@@ -19,24 +19,24 @@ Settled before this document, on the ics-runtime and quipu-cli threads:
 |---|---|
 | Build fresh, not on glove. | Glove has not been touched in months and the advice that grafted onto it rested on unverified details. |
 | A standalone Python runtime owns the loop, with headless Claude Code as one capability among others. | A skill is advice and cannot enforce the propose-then-validate boundary; code can. |
-| Capabilities carry their own system prompt, model and tool list as fields. | A stripped headless session costs about 3k tokens of context against about 40k for a default one, and the model must be passed explicitly because user settings are what select it. |
+| Capabilities carry their own system prompt, model and Claude Code tool list as fields. | A stripped headless session costs about 3k tokens of context against about 40k for a default one, and the model must be passed explicitly because user settings are what select it. |
 | {==Model routing: a capability declares a default model, and an assignment may override it from an allowlist, so the same capability runs on Haiku for a narrow job and on Opus for a subtle one.==}{>>we're just gonna incorporate model routing. some capabilities will have a fixed model but we should also be able to choose the right model for new capabilities, or use the same capability with different models for different purposes. we may actually need to fully talk about the ICS structure and how we're mapping it over to make sure we're on the same page<<}{id="c1" by="user" at="2026-09-12T20:49:38.101Z"}{>>Changed to model routing: the capability holds a default model, the assignment may override it, the validator checks the override against an allowlist. Wired through Step 2 (assignments.model), Step 3 (the model field), Step 4 (AssignmentProposal.model) and Step 5 (the Model allowed rule). The ICS mapping is now a table right after the vocabulary.<<}{id="r1" by="AI" at="2026-09-12T21:18:00.000Z" re="c1"} | Context load and price scale with the model, and a narrow read-only worker needs no more, while a subtle read needs more; routing per assignment buys both. |
 | New repo under kudzuweb, cloned to `~/Documents/Projects/ics-runtime`. | It keeps the runtime separate from lil-guy-quipu and roughdraftplus, which will later be its users. |
-| Tools are the primitives and are never assigned; a capability is a declared set of tools plus, when judgment is needed, a headless session with a prompt and a default model. | Ruled by Mauria in review, 2026-09-12: one word for the assignable thing, and `send_email` is the shape, the mail tools plus an Opus session that receives a brief and applies them. |
+| Equipment is the primitive and is never assigned; a capability is declared equipment plus, when judgment is needed, a headless session with a prompt and a default model. | Ruled by Mauria in review, 2026-09-12: one word for the assignable thing, and `send_email` is the shape, the mail equipment plus an Opus session that receives a brief and applies it. "Equipment" rather than "tool" so it is not confused with Claude Code's tools and does not narrow what counts. |
 | Build this first, then use it to work on {==roughdraft, quipu and the codebase scan.==}{>>and also the codebase scan<<}{id="c2" by="user" at="2026-09-12T20:51:14.050Z"}{>>Added.<<}{id="r2" by="AI" at="2026-09-12T21:18:00.000Z" re="c2"} | Sequencing set by Mauria on 2026-09-12. |
 
 Proposed in this document and not yet ruled: SQLite as the store, `pydantic` as the only
 dependency, Opus 5 as the organizer model, the model allowlist, the schema, the validator
 rules, the CLI surface, and the first case.
-## {==Vocabulary==}{>>oh okay here we're talking about it. maybe we will talk about my next proposal later in the document, but i think that capability primitives are good, but that you should also be able to bundle them for reuse. you will not need to think every time about what you need to do certain things, so that should become a capability in itself. you see? fractal. can also be a surface for self-improvement of the system, where we can decide what combo of primitives does that job best. if it's often conditional/contextual we keep it flexible(though we can talk algorithmic shortcuts) but if it isn't really, we make a.. capability bundle. capability function. whatever, you get it.<<}{id="c3" by="user" at="2026-09-12T20:53:14.982Z"}{>>Yes, and renamed per your later ruling: primitives are tools, and the composition is the capability, so there is no separate bundle. A capability may include other capabilities. The event log is the surface for deciding which recurring compositions become new capabilities; that sentence is at the end of Step 3. The quipu CLI objective catalog is the first planned set.<<}{id="r3" by="AI" at="2026-09-12T21:18:00.000Z" re="c3"}
+## {==Vocabulary==}{>>oh okay here we're talking about it. maybe we will talk about my next proposal later in the document, but i think that capability primitives are good, but that you should also be able to bundle them for reuse. you will not need to think every time about what you need to do certain things, so that should become a capability in itself. you see? fractal. can also be a surface for self-improvement of the system, where we can decide what combo of primitives does that job best. if it's often conditional/contextual we keep it flexible(though we can talk algorithmic shortcuts) but if it isn't really, we make a.. capability bundle. capability function. whatever, you get it.<<}{id="c3" by="user" at="2026-09-12T20:53:14.982Z"}{>>Yes, and renamed per your later rulings: primitives are equipment, and the composition is the capability, so there is no separate bundle. A capability may include other capabilities. The event log is the surface for deciding which recurring compositions become new capabilities; that sentence is at the end of Step 3. The quipu CLI objective catalog is the first planned set.<<}{id="r3" by="AI" at="2026-09-12T21:18:00.000Z" re="c3"}
 
 | Term | Meaning |
 |---|---|
 | Case | An objective pursued over time, with constraints. One row; many cycles. |
 | {==Unit==}{>>i don't understand the unit definition or why it carries no prompt, explain in chat<<}{id="c4" by="user" at="2026-09-12T20:59:35.956Z"}{>>Explained in chat; definition rewritten here. Short form: a unit is an ICS box (Branch, Group), not a person. Nothing runs as a unit; assignments run, and their capabilities carry the prompts. A unit exists so the organizer can open, subdivide and close one slice of the problem as a single thing.<<}{id="r4" by="AI" at="2026-09-12T21:18:00.000Z" re="c4"} | A box in the case's temporary tree that owns one slice of the problem, the way an ICS Branch or Group does. It has a purpose, a parent and children, and it opens, subdivides and closes as the organizer's picture of the problem changes. Nothing runs as a unit: assignments run, and their capabilities carry the prompts. The root unit, `command`, owns the objective and is created with the case. |
 | Assignment | A bounded piece of work owned by one unit and bound to one capability: objective, inputs, expected output, completion criteria, evidence required, dependencies. It becomes the worker's brief. |
-| Tool | A primitive: a Python function the runtime calls in-process, or a Claude Code built-in such as Read, Grep or Bash under an allowlist. Registered by name. Never assigned by the organizer. |
-| Capability | The assignable thing: a declared set of tools plus, when judgment is needed, a headless session with a system prompt and a default model. A capability with no session is deterministic and returns verified claims; one with a session returns candidate claims. A capability may include other capabilities. Later, a human. |
+| Equipment | A primitive: a Python function the runtime calls in-process, a Claude Code built-in tool such as Read, Grep or Bash under an allowlist, or later anything else a capability needs to do its work. Registered by name. Never assigned by the organizer. |
+| Capability | The assignable thing: declared equipment plus, when judgment is needed, a headless session with a system prompt and a default model. A capability with no session is deterministic and returns verified claims; one with a session returns candidate claims. A capability may include other capabilities. Later, a human. |
 | Claim | A statement about reality with epistemic status `candidate`, `verified` or `rejected`, plus provenance. LLM output enters as `candidate`; only deterministic verification promotes it. |
 | Event | One append-only record of something that happened, written in the same transaction as the state change it describes. |
 | {==Patch==}{>>why is this called patch? are any of these terms from ICS? just curious, answer in chat<<}{id="c5" by="user" at="2026-09-12T21:01:14.077Z"}{>>Not an ICS term; it is the software sense, a proposed set of changes applied to the current state atomically or not at all. ICS has no named artifact for a proposed change to the org chart; reorganization happens through the Planning P and the next Incident Action Plan (verified against NIMS 2017). Which vocabulary is ICS and which is ours is now the table under "ICS mapping" below.<<}{id="r5" by="AI" at="2026-09-12T21:18:00.000Z" re="c5"} | The organizer's proposal for one cycle: units to create or close, assignments to create or cancel, case status. Validated before anything commits. |
@@ -51,7 +51,7 @@ Definitions checked against the NIMS Third Edition (FEMA, October 2017) on 2026-
 | Incident: an occurrence that necessitates a response. | Case. |
 | Incident Commander: develops objectives, orders and releases resources. | The root unit `command` holds the objective; the organizer does the ordering and releasing by proposing patches. |
 | Section, Branch, Division, Group, Unit: the organizational levels, distinguished by depth and by functional versus geographic responsibility. | All are the one thing called a unit here. Depth is whatever the tree needs, and a unit's purpose says what it is responsible for. |
-| Single Resource, Strike Team (same kind and type, one leader), Task Force (mixed kinds for one mission). | A capability is a single resource and its tools are its equipment. A capability that includes other capabilities is the strike team or task force. |
+| Single Resource, Strike Team (same kind and type, one leader), Task Force (mixed kinds for one mission). | A capability is a single resource, and equipment is equipment; the word is ICS's. A capability that includes other capabilities is the strike team or task force. |
 | Resource typing: categorizing resources by capability so everyone means the same thing by a name. | The capability registry: name, description, schemas, side effects. |
 | Assignment: a task given to a person or team based on the objectives in the Incident Action Plan. | Assignment, same word and meaning. |
 | Incident Action Plan and Operational Period: the objectives and tactics for one period, then a new plan. | The applied patch plus the current tree is the plan; one cycle is the operational period. |
@@ -84,9 +84,9 @@ ics-runtime/
 │   ├── dispatcher.py     # runs ready assignments through capabilities
 │   ├── verifier.py       # turns results into claims
 │   ├── tree.py           # renders the unit tree and the event log
-│   ├── tools/
-│   │   ├── registry.py   # tool decorator and lookup
-│   │   ├── {==filesystem.py ==}{>>so this is python scripts for each tool all in one file or what? how does this interact with tool calls in claude code<<}{id="c6" by="user" at="2026-09-12T21:03:29.083Z"}{>>Now the tools/ package: one module per family of Python tools, each registered by decorator; deterministic capabilities call them in-process and Claude Code is never involved. Claude Code's built-ins (Read, Grep, Bash) are also tools, usable only inside a capability that has a session, where the whole headless session is one capability call. Explained in chat.<<}{id="r6" by="AI" at="2026-09-12T21:18:00.000Z" re="c6"}# read_file, list_directory, grep_files
+│   ├── equipment/
+│   │   ├── registry.py   # equipment decorator and lookup
+│   │   ├── {==filesystem.py ==}{>>so this is python scripts for each tool all in one file or what? how does this interact with tool calls in claude code<<}{id="c6" by="user" at="2026-09-12T21:03:29.083Z"}{>>Now the equipment/ package: one module per family of Python equipment, each registered by decorator; deterministic capabilities call it in-process and Claude Code is never involved. Claude Code's built-in tools (Read, Grep, Bash) are also equipment, usable only inside a capability that has a session, where the whole headless session is one capability call. Explained in chat.<<}{id="r6" by="AI" at="2026-09-12T21:18:00.000Z" re="c6"}# read_file, list_directory, grep_files
 │   │   ├── git.py        # git_status, git_log, git_diff
 │   │   ├── shell.py      # allowlisted read-only commands
 │   │   └── builtin.py    # names and allowlists for Claude Code's own tools
@@ -119,24 +119,24 @@ Event types in v0: `case.created`, `case.closed`, `unit.created`, `unit.closed`,
 
 Capabilities are not a table. The registry is code, and `case show` prints what is
 registered.
-### Step 3: tools and capabilities
+### Step 3: equipment and capabilities
 
-Every tool and every capability is registered by decorator. Tools are primitives and the
-organizer never assigns one. Capabilities are what the organizer assigns. The registries
-describe what can be done, never when.
+Every piece of equipment and every capability is registered by decorator. Equipment is
+primitive and the organizer never assigns it. Capabilities are what the organizer assigns.
+The registries describe what can be done, never when.
 
-Tool kinds:
+Equipment kinds in v0:
 
 | Kind | Where it runs |
 |---|---|
 | Python function | In-process, called by a deterministic capability. `read_file`, `grep_files`, `list_directory`, `git_status`, `git_log`, `git_diff`, `run_readonly`. |
-| Claude Code built-in | Only inside a capability's session, named in that capability's tool set: `Read`, `Grep`, `Glob`, and `Bash` under an allowlist of read-only commands. |
+| Claude Code built-in tool | Only inside a capability's session, named in that capability's equipment: `Read`, `Grep`, `Glob`, and `Bash` under an allowlist of read-only commands. |
 
 ```python
 @capability(
     name="investigate",
     description="Read the files a question points at and return what they show",
-    tools=["Read", "Grep", "Glob", "Bash"],
+    equipment=["Read", "Grep", "Glob", "Bash"],
     bash_allowlist=["ls", "cat", "head", "tail", "wc", "find", "stat"],
     session=Session(system_prompt=INVESTIGATE_PROMPT, model="claude-haiku-4-5"),
     side_effects="none",
@@ -150,7 +150,7 @@ class Investigate(Capability): ...
 |---|---|
 | `name` | The identifier the organizer uses in a patch. |
 | `description` | One sentence the organizer sees. |
-| `tools` | The declared set of tools this capability may use. A deterministic capability calls them in code; a session-backed one exposes exactly these to its session. |
+| `equipment` | What this capability may use. A deterministic capability calls it in code; a session-backed one exposes exactly this to its session. |
 | `input_schema`, `output_schema` | Pydantic models. The validator checks assignment inputs against the input schema before dispatch. |
 | `side_effects` | `none`, `local_reversible` or `external`. v0 registers only `none`. |
 | `returns` | `verified` for a deterministic capability, whose output is a fact about the machine; `candidate` for a session-backed one. |
@@ -162,7 +162,7 @@ the headless com{==mand from them:==}{>>table didnt render, show in chat pls<<}{
 |---|---|
 | `system_prompt` | `--system-prompt <text>` |
 | `model` | `--model <id>`, always explicit. The capability's default; an assignment may override it from the allowlist in Step 5. |
-| `tools` | `--tools "<list>"`, the built-ins in the capability's tool set |
+| `equipment` | `--tools "<list>"`, the Claude Code built-in tools in the capability's equipment |
 | `bash_allowlist` | `--allowedTools` entries of the form `Bash(<command> *)`, so read-only tool calls need no approval |
 | `cwd`, `add_dirs` | The working directory and `--add-dir` entries |
 | `output_schema` | `--json-schema <schema>`, so the result comes back structured |
@@ -176,9 +176,9 @@ about 40k tokens to about 3k and keep Mauria's personal CLAUDE.md, skills and ho
 The assignment is the user message: objective, inputs, expected output, completion
 criteria, evidence required, and the owning unit's purpose as one line of context.
 
-v0 {==capabilities:==}{>>table didnt render, show in chat pls<<}{id="c9" by="user" at="2026-09-12T21:06:00.948Z"}{>>Shown in chat. Rewritten under the tools ruling: the table now lists capabilities with their tool sets and whether they have a session.<<}{id="r9" by="AI" at="2026-09-12T21:18:00.000Z" re="c9"}
+v0 {==capabilities:==}{>>table didnt render, show in chat pls<<}{id="c9" by="user" at="2026-09-12T21:06:00.948Z"}{>>Shown in chat. Rewritten under the equipment ruling: the table now lists capabilities with their equipment and whether they have a session.<<}{id="r9" by="AI" at="2026-09-12T21:18:00.000Z" re="c9"}
 
-| Capability | Tools | Session |
+| Capability | Equipment | Session |
 |---|---|---|
 | `check_path` | `list_directory` | none; returns verified |
 | `read` | `read_file` | none; returns verified |
@@ -253,7 +253,7 @@ Ready means every dependency is completed. v0 runs ready assignments sequentiall
 run writes `assignment.started`, then the result and `assignment.completed` or
 `assignment.failed` in one transaction.
 
-The verifier turns results into claims. {==A deterministic capability's==}{>>a what?<<}{id="c13" by="user" at="2026-09-12T21:10:37.522Z"}{>>Was "function capability", then "plain Python capability"; under the tools ruling it is a deterministic capability, one with no session, composing Python tools in code. Renamed everywhere.<<}{id="r13" by="AI" at="2026-09-12T21:18:00.000Z" re="c13"} result becomes a `verified`
+The verifier turns results into claims. {==A deterministic capability's==}{>>a what?<<}{id="c13" by="user" at="2026-09-12T21:10:37.522Z"}{>>Was "function capability", then "plain Python capability"; under the equipment ruling it is a deterministic capability, one with no session, composing Python equipment in code. Renamed everywhere.<<}{id="r13" by="AI" at="2026-09-12T21:18:00.000Z" re="c13"} result becomes a `verified`
 claim with the capability and inputs as provenance. A session-backed capability's result
 becomes `candidate` claims with the session id as provenance. Promotion of a candidate in
 v0 happens only when a later deterministic result matches it; the organizer can request
@@ -314,8 +314,8 @@ v0 is done when all of these hold on the first case:
 | Role | Model | Because |
 |---|---|---|
 | Organizer | `claude-opus-5` | The patch is the judgment in the system; Opus 5 is the default for anything nontrivial, and it ran the test patch well. |
-| `investigate`, `interpret` | `claude-haiku-4-5` by default | Narrow brief, few tools, small context; the cheapest floor. The organizer overrides per assignment when a read needs more. |
-| Later builder, reviewer and `send_email`-shaped capabilities | `claude-fable-5-1` or `claude-opus-5` with the tools the job needs | Not in v0. |
+| `investigate`, `interpret` | `claude-haiku-4-5` by default | Narrow brief, little equipment, small context; the cheapest floor. The organizer overrides per assignment when a read needs more. |
+| Later builder, reviewer and `send_email`-shaped capabilities | `claude-fable-5-1` or `claude-opus-5` with the equipment the job needs | Not in v0. |
 
 ## Open questions
 
@@ -323,7 +323,7 @@ v0 is done when all of these hold on the first case:
 |---|---|
 | Whether the organizer should see the full text of completed results or only their summaries against the contract. | Step 4's input rendering. Start with summaries plus evidence pointers; widen if the tree stops changing shape. |
 | Whether `interpret` is worth having in v0 or whether `investigate` covers it. | Step 3's registry. Drop it if the first case never needs it. |
-| How a session-backed capability gets Python tools, not only Claude Code built-ins. The candidate is the runtime serving its tool registry as an MCP server passed by `--mcp-config` with `--strict-mcp-config`; untested. | Any session-backed capability that needs a Python tool. v0 avoids it by giving sessions built-ins only. |
+| How a session-backed capability gets Python equipment, not only Claude Code built-in tools. The candidate is the runtime serving its equipment registry as an MCP server passed by `--mcp-config` with `--strict-mcp-config`; untested. | Any session-backed capability that needs Python equipment. v0 avoids it by giving sessions built-in tools only. |
 | The repo's GitHub name and whether it is public. | The push, not the build. |
 
 ---
