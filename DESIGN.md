@@ -1,6 +1,6 @@
 # noscope: design and v0 build plan
 ## Overview
-A Python runtime that pursues an objective by building and revising a temporary
+A TypeScript runtime that pursues an objective by building and revising a temporary
 organization around it. The durable layer is capabilities, state and history. The
 organization is a tree of responsibility recomputed each cycle. One LLM call per cycle
 proposes changes to that tree as a structured patch; deterministic code validates the patch,
@@ -16,7 +16,7 @@ Settled before this document, on the ics-runtime and quipu-cli threads:
 | Decision | Because |
 |---|---|
 | Build fresh, not on glove. | Glove has not been touched in months and the advice that grafted onto it rested on unverified details. |
-| A standalone Python runtime owns the loop, with headless Claude Code as one capability among others. | A skill is advice and cannot enforce the propose-then-validate boundary; code can. |
+| A standalone runtime owns the loop, with headless Claude Code as one capability among others. | A skill is advice and cannot enforce the propose-then-validate boundary; code can. |
 | Capabilities carry their own system prompt and Claude Code tool list as fields. | A stripped headless session costs about 3k tokens of context against about 40k for a default one, and the model must be passed explicitly because user settings are what select it. |
 | {==Model routing: every assignment to a session-backed capability names its model from an allowlist, and capabilities carry no default, so the same capability runs on Haiku for a narrow job and on Opus for a subtle one.==}{>>we're just gonna incorporate model routing. some capabilities will have a fixed model but we should also be able to choose the right model for new capabilities, or use the same capability with different models for different purposes. we may actually need to fully talk about the ICS structure and how we're mapping it over to make sure we're on the same page<<}{id="c1" by="user" at="2026-09-12T20:49:38.101Z"}{>>Changed to model routing; then per your c20, no defaults: the assignment names the model every time, the validator requires it from the allowlist. Wired through Step 2 (assignments.model), Step 3 (the model field), Step 4 (AssignmentProposal.model) and Step 5 (the Model allowed rule). The ICS mapping is now a table right after the vocabulary.<<}{id="r1" by="AI" at="2026-09-12T21:18:00.000Z" re="c1"} | Context load and price scale with the model, and a narrow read-only worker needs no more, while a subtle read needs more; routing per assignment buys both. |
 | New repo under kudzuweb, cloned to `~/Documents/Projects/noscope`. | It keeps the runtime separate from lil-guy-quipu and roughdraftplus, which will later be its users. |
@@ -24,11 +24,13 @@ Settled before this document, on the ics-runtime and quipu-cli threads:
 | The repository is `kudzuweb/noscope`, private for now, public later. | Ruled by Mauria 2026-09-12. She expects to use it at work if it proves out, and that is the point at which it goes public. |
 | Every session-backed capability can answer "insufficient": its output schema carries an outcome of `answered` or `insufficient`, and an insufficient result names what evidence it would need. `interpret`, the sandboxed capability with no equipment, stays in v0 because of this. | Ruled by Mauria 2026-09-12. A sandboxed "tell me what you think" cannot go and get more, and that is the point: when it says it cannot answer and why, the organizer gets a precise next assignment and Mauria gets a diagnostic on prompts and assignments. |
 | Platform-agnostic: a session runs on a provider, and Claude Code is the first provider, not the only one. Codex is the second. | Ruled by Mauria 2026-09-12. She wants to deploy Codex, or anything else, as a capability. Nothing above the session layer knows which provider ran it. |
-| The framework is named `noscope`, one spelling for the repo, the Python package and the command. | Named by Mauria 2026-09-12, after FIRESCOPE, the interagency effort that produced ICS, and for the pun: the whole thing is built so she never has to zoom in. `noscope` is free on PATH, Homebrew and GitHub; PyPI has an unrelated `noscope`, so a PyPI release would be published as `no_scope` with the import name unchanged. |
+| Custom equipment reaches a session over MCP, and any external MCP server can itself be equipment. | Ruled by Mauria 2026-09-12. Her reason: MCP means other MCP servers, Craft, GitHub, a browser, can be handed to a capability as equipment with no adapter, and both providers already speak it. The CLI-command path stays as the fallback if headless MCP misbehaves. After v0. |
+| TypeScript on Node. | Ruled by Mauria 2026-09-12. Node is present wherever noscope can run, because Claude Code and Codex are both Node programs on this machine; it is her language and the language of roughdraftplus and the codebase-scan tooling; the MCP SDK is TypeScript-first. Python was inherited from the ChatGPT conversation, never ruled, and the machine has 3.11 where the draft assumed 3.12. |
+| The framework is named `noscope`, one spelling for the repo, the npm package and the command. | Named by Mauria 2026-09-12, after FIRESCOPE, the interagency effort that produced ICS, and for the pun: the whole thing is built so she never has to zoom in. `noscope` is free on PATH, Homebrew and GitHub; PyPI has an unrelated `noscope`, so a PyPI release would be published as `no_scope` with the import name unchanged. |
 | Build this first, then use it to work on roughdraft, quipu and the codebase scan. | Sequencing set by Mauria on 2026-09-12. |
 
-Proposed in this document and not yet ruled: SQLite as the store, `pydantic` as the only
-dependency, Opus 5 as the organizer model, the model allowlist, the schema, the validator
+Proposed in this document and not yet ruled: SQLite as the store through `node:sqlite`, `zod` as
+the schema dependency, Opus 5 as the organizer model, the model allowlist, the schema, the validator
 rules, the CLI surface, and the first case.
 ## Vocabulary
 | Term | Meaning |
@@ -36,7 +38,7 @@ rules, the CLI surface, and the first case.
 | Case | An objective pursued over time, with constraints. One row; many cycles. |
 | Unit | A box in the case's temporary tree that owns one slice of the problem, the way an ICS Branch or Group does. It has a purpose, a parent and children, and it opens, subdivides and closes as the organizer's picture of the problem changes. Nothing runs as a unit: assignments run, and their capabilities carry the prompts. The root unit, `command`, owns the objective and is created with the case. |
 | Assignment | A bounded piece of work owned by one unit and bound to one capability: objective, inputs, expected output, completion criteria, evidence required, dependencies, and for a session-backed capability the model and any instructions. It is the worker's brief, and for a session it is the prompt the session receives. |
-| Equipment | A primitive: a Python function the runtime calls in-process, a Claude Code built-in tool such as Read, Grep or Bash under an allowlist, or later anything else a capability needs to do its work. Registered by name. Never assigned by the organizer. |
+| Equipment | A primitive: a function the runtime calls in-process, a Claude Code built-in tool such as Read, Grep or Bash under an allowlist, or later anything else a capability needs to do its work. Registered by name. Never assigned by the organizer. |
 | Capability | The assignable thing: declared equipment plus, when judgment is needed, a headless session with a system prompt; the model comes from each assignment. A capability with no session is deterministic and produces verified claims; one with a session produces candidate claims. A capability may include other capabilities. Later, a human. |
 | Provider | A program that can run a session: Claude Code first, Codex second, later an HTTP API or a human. A provider maps the session fields onto its own command line and turns its output back into the runtime's result shape. Everything above the session layer is provider-blind. |
 | Claim | A statement about reality with epistemic status `candidate`, `verified` or `rejected`, plus provenance. LLM output enters as `candidate`; only deterministic verification promotes it. |
@@ -65,40 +67,45 @@ Definitions checked against the NIMS Third Edition (FEMA, October 2017) on 2026-
 
 ## Build steps
 ### Step 1: repository skeleton
-Python 3.12 or later. One dependency, `pydantic`, for every contract. Everything else is the
-standard library plus the installed `claude` binary, which every LLM call goes through.
+TypeScript on Node 24, a pnpm package. Runtime dependencies: `zod` for every contract and the
+JSON schemas the organizer and sessions receive, and `@modelcontextprotocol/sdk` only when
+custom equipment for sessions arrives after v0. Storage is `node:sqlite`, built into Node 24
+and verified working on this machine on 2026-09-12; it prints an experimental warning, and
+`better-sqlite3` is the fallback if that bites. Every LLM call goes through an installed
+provider binary, `claude` or `codex`.
 
 ```text
 noscope/
 ├── DESIGN.md
 ├── README.md
-├── pyproject.toml
-├── noscope/
-│   ├── cli.py            # the command surface
-│   ├── runtime.py        # the cycle
-│   ├── store.py          # SQLite: schema, transactions, queries
-│   ├── models.py         # pydantic contracts shared by every module
-│   ├── organizer.py      # the one headless Claude Code call per cycle
-│   ├── validator.py      # patch rules
-│   ├── dispatcher.py     # runs ready assignments through capabilities
-│   ├── verifier.py       # turns results into claims
-│   ├── tree.py           # renders the unit tree and the event log
+├── package.json
+├── tsconfig.json
+├── src/
+│   ├── cli.ts            # the command surface
+│   ├── runtime.ts        # the cycle
+│   ├── store.ts          # SQLite: schema, transactions, queries
+│   ├── models.ts         # zod contracts shared by every module
+│   ├── organizer.ts      # the one provider call per cycle
+│   ├── validator.ts      # patch rules
+│   ├── dispatcher.ts     # runs ready assignments through capabilities
+│   ├── verifier.ts       # turns results into claims
+│   ├── tree.ts           # renders the unit tree and the event log
 │   ├── equipment/
-│   │   ├── registry.py   # equipment decorator and lookup
-│   │   ├── filesystem.py # read_file, list_directory, grep_files
-│   │   ├── git.py        # git_status, git_log, git_diff
-│   │   ├── shell.py      # allowlisted read-only commands
-│   │   └── builtin.py    # names and allowlists for Claude Code's own tools
+│   │   ├── registry.ts   # defineEquipment and lookup
+│   │   ├── filesystem.ts # read_file, list_directory, grep_files
+│   │   ├── git.ts        # git_status, git_log, git_diff
+│   │   ├── shell.ts      # allowlisted read-only commands
+│   │   └── builtin.ts    # names and allowlists for the providers' own tools
 │   ├── providers/
-│   │   ├── base.py       # the provider interface and the shared session preamble
-│   │   ├── claude_code.py
-│   │   └── codex.py
+│   │   ├── base.ts       # the provider interface and the shared session preamble
+│   │   ├── claude-code.ts
+│   │   └── codex.ts
 │   └── capabilities/
-│       ├── registry.py   # capability decorator, contract, lookup
-│       ├── session.py    # builds a session request and hands it to a provider
-│       ├── deterministic.py  # check_path, read, grep, git_history
-│       └── investigate.py    # investigate, interpret
-└── tests/
+│       ├── registry.ts   # defineCapability, contract, lookup
+│       ├── session.ts    # builds a session request and hands it to a provider
+│       ├── deterministic.ts  # check_path, read, grep, git_history
+│       └── investigate.ts    # investigate, interpret
+└── test/
 ```
 
 ### Step 2: storage
@@ -122,7 +129,7 @@ Event types in v0: `case.created`, `case.closed`, `unit.created`, `unit.closed`,
 Capabilities are not a table. The registry is code, and `case show` prints what is
 registered.
 ### Step 3: equipment and capabilities
-Every piece of equipment and every capability is registered by decorator. Equipment is
+Every piece of equipment and every capability is registered by a define call. Equipment is
 primitive and the organizer never assigns it. Capabilities are what the organizer assigns.
 The registries describe what can be done, never when.
 
@@ -130,41 +137,44 @@ Equipment kinds in v0:
 
 | Kind | Where it runs |
 |---|---|
-| Python function | In-process, called by a deterministic capability. `read_file`, `grep_files`, `list_directory`, `git_status`, `git_log`, `git_diff`, `run_readonly`. |
+| Function | In-process, called by a deterministic capability. `read_file`, `grep_files`, `list_directory`, `git_status`, `git_log`, `git_diff`, `run_readonly`. |
 | Claude Code built-in tool | Only inside a capability's session, named in that capability's equipment: `Read`, `Grep`, `Glob`, and `Bash` under an allowlist of read-only commands. A capability may instead declare `default` to give its session Claude Code's whole built-in set. |
+| External MCP server, after v0 | Only inside a session. Declared as equipment by name and launch command, passed to the provider alongside the runtime's own equipment server. This is how Craft, GitHub, a browser or anything else with an MCP server becomes equipment without an adapter. |
 
-A Python equipment module is ordinary functions, one module per family, no scripts and no
+An equipment module is ordinary exported functions, one module per family, no scripts and no
 CLI:
 
-```python
-# equipment/filesystem.py
+```ts
+// src/equipment/filesystem.ts
 
-@equipment(name="grep_files")
-def grep_files(root: Path, pattern: str, glob: str = "*") -> list[Match]:
-    ...  # walks root, returns file, line and text for each match
+export const grepFiles = defineEquipment({
+  name: "grep_files",
+  input: z.object({ root: z.string(), pattern: z.string(), glob: z.string().default("*") }),
+  output: z.array(Match),
+  run: async ({ root, pattern, glob }) => { /* walks root, returns file, line and text per match */ },
+});
 
-@equipment(name="read_file")
-def read_file(path: Path, max_bytes: int = 200_000) -> FileContents: ...
+export const readFile = defineEquipment({ name: "read_file", input: ReadInput, output: FileContents, run: ... });
 
-@equipment(name="list_directory")
-def list_directory(path: Path) -> list[Entry]: ...
+export const listDirectory = defineEquipment({ name: "list_directory", input: PathInput, output: z.array(Entry), run: ... });
 ```
 
 A deterministic capability such as `grep` calls `grep_files` directly, in the runtime's own
 process, in milliseconds. Equipment shells out only where the thing itself is a command, as
-`git_status` runs `git status --porcelain` and parses it. No session calls Python equipment
+`git_status` runs `git status --porcelain` and parses it. No session calls function equipment
 in v0.
 
-```python
-@capability(
-    name="investigate",
-    description="Read the files a question points at and return what they show",
-    equipment=["Read", "Grep", "Glob", "Bash"],
-    bash_allowlist=["ls", "cat", "head", "tail", "wc", "find", "stat"],
-    session=Session(system_prompt=INVESTIGATE_PROMPT),
-    effect="read_only",
-)
-class Investigate(Capability): ...
+```ts
+export const investigate = defineCapability({
+  name: "investigate",
+  description: "Read the files a question points at and return what they show",
+  equipment: ["Read", "Grep", "Glob", "Bash"],
+  bashAllowlist: ["ls", "cat", "head", "tail", "wc", "find", "stat"],
+  session: { systemPrompt: INVESTIGATE_PROMPT },
+  effect: "read_only",
+  input: InvestigateInput,
+  output: SessionResult(InvestigateFindings),
+});
 ```
 
 Fields on every capability:
@@ -174,7 +184,7 @@ Fields on every capability:
 | `name` | The identifier the organizer uses in a patch. |
 | `description` | One sentence the organizer sees. |
 | `equipment` | What this capability may use. A deterministic capability calls it in code; a session-backed one exposes exactly this to its session. |
-| `input_schema`, `output_schema` | Pydantic models. The validator checks assignment inputs against the input schema before dispatch. |
+| `input`, `output` | zod schemas. The validator checks assignment inputs against the input schema before dispatch, and the output schema is what a session receives as its JSON schema. |
 | `effect` | `read_only`, `writes_local` or `writes_external`. v0 registers only `read_only`. |
 | `produces` | `verified_claims` for a deterministic capability, whose output is a fact about the machine; `candidate_claims` for a session-backed one. |
 
@@ -184,7 +194,7 @@ provider, and the provider renders the fields onto its own command from them:
 | Field | Claude Code renders it to | Codex renders it to |
 |---|---|---|
 | `provider` | The choice of column. | The choice of column. |
-| session preamble, fixed in `providers/base.py` | The first part of `--system-prompt`, identical for every session on every provider: this session is a resource assigned into a case run by this runtime; the assignment follows; report only against the assignment's contract; findings are candidate claims until the runtime verifies them; the session cannot change the organization or take on work outside the assignment. | Prepended to the prompt, since `codex exec` has no system-prompt flag in its help. |
+| session preamble, fixed in `providers/base.ts` | The first part of `--system-prompt`, identical for every session on every provider: this session is a resource assigned into a case run by this runtime; the assignment follows; report only against the assignment's contract; findings are candidate claims until the runtime verifies them; the session cannot change the organization or take on work outside the assignment. | Prepended to the prompt, since `codex exec` has no system-prompt flag in its help. |
 | `system_prompt` | The rest of `--system-prompt`: the capability's own role text, after the preamble. | Prepended to the prompt after the preamble. |
 | `model` | `--model <id>`, always explicit, taken from the assignment. A capability declares no default. | `-m <model>`, same rule. |
 | `equipment` | `--tools "<list>"` naming the Claude Code built-in tools in the capability's equipment, or `--tools default` when the capability declares `default`. | `-s read-only` bounds what the built-in shell can do; per-tool selection is not in the help and is an open item for this provider. |
@@ -244,15 +254,16 @@ Input, rendered as labeled sections in a stable order so the prefix caches:
 
 Output:
 
-```python
-class OrganizationPatch(BaseModel):
-    create_units: list[UnitProposal]          # purpose, parent unit
-    close_units: list[str]                    # unit ids, with a reason each
-    create_assignments: list[AssignmentProposal]  # unit, capability, objective, inputs, criteria, instructions, model
-    cancel_assignments: list[str]
-    claims_to_verify: list[str]               # candidate claim ids worth promoting
-    case_status: Literal["continue", "blocked", "satisfied", "failed"]
-    rationale: str                            # recorded on the patch event, never acted on
+```ts
+const OrganizationPatch = z.object({
+  createUnits: z.array(UnitProposal),            // purpose, parent unit
+  closeUnits: z.array(UnitClose),                // unit id, with a reason each
+  createAssignments: z.array(AssignmentProposal),// unit, capability, objective, inputs, criteria, instructions, provider, model
+  cancelAssignments: z.array(z.string()),
+  claimsToVerify: z.array(z.string()),           // candidate claim ids worth promoting
+  caseStatus: z.enum(["continue", "blocked", "satisfied", "failed"]),
+  rationale: z.string(),                         // recorded on the patch event, never acted on
+});
 ```
 
 The organizer proposes structure. It never runs a tool, never writes to the store, and never
@@ -354,9 +365,11 @@ first time.
 | No custom equipment in sessions at all: split the work into a deterministic capability that runs the equipment and a session that interprets its output, sequenced by the organizer. | The session never calls equipment; it receives results as evidence in its assignment. | The purest ICS shape, and it keeps facts on the verified side. Costs: it fails wherever judgment and equipment must interleave, as in `send_email`, where composing needs the model and sending needs the equipment in the same stretch. |
 | The Claude Agent SDK's in-process custom tools. | As native tools. | Ruled out: the SDK requires an API key, so it leaves the subscription. |
 
-The leading candidate is the MCP server, with the CLI command as the fallback if MCP
-proves awkward in headless mode. Platform independence strengthens the MCP choice: it is the
-one path both providers already speak, since Codex manages MCP servers with `codex mcp`. The third option is not an alternative to the first two
+Ruled: the MCP server, with the CLI command as the fallback if MCP proves awkward in headless
+mode. Two reasons. It is the one path both providers already speak, since Codex manages MCP
+servers with `codex mcp`. And it makes any external MCP server equipment too: a capability
+declares it by name and launch command, and the session gets it next to the runtime's own
+server, so Craft, GitHub or a browser needs no adapter. The third option is not an alternative to the first two
 but the default shape: a session gets custom equipment only when its judgment and the
 equipment must interleave.
 
@@ -382,7 +395,7 @@ which is untested for this use.
 |---|---|---|
 | Whether the organizer should see the full text of every completed result, or only a summary of each result against its assignment's contract plus pointers to the evidence. | Yes. | Step 4 cannot fix the organizer's input rendering until this is decided. The build starts with summaries plus evidence pointers, because that is the cheaper prompt. The signal to widen is the organizer proposing the same tree again after new results arrive, which means the summaries are not carrying enough for it to react. |
 | The Codex provider's untested parts: per-tool selection and a finer command allowlist beyond `-s read-only`, context size under its isolation flags, and whether it bills the ChatGPT subscription. | No. v0 runs on Claude Code only. | The Codex provider cannot be declared working until one test session runs through it, the same tests run for Claude Code today. |
-| How a session-backed capability gets custom Python equipment, not only Claude Code's built-in tools. The options and their tradeoffs are under "Custom equipment for sessions" in the Reference section. | No. v0 sessions use built-in tools only. | Any session-backed capability that needs Python equipment cannot be written until one path is chosen and tested. The leading candidate is the runtime serving its equipment registry as an MCP server, because the session then sees each piece of equipment as a native tool with a schema and nothing to learn. |
+| The MCP equipment server, now ruled, still has one untested part: whether a provider's built-in tool filter also filters MCP tools in headless mode. The options that were weighed are under "Custom equipment for sessions" in the Reference section. | No. v0 sessions use built-in tools only. | Any session-backed capability that needs function equipment cannot be written until one path is chosen and tested. The leading candidate is the runtime serving its equipment registry as an MCP server, because the session then sees each piece of equipment as a native tool with a schema and nothing to learn. |
 
 ---
 counters:
