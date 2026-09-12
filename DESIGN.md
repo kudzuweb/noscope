@@ -1,4 +1,4 @@
-# ics-runtime: design and v0 build plan
+# noscope: design and v0 build plan
 
 ## Overview
 
@@ -21,8 +21,9 @@ Settled before this document, on the ics-runtime and quipu-cli threads:
 | A standalone Python runtime owns the loop, with headless Claude Code as one capability among others. | A skill is advice and cannot enforce the propose-then-validate boundary; code can. |
 | Capabilities carry their own system prompt and Claude Code tool list as fields. | A stripped headless session costs about 3k tokens of context against about 40k for a default one, and the model must be passed explicitly because user settings are what select it. |
 | {==Model routing: every assignment to a session-backed capability names its model from an allowlist, and capabilities carry no default, so the same capability runs on Haiku for a narrow job and on Opus for a subtle one.==}{>>we're just gonna incorporate model routing. some capabilities will have a fixed model but we should also be able to choose the right model for new capabilities, or use the same capability with different models for different purposes. we may actually need to fully talk about the ICS structure and how we're mapping it over to make sure we're on the same page<<}{id="c1" by="user" at="2026-09-12T20:49:38.101Z"}{>>Changed to model routing; then per your c20, no defaults: the assignment names the model every time, the validator requires it from the allowlist. Wired through Step 2 (assignments.model), Step 3 (the model field), Step 4 (AssignmentProposal.model) and Step 5 (the Model allowed rule). The ICS mapping is now a table right after the vocabulary.<<}{id="r1" by="AI" at="2026-09-12T21:18:00.000Z" re="c1"} | Context load and price scale with the model, and a narrow read-only worker needs no more, while a subtle read needs more; routing per assignment buys both. |
-| New repo under kudzuweb, cloned to `~/Documents/Projects/ics-runtime`. | It keeps the runtime separate from lil-guy-quipu and roughdraftplus, which will later be its users. |
+| New repo under kudzuweb, cloned to `~/Documents/Projects/noscope`. | It keeps the runtime separate from lil-guy-quipu and roughdraftplus, which will later be its users. |
 | Equipment is the primitive and is never assigned; a capability is declared equipment plus, when judgment is needed, a headless session with a prompt. | Ruled by Mauria in review, 2026-09-12: one word for the assignable thing, and `send_email` is the shape, the mail equipment plus an Opus session that receives a brief and applies it. "Equipment" rather than "tool" so it is not confused with Claude Code's tools and does not narrow what counts. |
+| The framework is named `noscope`, one spelling for the repo, the Python package and the command. | Named by Mauria 2026-09-12, after FIRESCOPE, the interagency effort that produced ICS, and for the pun: the whole thing is built so she never has to zoom in. `noscope` is free on PATH, Homebrew and GitHub; PyPI has an unrelated `noscope`, so a PyPI release would be published as `no_scope` with the import name unchanged. |
 | Build this first, then use it to work on roughdraft, quipu and the codebase scan. | Sequencing set by Mauria on 2026-09-12. |
 
 Proposed in this document and not yet ruled: SQLite as the store, `pydantic` as the only
@@ -70,11 +71,11 @@ Python 3.12 or later. One dependency, `pydantic`, for every contract. Everything
 standard library plus the installed `claude` binary, which every LLM call goes through.
 
 ```text
-ics-runtime/
+noscope/
 ├── DESIGN.md
 ├── README.md
 ├── pyproject.toml
-├── ics/
+├── noscope/
 │   ├── cli.py            # the command surface
 │   ├── runtime.py        # the cycle
 │   ├── store.py          # SQLite: schema, transactions, queries
@@ -222,7 +223,7 @@ with context stays with the organizer. The quipu CLI's objective catalog is the 
 planned set of such capabilities. v0 registers none.
 ### Step 4: the organizer
 
-One call per cycle, {==as a headless Claude Code call on the subscription==}{>>aht aht, subscription-based solutions only for now<<}{id="c10" by="user" at="2026-09-12T21:06:34.909Z"}{>>Changed and tested 2026-09-12: the organizer ran as headless Opus 5 with the five stripped flags, no tools and a JSON schema, 3.6k tokens of context, and returned a schema-valid patch with four units and four assignments in the structured_output field. The anthropic SDK dependency is gone from Step 1.<<}{id="r10" by="AI" at="2026-09-12T21:18:00.000Z" re="c10"}{>>great, so we can decide what tools an instance needs if we want or give it the default set any session would have?<<}{id="c23" by="user" at="2026-09-12T21:39:07.240Z" re="r10"}{>>Yes. Name the built-ins individually, or declare default and the session gets Claude Code's full built-in set (verified in claude --help: --tools "default"). Either way --setting-sources "" keeps your MCP servers, skills and hooks out unless a capability adds them explicitly. Added to the equipment kinds table and the session fields.<<}{id="r32" by="AI" at="2026-09-12T21:50:00.000Z" re="c23"}{>>hell yeah, i love this control layer. they can only ever do what they need to do. and we could give them custom equipment and tell the session to use that right?<<}{id="c28" by="user" at="2026-09-12T22:14:00.113Z" re="r32"}{>>Yes. Two ways to hand a session custom equipment, both in the open questions now: the runtime serves its equipment registry to the session as an MCP server (untested), or the runtime exposes equipment as one CLI command, ics equipment <name>, and the capability allowlists exactly that command in Bash, which uses only mechanisms already verified today. The capability's system_prompt then tells the session to use it. v0 needs neither.<<}{id="r36" by="AI" at="2026-09-12T22:22:00.000Z" re="c28"}, with `--json-schema` so the
+One call per cycle, {==as a headless Claude Code call on the subscription==}{>>aht aht, subscription-based solutions only for now<<}{id="c10" by="user" at="2026-09-12T21:06:34.909Z"}{>>Changed and tested 2026-09-12: the organizer ran as headless Opus 5 with the five stripped flags, no tools and a JSON schema, 3.6k tokens of context, and returned a schema-valid patch with four units and four assignments in the structured_output field. The anthropic SDK dependency is gone from Step 1.<<}{id="r10" by="AI" at="2026-09-12T21:18:00.000Z" re="c10"}{>>great, so we can decide what tools an instance needs if we want or give it the default set any session would have?<<}{id="c23" by="user" at="2026-09-12T21:39:07.240Z" re="r10"}{>>Yes. Name the built-ins individually, or declare default and the session gets Claude Code's full built-in set (verified in claude --help: --tools "default"). Either way --setting-sources "" keeps your MCP servers, skills and hooks out unless a capability adds them explicitly. Added to the equipment kinds table and the session fields.<<}{id="r32" by="AI" at="2026-09-12T21:50:00.000Z" re="c23"}{>>hell yeah, i love this control layer. they can only ever do what they need to do. and we could give them custom equipment and tell the session to use that right?<<}{id="c28" by="user" at="2026-09-12T22:14:00.113Z" re="r32"}{>>Yes. Two ways to hand a session custom equipment, both in the open questions now: the runtime serves its equipment registry to the session as an MCP server (untested), or the runtime exposes equipment as one CLI command, noscope equipment <name>, and the capability allowlists exactly that command in Bash, which uses only mechanisms already verified today. The capability's system_prompt then tells the session to use it. v0 needs neither.<<}{id="r36" by="AI" at="2026-09-12T22:22:00.000Z" re="c28"}, with `--json-schema` so the
 response is a validated `OrganizationPatch` and never prose. Model `claude-opus-5`, no tools,
 the same five fixed flags as every session. Tested 2026-09-12 with an
 organizer-shaped prompt: 3.6k tokens of context and a valid patch back.
@@ -286,12 +287,12 @@ that through `claims_to_verify`, which schedules the deterministic check as an a
 
 | Command | Does |
 |---|---|
-| `ics case create "<objective>" [--constraint ...]` | Creates the case and its root unit, `command`. |
-| `ics case show <id>` | Objective, status, claims by status, open assignments, registered capabilities. |
-| `ics case tree <id>` | The unit tree with assignment marks: done, running, ready, pending. |
-| `ics case step <id>` | One cycle, then stop. Prints the patch, the validator's verdict, what ran, what changed. |
-| `ics case run <id> [--max-cycles N]` | Repeats `step` until the case leaves `open` or the cap is hit. |
-| `ics case events <id>` | The event log with timestamps and actors. |
+| `noscope case create "<objective>" [--constraint ...]` | Creates the case and its root unit, `command`. |
+| `noscope case show <id>` | Objective, status, claims by status, open assignments, registered capabilities. |
+| `noscope case tree <id>` | The unit tree with assignment marks: done, running, ready, pending. |
+| `noscope case step <id>` | One cycle, then stop. Prints the patch, the validator's verdict, what ran, what changed. |
+| `noscope case run <id> [--max-cycles N]` | Repeats `step` until the case leaves `open` or the cap is hit. |
+| `noscope case events <id>` | The event log with timestamps and actors. |
 
 `step` is the primary command in v0. `run` exists so the milestone can be demonstrated
 end to end, not for daily use.
@@ -365,7 +366,7 @@ which is untested for this use.
 |---|---|
 | Whether the organizer should see the full text of every completed result, or only a summary of each result against its assignment's contract plus pointers to the evidence. | Step 4 cannot fix the organizer's input rendering until this is decided. The build starts with summaries plus evidence pointers, because that is the cheaper prompt, and widens to full text only if the tree stops changing shape in response to results. |
 | Whether `interpret`, the capability that reads evidence without any equipment and says what it implies, earns its place in v0, or whether `investigate` already covers that. | Step 3's registry cannot be called final until this is decided. The build includes `interpret` and drops it if the first case never assigns it. |
-| How a session-backed capability gets custom Python equipment, not only Claude Code's built-in tools. Two candidates: the runtime serves its equipment registry to the session as an MCP server through `--mcp-config` with `--strict-mcp-config`, which is untested; or the runtime exposes equipment as one CLI command, `ics equipment <name>`, and the capability allowlists exactly that command in Bash, which uses only mechanisms verified today. | Any session-backed capability that needs Python equipment cannot be written until one path is chosen and tested. v0 needs neither, because its sessions use built-in tools only. |
+| How a session-backed capability gets custom Python equipment, not only Claude Code's built-in tools. Two candidates: the runtime serves its equipment registry to the session as an MCP server through `--mcp-config` with `--strict-mcp-config`, which is untested; or the runtime exposes equipment as one CLI command, `noscope equipment <name>`, and the capability allowlists exactly that command in Bash, which uses only mechanisms verified today. | Any session-backed capability that needs Python equipment cannot be written until one path is chosen and tested. v0 needs neither, because its sessions use built-in tools only. |
 | The repository's name on GitHub and whether it is public. | Only the push waits on this. The build does not. |
 
 ---
