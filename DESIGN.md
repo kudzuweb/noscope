@@ -22,6 +22,7 @@ Settled before this document, on the ics-runtime and quipu-cli threads:
 | New repo under kudzuweb, cloned to `~/Documents/Projects/noscope`. | It keeps the runtime separate from lil-guy-quipu and roughdraftplus, which will later be its users. |
 | Equipment is the primitive and is never assigned; a capability is declared equipment plus, when judgment is needed, a headless session with a prompt. | Ruled by Mauria in review, 2026-09-12: one word for the assignable thing, and `send_email` is the shape, the mail equipment plus an Opus session that receives a brief and applies it. "Equipment" rather than "tool" so it is not confused with Claude Code's tools and does not narrow what counts. |
 | The repository is `kudzuweb/noscope`, private for now, public later. | Ruled by Mauria 2026-09-12. She expects to use it at work if it proves out, and that is the point at which it goes public. |
+| Every session-backed capability can answer "insufficient": its output schema carries an outcome of `answered` or `insufficient`, and an insufficient result names what evidence it would need. `interpret`, the sandboxed capability with no equipment, stays in v0 because of this. | Ruled by Mauria 2026-09-12. A sandboxed "tell me what you think" cannot go and get more, and that is the point: when it says it cannot answer and why, the organizer gets a precise next assignment and Mauria gets a diagnostic on prompts and assignments. |
 | The framework is named `noscope`, one spelling for the repo, the Python package and the command. | Named by Mauria 2026-09-12, after FIRESCOPE, the interagency effort that produced ICS, and for the pun: the whole thing is built so she never has to zoom in. `noscope` is free on PATH, Homebrew and GitHub; PyPI has an unrelated `noscope`, so a PyPI release would be published as `no_scope` with the import name unchanged. |
 | Build this first, then use it to work on roughdraft, quipu and the codebase scan. | Sequencing set by Mauria on 2026-09-12. |
 
@@ -109,7 +110,7 @@ and the events explain how it got there.
 
 Event types in v0: `case.created`, `case.closed`, `unit.created`, `unit.closed`,
 `assignment.created`, `assignment.started`, `assignment.completed`, `assignment.failed`,
-`assignment.cancelled`, `claim.proposed`, `claim.verified`, `claim.rejected`,
+`assignment.cancelled`, `assignment.insufficient`, `claim.proposed`, `claim.verified`, `claim.rejected`,
 `patch.proposed`, `patch.rejected`, `patch.applied`.
 
 Capabilities are not a table. The registry is code, and `case show` prints what is
@@ -182,7 +183,7 @@ the headless command from them:
 | `equipment` | `--tools "<list>"` naming the Claude Code built-in tools in the capability's equipment, or `--tools default` when the capability declares `default` |
 | `bash_allowlist` | `--allowedTools` entries of the form `Bash(<command> *)`, so read-only tool calls need no approval |
 | `cwd`, `add_dirs` | The working directory and `--add-dir` entries |
-| `output_schema` | `--json-schema <schema>`, so the result comes back structured |
+| `output_schema` | `--json-schema <schema>`, so the result comes back structured. Every session schema carries `outcome: answered | insufficient`; an insufficient result carries `needed`, a list of the evidence or access the session lacked, and no claims. |
 
 Fixed flags on every session: `--output-format json`, `--no-session-persistence`,
 `--setting-sources ""`, `--disable-slash-commands`,
@@ -204,7 +205,7 @@ v0 capabilities:
 | `grep` | `grep_files` | none; produces verified claims |
 | `git_history` | `git_log`, `git_diff` | none; produces verified claims |
 | `investigate` | `Read`, `Grep`, `Glob`, `Bash` under the read-only allowlist | yes, model named per assignment; produces candidate claims with evidence |
-| `interpret` | none | yes, model named per assignment; given evidence, produces what it implies as candidate claims |
+| `interpret` | none | yes, model named per assignment; given evidence and nothing else, produces what it implies as candidate claims, or `insufficient` with what it would need |
 
 The four deterministic capabilities exist so the verifier has something to promote claims
 with, and so the organizer can ask a precise question without spending a session on it.
@@ -226,9 +227,10 @@ Input, rendered as labeled sections in a stable order so the prefix caches:
 3. Candidate claims, each with its provenance.
 4. The current unit tree with each unit's purpose and status.
 5. Assignments completed since the last cycle, with results summarized against their contracts.
-6. Open assignments.
-7. The capability registry, names and descriptions only.
-8. The rules the validator will apply, so the organizer does not propose what will be rejected.
+6. Assignments that came back `insufficient`, each with what the session said it needed.
+7. Open assignments.
+8. The capability registry, names and descriptions only.
+9. The rules the validator will apply, so the organizer does not propose what will be rejected.
 
 Output:
 
@@ -247,7 +249,7 @@ The organizer proposes structure. It never runs a tool, never writes to the stor
 marks its own conclusions true.
 ### Step 5: the validator
 Every patch passes all of these or is rejected whole, with the failing rule recorded as a
-`patch.rejected` event and fed back as input 8 on the next cycle:
+`patch.rejected` event and fed back as input 9 on the next cycle:
 
 | Rule | Check |
 |---|---|
@@ -270,7 +272,8 @@ run writes `assignment.started`, then the result and `assignment.completed` or
 
 The verifier turns results into claims. A deterministic capability's result becomes a `verified`
 claim with the capability and inputs as provenance. A session-backed capability's result
-becomes `candidate` claims with the session id as provenance. Promotion of a candidate in
+becomes `candidate` claims with the session id as provenance; an `insufficient` result becomes
+no claims and an `assignment.insufficient` event carrying what was needed. Promotion of a candidate in
 v0 happens only when a later deterministic result matches it; the organizer can request
 that through `claims_to_verify`, which schedules the deterministic check as an assignment.
 ### Step 7: the command surface
@@ -306,6 +309,7 @@ v0 is done when all of these hold on the first case:
 5. A patch that breaks span of control is rejected and the next patch groups instead.
 6. The case reaches `satisfied` with a verified claim naming the code path.
 7. Every state change has a matching event, checked by a test that replays events against the tables.
+8. An `interpret` assignment given too little evidence returns `insufficient` naming what it needs, and the next `step` creates an assignment that supplies it.
 ## Reference
 ### Verified facts the design rests on
 | Fact | How it was checked |
@@ -365,7 +369,6 @@ which is untested for this use.
 | What is undecided | Needed for v0? | What waits on it, and what the build assumes meanwhile |
 |---|---|---|
 | Whether the organizer should see the full text of every completed result, or only a summary of each result against its assignment's contract plus pointers to the evidence. | Yes. | Step 4 cannot fix the organizer's input rendering until this is decided. The build starts with summaries plus evidence pointers, because that is the cheaper prompt. The signal to widen is the organizer proposing the same tree again after new results arrive, which means the summaries are not carrying enough for it to react. |
-| Whether `interpret`, the capability that reads evidence without any equipment and says what it implies, earns its place in v0, or whether `investigate` already covers that. | No. v0 includes it and the first case decides. | Step 3's registry cannot be called final until this is decided. The build includes `interpret` and drops it if the first case never assigns it. |
 | How a session-backed capability gets custom Python equipment, not only Claude Code's built-in tools. The options and their tradeoffs are under "Custom equipment for sessions" in the Reference section. | No. v0 sessions use built-in tools only. | Any session-backed capability that needs Python equipment cannot be written until one path is chosen and tested. The leading candidate is the runtime serving its equipment registry as an MCP server, because the session then sees each piece of equipment as a native tool with a schema and nothing to learn. |
 
 ---
