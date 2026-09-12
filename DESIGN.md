@@ -1,7 +1,5 @@
 # noscope: design and v0 build plan
-
 ## Overview
-
 A Python runtime that pursues an objective by building and revising a temporary
 organization around it. The durable layer is capabilities, state and history. The
 organization is a tree of responsibility recomputed each cycle. One LLM call per cycle
@@ -30,21 +28,19 @@ Proposed in this document and not yet ruled: SQLite as the store, `pydantic` as 
 dependency, Opus 5 as the organizer model, the model allowlist, the schema, the validator
 rules, the CLI surface, and the first case.
 ## Vocabulary
-
 | Term | Meaning |
 |---|---|
 | Case | An objective pursued over time, with constraints. One row; many cycles. |
-| {==Unit==}{>>i don't understand the unit definition or why it carries no prompt, explain in chat<<}{id="c4" by="user" at="2026-09-12T20:59:35.956Z"} | A box in the case's temporary tree that owns one slice of the problem, the way an ICS Branch or Group does. It has a purpose, a parent and children, and it opens, subdivides and closes as the organizer's picture of the problem changes. Nothing runs as a unit: assignments run, and their capabilities carry the prompts. The root unit, `command`, owns the objective and is created with the case. |
+| Unit | A box in the case's temporary tree that owns one slice of the problem, the way an ICS Branch or Group does. It has a purpose, a parent and children, and it opens, subdivides and closes as the organizer's picture of the problem changes. Nothing runs as a unit: assignments run, and their capabilities carry the prompts. The root unit, `command`, owns the objective and is created with the case. |
 | Assignment | A bounded piece of work owned by one unit and bound to one capability: objective, inputs, expected output, completion criteria, evidence required, dependencies, and for a session-backed capability the model and any instructions. It is the worker's brief, and for a session it is the prompt the session receives. |
 | Equipment | A primitive: a Python function the runtime calls in-process, a Claude Code built-in tool such as Read, Grep or Bash under an allowlist, or later anything else a capability needs to do its work. Registered by name. Never assigned by the organizer. |
 | Capability | The assignable thing: declared equipment plus, when judgment is needed, a headless session with a system prompt; the model comes from each assignment. A capability with no session is deterministic and produces verified claims; one with a session produces candidate claims. A capability may include other capabilities. Later, a human. |
 | Claim | A statement about reality with epistemic status `candidate`, `verified` or `rejected`, plus provenance. LLM output enters as `candidate`; only deterministic verification promotes it. |
 | Event | One append-only record of something that happened, written in the same transaction as the state change it describes. |
-| {==Patch==}{>>why is this called patch? are any of these terms from ICS? just curious, answer in chat<<}{id="c5" by="user" at="2026-09-12T21:01:14.077Z"}{>>Not an ICS term; it is the software sense, a proposed set of changes applied to the current state atomically or not at all. ICS has no named artifact for a proposed change to the org chart; reorganization happens through the Planning P and the next Incident Action Plan (verified against NIMS 2017). Which vocabulary is ICS and which is ours is now the table under "ICS mapping" below.<<}{id="r5" by="AI" at="2026-09-12T21:18:00.000Z" re="c5"}{>>assignments can carry prompts too right?<<}{id="c18" by="user" at="2026-09-12T21:31:37.045Z" re="r5"}{>>Yes. The assignment is the prompt a session receives as its user message: objective, inputs, expected output, criteria, evidence required, and now a free-text instructions field. The capability's system prompt is the fixed setup; the assignment is everything specific to this piece of work. Added to the vocabulary, the assignments table and the patch schema.<<}{id="r27" by="AI" at="2026-09-12T21:50:00.000Z" re="c18"}{>>shouldn't there also be a field containing something that plays the role of system prompt so the session knows what kind of role it's playing and that it's in an ICS framework? or is that the wrong level for that info? i want them to stay on the rails lol<<}{id="c27" by="user" at="2026-09-12T22:09:11.352Z" re="r27"}{>>Right level, and it is now a fixed preamble every session gets as the first part of --system-prompt, before the capability's own text: you are a resource assigned into a case run by this runtime; your assignment follows; report only against its contract; your findings are candidate claims until verified; you cannot change the organization or take on work outside the assignment. The rails are that preamble plus the output schema, which forces the report shape, plus the equipment list, which bounds what it can touch. Added to the session fields table.<<}{id="r35" by="AI" at="2026-09-12T22:22:00.000Z" re="c27"} | The organizer's proposal for one cycle: units to create or close, assignments to create or cancel, case status. Validated before anything commits. |
+| {==Patch==}{>>why is this called patch? are any of these terms from ICS? just curious, answer in chat<<}{id="c5" by="user" at="2026-09-12T21:01:14.077Z"}{>>Not an ICS term; it is the software sense, a proposed set of changes applied to the current state atomically or not at all. ICS has no named artifact for a proposed change to the org chart; reorganization happens through the Planning P and the next Incident Action Plan (verified against NIMS 2017). Which vocabulary is ICS and which is ours is now the table under "ICS mapping" below.<<}{id="r5" by="AI" at="2026-09-12T21:18:00.000Z" re="c5"}{>>assignments can carry prompts too right?<<}{id="c18" by="user" at="2026-09-12T21:31:37.045Z" re="r5"}{>>Yes. The assignment is the prompt a session receives as its user message: objective, inputs, expected output, criteria, evidence required, and now a free-text instructions field. The capability's system prompt is the fixed setup; the assignment is everything specific to this piece of work. Added to the vocabulary, the assignments table and the patch schema.<<}{id="r27" by="AI" at="2026-09-12T21:50:00.000Z" re="c18"}{>>shouldn't there also be a field containing something that plays the role of system prompt so the session knows what kind of role it's playing and that it's in an ICS framework? or is that the wrong level for that info? i want them to stay on the rails lol<<}{id="c27" by="user" at="2026-09-12T22:09:11.352Z" re="r27"} | The organizer's proposal for one cycle: units to create or close, assignments to create or cancel, case status. Validated before anything commits. |
 | Cycle | Observe, organize, validate, dispatch, record, stop. `case step` runs exactly one. |
 
 ### ICS mapping
-
 Definitions checked against the NIMS Third Edition (FEMA, October 2017) on 2026-09-12.
 
 | ICS term | Here |
@@ -64,9 +60,7 @@ Definitions checked against the NIMS Third Edition (FEMA, October 2017) on 2026-
 | No ICS term. | Patch, claim, event, cycle are ours. |
 
 ## Build steps
-
 ### Step 1: repository skeleton
-
 Python 3.12 or later. One dependency, `pydantic`, for every contract. Everything else is the
 standard library plus the installed `claude` binary, which every LLM call goes through.
 
@@ -87,7 +81,7 @@ noscope/
 │   ├── tree.py           # renders the unit tree and the event log
 │   ├── equipment/
 │   │   ├── registry.py   # equipment decorator and lookup
-│   │   ├── {==filesystem.py ==}{>>so this is python scripts for each tool all in one file or what? how does this interact with tool calls in claude code<<}{id="c6" by="user" at="2026-09-12T21:03:29.083Z"}{>>Now the equipment/ package: one module per family of Python equipment, each registered by decorator; deterministic capabilities call it in-process and Claude Code is never involved. Claude Code's built-in tools (Read, Grep, Bash) are also equipment, usable only inside a capability that has a session, where the whole headless session is one capability call. Explained in chat.<<}{id="r6" by="AI" at="2026-09-12T21:18:00.000Z" re="c6"}{>>so these are like little CLIs the headless cluade uses? i'm not understanding the intended structure of the file. a bunch of scripts? one script? conditionals? what's happening<<}{id="c19" by="user" at="2026-09-12T21:32:31.644Z" re="r6"}# read_file, list_directory, grep_files
+│   │   ├── filesystem.py # read_file, list_directory, grep_files
 │   │   ├── git.py        # git_status, git_log, git_diff
 │   │   ├── shell.py      # allowlisted read-only commands
 │   │   └── builtin.py    # names and allowlists for Claude Code's own tools
@@ -100,7 +94,6 @@ noscope/
 ```
 
 ### Step 2: storage
-
 One SQLite file per installation, WAL mode. Current-state tables plus an append-only event
 table, updated in the same transaction. No event sourcing: state is read from the tables,
 and the events explain how it got there.
@@ -121,7 +114,6 @@ Event types in v0: `case.created`, `case.closed`, `unit.created`, `unit.closed`,
 Capabilities are not a table. The registry is code, and `case show` prints what is
 registered.
 ### Step 3: equipment and capabilities
-
 Every piece of equipment and every capability is registered by decorator. Equipment is
 primitive and the organizer never assigns it. Capabilities are what the organizer assigns.
 The registries describe what can be done, never when.
@@ -167,7 +159,7 @@ in v0.
 class Investigate(Capability): ...
 ```
 
-{==Fields on every capability:==}{>>table didnt render, show in chat pls<<}{id="c7" by="user" at="2026-09-12T21:05:38.025Z"}{>>Shown in chat. Table unchanged. The rendering loss is Roughdraft's, parked at your call and logged as papercut pc-490f5c.<<}{id="r7" by="AI" at="2026-09-12T21:18:00.000Z" re="c7"}{>>side_effects and returns seem like ambiguous names<<}{id="c22" by="user" at="2026-09-12T21:38:14.375Z" re="r7"}
+Fields on every capability:
 
 | Field | Meaning |
 |---|---|
@@ -179,7 +171,7 @@ class Investigate(Capability): ...
 | `produces` | `verified_claims` for a deterministic capability, whose output is a fact about the machine; `candidate_claims` for a session-backed one. |
 
 A capability with a session adds the fields that define its setup, and the runtime renders
-the headless com{==mand from them:==}{>>table didnt render, show in chat pls<<}{id="c8" by="user" at="2026-09-12T21:05:54.875Z"}{>>Shown in chat. This is now the session fields table; the model row is a default the assignment can override.<<}{id="r8" by="AI" at="2026-09-12T21:18:00.000Z" re="c8"}{>>is allowedtools being decided or coming from my system<<}{id="c21" by="user" at="2026-09-12T21:37:43.778Z" re="r8"}{>>also is it efficient to be running python scripts to check eg git_status?<<}{id="c24" by="user" at="2026-09-12T21:40:10.290Z" re="r8"}
+the headless command from them:
 
 | Field | Renders to |
 |---|---|
@@ -202,7 +194,7 @@ settings do not load.
 The assignment is the user message: objective, inputs, expected output, completion
 criteria, evidence required, and the owning unit's purpose as one line of context.
 
-v0 {==capabilities:==}{>>table didnt render, show in chat pls<<}{id="c9" by="user" at="2026-09-12T21:06:00.948Z"}{>>Shown in chat. Rewritten under the equipment ruling: the table now lists capabilities with their equipment and whether they have a session.<<}{id="r9" by="AI" at="2026-09-12T21:18:00.000Z" re="c9"}{>>no default models for now please<<}{id="c20" by="user" at="2026-09-12T21:37:21.000Z" re="r9"}
+v0 capabilities:
 
 | Capability | Equipment | Session |
 |---|---|---|
@@ -222,8 +214,7 @@ cases with the same shape is a candidate for a new capability, and one whose sha
 with context stays with the organizer. The quipu CLI's objective catalog is the first
 planned set of such capabilities. v0 registers none.
 ### Step 4: the organizer
-
-One call per cycle, {==as a headless Claude Code call on the subscription==}{>>aht aht, subscription-based solutions only for now<<}{id="c10" by="user" at="2026-09-12T21:06:34.909Z"}{>>Changed and tested 2026-09-12: the organizer ran as headless Opus 5 with the five stripped flags, no tools and a JSON schema, 3.6k tokens of context, and returned a schema-valid patch with four units and four assignments in the structured_output field. The anthropic SDK dependency is gone from Step 1.<<}{id="r10" by="AI" at="2026-09-12T21:18:00.000Z" re="c10"}{>>great, so we can decide what tools an instance needs if we want or give it the default set any session would have?<<}{id="c23" by="user" at="2026-09-12T21:39:07.240Z" re="r10"}{>>Yes. Name the built-ins individually, or declare default and the session gets Claude Code's full built-in set (verified in claude --help: --tools "default"). Either way --setting-sources "" keeps your MCP servers, skills and hooks out unless a capability adds them explicitly. Added to the equipment kinds table and the session fields.<<}{id="r32" by="AI" at="2026-09-12T21:50:00.000Z" re="c23"}{>>hell yeah, i love this control layer. they can only ever do what they need to do. and we could give them custom equipment and tell the session to use that right?<<}{id="c28" by="user" at="2026-09-12T22:14:00.113Z" re="r32"}{>>Yes. Two ways to hand a session custom equipment, both in the open questions now: the runtime serves its equipment registry to the session as an MCP server (untested), or the runtime exposes equipment as one CLI command, noscope equipment <name>, and the capability allowlists exactly that command in Bash, which uses only mechanisms already verified today. The capability's system_prompt then tells the session to use it. v0 needs neither.<<}{id="r36" by="AI" at="2026-09-12T22:22:00.000Z" re="c28"}, with `--json-schema` so the
+One call per cycle, {==as a headless Claude Code call on the subscription==}{>>aht aht, subscription-based solutions only for now<<}{id="c10" by="user" at="2026-09-12T21:06:34.909Z"}{>>Changed and tested 2026-09-12: the organizer ran as headless Opus 5 with the five stripped flags, no tools and a JSON schema, 3.6k tokens of context, and returned a schema-valid patch with four units and four assignments in the structured_output field. The anthropic SDK dependency is gone from Step 1.<<}{id="r10" by="AI" at="2026-09-12T21:18:00.000Z" re="c10"}{>>great, so we can decide what tools an instance needs if we want or give it the default set any session would have?<<}{id="c23" by="user" at="2026-09-12T21:39:07.240Z" re="r10"}{>>Yes. Name the built-ins individually, or declare default and the session gets Claude Code's full built-in set (verified in claude --help: --tools "default"). Either way --setting-sources "" keeps your MCP servers, skills and hooks out unless a capability adds them explicitly. Added to the equipment kinds table and the session fields.<<}{id="r32" by="AI" at="2026-09-12T21:50:00.000Z" re="c23"}{>>hell yeah, i love this control layer. they can only ever do what they need to do. and we could give them custom equipment and tell the session to use that right?<<}{id="c28" by="user" at="2026-09-12T22:14:00.113Z" re="r32"}{>>Yes. Two ways to hand a session custom equipment, both in the open questions now: the runtime serves its equipment registry to the session as an MCP server (untested), or the runtime exposes equipment as one CLI command, noscope equipment <name>, and the capability allowlists exactly that command in Bash, which uses only mechanisms already verified today. The capability's system_prompt then tells the session to use it. v0 needs neither.<<}{id="r36" by="AI" at="2026-09-12T22:22:00.000Z" re="c28"}{>>cool. add a column to open questions that says if it's needed for this version<<}{id="c31" by="user" at="2026-09-12T22:31:50.827Z" re="r36"}{>>Added a "Needed for v0?" column. Only the organizer-input question is; the other three are after v0.<<}{id="r39" by="AI" at="2026-09-12T22:35:00.000Z" re="c31"}, with `--json-schema` so the
 response is a validated `OrganizationPatch` and never prose. Model `claude-opus-5`, no tools,
 the same five fixed flags as every session. Tested 2026-09-12 with an
 organizer-shaped prompt: 3.6k tokens of context and a valid patch back.
@@ -254,7 +245,6 @@ class OrganizationPatch(BaseModel):
 The organizer proposes structure. It never runs a tool, never writes to the store, and never
 marks its own conclusions true.
 ### Step 5: the validator
-
 Every patch passes all of these or is rejected whole, with the failing rule recorded as a
 `patch.rejected` event and fed back as input 8 on the next cycle:
 
@@ -273,7 +263,6 @@ Every patch passes all of these or is rejected whole, with the failing rule reco
 | Status is earned | `satisfied` requires every open assignment completed or cancelled and at least one verified claim. |
 
 ### Step 6: dispatch, record, verify
-
 Ready means every dependency is completed. v0 runs ready assignments sequentially. Each
 run writes `assignment.started`, then the result and `assignment.completed` or
 `assignment.failed` in one transaction.
@@ -284,7 +273,6 @@ becomes `candidate` claims with the session id as provenance. Promotion of a can
 v0 happens only when a later deterministic result matches it; the organizer can request
 that through `claims_to_verify`, which schedules the deterministic check as an assignment.
 ### Step 7: the command surface
-
 | Command | Does |
 |---|---|
 | `noscope case create "<objective>" [--constraint ...]` | Creates the case and its root unit, `command`. |
@@ -297,7 +285,6 @@ that through `claims_to_verify`, which schedules the deterministic check as an a
 `step` is the primary command in v0. `run` exists so the milestone can be demonstrated
 end to end, not for daily use.
 ### Step 8: the first case
-
 A real, read-only investigation on this machine, so every step can be checked by hand:
 
 > Determine why saving a document in Roughdraft drops blank lines and adds trailing
@@ -309,7 +296,6 @@ but the tree: whether the organizer opens separate units for the save path and t
 formatter, closes the one that turns out irrelevant, and stops when a verified claim names
 the code path.
 ### v0 acceptance
-
 v0 is done when all of these hold on the first case:
 
 1. `case create` produces a case with one root unit, `command`, and one event.
@@ -319,10 +305,8 @@ v0 is done when all of these hold on the first case:
 5. A patch that breaks span of control is rejected and the next patch groups instead.
 6. The case reaches `satisfied` with a verified claim naming the code path.
 7. Every state change has a matching event, checked by a test that replays events against the tables.
-## {==Reference==}{>>none of these tables rendered<<}{id="c16" by="user" at="2026-09-12T21:13:03.222Z"}{>>Roughdraft rendering, parked at your call and logged as papercut pc-490f5c. The three tables are the verified facts, the model choices and the open questions; content updated below for the headless organizer and the --json-schema test.<<}{id="r16" by="AI" at="2026-09-12T21:18:00.000Z" re="c16"}{>>show them to me in chat<<}{id="c25" by="user" at="2026-09-12T21:41:51.699Z" re="r16"}{>>Shown in chat.<<}{id="r34" by="AI" at="2026-09-12T21:50:00.000Z" re="c25"}{>>--system_prompt alone as opposed to?<<}{id="c29" by="user" at="2026-09-12T22:17:03.745Z" re="r34"}{>>As opposed to --system-prompt together with the other four fixed flags. Row reworded.<<}{id="r37" by="AI" at="2026-09-12T22:22:00.000Z" re="c29"}
-
+## Reference
 ### Verified facts the design rests on
-
 | Fact | How it was checked |
 |---|---|
 | Headless Claude Code runs on the subscription when no API key is set. | A `claude -p` call succeeded on this machine with no `ANTHROPIC_API_KEY` in the environment, 2026-09-12. |
@@ -335,7 +319,6 @@ v0 is done when all of these hold on the first case:
 | `--json-schema` returns a schema-valid `structured_output` field, and `--tools ""` plus the five fixed flags work with it. | A test call on the installed version with an organizer-shaped prompt and patch schema, 2026-09-12. |
 
 ### Model choices
-
 | Role | Model | Because |
 |---|---|---|
 | Organizer | `claude-opus-5` | The patch is the judgment in the system; Opus 5 is the default for anything nontrivial, and it ran the test patch well. |
@@ -343,7 +326,6 @@ v0 is done when all of these hold on the first case:
 | Later builder, reviewer and `send_email`-shaped capabilities | `claude-fable-5-1` or `claude-opus-5` with the equipment the job needs | Not in v0. |
 
 ### Speed
-
 Measured 2026-09-12 on this machine, all with the five fixed flags:
 
 | Call | Time |
@@ -360,18 +342,17 @@ That is slow for a daemon and right for v0, which is stepped by hand to be watch
 lever after v0 is running ready assignments in parallel, which turns the sum into a
 maximum; the startup cost per session stays unless sessions are reused with `--resume`,
 which is untested for this use.
-## {==Open questions==}{>>i don't understand your suggestions under "blocks", too compressed<<}{id="c30" by="user" at="2026-09-12T22:19:17.566Z"}{>>Rewritten: each row now says what is undecided, which step cannot be finished until it is, and what the build assumes in the meantime.<<}{id="r38" by="AI" at="2026-09-12T22:22:00.000Z" re="c30"}
-
-| What is undecided | What waits on it, and what the build assumes meanwhile |
-|---|---|
-| Whether the organizer should see the full text of every completed result, or only a summary of each result against its assignment's contract plus pointers to the evidence. | Step 4 cannot fix the organizer's input rendering until this is decided. The build starts with summaries plus evidence pointers, because that is the cheaper prompt, and widens to full text only if the tree stops changing shape in response to results. |
-| Whether `interpret`, the capability that reads evidence without any equipment and says what it implies, earns its place in v0, or whether `investigate` already covers that. | Step 3's registry cannot be called final until this is decided. The build includes `interpret` and drops it if the first case never assigns it. |
-| How a session-backed capability gets custom Python equipment, not only Claude Code's built-in tools. Two candidates: the runtime serves its equipment registry to the session as an MCP server through `--mcp-config` with `--strict-mcp-config`, which is untested; or the runtime exposes equipment as one CLI command, `noscope equipment <name>`, and the capability allowlists exactly that command in Bash, which uses only mechanisms verified today. | Any session-backed capability that needs Python equipment cannot be written until one path is chosen and tested. v0 needs neither, because its sessions use built-in tools only. |
-| The repository's name on GitHub and whether it is public. | Only the push waits on this. The build does not. |
+## {==Open questions==}{>>i don't understand your suggestions under "blocks", too compressed<<}{id="c30" by="user" at="2026-09-12T22:19:17.566Z"}{>>Rewritten: each row now says what is undecided, which step cannot be finished until it is, and what the build assumes in the meantime.<<}{id="r38" by="AI" at="2026-09-12T22:22:00.000Z" re="c30"}{>>this is no longer rendering, i'll need to see it in chat<<}{id="c32" by="user" at="2026-09-12T22:32:42.594Z" re="r38"}{>>Shown in chat, with the new column.<<}{id="r40" by="AI" at="2026-09-12T22:35:00.000Z" re="c32"}
+| What is undecided | Needed for v0? | What waits on it, and what the build assumes meanwhile |
+|---|---|---|
+| Whether the organizer should see the full text of every completed result, or only a summary of each result against its assignment's contract plus pointers to the evidence. | Yes. | Step 4 cannot fix the organizer's input rendering until this is decided. The build starts with summaries plus evidence pointers, because that is the cheaper prompt, and widens to full text only if the tree stops changing shape in response to results. |
+| Whether `interpret`, the capability that reads evidence without any equipment and says what it implies, earns its place in v0, or whether `investigate` already covers that. | No. v0 includes it and the first case decides. | Step 3's registry cannot be called final until this is decided. The build includes `interpret` and drops it if the first case never assigns it. |
+| How a session-backed capability gets custom Python equipment, not only Claude Code's built-in tools. Two candidates: the runtime serves its equipment registry to the session as an MCP server through `--mcp-config` with `--strict-mcp-config`, which is untested; or the runtime exposes equipment as one CLI command, `noscope equipment <name>`, and the capability allowlists exactly that command in Bash, which uses only mechanisms verified today. | No. v0 sessions use built-in tools only. | Any session-backed capability that needs Python equipment cannot be written until one path is chosen and tested. |
+| The repository's name on GitHub and whether it is public. | No. | Only the push waits on this. The build does not. |
 
 ---
 counters:
-  comments: 30
+  comments: 32
 comments:
   c26:
     body: will this thing be slow as written?
