@@ -21,6 +21,7 @@ Settled before this document, on the ics-runtime and quipu-cli threads:
 | {==Model routing: every assignment to a session-backed capability names its model from an allowlist, and capabilities carry no default, so the same capability runs on Haiku for a narrow job and on Opus for a subtle one.==}{>>we're just gonna incorporate model routing. some capabilities will have a fixed model but we should also be able to choose the right model for new capabilities, or use the same capability with different models for different purposes. we may actually need to fully talk about the ICS structure and how we're mapping it over to make sure we're on the same page<<}{id="c1" by="user" at="2026-09-12T20:49:38.101Z"}{>>Changed to model routing; then per your c20, no defaults: the assignment names the model every time, the validator requires it from the allowlist. Wired through Step 2 (assignments.model), Step 3 (the model field), Step 4 (AssignmentProposal.model) and Step 5 (the Model allowed rule). The ICS mapping is now a table right after the vocabulary.<<}{id="r1" by="AI" at="2026-09-12T21:18:00.000Z" re="c1"} | Context load and price scale with the model, and a narrow read-only worker needs no more, while a subtle read needs more; routing per assignment buys both. |
 | New repo under kudzuweb, cloned to `~/Documents/Projects/noscope`. | It keeps the runtime separate from lil-guy-quipu and roughdraftplus, which will later be its users. |
 | Equipment is the primitive and is never assigned; a capability is declared equipment plus, when judgment is needed, a headless session with a prompt. | Ruled by Mauria in review, 2026-09-12: one word for the assignable thing, and `send_email` is the shape, the mail equipment plus an Opus session that receives a brief and applies it. "Equipment" rather than "tool" so it is not confused with Claude Code's tools and does not narrow what counts. |
+| The repository is `kudzuweb/noscope`, private for now, public later. | Ruled by Mauria 2026-09-12. She expects to use it at work if it proves out, and that is the point at which it goes public. |
 | The framework is named `noscope`, one spelling for the repo, the Python package and the command. | Named by Mauria 2026-09-12, after FIRESCOPE, the interagency effort that produced ICS, and for the pun: the whole thing is built so she never has to zoom in. `noscope` is free on PATH, Homebrew and GitHub; PyPI has an unrelated `noscope`, so a PyPI release would be published as `no_scope` with the import name unchanged. |
 | Build this first, then use it to work on roughdraft, quipu and the codebase scan. | Sequencing set by Mauria on 2026-09-12. |
 
@@ -325,6 +326,24 @@ v0 is done when all of these hold on the first case:
 | `investigate`, `interpret` | Named per assignment by the organizer, from the allowlist | No defaults, ruled 2026-09-12. Haiku for a narrow read with little equipment; Opus when the read is subtle. |
 | Later builder, reviewer and `send_email`-shaped capabilities | `claude-fable-5-1` or `claude-opus-5` with the equipment the job needs | Not in v0. |
 
+### Custom equipment for sessions (after v0)
+
+The goal is that a session uses whatever equipment it is given without learning anything:
+the equipment should look like any other tool call, with a schema, and be callable the
+first time.
+
+| Option | How the session sees it | Tradeoffs |
+|---|---|---|
+| The runtime serves its equipment registry as an MCP server, passed with `--mcp-config` and `--strict-mcp-config`. | As native tools with names and input schemas, exactly like `Read` or `Grep`, invoked without any syntax to learn. | The most obvious for the session, and the schema validates inputs before the equipment runs. Costs: the runtime must implement an MCP stdio server, every session pays its startup, each tool definition adds context tokens, and whether `--tools` filtering also filters MCP tools is untested. |
+| The runtime exposes equipment as one CLI command, `noscope equipment <name> --arg value`, and the capability allowlists exactly that command in Bash. | As a shell command it must be told about in the capability's prompt, called through the `Bash` tool, returning JSON on stdout. | Uses only mechanisms verified today, no server to write, and one allowlist entry bounds it. Costs: the session has to learn the command's syntax from the prompt, argument errors surface as text rather than schema rejections, and every call spawns a process. |
+| No custom equipment in sessions at all: split the work into a deterministic capability that runs the equipment and a session that interprets its output, sequenced by the organizer. | The session never calls equipment; it receives results as evidence in its assignment. | The purest ICS shape, and it keeps facts on the verified side. Costs: it fails wherever judgment and equipment must interleave, as in `send_email`, where composing needs the model and sending needs the equipment in the same stretch. |
+| The Claude Agent SDK's in-process custom tools. | As native tools. | Ruled out: the SDK requires an API key, so it leaves the subscription. |
+
+The leading candidate is the MCP server, with the CLI command as the fallback if MCP
+proves awkward in headless mode. The third option is not an alternative to the first two
+but the default shape: a session gets custom equipment only when its judgment and the
+equipment must interleave.
+
 ### Speed
 Measured 2026-09-12 on this machine, all with the five fixed flags:
 
@@ -345,10 +364,9 @@ which is untested for this use.
 ## {==Open questions==}{>>i don't understand your suggestions under "blocks", too compressed<<}{id="c30" by="user" at="2026-09-12T22:19:17.566Z"}{>>Rewritten: each row now says what is undecided, which step cannot be finished until it is, and what the build assumes in the meantime.<<}{id="r38" by="AI" at="2026-09-12T22:22:00.000Z" re="c30"}{>>this is no longer rendering, i'll need to see it in chat<<}{id="c32" by="user" at="2026-09-12T22:32:42.594Z" re="r38"}{>>Shown in chat, with the new column.<<}{id="r40" by="AI" at="2026-09-12T22:35:00.000Z" re="c32"}
 | What is undecided | Needed for v0? | What waits on it, and what the build assumes meanwhile |
 |---|---|---|
-| Whether the organizer should see the full text of every completed result, or only a summary of each result against its assignment's contract plus pointers to the evidence. | Yes. | Step 4 cannot fix the organizer's input rendering until this is decided. The build starts with summaries plus evidence pointers, because that is the cheaper prompt, and widens to full text only if the tree stops changing shape in response to results. |
+| Whether the organizer should see the full text of every completed result, or only a summary of each result against its assignment's contract plus pointers to the evidence. | Yes. | Step 4 cannot fix the organizer's input rendering until this is decided. The build starts with summaries plus evidence pointers, because that is the cheaper prompt. The signal to widen is the organizer proposing the same tree again after new results arrive, which means the summaries are not carrying enough for it to react. |
 | Whether `interpret`, the capability that reads evidence without any equipment and says what it implies, earns its place in v0, or whether `investigate` already covers that. | No. v0 includes it and the first case decides. | Step 3's registry cannot be called final until this is decided. The build includes `interpret` and drops it if the first case never assigns it. |
-| How a session-backed capability gets custom Python equipment, not only Claude Code's built-in tools. Two candidates: the runtime serves its equipment registry to the session as an MCP server through `--mcp-config` with `--strict-mcp-config`, which is untested; or the runtime exposes equipment as one CLI command, `noscope equipment <name>`, and the capability allowlists exactly that command in Bash, which uses only mechanisms verified today. | No. v0 sessions use built-in tools only. | Any session-backed capability that needs Python equipment cannot be written until one path is chosen and tested. |
-| The repository's name on GitHub and whether it is public. | No. | Only the push waits on this. The build does not. |
+| How a session-backed capability gets custom Python equipment, not only Claude Code's built-in tools. The options and their tradeoffs are under "Custom equipment for sessions" in the Reference section. | No. v0 sessions use built-in tools only. | Any session-backed capability that needs Python equipment cannot be written until one path is chosen and tested. The leading candidate is the runtime serving its equipment registry as an MCP server, because the session then sees each piece of equipment as a native tool with a schema and nothing to learn. |
 
 ---
 counters:
