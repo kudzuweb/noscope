@@ -20,33 +20,53 @@ Settled before this document, on the ics-runtime and quipu-cli threads:
 | Build fresh, not on glove. | Glove has not been touched in months and the advice that grafted onto it rested on unverified details. |
 | A standalone Python runtime owns the loop, with headless Claude Code as one capability among others. | A skill is advice and cannot enforce the propose-then-validate boundary; code can. |
 | Capabilities carry their own system prompt, model and tool list as fields. | A stripped headless session costs about 3k tokens of context against about 40k for a default one, and the model must be passed explicitly because user settings are what select it. |
-| Narrow capabilities may run on Haiku. | Context load and price scale with the model, and a two-tool read-only worker needs no more. |
+| {==Model routing: a capability declares a default model, and an assignment may override it from an allowlist, so the same capability runs on Haiku for a narrow job and on Opus for a subtle one.==}{>>we're just gonna incorporate model routing. some capabilities will have a fixed model but we should also be able to choose the right model for new capabilities, or use the same capability with different models for different purposes. we may actually need to fully talk about the ICS structure and how we're mapping it over to make sure we're on the same page<<}{id="c1" by="user" at="2026-09-12T20:49:38.101Z"}{>>Changed to model routing: the capability holds a default model, the assignment may override it, the validator checks the override against an allowlist. Wired through Step 2 (assignments.model), Step 3 (the model field), Step 4 (AssignmentProposal.model) and Step 5 (the Model allowed rule). The ICS mapping is now a table right after the vocabulary.<<}{id="r1" by="AI" at="2026-09-12T21:18:00.000Z" re="c1"} | Context load and price scale with the model, and a narrow read-only worker needs no more, while a subtle read needs more; routing per assignment buys both. |
 | New repo under kudzuweb, cloned to `~/Documents/Projects/ics-runtime`. | It keeps the runtime separate from lil-guy-quipu and roughdraftplus, which will later be its users. |
-| Build this first, then use it to work on roughdraft and quipu. | Sequencing set by Mauria on 2026-09-12. |
+| Build this first, then use it to work on {==roughdraft, quipu and the codebase scan.==}{>>and also the codebase scan<<}{id="c2" by="user" at="2026-09-12T20:51:14.050Z"}{>>Added.<<}{id="r2" by="AI" at="2026-09-12T21:18:00.000Z" re="c2"} | Sequencing set by Mauria on 2026-09-12. |
 
-Proposed in this document and not yet ruled: SQLite as the store, the `anthropic` SDK plus
-`pydantic` as the only dependencies, Opus 5 as the organizer model, the schema, the
-validator rules, the CLI surface, and the first case.
-
-## Vocabulary
+Proposed in this document and not yet ruled: SQLite as the store, `pydantic` as the only
+dependency, Opus 5 as the organizer model, the model allowlist, the schema, the validator
+rules, the CLI surface, the first case, and capability bundles after v0.
+## {==Vocabulary==}{>>oh okay here we're talking about it. maybe we will talk about my next proposal later in the document, but i think that capability primitives are good, but that you should also be able to bundle them for reuse. you will not need to think every time about what you need to do certain things, so that should become a capability in itself. you see? fractal. can also be a surface for self-improvement of the system, where we can decide what combo of primitives does that job best. if it's often conditional/contextual we keep it flexible(though we can talk algorithmic shortcuts) but if it isn't really, we make a.. capability bundle. capability function. whatever, you get it.<<}{id="c3" by="user" at="2026-09-12T20:53:14.982Z"}{>>Yes. Added Bundle to the vocabulary and a section "Capability bundles (after v0)" at the end of Step 3: a bundle is a capability whose body is a fixed composition of other capabilities, declared with the same contract as a primitive, so the organizer assigns it without re-deriving the composition; bundles can contain bundles; the event log is the surface for deciding which recurring compositions to promote. The quipu CLI objective catalog is the first planned set.<<}{id="r3" by="AI" at="2026-09-12T21:18:00.000Z" re="c3"}
 
 | Term | Meaning |
 |---|---|
 | Case | An objective pursued over time, with constraints. One row; many cycles. |
-| Unit | A node of responsibility in the case's temporary tree. It has a purpose and a parent, opens and closes, and carries no prompt. The root unit is `command`. |
+| {==Unit==}{>>i don't understand the unit definition or why it carries no prompt, explain in chat<<}{id="c4" by="user" at="2026-09-12T20:59:35.956Z"}{>>Explained in chat; definition rewritten here. Short form: a unit is an ICS box (Branch, Group), not a person. Nothing runs as a unit; assignments run, and their capabilities carry the prompts. A unit exists so the organizer can open, subdivide and close one slice of the problem as a single thing.<<}{id="r4" by="AI" at="2026-09-12T21:18:00.000Z" re="c4"} | A box in the case's temporary tree that owns one slice of the problem, the way an ICS Branch or Group does. It has a purpose, a parent and children, and it opens, subdivides and closes as the organizer's picture of the problem changes. Nothing runs as a unit: assignments run, and their capabilities carry the prompts. The root unit, `command`, owns the objective and is created with the case. |
 | Assignment | A bounded piece of work owned by one unit and bound to one capability: objective, inputs, expected output, completion criteria, evidence required, dependencies. It becomes the worker's brief. |
 | Capability | Something that can perform work: a Python function, a shell command, a headless Claude Code session, later a human. Registered in code with name, description, schemas, side-effect level, and for Claude-backed ones the system prompt, model and tool list. |
 | Claim | A statement about reality with epistemic status `candidate`, `verified` or `rejected`, plus provenance. LLM output enters as `candidate`; only deterministic verification promotes it. |
 | Event | One append-only record of something that happened, written in the same transaction as the state change it describes. |
-| Patch | The organizer's proposal for one cycle: units to create or close, assignments to create or cancel, case status. Validated before anything commits. |
+| {==Patch==}{>>why is this called patch? are any of these terms from ICS? just curious, answer in chat<<}{id="c5" by="user" at="2026-09-12T21:01:14.077Z"}{>>Not an ICS term; it is the software sense, a proposed set of changes applied to the current state atomically or not at all. ICS has no named artifact for a proposed change to the org chart; reorganization happens through the Planning P and the next Incident Action Plan (verified against NIMS 2017). Which vocabulary is ICS and which is ours is now the table under "ICS mapping" below.<<}{id="r5" by="AI" at="2026-09-12T21:18:00.000Z" re="c5"} | The organizer's proposal for one cycle: units to create or close, assignments to create or cancel, case status. Validated before anything commits. |
 | Cycle | Observe, organize, validate, dispatch, record, stop. `case step` runs exactly one. |
+| Bundle | A capability whose body is a fixed composition of other capabilities, primitives or bundles, declared with the same contract as a primitive. Proposed for after v0; see the end of Step 3. |
+
+### ICS mapping
+
+Definitions checked against the NIMS Third Edition (FEMA, October 2017) on 2026-09-12.
+
+| ICS term | Here |
+|---|---|
+| Incident: an occurrence that necessitates a response. | Case. |
+| Incident Commander: develops objectives, orders and releases resources. | The root unit `command` holds the objective; the organizer does the ordering and releasing by proposing patches. |
+| Section, Branch, Division, Group, Unit: the organizational levels, distinguished by depth and by functional versus geographic responsibility. | All are the one thing called a unit here. Depth is whatever the tree needs, and a unit's purpose says what it is responsible for. |
+| Single Resource, Strike Team (same kind and type, one leader), Task Force (mixed kinds for one mission). | A capability is a single resource. Bundles, after v0, are the strike teams and task forces. |
+| Resource typing: categorizing resources by capability so everyone means the same thing by a name. | The capability registry: name, description, schemas, side effects. |
+| Assignment: a task given to a person or team based on the objectives in the Incident Action Plan. | Assignment, same word and meaning. |
+| Incident Action Plan and Operational Period: the objectives and tactics for one period, then a new plan. | The applied patch plus the current tree is the plan; one cycle is the operational period. |
+| The Planning P: objectives, tactics meeting, planning meeting, plan approval, briefing, execute, repeat. | The cycle: observe, organize, validate, dispatch, record. |
+| Span of control: one supervisor to five is the guideline, not a rule. | Validator rule: target 5 direct children, maximum 7. |
+| Demobilization: the orderly release of a resource when no longer needed. | Closing a unit and cancelling its assignments. |
+| Situation Unit and Resources Unit: who tracks what is known and where every resource is. | The store. Claims are the situation; assignments and their statuses are the resource tracking. |
+| Unified Command, Staging Area. | No equivalent in v0. |
+| No ICS term. | Patch, claim, event, cycle are ours. |
 
 ## Build steps
 
 ### Step 1: repository skeleton
 
-Python 3.12 or later. Dependencies: `anthropic` for the organizer call and `pydantic` for
-every contract. Everything else is the standard library.
+Python 3.12 or later. One dependency, `pydantic`, for every contract. Everything else is the
+standard library plus the installed `claude` binary, which every LLM call goes through.
 
 ```text
 ics-runtime/
@@ -58,14 +78,14 @@ ics-runtime/
 │   ├── runtime.py        # the cycle
 │   ├── store.py          # SQLite: schema, transactions, queries
 │   ├── models.py         # pydantic contracts shared by every module
-│   ├── organizer.py      # the one LLM call per cycle
+│   ├── organizer.py      # the one headless Claude Code call per cycle
 │   ├── validator.py      # patch rules
 │   ├── dispatcher.py     # runs ready assignments through capabilities
 │   ├── verifier.py       # turns results into claims
 │   ├── tree.py           # renders the unit tree and the event log
 │   └── capabilities/
 │       ├── registry.py   # decorator and lookup
-│       ├── filesystem.py # read_file, list_directory, grep_files
+│       ├── {==filesystem.py ==}{>>so this is python scripts for each tool all in one file or what? how does this interact with tool calls in claude code<<}{id="c6" by="user" at="2026-09-12T21:03:29.083Z"}{>>One module per family of plain Python capabilities, each function registered by the decorator; the dispatcher calls them directly and Claude Code is never involved. Claude Code's own tools (Read, Grep, Bash) only appear inside a Claude-backed capability, where a whole headless session is one capability call and its tool use is internal to it. Explained in chat.<<}{id="r6" by="AI" at="2026-09-12T21:18:00.000Z" re="c6"}# read_file, list_directory, grep_files
 │       ├── git.py        # git_status, git_log, git_diff
 │       ├── shell.py      # allowlisted read-only commands
 │       └── claude.py     # headless Claude Code as a capability kind
@@ -82,7 +102,7 @@ and the events explain how it got there.
 |---|---|
 | `cases` | `id`, `objective`, `constraints_json`, `status` (`open`, `satisfied`, `failed`, `blocked`), `created_at`, `updated_at` |
 | `units` | `id`, `case_id`, `parent_id`, `purpose`, `status` (`active`, `closed`), `created_at`, `closed_at` |
-| `assignments` | `id`, `case_id`, `unit_id`, `capability`, `objective`, `inputs_json`, `expected_output`, `completion_criteria_json`, `evidence_required_json`, `depends_on_json`, `status` (`pending`, `ready`, `running`, `completed`, `failed`, `cancelled`), `result_json`, `created_at`, `completed_at` |
+| `assignments` | `id`, `case_id`, `unit_id`, `capability`, `objective`, `inputs_json`, `expected_output`, `completion_criteria_json`, `evidence_required_json`, `depends_on_json`, `model` (null for the capability default), `status` (`pending`, `ready`, `running`, `completed`, `failed`, `cancelled`), `result_json`, `created_at`, `completed_at` |
 | `claims` | `id`, `case_id`, `subject`, `predicate`, `object_json`, `status` (`candidate`, `verified`, `rejected`), `confidence`, `provenance_json`, `created_at` |
 | `events` | `id`, `case_id`, `sequence`, `type`, `actor`, `payload_json`, `created_at` |
 
@@ -93,7 +113,6 @@ Event types in v0: `case.created`, `case.closed`, `unit.created`, `unit.closed`,
 
 Capabilities are not a table. The registry is code, and `case show` prints what is
 registered.
-
 ### Step 3: the capability contract
 
 Every capability is a Python object registered by decorator. The registry describes what
@@ -108,7 +127,7 @@ can be done, never when.
 def grep_files(inputs: GrepInputs) -> GrepResult: ...
 ```
 
-Fields on every capability:
+{==Fields on every capability:==}{>>table didnt render, show in chat pls<<}{id="c7" by="user" at="2026-09-12T21:05:38.025Z"}{>>Shown in chat. Table unchanged. The rendering loss is Roughdraft's, parked at your call and logged as papercut pc-490f5c.<<}{id="r7" by="AI" at="2026-09-12T21:18:00.000Z" re="c7"}
 
 | Field | Meaning |
 |---|---|
@@ -119,12 +138,12 @@ Fields on every capability:
 | `returns` | `verified` for deterministic capabilities whose output is a fact about the machine, `candidate` for anything an LLM produced. |
 
 A Claude-backed capability adds the fields that define its setup, and the runtime renders
-the headless command from them:
+the headless com{==mand from them:==}{>>table didnt render, show in chat pls<<}{id="c8" by="user" at="2026-09-12T21:05:54.875Z"}{>>Shown in chat. The model row now says the field is a default the assignment can override.<<}{id="r8" by="AI" at="2026-09-12T21:18:00.000Z" re="c8"}
 
 | Field | Renders to |
 |---|---|
 | `system_prompt` | `--system-prompt <text>` |
-| `model` | `--model <id>`, always explicit |
+| `model` | `--model <id>`, always explicit. The capability's default; an assignment may override it from the allowlist in Step 5. |
 | `tools` | `--tools "<list>"` |
 | `allowed_tools` | `--allowedTools <list>`, so read-only tool calls need no approval |
 | `cwd`, `add_dirs` | The working directory and `--add-dir` entries |
@@ -139,20 +158,37 @@ about 40k tokens to about 3k and keep Mauria's personal CLAUDE.md, skills and ho
 The assignment is the user message: objective, inputs, expected output, completion
 criteria, evidence required, and the owning unit's purpose as one line of context.
 
-v0 capabilities:
+v0 {==capabilities:==}{>>table didnt render, show in chat pls<<}{id="c9" by="user" at="2026-09-12T21:06:00.948Z"}{>>Shown in chat. "Function" is now "Plain Python" and the model column is the default model.<<}{id="r9" by="AI" at="2026-09-12T21:18:00.000Z" re="c9"}
 
-| Capability | Kind | Model |
+| Capability | Kind | Default model |
 |---|---|---|
-| `read_file`, `list_directory`, `grep_files` | Function | none |
-| `git_status`, `git_log`, `git_diff` | Function | none |
+| `read_file`, `list_directory`, `grep_files` | Plain Python | none |
+| `git_status`, `git_log`, `git_diff` | Plain Python | none |
 | `run_readonly` | Shell, allowlist of `ls`, `cat`, `head`, `tail`, `wc`, `find`, `stat` | none |
 | `investigate` | Claude-backed, tools `Read,Grep,Glob,Bash` with Bash allowlisted to the same read-only commands, returns candidate claims with evidence | `claude-haiku-4-5` |
 | `interpret` | Claude-backed, no tools, given evidence and asked what it implies, returns candidate claims | `claude-haiku-4-5` |
 
+### Capability bundles (after v0)
+
+A bundle is a capability whose body is a fixed composition of other capabilities, primitives
+or bundles, with the data threaded through in code. It is declared with the same contract as
+a primitive, so the organizer assigns it like any other and never re-derives the composition.
+The registry treats a bundle and a primitive identically, so adding one later changes no
+runtime code.
+
+The event log is the surface for deciding what to bundle: it records which capabilities every
+case composed under which unit purposes. A composition that recurs across cases with the same
+shape is a candidate for promotion to a bundle. One whose shape varies with context stays with
+the organizer. The quipu CLI's objective catalog is the first planned set of bundles.
+
+v0 registers no bundles.
+
 ### Step 4: the organizer
 
-One call per cycle, through the Anthropic API with structured output, so the response is a
-validated `OrganizationPatch` and never prose. Model `claude-opus-5` with adaptive thinking.
+One call per cycle, {==as a headless Claude Code call on the subscription==}{>>aht aht, subscription-based solutions only for now<<}{id="c10" by="user" at="2026-09-12T21:06:34.909Z"}{>>Changed and tested 2026-09-12: the organizer ran as headless Opus 5 with the five stripped flags, no tools and a JSON schema, 3.6k tokens of context, and returned a schema-valid patch with four units and four assignments in the structured_output field. The anthropic SDK dependency is gone from Step 1.<<}{id="r10" by="AI" at="2026-09-12T21:18:00.000Z" re="c10"}, with `--json-schema` so the
+response is a validated `OrganizationPatch` and never prose. Model `claude-opus-5`, no tools,
+the same five fixed flags as every Claude-backed capability. Tested 2026-09-12 with an
+organizer-shaped prompt: 3.6k tokens of context and a valid patch back.
 Input, rendered as labeled sections in a stable order so the prefix caches:
 
 1. The case objective and constraints.
@@ -170,7 +206,7 @@ Output:
 class OrganizationPatch(BaseModel):
     create_units: list[UnitProposal]          # purpose, parent unit
     close_units: list[str]                    # unit ids, with a reason each
-    create_assignments: list[AssignmentProposal]
+    create_assignments: list[AssignmentProposal]  # unit, capability, objective, inputs, criteria, optional model
     cancel_assignments: list[str]
     claims_to_verify: list[str]               # candidate claim ids worth promoting
     case_status: Literal["continue", "blocked", "satisfied", "failed"]
@@ -179,7 +215,6 @@ class OrganizationPatch(BaseModel):
 
 The organizer proposes structure. It never runs a tool, never writes to the store, and never
 marks its own conclusions true.
-
 ### Step 5: the validator
 
 Every patch passes all of these or is rejected whole, with the failing rule recorded as a
@@ -195,6 +230,7 @@ Every patch passes all of these or is rejected whole, with the failing rule reco
 | Span of control | No unit ends the patch with more than 7 direct children, units and assignments combined. Target is 5. |
 | Side-effect policy | v0 rejects any capability whose side effects are not `none`. |
 | Dependencies resolve | Every `depends_on` names an assignment in the case. |
+| Model allowed | An assignment's model override, if any, is on the allowlist: `claude-haiku-4-5`, `claude-sonnet-5`, `claude-opus-5`, `claude-fable-5-1`. Plain Python capabilities take no override. |
 | Closing is clean | A closed unit has no running assignments. |
 | Status is earned | `satisfied` requires every open assignment completed or cancelled and at least one verified claim. |
 
@@ -204,17 +240,16 @@ Ready means every dependency is completed. v0 runs ready assignments sequentiall
 run writes `assignment.started`, then the result and `assignment.completed` or
 `assignment.failed` in one transaction.
 
-The verifier turns results into claims. A function capability's result becomes a `verified`
+The verifier turns results into claims. {==A plain Python capability's==}{>>a what?<<}{id="c13" by="user" at="2026-09-12T21:10:37.522Z"}{>>A capability backed by an ordinary Python function, as against one backed by a Claude session. Renamed "plain Python capability" everywhere.<<}{id="r13" by="AI" at="2026-09-12T21:18:00.000Z" re="c13"} result becomes a `verified`
 claim with the capability and inputs as provenance. A Claude-backed capability's result
 becomes `candidate` claims with the session id as provenance. Promotion of a candidate in
 v0 happens only when a later deterministic result matches it; the organizer can request
 that through `claims_to_verify`, which schedules the deterministic check as an assignment.
-
 ### Step 7: the command surface
 
 | Command | Does |
 |---|---|
-| `ics case create "<objective>" [--constraint ...]` | Creates the case and its `command` unit. |
+| `ics case create "<objective>" [--constraint ...]` | Creates the case and its root unit, `command`. |
 | `ics case show <id>` | Objective, status, claims by status, open assignments, registered capabilities. |
 | `ics case tree <id>` | The unit tree with assignment marks: done, running, ready, pending. |
 | `ics case step <id>` | One cycle, then stop. Prints the patch, the validator's verdict, what ran, what changed. |
@@ -223,7 +258,6 @@ that through `claims_to_verify`, which schedules the deterministic check as an a
 
 `step` is the primary command in v0. `run` exists so the milestone can be demonstrated
 end to end, not for daily use.
-
 ### Step 8: the first case
 
 A real, read-only investigation on this machine, so every step can be checked by hand:
@@ -236,20 +270,18 @@ verifiable by reading the code the case points at. The interesting output is not
 but the tree: whether the organizer opens separate units for the save path and the
 formatter, closes the one that turns out irrelevant, and stops when a verified claim names
 the code path.
-
 ### v0 acceptance
 
 v0 is done when all of these hold on the first case:
 
-1. `case create` produces a case with one `command` unit and one event.
+1. `case create` produces a case with one {==root unit, `command`,==}{>>what is a command unit<<}{id="c15" by="user" at="2026-09-12T21:12:39.322Z"}{>>The root of the unit tree, created with the case, owning the objective. Now defined in the Unit row of the vocabulary and named "root unit" here.<<}{id="r15" by="AI" at="2026-09-12T21:18:00.000Z" re="c15"} and one event.
 2. The first `step` yields a patch that creates at least one unit and one assignment, and the validator accepts it.
 3. Assignments run and their results appear as claims with the right status.
 4. A later `step` closes a unit that has served its purpose, visible in `tree` and `events`.
 5. A patch that breaks span of control is rejected and the next patch groups instead.
 6. The case reaches `satisfied` with a verified claim naming the code path.
 7. Every state change has a matching event, checked by a test that replays events against the tables.
-
-## Reference
+## {==Reference==}{>>none of these tables rendered<<}{id="c16" by="user" at="2026-09-12T21:13:03.222Z"}{>>Roughdraft rendering, parked at your call and logged as papercut pc-490f5c. The three tables are the verified facts, the model choices and the open questions; content updated below for the headless organizer and the --json-schema test.<<}{id="r16" by="AI" at="2026-09-12T21:18:00.000Z" re="c16"}
 
 ### Verified facts the design rests on
 
@@ -262,22 +294,24 @@ v0 is done when all of these hold on the first case:
 | With `--setting-sources ""` the model falls back to Opus 5. | The `modelUsage` field of the test call. |
 | `--bare` authenticates only with an API key. | `claude --help`. |
 | The Claude Agent SDK requires an API key. | The SDK quickstart, read by a docs subagent; not read directly. |
-| `--json-schema` returns a `structured_output` field. | The headless docs, read by a docs subagent; not read directly. |
-| Structured output through the API is `output_config.format` with `client.messages.parse()`. | The claude-api skill's current reference. |
+| `--json-schema` returns a schema-valid `structured_output` field, and `--tools ""` plus the five fixed flags work with it. | A test call on the installed version with an organizer-shaped prompt and patch schema, 2026-09-12. |
 
 ### Model choices
 
 | Role | Model | Because |
 |---|---|---|
-| Organizer | `claude-opus-5` | The patch is the judgment in the system, and the skill's default for anything nontrivial is Opus 5. |
-| `investigate`, `interpret` | `claude-haiku-4-5` | Narrow brief, two tools, small context; the cheapest floor. Raise per capability if results are thin. |
+| Organizer | `claude-opus-5` | The patch is the judgment in the system; Opus 5 is the default for anything nontrivial, and it ran the test patch well. |
+| `investigate`, `interpret` | `claude-haiku-4-5` by default | Narrow brief, few tools, small context; the cheapest floor. The organizer overrides per assignment when a read needs more. |
 | Later builder and reviewer capabilities | `claude-fable-5-1` or `claude-opus-5` with full repo, skills and hooks | Not in v0. |
 
 ## Open questions
 
 | Question | Blocks |
 |---|---|
-| Whether `--json-schema` and `--tools` behave as documented on the installed version; the docs were read secondhand. | Step 3's Claude-backed capability. Answered by one test call before writing `claude.py`. |
 | Whether the organizer should see the full text of completed results or only their summaries against the contract. | Step 4's input rendering. Start with summaries plus evidence pointers; widen if the tree stops changing shape. |
 | Whether `interpret` is worth having in v0 or whether `investigate` covers it. | Step 3's registry. Drop it if the first case never needs it. |
 | The repo's GitHub name and whether it is public. | The push, not the build. |
+
+---
+counters:
+  comments: 16
