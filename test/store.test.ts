@@ -80,11 +80,7 @@ function scripted(store: Store): void {
   };
   store.createClaim(claim, "verifier");
   store.setClaimStatus("i1", "c1", "verified", "verifier");
-  store.record("i1", {
-    type: "plan.proposed",
-    actor: "planner",
-    payload: { rationale: "two symptoms" },
-  });
+  store.record("i1", "plan.proposed", "planner", { rationale: "two symptoms" });
   store.closeUnit("i1", "u1", "served its purpose", "runtime");
   store.setIncidentStatus("i1", "blocked", "runtime", "question.asked", {
     question: "which branch?",
@@ -209,6 +205,88 @@ describe("store", () => {
     ).toThrow(/CHECK/);
     expect(store.listGrants(null)).toHaveLength(1);
     store.close();
+  });
+
+  it("applies no state for a bare record, whatever its type, and replay agrees", () => {
+    const a = new Store(":memory:");
+    scripted(a);
+    a.record("i1", "task.completed", "test", {
+      taskId: "t1",
+      status: "completed",
+    });
+    expect(a.listTasks("i1")[0]?.status).toBe("completed");
+    const b = new Store(":memory:");
+    b.replay([...a.listEvents(null), ...a.listEvents("i1")]);
+    expect(b.snapshot()).toEqual(a.snapshot());
+    a.close();
+    b.close();
+  });
+
+  it("refuses to replay an event whose recorded mutation is missing a key", () => {
+    const a = new Store(":memory:");
+    scripted(a);
+    const events = a.listEvents("i1");
+    const closed = events.find((e) => e.type === "unit.closed");
+    if (closed === undefined) throw new Error("scripted closes a unit");
+    const broken = {
+      ...closed,
+      payload: {
+        ...closed.payload,
+        mutation: { kind: "unit.close", at: closed.createdAt },
+      },
+    };
+    const b = new Store(":memory:");
+    expect(() =>
+      b.replay([...events.filter((e) => e.sequence < closed.sequence), broken]),
+    ).toThrow();
+    a.close();
+    b.close();
+  });
+
+  it("rejects a payload that uses the reserved mutation key", () => {
+    const store = new Store(":memory:");
+    scripted(store);
+    expect(() =>
+      store.record("i1", "plan.proposed", "planner", {
+        mutation: { kind: "unit.close" },
+      }),
+    ).toThrow(/reserved/);
+    store.close();
+  });
+
+  it("stores a claim whose object is absent as null rather than failing the insert", () => {
+    const store = new Store(":memory:");
+    scripted(store);
+    const claim = {
+      id: "c2",
+      incidentId: "i1",
+      subject: "s",
+      predicate: "p",
+      status: "asserted",
+      confidence: null,
+      evidence: [],
+      provenance: { capability: "grep", taskId: "t1" },
+      createdAt: now(),
+    } as unknown as Claim;
+    store.createClaim(claim, "verifier");
+    expect(
+      store.listClaims("i1").find((c) => c.id === "c2")?.object,
+    ).toBeNull();
+    store.close();
+  });
+
+  it("keeps sequences unique for system events across two stores on one file", async () => {
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const path = `${mkdtempSync(`${tmpdir()}/noscope-`)}/db.sqlite`;
+    const a = new Store(path);
+    const b = new Store(path);
+    a.record(null, "grant.given", "a", { n: 1 });
+    b.record(null, "grant.given", "b", { n: 2 });
+    a.record(null, "grant.given", "a", { n: 3 });
+    expect(a.listEvents(null).map((e) => e.sequence)).toEqual([0, 1, 2]);
+    a.close();
+    b.close();
   });
 
   it("rebuilds every current-state table by replaying the events (acceptance 7)", () => {

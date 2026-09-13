@@ -130,16 +130,17 @@ noscope/
 ### Step 2: storage
 One SQLite file per installation, WAL mode, at `$NOSCOPE_DB` when that is set and otherwise
 `~/.noscope/noscope.sqlite`, created on first use; tests point `NOSCOPE_DB` at a temp file. Current-state tables plus an append-only event
-table, updated in the same transaction. No event sourcing: state is read from the tables,
-and the events explain how it got there.
+table, updated in the same immediate transaction. No event sourcing: state is read from the
+tables, and the events explain how it got there. Every event that changes state records its
+mutation in its payload, which is what makes the tables rebuildable from the events.
 
 | Table | Columns |
 |---|---|
 | `incidents` | `id`, `objective`, `constraints_json`, `priorities_json`, `budget_json`, `questions_json`, `capability_requests_json`, `status` (`open`, `satisfied`, `failed`, `blocked`), `created_at`, `updated_at` |
 | `units` | `id`, `incident_id`, `parent_id`, `purpose`, `status` (`active`, `closed`), `created_at`, `closed_at` |
 | `tasks` | `id`, `incident_id`, `unit_id`, `capability`, `objective`, `inputs_json`, `expected_output`, `completion_criteria_json`, `evidence_required_json`, `depends_on_json`, `provider`, `model` (both required for a session-backed capability), `instructions`, `budget_json`, `status` (`pending`, `ready`, `running`, `completed`, `failed`, `cancelled`), `result_json`, `created_at`, `completed_at` |
-| `claims` | `id`, `incident_id`, `subject`, `predicate`, `object_json`, `status` (`asserted`, `verified`, `rejected`), `confidence`, `provenance_json`, `created_at` |
-| `events` | `id`, `incident_id`, `sequence`, `type`, `actor`, `payload_json`, `created_at` |
+| `claims` | `id`, `incident_id`, `subject`, `predicate`, `object_json`, `status` (`asserted`, `verified`, `rejected`), `confidence`, `evidence_json`, `provenance_json`, `created_at` |
+| `events` | `id`, `scope` (`incident` or `system`), `incident_id` (required for an incident event, null for a system event, enforced by a CHECK), `sequence` (unique per incident, and per the system scope), `type`, `actor`, `payload_json`, `created_at`. A payload carries a `mutation` naming the exact state change the event records, so replay applies that and nothing else; an event with no mutation, such as `plan.proposed`, changes no state. |
 | `grants` | `id`, `scope` (`incident` or `standing`), `incident_id` (null for standing), `capability`, `effect`, `reason`, `granted_by`, `per_task` (boolean), `created_at`. Empty in v0. |
 
 Event types in v0: `incident.created`, `incident.closed`, `unit.created`, `unit.closed`,
