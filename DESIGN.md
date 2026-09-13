@@ -39,13 +39,13 @@ rules, the CLI surface, and the first incident.
 ## Vocabulary
 | Term | Meaning |
 |---|---|
-| {==Incident==}{>>why case?<<}{id="c34" by="user" at="2026-09-13T00:00:33.414Z"}{>>Not ICS; ICS says incident, which implies something went wrong, and a case can be a build or an investigation. Candidates for you to choose from are in chat; the rename waits on you.<<}{id="r42" by="AI" at="2026-09-13T00:55:00.000Z" re="c34"} | An objective pursued over time, with constraints: a project, a single task, a piece of research, anything Mauria asks for. One row; many cycles. ICS's own word; it does not imply that something went wrong here. |
+| Incident | An objective pursued over time, with constraints: a project, a single task, a piece of research, anything Mauria asks for. One row; many cycles. ICS's own word; it does not imply that something went wrong here. |
 | Unit | A box in the incident's temporary tree that owns one slice of the problem, the way an ICS Branch or Group does. It has a purpose, a parent and children, and it opens, subdivides and closes as the planner's picture of the problem changes. Nothing runs as a unit: tasks run, and their capabilities carry the prompts. The root unit, `command`, owns the objective and is created with the incident. |
-| {==Task==}{>>is this ICS terminology? if these are mostly not ICS and we're mapping terms, i prefer to choose terms more like software or agentic systems(and yes i want to choose them). i also want to consider the terms from the angle of their connotation so we don't accidentally put landmines in the vibes of the prompts we write and poison what any agent thinks it's doing. the mapping of terms will need to be passed to them so they know how to think of them<<}{id="c35" by="user" at="2026-09-13T00:01:22.966Z"}{>>Assignment is ICS, verified in NIMS 2017: a task given to a person or team based on the objectives in the plan. Case, claim, patch, event, cycle, provider and organizer are ours. A terms table with each word's origin, its connotation risk, and candidates is in chat for you to choose from. And yes: the session preamble now carries the vocabulary, one line per term, so a session takes our meaning and not its own.<<}{id="r43" by="AI" at="2026-09-13T00:55:00.000Z" re="c35"} | A bounded piece of work owned by one unit and bound to one capability: objective, inputs, expected output, completion criteria, evidence required, dependencies, and for a session-backed capability the model and any instructions. It is the worker's brief, and for a session it is the prompt the session receives. |
+| Task | A bounded piece of work owned by one unit and bound to one capability: objective, inputs, expected output, completion criteria, evidence required, dependencies, and for a session-backed capability the model and any instructions. It is the worker's brief, and for a session it is the prompt the session receives. |
 | Equipment | A primitive: a function the runtime calls in-process, a Claude Code built-in tool such as Read, Grep or Bash under an allowlist, or later anything else a capability needs to do its work. Registered by name. Never assigned by the planner. |
 | Capability | The assignable thing: declared equipment plus, when judgment is needed, a headless session with a system prompt; the model comes from each task. A capability with no session is deterministic and produces verified claims; one with a session produces asserted claims. A capability may include other capabilities. Later, a human. |
 | Provider | A program that can run a session: Claude Code first, Codex second, later an HTTP API or a human. A provider maps the session fields onto its own command line and turns its output back into the runtime's result shape. Everything above the session layer is provider-blind. |
-| {==Claim==}{>>is this an ICS construct? if not why do we have it when they don't?<<}{id="c36" by="user" at="2026-09-13T00:04:20.450Z"}{>>Not ICS. ICS gets its situation picture from humans through a Situation Unit that vets what comes in. We need a construct they do not because a model's statements are not trustworthy by default, so each one carries an epistemic status and provenance until deterministic equipment confirms it. Candidates for the word are in the chat table.<<}{id="r44" by="AI" at="2026-09-13T00:55:00.000Z" re="c36"}{>>okay that makes sense. i want to revisit the situation unit concept in chat possibly for a later version, could be good for keeping perspective maybe or triage for more autonomous work<<}{id="c54" by="user" at="2026-09-13T01:14:39.212Z" re="r44"}{>>Added as an after-v0 open item: a Situation Unit role, a periodic session that reads the case file and produces the situation picture, so it can keep perspective across cycles and triage when noscope runs autonomously. Discussion in chat.<<}{id="r61" by="AI" at="2026-09-13T02:45:00.000Z" re="c54"} | A statement about reality with epistemic status `asserted`, `verified` or `rejected`, plus provenance. LLM output enters as `asserted`; only deterministic verification promotes it. |
+| Claim | A statement about reality with epistemic status `asserted`, `verified` or `rejected`, plus provenance. LLM output enters as `asserted`; only deterministic verification promotes it. |
 | Event | One append-only record of something that happened, written in the same transaction as the state change it describes. |
 | Action plan | The planner's plan for one cycle: units to create or close, tasks to create or cancel, questions for a human, grant requests, incident status. It is proposed by the planner and approved by the validator, and only an approved plan is applied. |
 | Cycle | Observe, organize, validate, dispatch, record, stop. `incident step` runs exactly one. |
@@ -75,11 +75,11 @@ Definitions checked against the NIMS Third Edition (FEMA, October 2017) on 2026-
 | Demobilization: the orderly release of a resource when no longer needed. | Closing a unit and cancelling its tasks. |
 | Situation Unit and Resources Unit: who tracks what is known and where every resource is. | The store. Claims are the situation; tasks and their statuses are the resource tracking. |
 | Unified Command, Staging Area. | No equivalent in v0. |
-| No ICS term. | {==Claim, event, cycle, provider and planner are ours; task is our word for ICS's assignment.==}{>>hmm. i don't know that i love all of them per my prior comments<<}{id="c38" by="user" at="2026-09-13T00:11:39.472Z"}{>>Held for your choice; candidates for each are in the chat table.<<}{id="r45" by="AI" at="2026-09-13T00:55:00.000Z" re="c38"} |
+| No ICS term. | Claim, event, cycle, provider and planner are ours; task is our word for ICS's assignment. |
 
 ## Build steps
 ### Step 1: repository skeleton
-TypeScript on Node 24, a pnpm package. Runtime dependencies: {==`zod`==}{>>why zod?<<}{id="c39" by="user" at="2026-09-13T00:12:05.489Z"}{>>Because one zod schema gives three things the design needs from one definition: the TypeScript type, runtime validation of every contract, and the JSON Schema that --json-schema and --output-schema take (z.toJSONSchema, in zod 4, verified on zod.dev today). Alternatives and tradeoffs in chat.<<}{id="r47" by="AI" at="2026-09-13T00:55:00.000Z" re="c39"} for every contract and the
+TypeScript on Node 24, a pnpm package. Runtime dependencies: `zod` for every contract and the
 JSON schemas the planner and sessions receive, `better-sqlite3` for storage, and
 `@modelcontextprotocol/sdk` only when custom equipment for sessions arrives after v0.
 `better-sqlite3` is a native addon with prebuilt binaries; it is chosen over Node 24's built-in
@@ -128,7 +128,7 @@ noscope/
 ### Step 2: storage
 One SQLite file per installation, WAL mode. Current-state tables plus an append-only event
 table, updated in the same transaction. No event sourcing: state is read from the tables,
-and the events explain how i{==t got there.==}{>>table's not rendering, show in chat<<}{id="c40" by="user" at="2026-09-13T00:14:25.708Z"}{>>Rendered whole at ~/Downloads/noscope-design.html, which opened in your browser; also shown in chat where the content changed.<<}{id="r48" by="AI" at="2026-09-13T00:55:00.000Z" re="c40"}
+and the events explain how it got there.
 
 | Table | Columns |
 |---|---|
@@ -208,8 +208,8 @@ Fields on every capability:
 | `produces` | `verified_claims` for a deterministic capability, whose output is a fact about the machine; `asserted_claims` for a session-backed one. |
 | `cost` | Facts that live with the thing so they are at hand whenever it is equipped: rate limit, typical tokens, typical seconds, money per call if any. Equipment declares the same field. The budget logic reads these and nothing else. |
 
-A {==capability with a session adds the fields that define its setup. The session names a
-provider, and the provider renders the fields onto its own command from them:==}{>>didn;t render show in chat<<}{id="c42" by="user" at="2026-09-13T00:21:43.980Z"}{>>Rendered whole at ~/Downloads/noscope-design.html, which opened in your browser; also shown in chat where the content changed.<<}{id="r50" by="AI" at="2026-09-13T00:55:00.000Z" re="c42"}
+A capability with a session adds the fields that define its setup. The session names a
+provider, and the provider renders the fields onto its own command from them:
 
 | Field | Claude Code renders it to | Codex renders it to |
 |---|---|---|
@@ -230,13 +230,13 @@ setup. Claude Code: `--output-format json`, `--no-session-persistence`,
 because it authenticates only with an API key. Codex: `--ignore-user-config`,
 `--ignore-rules`, `--ephemeral`, `--json`, verified present in `codex exec --help` on
 2026-09-12 and not yet tested for context size or subscription billing. {==Permissions come only
-from the capability's declaration;==}{>>should follow a principle of least perms necessary, or however you say it. for now destructive perms should be gated by me; if the proposed needs for equipment or capability include something destructive it should ask me for it and say why it needs it. i'm open to discussion on what level the destructive perms requests should live at though<<}{id="c43" by="user" at="2026-09-13T00:22:42.230Z"}{>>Written in as grants. Policy: read_only runs without asking; anything that writes needs a grant from you, requested by the organizer with its reason, before the validator lets the assignment through. Level: the grant is per case per capability, which is my recommendation, with two alternatives in chat: per assignment for external writes, and standing grants you pre-approve in a config file. v0 stays read-only so none of this is exercised yet, but the schema slot, the event types, the validator rule and the CLI commands are in.<<}{id="r54" by="AI" at="2026-09-13T00:55:00.000Z" re="c43"} with the isolation flags, Mauria's own permission settings
+from the capability's declaration;==}{>>should follow a principle of least perms necessary, or however you say it. for now destructive perms should be gated by me; if the proposed needs for equipment or capability include something destructive it should ask me for it and say why it needs it. i'm open to discussion on what level the destructive perms requests should live at though<<}{id="c43" by="user" at="2026-09-13T00:22:42.230Z"} with the isolation flags, Mauria's own permission settings
 do not load on either provider.
 
 The task is the user message: objective, inputs, expected output, completion
-criteria, evidence required, and {==one line saying what the unit that owns this task is trying to establish==}{>>huh?<<}{id="c44" by="user" at="2026-09-13T00:24:43.882Z"}{>>Reworded: the session gets one line saying what the unit that owns its assignment is trying to establish, so it knows what its result is for without seeing the rest of the tree.<<}{id="r55" by="AI" at="2026-09-13T00:55:00.000Z" re="c44"} as one line of context.
+criteria, evidence required, and one line saying what the unit that owns this task is trying to establish as one line of context.
 
-v{==0 capabilities:==}{>>didn't render<<}{id="c45" by="user" at="2026-09-13T00:25:04.500Z"}{>>Rendered whole at ~/Downloads/noscope-design.html, which opened in your browser; also shown in chat where the content changed.<<}{id="r51" by="AI" at="2026-09-13T00:55:00.000Z" re="c45"}
+v0 capabilities:
 
 | Capability | Equipment | Session |
 |---|---|---|
@@ -257,10 +257,10 @@ with context stays with the planner. The quipu CLI's objective catalog is the fi
 planned set of such capabilities. v0 registers none.
 ### Step 4: the planner
 One call per cycle, through a provider, as a headless Claude Code call on the subscription, with `--json-schema` so the
-response is a validated `ActionPlan` and never prose. Model `claude-opus-5`, {==no tools,==}{>>does it need tools to gather info? no, better for it to say it needs more info and ask for it(agent message? are those in transcripts?) before proceeding, so it gets everything it needs to make a good decision<<}{id="c46" by="user" at="2026-09-13T00:26:42.166Z"}{>>Agreed, no tools. Two kinds of missing information. Facts about the machine it gets by creating assignments, which is the normal cycle. Things only you can supply it asks for: the patch now carries questionsForHuman, the case goes to blocked, case show prints the questions, and when noscope is run from inside a Claude Code session the runtime can send them as an agent message. Agent messages do land in the receiving session's transcript, verified in this session, which has received several today.<<}{id="r56" by="AI" at="2026-09-13T00:55:00.000Z" re="c46"}
+response is a validated `ActionPlan` and never prose. Model `claude-opus-5`, no tools,
 the same five fixed flags as every session. Tested 2026-09-12 with an
 planner-shaped prompt: 3.6k tokens of context and a valid action plan back.
-Input, rendered as labeled sections in a stable order {==so the prefix caches==}{>>huh? in claude code?<<}{id="c47" by="user" at="2026-09-13T00:28:30.284Z"}{>>Yes, in Claude Code too. Every headless test call today reported cache_creation_input_tokens and cache_read_input_tokens with a one-hour ephemeral cache, so the organizer prompt keeps its stable sections first and the per-cycle sections last to get cache reads on repeat cycles.<<}{id="r57" by="AI" at="2026-09-13T00:55:00.000Z" re="c47"}:
+Input, rendered as labeled sections in a stable order so the prefix caches:
 
 1. The incident file's command picture: objective, constraints, priorities, budget remaining, grants given, questions still unanswered.
 2. Verified claims.
@@ -269,7 +269,7 @@ Input, rendered as labeled sections in a stable order {==so the prefix caches==}
 5. Tasks completed since the last cycle, with results summarized against their contracts.
 6. Tasks that came back `insufficient`, each with what the session said it needed.
 7. Open tasks.
-8. The capability registry, names and descriptions only.
+8. The capability registry, names and descriptions only, and for each provider every model it serves with its cost, so every option is on the table.
 9. The rules the validator will apply, so the planner does not propose what will be rejected.
 
 Output:
@@ -306,14 +306,14 @@ Every action plan passes all of these or is rejected whole, with the failing rul
 | Effect policy | v0 rejects any capability whose effect is not `read_only`. After v0, a task to a capability whose effect is `writes_local` or `writes_external` passes only with a grant on this incident for that capability. |
 | Budget respected | A task's budget fits inside the incident's remaining budget, and a session-backed task carries a time bound. |
 | Dependencies resolve | Every `depends_on` names a task in the incident. |
-| Model known | Every task to a session-backed capability names a provider and model pair the provider accepts. The list is every model the provider serves, not a curated subset, because Mauria can ask for whatever she wants. The first draft's {==allowlist is Claude Code with `claude-haiku-4-5`, `claude-sonnet-5`, `claude-opus-5`, `claude-fable-5-1`==}{>>are there any other anthropic models available?<<}{id="c48" by="user" at="2026-09-13T00:32:32.470Z"}{>>Yes. Current generation: Fable 5.1, Opus 5, Sonnet 5, Haiku 4.5. Still served: Fable 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6. Mythos 5.1 is Project Glasswing only. Claude Code takes any of them by full name with --model. The allowlist keeps the current generation because the older ones cost the same or more for less; add one by name if a job wants it.<<}{id="r58" by="AI" at="2026-09-13T00:55:00.000Z" re="c48"}; Codex pairs are added when that provider is tested. A task to a deterministic capability names none. |
+| Model known | Every task to a session-backed capability names a provider and model pair. The known list is every model the provider serves, never a curated subset, so Mauria can ask for whatever she wants and the planner sees every option. For Claude Code the {==known list is every Anthropic model currently served: `claude-fable-5-1`, `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5`, `claude-fable-5`, `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6`, `claude-sonnet-4-6`==}{>>are there any other anthropic models available?<<}{id="c48" by="user" at="2026-09-13T00:32:32.470Z"}{>>Yes. Current generation: Fable 5.1, Opus 5, Sonnet 5, Haiku 4.5. Still served: Fable 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6. Mythos 5.1 is Project Glasswing only. Claude Code takes any of them by full name with --model. The allowlist keeps the current generation because the older ones cost the same or more for less; add one by name if a job wants it.<<}{id="r58" by="AI" at="2026-09-13T00:55:00.000Z" re="c48"}{>>i want all the models in the allowlist so i can ask for whatever i want and so we have all options available when planning<<}{id="c57" by="user" at="2026-09-13T03:16:17.933Z" re="r58"}{>>Done. The rule now says the known list is every model the provider serves, the row lists all nine Anthropic models Claude Code accepts today, and the planner's input (item 8) now carries the model list with costs so every option is on the table when it plans.<<}{id="r62" by="AI" at="2026-09-13T03:25:00.000Z" re="c57"}; Codex pairs are added when that provider is tested. A task to a deterministic capability names none. |
 | Closing is clean | A closed unit has no running tasks. |
 | Status is earned | `satisfied` requires every open task completed or cancelled and at least one verified claim. |
 
 ### Step 6: dispatch, record, verify
 Ready means every dependency is completed. v0 runs ready tasks sequentially. Each
 run writes `task.started`, then the result and `task.completed` or
-{==`task.failed` in one transaction.==}{>>this made me realize the case needs something like a case file? do we have that construct somewhere? something for command to keep the state of the case in with reasons and pointers. we also need a resource budget construct. of course i can make it unlimited, but i should be able to put a token or time bound on a case or assignment and have the plan take that into account. would also be good to have something similar at the capability/equipment level, so if there is relevant rate limit info or something to know for a tool, that can be taken into account as well<<}{id="c49" by="user" at="2026-09-13T00:34:19.739Z"}{>>Both written in. Case file: a vocabulary row and the construct command works from; the organizer's input is rendered from it and case show prints it. Budget: a vocabulary row, budget_json on cases and assignments, cost hints on equipment and capabilities, a validator rule, dispatcher time bounds, usage recorded as events. Unlimited is the v0 default.<<}{id="r59" by="AI" at="2026-09-13T00:55:00.000Z" re="c49"}
+`task.failed` in one transaction.
 
 The verifier turns results into claims. A deterministic capability's result becomes a `verified`
 claim with the capability and inputs as provenance. A session-backed capability's result
@@ -321,7 +321,7 @@ becomes `asserted` claims with the session id as provenance; an `insufficient` r
 no claims and an `task.insufficient` event carrying what was needed. Promotion of an asserted in
 v0 happens only when a later deterministic result matches it; the planner can request
 that through `claims_to_verify`, which schedules the deterministic check as a task.
-### Step 7: {==the command surface==}{>>didn't render<<}{id="c50" by="user" at="2026-09-13T00:39:48.143Z"}{>>Rendered whole at ~/Downloads/noscope-design.html, which opened in your browser; also shown in chat where the content changed.<<}{id="r52" by="AI" at="2026-09-13T00:55:00.000Z" re="c50"}
+### Step 7: the command surface
 | Command | Does |
 |---|---|
 | `noscope incident create "<objective>" [--constraint ...]` | Creates the incident and its root unit, `command`. |
@@ -359,7 +359,7 @@ v0 is done when all of these hold on the first incident:
 6. The incident reaches `satisfied` with a verified claim naming the code path.
 7. Every state change has a matching event, checked by a test that replays events against the tables.
 8. An `interpret` task given too little evidence returns `insufficient` naming what it needs, and the next `step` creates a task that supplies it.
-## {==Reference==}{>>none of these rendered<<}{id="c51" by="user" at="2026-09-13T00:41:23.827Z"}{>>Rendered whole at ~/Downloads/noscope-design.html, which opened in your browser; also shown in chat where the content changed.<<}{id="r53" by="AI" at="2026-09-13T00:55:00.000Z" re="c51"}
+## Reference
 ### Verified facts the design rests on
 | Fact | How it was checked |
 |---|---|
@@ -448,7 +448,7 @@ which is untested for this use.
 
 ---
 counters:
-  comments: 56
+  comments: 57
 comments:
   c26:
     body: will this thing be slow as written?
