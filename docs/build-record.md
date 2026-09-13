@@ -471,4 +471,9 @@ Not exactly to spec, with reasons:
   without a check; the design names no default.
 - `run` on an incident that is not open exits 5, as `step` does, and a cycle that blocks or
   closes the incident ends the run before the cap.
+- From the review (2026-09-13): a budget stop ends the run, since another cycle could only
+  plan and never run (before, `run` called the planner every cycle to the cap with tasks
+  sitting ready); a cycle whose provider cannot run ends the run with exit 1 and the reason
+  on stderr, as `step` does, with the store consistent; `--max-cycles` accepts only a
+  positive whole number written as digits.
 

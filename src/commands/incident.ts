@@ -287,7 +287,9 @@ async function cycle(
     cwd: ctx.cwd,
   });
   const { plan } = proposal;
-  ctx.io.out(`plan proposed (session ${proposal.sessionId}): ${plan.rationale}`);
+  ctx.io.out(
+    `plan proposed (session ${proposal.sessionId}): ${plan.rationale}`,
+  );
   for (const u of plan.createUnits)
     ctx.io.out(`  create unit ${u.ref} under ${u.parent}: ${u.purpose}`);
   for (const c of plan.closeUnits)
@@ -305,7 +307,8 @@ async function cycle(
   const verdict = validateAndRecord(store, incident, plan, providers);
   if (!verdict.ok) {
     ctx.io.out("plan rejected:");
-    for (const r of verdict.rejections) ctx.io.out(`  - ${r.rule}: ${r.reason}`);
+    for (const r of verdict.rejections)
+      ctx.io.out(`  - ${r.rule}: ${r.reason}`);
     return { status: incident.status, stopped: null };
   }
   ctx.io.out("plan approved");
@@ -318,7 +321,8 @@ async function cycle(
       `  task ${t.id} [${t.status}] under ${t.unitId}: ${t.capability}: ${t.objective}`,
     );
   for (const id of applied.cancelledTasks) ctx.io.out(`  task ${id} cancelled`);
-  for (const q of applied.questions) ctx.io.out(`  question ${q.id}: ${q.text}`);
+  for (const q of applied.questions)
+    ctx.io.out(`  question ${q.id}: ${q.text}`);
   if (applied.incidentStatus !== "open") {
     ctx.io.out(`incident ${incident.id} is now ${applied.incidentStatus}`);
     return { status: applied.incidentStatus, stopped: null };
@@ -418,7 +422,11 @@ export const run: Handler = async (args, ctx) => {
     let cycles = 0;
     let incident = first;
     let stopped: string | null = null;
-    while (incident.status === "open" && stopped === null && cycles < maxCycles) {
+    while (
+      incident.status === "open" &&
+      stopped === null &&
+      cycles < maxCycles
+    ) {
       cycles += 1;
       ctx.io.out(`--- cycle ${cycles} ---`);
       try {
@@ -428,7 +436,8 @@ export const run: Handler = async (args, ctx) => {
         return reportFailure(ctx, "run", error);
       }
       const next = store.getIncident(incident.id);
-      if (next === undefined) throw new Error(`incident ${incident.id} vanished`);
+      if (next === undefined)
+        throw new Error(`incident ${incident.id} vanished`);
       incident = next;
     }
     ctx.io.out(
