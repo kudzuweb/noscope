@@ -57,11 +57,11 @@ describe("noscope cli", () => {
 
   it("names what delivers a known but unimplemented command and exits 3", async () => {
     const c = ctx();
-    expect(await run(["incident", "step", "7"], c.context)).toBe(
+    expect(await run(["incident", "run", "7"], c.context)).toBe(
       EXIT.notYetImplemented,
     );
     expect(c.err[0]).toBe(
-      "noscope incident step: not yet implemented, arrives PR 12",
+      "noscope incident run: not yet implemented, arrives PR 14",
     );
     const top = ctx();
     expect(await run(["grant", "standing", "send_email"], top.context)).toBe(

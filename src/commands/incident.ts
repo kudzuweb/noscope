@@ -1,9 +1,14 @@
 import { parseArgs } from "node:util";
 import { listCapabilities } from "../capabilities/index.js";
 import { type Context, EXIT, type Handler } from "../context.js";
+import { dispatch } from "../dispatcher.js";
 import { Budget, type Event, type Incident, type Unit } from "../models.js";
+import { proposePlan } from "../planner.js";
+import { getProvider } from "../providers/index.js";
+import { applyPlan } from "../runtime.js";
 import { now, resolveDbPath, Store, sumUsage } from "../store.js";
 import { renderTree } from "../tree.js";
+import { validateAndRecord } from "../validator.js";
 
 const ACTOR = "cli";
 
@@ -250,6 +255,75 @@ export const tree: Handler = async (args, ctx) => {
       store.listTasks(incident.id),
     ))
       ctx.io.out(line);
+    return EXIT.ok;
+  } finally {
+    store.close();
+  }
+};
+
+/**
+ * One cycle (DESIGN.md Step 1): observe and plan, validate, apply, dispatch, verify and
+ * record, then stop. Prints the action plan, the verdict, what changed and what ran. Exit 5
+ * when the incident is not open, since only Mauria can move it (`incident answer`).
+ */
+export const step: Handler = async (args, ctx) => {
+  const store = openStore(ctx);
+  try {
+    const incident = requireIncident(store, args, ctx, "step");
+    if (incident === undefined) return EXIT.notFound;
+    if (incident.status !== "open") {
+      ctx.io.err(
+        `noscope incident step: incident ${incident.id} is ${incident.status}; a step needs an open incident`,
+      );
+      return EXIT.cannotProceed;
+    }
+    const planner = getProvider("claude-code", ctx.env);
+    const providers = [planner];
+    const proposal = await proposePlan(store, incident, planner, {
+      providers,
+      cwd: ctx.cwd,
+    });
+    const { plan } = proposal;
+    ctx.io.out(
+      `plan proposed (session ${proposal.sessionId}): ${plan.rationale}`,
+    );
+    ctx.io.out(
+      `  ${plan.createUnits.length} unit(s) to create, ${plan.closeUnits.length} to close; ${plan.createTasks.length} task(s) to create, ${plan.cancelTasks.length} to cancel; ${plan.questionsForHuman.length} question(s); status ${plan.incidentStatus}`,
+    );
+    const verdict = validateAndRecord(store, incident, plan, providers);
+    if (!verdict.ok) {
+      ctx.io.out("plan rejected:");
+      for (const r of verdict.rejections)
+        ctx.io.out(`  - ${r.rule}: ${r.reason}`);
+      return EXIT.ok;
+    }
+    ctx.io.out("plan approved");
+    const applied = applyPlan(store, incident, plan);
+    for (const u of applied.units)
+      ctx.io.out(`  unit ${u.id} created under ${u.parentId}: ${u.purpose}`);
+    for (const id of applied.closedUnits) ctx.io.out(`  unit ${id} closed`);
+    for (const t of applied.tasks)
+      ctx.io.out(
+        `  task ${t.id} [${t.status}] under ${t.unitId}: ${t.capability}: ${t.objective}`,
+      );
+    for (const id of applied.cancelledTasks)
+      ctx.io.out(`  task ${id} cancelled`);
+    for (const q of applied.questions)
+      ctx.io.out(`  question ${q.id}: ${q.text}`);
+    if (applied.incidentStatus !== "open") {
+      ctx.io.out(`incident ${incident.id} is now ${applied.incidentStatus}`);
+      return EXIT.ok;
+    }
+    const ran = await dispatch(store, incident, { cwd: ctx.cwd, env: ctx.env });
+    for (const r of ran)
+      ctx.io.out(
+        `  ran ${r.taskId} (${r.capability}): ${r.status}${r.reason === undefined ? "" : `, ${r.reason}`}; ${r.claims} claim(s)`,
+      );
+    if (ran.length === 0) ctx.io.out("  nothing ready to run");
+    const claims = store.listClaims(incident.id);
+    ctx.io.out(
+      `claims: ${claims.filter((c) => c.status === "verified").length} verified, ${claims.filter((c) => c.status === "asserted").length} asserted`,
+    );
     return EXIT.ok;
   } finally {
     store.close();

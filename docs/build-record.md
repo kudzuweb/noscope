@@ -362,3 +362,36 @@ Not exactly to spec, with reasons:
   it), and a ref that starts with the incident id (it could shadow the id a new unit
   receives); `incident show`, `events` and `tree` exit 2, not 4, when no id is given.
 
+## PR 12: Dispatch and step (#12, merged 2026-09-13)
+
+Built: `src/dispatcher.ts` with `dispatch`, which runs every ready task one after another
+under its time bound, writing `task.started`, then the claims, the result with
+`task.completed` and `task.usage` in one transaction, or `task.failed` with the reason, and
+stops with `budget.exceeded` when the incident's budget has no room for the next task;
+`noscope incident step`, wiring observe and plan, validate, apply, dispatch, verify and
+record, and printing the plan, the verdict, what changed and what ran; `getProvider` reads
+`NOSCOPE_CLAUDE_BIN` so tests run the whole cycle on the stub. Tests: criterion 3 (tasks run
+and their claims appear verified or asserted), a task over its time bound fails with
+`task.failed`, a task whose dependency completes in the same pass runs in that pass, the
+budget stop, and one full `step` on the stub planner through to claims, a rejected plan,
+a `satisfied` plan, and exit 5 on a closed incident.
+
+Not exactly to spec, with reasons:
+
+- Ready is computed at dispatch time: a `pending` task whose dependencies have completed
+  is dispatched directly, without a status change to `ready` first, since no event type
+  records that promotion and the transition would carry no information the log lacks.
+- A task's time bound is `budget.seconds`, or ten minutes for a session and two for a
+  deterministic run when the task sets none; a session's bound is also passed to the
+  provider, which kills the process, while a deterministic run past its bound is abandoned
+  to finish on its own and its result discarded (v0 runs one task at a time, so nothing
+  waits on it).
+- The budget check is spend so far plus the capability's typical cost against the
+  incident's bound, on tokens and seconds; a task over it is left as it was and the pass
+  ends, so the planner sees `budget.exceeded` next cycle.
+- `step` exits 0 when the plan is rejected: the cycle ran and its outcome is recorded; the
+  next step gives the planner the rejection. Exit 5 is only for an incident that is not
+  open.
+- `NOSCOPE_CLAUDE_BIN` names the Claude Code binary; the README documents it with
+  `NOSCOPE_DB`.
+
