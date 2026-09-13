@@ -2,7 +2,13 @@ import { parseArgs } from "node:util";
 import { listCapabilities } from "../capabilities/index.js";
 import { type Context, EXIT, type Handler } from "../context.js";
 import { dispatch } from "../dispatcher.js";
-import { Budget, type Event, type Incident, type Unit } from "../models.js";
+import {
+  Budget,
+  type Event,
+  type Incident,
+  type IncidentStatus,
+  type Unit,
+} from "../models.js";
 import { proposePlan } from "../planner.js";
 import { getProvider } from "../providers/index.js";
 import { applyPlan } from "../runtime.js";
@@ -261,97 +267,176 @@ export const tree: Handler = async (args, ctx) => {
   }
 };
 
+/** What one cycle came to: the incident's status afterwards, and a budget stop if the pass ended on one. */
+type CycleOutcome = { status: IncidentStatus; stopped: string | null };
+
 /**
  * One cycle (DESIGN.md Step 1): observe and plan, validate, apply, dispatch, verify and
- * record, then stop. Prints the action plan, the verdict, what changed and what ran. Exit 5
- * when the incident is not open, since only Mauria can move it (`incident answer`).
+ * record, then stop. Prints the proposed plan, the verdict, what changed and what ran. A
+ * provider that cannot run throws; the command decides the exit code.
  */
+async function cycle(
+  store: Store,
+  incident: Incident,
+  ctx: Context,
+): Promise<CycleOutcome> {
+  const planner = getProvider("claude-code", ctx.env);
+  const providers = [planner];
+  const proposal = await proposePlan(store, incident, planner, {
+    providers,
+    cwd: ctx.cwd,
+  });
+  const { plan } = proposal;
+  ctx.io.out(`plan proposed (session ${proposal.sessionId}): ${plan.rationale}`);
+  for (const u of plan.createUnits)
+    ctx.io.out(`  create unit ${u.ref} under ${u.parent}: ${u.purpose}`);
+  for (const c of plan.closeUnits)
+    ctx.io.out(`  close unit ${c.unitId}: ${c.reason}`);
+  for (const t of plan.createTasks)
+    ctx.io.out(
+      `  create task under ${t.unit}: ${t.capability}: ${t.objective}${t.model === null ? "" : ` (${t.provider}/${t.model})`}`,
+    );
+  for (const id of plan.cancelTasks) ctx.io.out(`  cancel task ${id}`);
+  for (const q of plan.questionsForHuman) ctx.io.out(`  ask: ${q}`);
+  for (const r of plan.capabilityRequests)
+    ctx.io.out(`  request capability: ${r.need} (${r.why})`);
+  for (const id of plan.claimsToVerify) ctx.io.out(`  verify claim ${id}`);
+  ctx.io.out(`  status: ${plan.incidentStatus}`);
+  const verdict = validateAndRecord(store, incident, plan, providers);
+  if (!verdict.ok) {
+    ctx.io.out("plan rejected:");
+    for (const r of verdict.rejections) ctx.io.out(`  - ${r.rule}: ${r.reason}`);
+    return { status: incident.status, stopped: null };
+  }
+  ctx.io.out("plan approved");
+  const applied = applyPlan(store, incident, plan);
+  for (const u of applied.units)
+    ctx.io.out(`  unit ${u.id} created under ${u.parentId}: ${u.purpose}`);
+  for (const id of applied.closedUnits) ctx.io.out(`  unit ${id} closed`);
+  for (const t of applied.tasks)
+    ctx.io.out(
+      `  task ${t.id} [${t.status}] under ${t.unitId}: ${t.capability}: ${t.objective}`,
+    );
+  for (const id of applied.cancelledTasks) ctx.io.out(`  task ${id} cancelled`);
+  for (const q of applied.questions) ctx.io.out(`  question ${q.id}: ${q.text}`);
+  if (applied.incidentStatus !== "open") {
+    ctx.io.out(`incident ${incident.id} is now ${applied.incidentStatus}`);
+    return { status: applied.incidentStatus, stopped: null };
+  }
+  const { ran, stopped } = await dispatch(store, incident, {
+    cwd: ctx.cwd,
+    env: ctx.env,
+  });
+  for (const r of ran)
+    ctx.io.out(
+      `  ran ${r.taskId} (${r.capability}): ${r.status}${r.reason === undefined ? "" : `, ${r.reason}`}; ${r.claims} claim(s)`,
+    );
+  if (stopped !== null) ctx.io.out(`  budget stopped the pass: ${stopped}`);
+  else if (ran.length === 0) ctx.io.out("  nothing ready to run");
+  const claims = store.listClaims(incident.id);
+  ctx.io.out(
+    `claims: ${claims.filter((c) => c.status === "verified").length} verified, ${claims.filter((c) => c.status === "asserted").length} asserted`,
+  );
+  return { status: "open", stopped };
+}
+
+function refuseUnlessOpen(
+  incident: Incident,
+  ctx: Context,
+  command: string,
+): boolean {
+  if (incident.status === "open") return true;
+  ctx.io.err(
+    `noscope incident ${command}: incident ${incident.id} is ${incident.status}; ${command === "step" ? "a step" : "run"} needs an open incident`,
+  );
+  return false;
+}
+
+/** A provider that could not run, or a store that failed outside the record: exit 1 with the reason (DESIGN.md Step 7). */
+function reportFailure(ctx: Context, command: string, error: unknown): number {
+  ctx.io.err(
+    `noscope incident ${command}: ${error instanceof Error ? error.message : String(error)}`,
+  );
+  return EXIT.failed;
+}
+
 /**
- * One cycle (DESIGN.md Step 1): observe and plan, validate, apply, dispatch, verify and
- * record, then stop. Prints the proposed plan, the verdict, what changed and what ran. Exit 5
- * when the incident is not open, since only Mauria can move it (`incident answer`); exit 1
- * when the provider could not be run at all, with nothing written for the cycle.
+ * One cycle, then stop. Exit 5 when the incident is not open, since only Mauria can move it
+ * (`incident answer`); exit 1 when the provider could not run at all.
  */
 export const step: Handler = async (args, ctx) => {
   const store = openStore(ctx);
   try {
     const incident = requireIncident(store, args, ctx, "step");
     if (typeof incident === "number") return incident;
-    if (incident.status !== "open") {
-      ctx.io.err(
-        `noscope incident step: incident ${incident.id} is ${incident.status}; a step needs an open incident`,
-      );
-      return EXIT.cannotProceed;
-    }
-    const planner = getProvider("claude-code", ctx.env);
-    const providers = [planner];
-    let proposal: Awaited<ReturnType<typeof proposePlan>>;
+    if (!refuseUnlessOpen(incident, ctx, "step")) return EXIT.cannotProceed;
     try {
-      proposal = await proposePlan(store, incident, planner, {
-        providers,
-        cwd: ctx.cwd,
-      });
+      await cycle(store, incident, ctx);
     } catch (error) {
-      ctx.io.err(
-        `noscope incident step: the planner could not run: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      return EXIT.failed;
+      return reportFailure(ctx, "step", error);
     }
-    const { plan } = proposal;
-    ctx.io.out(
-      `plan proposed (session ${proposal.sessionId}): ${plan.rationale}`,
-    );
-    for (const u of plan.createUnits)
-      ctx.io.out(`  create unit ${u.ref} under ${u.parent}: ${u.purpose}`);
-    for (const c of plan.closeUnits)
-      ctx.io.out(`  close unit ${c.unitId}: ${c.reason}`);
-    for (const t of plan.createTasks)
-      ctx.io.out(
-        `  create task under ${t.unit}: ${t.capability}: ${t.objective}${t.model === null ? "" : ` (${t.provider}/${t.model})`}`,
-      );
-    for (const id of plan.cancelTasks) ctx.io.out(`  cancel task ${id}`);
-    for (const q of plan.questionsForHuman) ctx.io.out(`  ask: ${q}`);
-    for (const r of plan.capabilityRequests)
-      ctx.io.out(`  request capability: ${r.need} (${r.why})`);
-    for (const id of plan.claimsToVerify) ctx.io.out(`  verify claim ${id}`);
-    ctx.io.out(`  status: ${plan.incidentStatus}`);
-    const verdict = validateAndRecord(store, incident, plan, providers);
-    if (!verdict.ok) {
-      ctx.io.out("plan rejected:");
-      for (const r of verdict.rejections)
-        ctx.io.out(`  - ${r.rule}: ${r.reason}`);
-      return EXIT.ok;
-    }
-    ctx.io.out("plan approved");
-    const applied = applyPlan(store, incident, plan);
-    for (const u of applied.units)
-      ctx.io.out(`  unit ${u.id} created under ${u.parentId}: ${u.purpose}`);
-    for (const id of applied.closedUnits) ctx.io.out(`  unit ${id} closed`);
-    for (const t of applied.tasks)
-      ctx.io.out(
-        `  task ${t.id} [${t.status}] under ${t.unitId}: ${t.capability}: ${t.objective}`,
-      );
-    for (const id of applied.cancelledTasks)
-      ctx.io.out(`  task ${id} cancelled`);
-    for (const q of applied.questions)
-      ctx.io.out(`  question ${q.id}: ${q.text}`);
-    if (applied.incidentStatus !== "open") {
-      ctx.io.out(`incident ${incident.id} is now ${applied.incidentStatus}`);
-      return EXIT.ok;
-    }
-    const { ran, stopped } = await dispatch(store, incident, {
-      cwd: ctx.cwd,
-      env: ctx.env,
+    return EXIT.ok;
+  } finally {
+    store.close();
+  }
+};
+
+const DEFAULT_MAX_CYCLES = 10;
+
+/**
+ * Repeat `step` until the incident leaves `open`, the budget stops a pass, or the cap is
+ * hit (DESIGN.md Step 7). The incident is re-read each cycle, so a plan that blocks or
+ * closes it ends the run; a budget stop ends it too, since another cycle could only plan
+ * and never run. Exit 1 when a cycle could not run its provider.
+ */
+export const run: Handler = async (args, ctx) => {
+  let parsed: ReturnType<typeof parseArgs>;
+  try {
+    parsed = parseArgs({
+      args: [...args],
+      allowPositionals: true,
+      strict: true,
+      options: { "max-cycles": { type: "string" } },
     });
-    for (const r of ran)
-      ctx.io.out(
-        `  ran ${r.taskId} (${r.capability}): ${r.status}${r.reason === undefined ? "" : `, ${r.reason}`}; ${r.claims} claim(s)`,
-      );
-    if (stopped !== null) ctx.io.out(`  budget stopped the pass: ${stopped}`);
-    else if (ran.length === 0) ctx.io.out("  nothing ready to run");
-    const claims = store.listClaims(incident.id);
+  } catch (error) {
+    ctx.io.err(
+      `noscope incident run: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return EXIT.usage;
+  }
+  const raw = parsed.values["max-cycles"];
+  const maxCycles = raw === undefined ? DEFAULT_MAX_CYCLES : Number(raw);
+  if (typeof raw === "string" && !/^[1-9]\d*$/.test(raw)) {
+    ctx.io.err("noscope incident run: --max-cycles is a positive whole number");
+    return EXIT.usage;
+  }
+  const store = openStore(ctx);
+  try {
+    const first = requireIncident(store, parsed.positionals, ctx, "run");
+    if (typeof first === "number") return first;
+    if (!refuseUnlessOpen(first, ctx, "run")) return EXIT.cannotProceed;
+    let cycles = 0;
+    let incident = first;
+    let stopped: string | null = null;
+    while (incident.status === "open" && stopped === null && cycles < maxCycles) {
+      cycles += 1;
+      ctx.io.out(`--- cycle ${cycles} ---`);
+      try {
+        stopped = (await cycle(store, incident, ctx)).stopped;
+      } catch (error) {
+        ctx.io.out(`stopped after ${cycles} cycle(s): the cycle could not run`);
+        return reportFailure(ctx, "run", error);
+      }
+      const next = store.getIncident(incident.id);
+      if (next === undefined) throw new Error(`incident ${incident.id} vanished`);
+      incident = next;
+    }
     ctx.io.out(
-      `claims: ${claims.filter((c) => c.status === "verified").length} verified, ${claims.filter((c) => c.status === "asserted").length} asserted`,
+      incident.status !== "open"
+        ? `stopped after ${cycles} cycle(s): incident ${incident.id} is ${incident.status}`
+        : stopped !== null
+          ? `stopped after ${cycles} cycle(s): the budget has no room to run more, ${stopped}`
+          : `stopped after ${cycles} cycle(s): the cap of ${maxCycles} was hit and incident ${incident.id} is still open`,
     );
     return EXIT.ok;
   } finally {

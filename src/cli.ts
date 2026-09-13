@@ -72,6 +72,7 @@ export const COMMANDS: readonly Command[] = [
     usage: "incident run <id> [--max-cycles N]",
     summary: "Repeat step until the incident leaves open or the cap is hit",
     arrives: "PR 14",
+    handler: incident.run,
   },
   {
     group: "incident",
