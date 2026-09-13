@@ -159,7 +159,7 @@ Equipment kinds in v0:
 
 | Kind | Where it runs |
 |---|---|
-| Function | In-process, called by a deterministic capability. `read_file`, `grep_files`, `list_directory`, `git_status`, `git_log`, `git_diff`, `run_readonly`. |
+| Function | In-process, called by a deterministic capability: `read_file`, `grep_files`, `list_directory`, `git_status`, `git_log`, `git_diff`, `run_readonly`. A session reaches function equipment only through the runtime's own MCP equipment server, after v0: one process per session, advertising exactly the capability's declared function equipment, every call logged as an event. |
 | Claude Code built-in tool | Only inside a capability's session, named in that capability's equipment: `Read`, `Grep`, `Glob`, and `Bash` under an allowlist of read-only commands. A capability may instead declare `default` to give its session Claude Code's whole built-in set. |
 | External MCP server, after v0 | Only inside a session. Declared as equipment by name and launch command, passed to the provider alongside the runtime's own equipment server. This is how Craft, GitHub, a browser or anything else with an MCP server becomes equipment without an adapter. |
 
