@@ -34,10 +34,6 @@ pre{background:var(--box);border:1px solid var(--line);border-radius:6px;padding
 code{font:.9em ui-monospace,SFMono-Regular,Menlo,monospace}
 .two{display:grid;grid-template-columns:1fr 1fr;gap:1rem} @media(max-width:760px){.two{grid-template-columns:1fr}}
 .tag{display:inline-block;font-size:.75em;padding:.05rem .4rem;border-radius:3px;border:1px solid var(--dash);color:var(--muted);margin-left:.4rem;vertical-align:middle}
-svg text{font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;fill:var(--fg)}
-svg .box{fill:var(--box);stroke:var(--line);stroke-width:2} svg .box.model{stroke:var(--accent)} svg .box.human{stroke:var(--warn)} svg .box.fact{stroke:var(--ok)}
-svg .edge{stroke:var(--muted);stroke-width:1.8;fill:none;marker-end:url(#ah)} svg .edge.after{stroke-dasharray:6 5;stroke:var(--dash)}
-svg .lbl{fill:var(--muted);font-size:11.5px}
 </style>
 </head>
 <body>
@@ -53,40 +49,43 @@ svg .lbl{fill:var(--muted);font-size:11.5px}
 </div>
 
 <h2>1. The pieces and who talks to whom</h2>
-<svg viewBox="0 0 1060 470" width="100%" role="img" aria-label="Component diagram">
-<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--muted)"/></marker></defs>
-<!-- Mauria -->
-<rect class="box human" x="20" y="20" width="200" height="70" rx="6"/><text x="120" y="48" text-anchor="middle" font-weight="700">Mauria</text><text x="120" y="68" text-anchor="middle" class="lbl">Agency Administrator: objectives, grants, answers, budgets</text>
-<!-- CLI -->
-<rect class="box" x="300" y="20" width="220" height="70" rx="6"/><text x="410" y="48" text-anchor="middle" font-weight="700">CLI  noscope incident …</text><text x="410" y="68" text-anchor="middle" class="lbl">create · show · tree · step · run · events · answer · grant · sop</text>
-<path class="edge" d="M220,55 L298,55"/>
-<!-- Runtime -->
-<rect class="box" x="300" y="130" width="220" height="70" rx="6"/><text x="410" y="158" text-anchor="middle" font-weight="700">Runtime: the cycle</text><text x="410" y="178" text-anchor="middle" class="lbl">observe → plan → validate → dispatch → verify → record</text>
-<path class="edge" d="M410,90 L410,128"/>
-<!-- Store -->
-<rect class="box fact" x="600" y="130" width="440" height="70" rx="6"/><text x="820" y="158" text-anchor="middle" font-weight="700">Incident file  (SQLite, better-sqlite3)</text><text x="820" y="178" text-anchor="middle" class="lbl">incidents · units · tasks · claims · events · grants — every change writes an event in the same transaction</text>
-<path class="edge" d="M520,165 L598,165"/><path class="edge" d="M598,150 L520,150"/>
-<!-- Planner -->
-<rect class="box model" x="20" y="250" width="240" height="70" rx="6"/><text x="140" y="278" text-anchor="middle" font-weight="700">Planner  (Planning Section)</text><text x="140" y="298" text-anchor="middle" class="lbl">one headless call per cycle, returns an action plan as JSON</text>
-<path class="edge" d="M330,200 L200,248"/><text x="230" y="222" class="lbl">incident file, rendered</text>
-<path class="edge" d="M260,270 L340,205"/><text x="300" y="255" class="lbl">action plan</text>
-<!-- Validator -->
-<rect class="box" x="300" y="250" width="220" height="70" rx="6"/><text x="410" y="278" text-anchor="middle" font-weight="700">Validator  (Safety Officer)</text><text x="410" y="298" text-anchor="middle" class="lbl">rules; rejects the whole plan or applies it</text>
-<path class="edge" d="M410,200 L410,248"/>
-<!-- Dispatcher -->
-<rect class="box" x="300" y="360" width="220" height="70" rx="6"/><text x="410" y="388" text-anchor="middle" font-weight="700">Dispatcher + Verifier</text><text x="410" y="408" text-anchor="middle" class="lbl">runs ready tasks, turns results into claims</text>
-<path class="edge" d="M410,320 L410,358"/>
-<!-- Capabilities -->
-<rect class="box" x="600" y="250" width="200" height="70" rx="6"/><text x="700" y="278" text-anchor="middle" font-weight="700">Deterministic capability</text><text x="700" y="298" text-anchor="middle" class="lbl">equipment in-process → verified claims</text>
-<rect class="box model" x="840" y="250" width="200" height="70" rx="6"/><text x="940" y="278" text-anchor="middle" font-weight="700">Session-backed capability</text><text x="940" y="298" text-anchor="middle" class="lbl">equipment + session → asserted claims</text>
-<path class="edge" d="M520,380 C560,380 570,285 598,285"/><path class="edge" d="M520,395 C700,395 760,300 838,290"/>
-<!-- Providers -->
-<rect class="box model" x="600" y="360" width="200" height="70" rx="6"/><text x="700" y="388" text-anchor="middle" font-weight="700">Provider: Claude Code</text><text x="700" y="408" text-anchor="middle" class="lbl">claude -p, five isolation flags, --json-schema</text>
-<rect class="box model after" x="840" y="360" width="200" height="70" rx="6" stroke-dasharray="6 5"/><text x="940" y="388" text-anchor="middle" font-weight="700">Provider: Codex</text><text x="940" y="408" text-anchor="middle" class="lbl">codex exec, --output-schema, isolation flags</text>
-<path class="edge" d="M900,320 L720,358"/><path class="edge after" d="M950,320 L950,358"/>
-<!-- Equipment server -->
-<rect class="box after" x="600" y="440" width="440" height="24" rx="6" stroke-dasharray="6 5"/><text x="820" y="457" text-anchor="middle" class="lbl">MCP equipment server, one per session, exposes only the capability's equipment; external MCP servers are equipment too (after v0)</text>
-</svg>
+<style>
+.layers{display:flex;flex-direction:column;gap:0}
+.row{display:grid;gap:.8rem;align-items:stretch}
+.row.c1{grid-template-columns:1fr} .row.c2{grid-template-columns:1fr 1fr} .row.c3{grid-template-columns:1fr 1fr 1fr}
+.node{border:2px solid var(--line);border-radius:6px;background:var(--box);padding:.55rem .8rem}
+.node.model{border-color:var(--accent)} .node.human{border-color:var(--warn)} .node.fact{border-color:var(--ok)} .node.after{border-style:dashed;border-color:var(--dash)}
+.node b{display:block;margin-bottom:.15rem} .node .sub{color:var(--muted);font-size:.9em}
+.node .io{font-size:.86em;margin-top:.35rem;padding-top:.3rem;border-top:1px dashed var(--line)}
+.node .io span{display:block}
+.down{text-align:center;color:var(--muted);font-size:1.25em;line-height:1.1;padding:.2rem 0} .down small{display:block;font-size:.62em}
+</style>
+<div class="layers">
+  <div class="row c1"><div class="node human"><b>Mauria, the Agency Administrator</b><span class="sub">Creates incidents with an objective, constraints, priorities and a budget. Answers the planner's questions. Gives grants. Reads the incident file through the CLI.</span></div></div>
+  <div class="down">↓<small>noscope incident create · show · tree · step · run · events · answer · grant · sop</small></div>
+  <div class="row c2">
+    <div class="node"><b>Runtime: the cycle</b><span class="sub">observe → plan → validate → apply → dispatch → verify → record. <code>step</code> runs it once; <code>run</code> repeats until the incident leaves <code>open</code>.</span><div class="io"><span>reads: the whole incident file, every cycle</span><span>writes: units, tasks, claims, each with its event, in one transaction</span></div></div>
+    <div class="node fact"><b>Incident file (SQLite, better-sqlite3)</b><span class="sub">Tables: incidents · units · tasks · claims · events · grants. The one place command keeps an incident's state: objective, priorities, budget and spend, the tree, claims by status, decisions with reasons, open questions, grants.</span><div class="io"><span>every change writes an event in the same transaction</span><span><code>incident show</code> prints it; <code>events</code> prints why the tree changed</span></div></div>
+  </div>
+  <div class="down">↓<small>inside one cycle, left to right</small></div>
+  <div class="row c3">
+    <div class="node model"><b>Planner (ICS Planning Section)</b><span class="sub">One headless Claude Code call, Opus 5, no tools, <code>--json-schema</code>.</span><div class="io"><span>in: the incident file rendered as labeled sections</span><span>out: an action plan, JSON: units to open or close, tasks, questions for Mauria, grant requests, SOPs to apply, incident status, rationale</span><span>never runs a tool, never writes</span></div></div>
+    <div class="node"><b>Validator (ICS Safety Officer)</b><span class="sub">Deterministic rules; the whole plan passes or is rejected and the failing rule goes back to the planner next cycle.</span><div class="io"><span>in: the action plan and the incident file</span><span>out: <code>plan.applied</code> with the tree changed, or <code>plan.rejected</code> with the rule</span><span>also holds any task that needs a grant</span></div></div>
+    <div class="node"><b>Dispatcher and Verifier</b><span class="sub">Runs every task whose dependencies are done, one after another in v0, under its time bound.</span><div class="io"><span>in: ready tasks</span><span>out: results → claims (<code>verified</code> from deterministic capabilities, <code>asserted</code> from sessions), <code>task.*</code> and <code>task.usage</code> events</span></div></div>
+  </div>
+  <div class="down">↓<small>each task runs through its capability</small></div>
+  <div class="row c2">
+    <div class="node fact"><b>Deterministic capability</b><span class="sub"><code>check_path</code>, <code>read</code>, <code>grep</code>, <code>git_history</code>: function equipment called in-process, milliseconds, no model.</span><div class="io"><span>in: the task's inputs, validated against its schema</span><span>out: a fact about the machine → verified claims</span></div></div>
+    <div class="node model"><b>Session-backed capability</b><span class="sub"><code>investigate</code>, <code>interpret</code>: declared equipment plus a session with a role prompt; the model is named by the task.</span><div class="io"><span>in: preamble + role text as system prompt, the task brief as the user message, only the declared equipment, an output schema</span><span>out: <code>answered</code> with asserted claims, or <code>insufficient</code> with what it needed; usage; session id</span></div></div>
+  </div>
+  <div class="down">↓<small>a session runs on a provider</small></div>
+  <div class="row c2">
+    <div class="node model"><b>Provider: Claude Code</b><span class="sub"><code>claude -p</code> with <code>--model</code>, <code>--system-prompt</code>, <code>--tools</code>, <code>--allowedTools</code>, <code>--json-schema</code>, and the five isolation flags that keep Mauria's own setup out: about 3k tokens of context, 2.5k with no built-in tools.</span></div>
+    <div class="node model after"><b>Provider: Codex  <span class="tag">after v0</span></b><span class="sub"><code>codex exec</code> with <code>-m</code>, <code>-s read-only</code>, <code>-C</code>, <code>--output-schema</code>, <code>-o</code>, and its isolation flags. Flags verified in its help; nothing run through it yet.</span></div>
+  </div>
+  <div class="down">↓<small>equipment reaches a session as tools</small></div>
+  <div class="row c1"><div class="node after"><b>MCP equipment server  <span class="tag">after v0</span></b><span class="sub">One server implementation, one process per session, launched by the provider from the session's MCP config with the capability's equipment list and the task id, so it advertises only that equipment. Every call lands in the event log with provenance. External MCP servers (Craft, GitHub, a browser) are declared as equipment the same way. Verified today: the provider's <code>--tools</code> filter leaves MCP tools alone, so <code>--tools ""</code> gives a session nothing but this.</span></div></div>
+</div>
 
 <h2>2. One cycle, in order  <span class="tag">noscope incident step</span></h2>
 <p class="lead">Every <code>step</code> runs exactly this and stops. <code>run</code> repeats it until the incident leaves <code>open</code>.</p>
