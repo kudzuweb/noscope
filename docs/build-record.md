@@ -477,3 +477,29 @@ Not exactly to spec, with reasons:
   on stderr, as `step` does, with the store consistent; `--max-cycles` accepts only a
   positive whole number written as digits.
 
+## PR 15: First incident (#15, merged 2026-09-13)
+
+Built: the live run of the first incident against the real Claude Code provider, nine
+steps from the roughdraftplus working directory, recorded in `docs/first-incident.md` with
+the answer, the run cycle by cycle, the totals, the acceptance criteria checked one by one,
+and event-log excerpts; two tuning changes to the planner input that the run demanded.
+
+Not exactly to spec, with reasons:
+
+- The planner input's section 8 shows each capability's input fields (name, type, required
+  or default, nested shapes in full) rendered from its schema, where the design said names
+  and descriptions only: the first live plan named inputs the capabilities could not take
+  and was rejected, and the fifth omitted the fields of an object array. DESIGN.md Step 4
+  says so now.
+- Claims get positional ids (`001-c381`) instead of UUIDs, since the planner mistyped a
+  UUID in `claimsToVerify` and lost a cycle.
+- The run ended `blocked` on a question for Mauria rather than `satisfied`: the planner
+  declared the evidence complete and asked the one thing the repository cannot prove.
+  Criterion 6 is met on her answer and one more step; criteria 5 and 8 were not observed
+  live (the planner stayed within span of control unprompted and the one `interpret` task
+  had enough evidence) and rest on the stub tests, as the document says.
+- The preamble and role prompts were not changed; the plan expected tuning there, and the
+  run needed none.
+- Observations for the revisit, in the document: promotion by exact triple never fired, and
+  grep's per-match claims took the planner's input from 7k tokens to 91k in one cycle and 111k by cycle 9.
+

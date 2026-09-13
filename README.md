@@ -15,6 +15,8 @@ configure lint, unused-code detection, the build and the typecheck that includes
 
 `docs/build-record.md` is one entry per merged PR: what was built and where it departs from the plan and why.
 
+`docs/first-incident.md` is the record of the first live run: the answer the runtime produced, the run cycle by cycle, and the acceptance criteria checked against it.
+
 `docs/architecture.html` is the flow diagram: the pieces, one cycle in order, what a session receives and returns, a claim's life, where the loop waits on Mauria, the tree changing shape. Opens straight from disk.
 
 ## Install and run
