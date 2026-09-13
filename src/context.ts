@@ -18,6 +18,7 @@ export type Handler = (
 /** Exit codes, DESIGN.md Step 7. */
 export const EXIT = {
   ok: 0,
+  failed: 1,
   usage: 2,
   notYetImplemented: 3,
   notFound: 4,

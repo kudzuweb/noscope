@@ -362,3 +362,62 @@ Not exactly to spec, with reasons:
   it), and a ref that starts with the incident id (it could shadow the id a new unit
   receives); `incident show`, `events` and `tree` exit 2, not 4, when no id is given.
 
+## PR 12: Dispatch and step (#12, merged 2026-09-13)
+
+Built: `src/dispatcher.ts` with `dispatch`, which runs every ready task one after another
+under its time bound, promoting a pending task whose dependencies are complete with
+`task.ready`, writing `task.started`, then the claims, the result with `task.completed` and
+`task.usage` in one transaction, or `task.failed` with the reason and the usage the run
+still spent, and stopping with `budget.exceeded` when the incident's budget has no room for
+the next task; claim promotion in the verifier, so a deterministic result that matches an
+asserted claim on subject, predicate and object promotes it with a `claim.verified` event
+recording the task, its effective inputs and the matching claim; `noscope incident step`,
+wiring observe and plan, validate, apply, dispatch, verify and record, printing the proposed
+plan, the verdict, what changed, what ran and any budget stop; `getProvider` reads
+`NOSCOPE_CLAUDE_BIN` so tests run the whole cycle on the stub. Tests: criterion 3 (tasks
+run and their claims appear verified or asserted), a task over its time bound fails with
+`task.failed`, a task whose dependency completes in the same pass runs in that pass with a
+`task.ready` event, the budget stop, a failed session keeping its usage, promotion of a
+matching asserted claim, and one full `step` on the stub planner through to claims, a
+rejected plan, a `satisfied` plan, and exit 5 on a closed incident.
+
+Not exactly to spec, with reasons:
+
+- A deterministic run with no `budget.seconds` is unbounded, as the design's Budget row
+  says unlimited is the v0 default; a session always runs under a bound, the task's own
+  (the validator requires one) or ten minutes for a direct caller, since a hung process
+  must end. The provider kills the session's process group at the same bound. A
+  deterministic run that does carry a bound and passes it is abandoned, not killed: it keeps
+  executing while the next task starts, writes nothing to the store, and holds the process
+  open until it finishes. Only read-only capabilities exist in v0, so the overlap has no
+  effect on the record; a writing capability will need a cancellable run.
+- A task still `running` when a pass starts was left by a pass that died mid-run (v0 runs
+  one task at a time in one process), so the pass fails it with that reason rather than
+  skipping it forever, and the planner can reissue it.
+- A result that does not fit its schema fails the task with the issues in one sentence;
+  a bound longer than the timer can hold (about 24 days) is treated as no bound.
+- Set aside for Mauria: the planner's own tokens are recorded on `plan.proposed` and do
+  not count against the incident's budget, since the design's Budget row speaks of tasks;
+  whether an incident budget should include planning spend is a design call.
+- The budget check before a task uses the task's own bound where it sets one, which the
+  validator has already fitted to the incident's remaining budget, and the capability's
+  typical cost otherwise; before the review it always used the typical cost, so a session
+  task the validator had just approved could be refused on the same step.
+- A budget stop ends the pass and is returned to the caller: `step` prints it, and the
+  planner's section 1 shows the last stop's reason, so the next plan can respond.
+- A session that fails after spending (an error envelope, or output that does not fit the
+  capability's schema) throws a `SessionError` carrying its session id and usage, and the
+  dispatcher records that usage on `task.failed`, so failed sessions still count against a
+  token budget.
+- Promotion of asserted claims lives in `recordClaims`, so any deterministic result
+  promotes what it matches, whether or not the planner asked through `claimsToVerify`;
+  the design's Step 6 now describes the event's record, which is the claim-verification
+  record Mauria asked for on 2026-09-13.
+- `step` exits 0 when the plan is rejected: the cycle ran and its outcome is recorded.
+  Exit 5 is for an incident that is not open. A planner that cannot run at all (no binary,
+  a non-zero exit, no JSON) exits 1 with the reason on stderr and nothing written for the
+  cycle; the design's exit-code table has the row.
+- `step` prints the proposed plan's units, tasks, questions and requests before the
+  verdict, so a rejected plan can be read without opening the event log.
+- `NOSCOPE_CLAUDE_BIN` names the binary every provider call runs on, the planner's and
+  each task session's; the README and the design's Step 2 say so beside `NOSCOPE_DB`.

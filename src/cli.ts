@@ -56,6 +56,7 @@ export const COMMANDS: readonly Command[] = [
     usage: "incident step <id>",
     summary: "Run one cycle and stop",
     arrives: "PR 12",
+    handler: incident.step,
   },
   {
     group: "incident",
