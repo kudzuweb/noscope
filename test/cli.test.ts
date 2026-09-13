@@ -35,6 +35,18 @@ describe("noscope cli", () => {
     expect(io.lines.err[0]).toContain("PR 12");
   });
 
+  it("treats incident with no subcommand or --help as help", async () => {
+    for (const argv of [
+      ["incident"],
+      ["incident", "--help"],
+      ["incident", "-h"],
+    ]) {
+      const io = capture();
+      expect(await run(argv, io)).toBe(0);
+      expect(io.lines.out.join("\n")).toBe(helpText());
+    }
+  });
+
   it("rejects an unknown incident command with help on stderr", async () => {
     const io = capture();
     expect(await run(["incident", "frobnicate"], io)).toBe(2);

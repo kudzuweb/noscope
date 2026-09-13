@@ -93,6 +93,15 @@ export async function run(argv: readonly string[], io: Io): Promise<number> {
     return 0;
   }
   if (first === "incident") {
+    if (
+      second === undefined ||
+      second === "--help" ||
+      second === "-h" ||
+      second === "help"
+    ) {
+      io.out(helpText());
+      return 0;
+    }
     const command = INCIDENT_COMMANDS.find((c) => c.name === second);
     if (command === undefined) {
       io.err(
