@@ -238,7 +238,8 @@ hooks out; `--bare` is not used because it authenticates only with an API key. S
 not made ephemeral: every planner and task session leaves its transcript under Claude Code's
 project directory for the session's working directory (`~/.claude/projects/<directory with
 slashes as dashes>/<session id>.jsonl`), and the session id is on `plan.proposed`, on
-`task.completed` and `task.failed`, and in every asserted claim's provenance, so a run can
+`task.completed`, `task.failed` and `task.insufficient`, and in every asserted claim's
+provenance, so a run can
 be read back call by call while the runtime is being refined (Mauria, 2026-09-13). Codex: `--ignore-user-config`,
 `--ignore-rules`, `--ephemeral`, `--json`, verified present in `codex exec --help` on
 2026-09-12 and not yet tested for context size or subscription billing. Permissions come only
@@ -437,7 +438,7 @@ v0 is done when all of these hold on the first incident:
 | The Claude Agent SDK requires an API key. | The SDK quickstart, read by a docs subagent; not read directly. |
 | zod 4 converts a schema to JSON Schema with `z.toJSONSchema`, targets draft-2020-12 by default, and cannot represent dates, maps, sets, transforms or bigints. | The zod.dev JSON Schema page, fetched 2026-09-12. |
 | Headless `--tools` filters built-in tools only; MCP tools from `--mcp-config` stay available even with `--tools ""`. | Four test calls against a minimal stdio MCP server, 2026-09-12; `spikes/mcp-tools-filter/run.sh` reproduces them. |
-| `--json-schema` returns a schema-valid `structured_output` field, and `--tools ""` plus the five fixed flags work with it. | A test call on the installed version with an planner-shaped prompt and action plan schema, 2026-09-12. |
+| `--json-schema` returns a schema-valid `structured_output` field, and `--tools ""` plus the five flags then fixed (the four of Step 3 and `--no-session-persistence`, since dropped) work with it. | A test call on the installed version with an planner-shaped prompt and action plan schema, 2026-09-12. |
 
 ### Model choices
 | Role | Model | Because |
@@ -486,7 +487,7 @@ handshake of a few JSON messages, and one pipe round trip per call, against a se
 already costs seconds. A server per capability would duplicate the registry and turn every
 new capability into a new process type.
 ### Speed
-Measured 2026-09-12 on this machine, all with the five fixed flags:
+Measured 2026-09-12 on this machine, all with the five flags then fixed (the four of Step 3 and `--no-session-persistence`, dropped 2026-09-13):
 
 | Call | Time |
 |---|---|

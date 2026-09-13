@@ -115,7 +115,13 @@ function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-type Outcome = { result: unknown; usage: Usage; record: () => Claim[] };
+/** A finished run; `sessionId` is present for a session so its transcript can be found from `task.completed`. */
+type Outcome = {
+  result: unknown;
+  usage: Usage;
+  sessionId?: string;
+  record: () => Claim[];
+};
 
 async function runTask(
   store: Store,
@@ -164,6 +170,7 @@ async function runTask(
   return {
     result,
     usage: session.usage,
+    sessionId: session.sessionId,
     record: () =>
       recordSessionResult(store, task, capability, result, session.sessionId),
   };
@@ -253,7 +260,13 @@ export async function dispatch(
           "completed",
           actor,
           "task.completed",
-          { result: outcome.result },
+          {
+            result: outcome.result,
+            extra:
+              outcome.sessionId === undefined
+                ? {}
+                : { sessionId: outcome.sessionId },
+          },
         );
         store.record(incident.id, "task.usage", actor, {
           taskId: next.id,

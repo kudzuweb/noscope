@@ -173,6 +173,9 @@ describe("dispatcher", () => {
       status: "asserted",
       provenance: { sessionId: "stub-session" },
     });
+    expect(
+      store.listEvents("i1").find((e) => e.type === "task.completed")?.payload,
+    ).toMatchObject({ sessionId: "stub-session" });
     const usage = store.listEvents("i1").find((e) => e.type === "task.usage");
     expect(usage?.payload).toMatchObject({
       usage: { inputTokens: 1500, outputTokens: 42, costUsd: 0.0123 },

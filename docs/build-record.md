@@ -556,7 +556,11 @@ Not exactly to spec, with reasons:
 - Transcripts land under `~/.claude/projects/<directory with slashes as dashes>/`, which
   for an incident run from a repository is that repository's own Claude Code project
   directory, beside Mauria's interactive sessions there; they are told apart by the
-  session id on `plan.proposed`, `task.completed`, `task.failed` and claim provenance.
+  session id on `plan.proposed`, `task.completed`, `task.failed`, `task.insufficient` and
+  claim provenance.
+- From the review: `task.completed` did not carry the session id before this PR, so a
+  session that completed with no claims left no way to its transcript; the dispatcher now
+  writes it there, which is the one behavior change beyond the flag.
 
 ## PR 19: Incident review (#19, merged 2026-09-13)
 
