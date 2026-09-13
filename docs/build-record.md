@@ -493,11 +493,14 @@ Not exactly to spec, with reasons:
   says so now.
 - Claims get positional ids (`001-c381`) instead of UUIDs, since the planner mistyped a
   UUID in `claimsToVerify` and lost a cycle.
-- The run ended `blocked` on a question for Mauria rather than `satisfied`: the planner
-  declared the evidence complete and asked the one thing the repository cannot prove.
-  Criterion 6 is met on her answer and one more step; criteria 5 and 8 were not observed
-  live (the planner stayed within span of control unprompted and the one `interpret` task
-  had enough evidence) and rest on the stub tests, as the document says.
+- The run's first nine cycles ended `blocked` on a question for Mauria: the planner
+  declared the evidence complete and asked the one thing the repository cannot prove. Her
+  answer contradicted the planner's inferred link; the next three cycles said so, found a
+  stronger explanation (the selection rests at the document end after a mount-time
+  `setContent`), verified its code facts deterministically, and closed the incident
+  `satisfied` on cycle 12, meeting criterion 6. Criteria 5 and 8 were not observed live
+  (the planner stayed within span of control unprompted and the `interpret` tasks had enough
+  evidence) and rest on the stub tests, as the document says.
 - The preamble and role prompts were not changed; the plan expected tuning there, and the
   run needed none.
 - Observations for the revisit, in the document: promotion by exact triple never fired, and
