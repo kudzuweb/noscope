@@ -3,6 +3,7 @@ import { listCapabilities } from "../capabilities/index.js";
 import { type Context, EXIT, type Handler } from "../context.js";
 import { Budget, type Event, type Incident, type Unit } from "../models.js";
 import { now, resolveDbPath, Store, sumUsage } from "../store.js";
+import { renderTree } from "../tree.js";
 
 const ACTOR = "cli";
 
@@ -227,6 +228,25 @@ export const events: Handler = async (args, ctx) => {
     const incident = requireIncident(store, args, ctx, "events");
     if (incident === undefined) return EXIT.notFound;
     for (const e of store.listEvents(incident.id)) ctx.io.out(renderEvent(e));
+    return EXIT.ok;
+  } finally {
+    store.close();
+  }
+};
+
+export const tree: Handler = async (args, ctx) => {
+  const store = openStore(ctx);
+  try {
+    const incident = requireIncident(store, args, ctx, "tree");
+    if (incident === undefined) return EXIT.notFound;
+    ctx.io.out(
+      `incident ${incident.id} [${incident.status}]  ${incident.objective}`,
+    );
+    for (const line of renderTree(
+      store.listUnits(incident.id),
+      store.listTasks(incident.id),
+    ))
+      ctx.io.out(line);
     return EXIT.ok;
   } finally {
     store.close();

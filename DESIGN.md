@@ -146,7 +146,7 @@ mutation in its payload, which is what makes the tables rebuildable from the eve
 | `events` | `id`, `scope` (`incident` or `system`), `incident_id` (required for an incident event, null for a system event, enforced by a CHECK), `sequence` (unique per incident, and per the system scope), `type`, `actor`, `payload_json`, `created_at`. A payload carries a `mutation` naming the exact state change the event records, so replay applies that and nothing else; an event with no mutation, such as `plan.proposed`, changes no state. |
 | `grants` | `id`, `scope` (`incident` or `standing`), `incident_id` (null for standing), `capability`, `effect`, `reason`, `granted_by`, `per_task` (boolean), `created_at`. Empty in v0. |
 
-Event types in v0: `incident.created`, `incident.closed`, `unit.created`, `unit.closed`,
+Event types in v0: `incident.created`, `incident.blocked`, `incident.closed`, `unit.created`, `unit.closed`,
 `task.created`, `task.started`, `task.completed`, `task.failed`,
 `task.cancelled`, `task.insufficient`, `claim.asserted`, `claim.verified`, `claim.rejected`,
 `plan.proposed`, `plan.rejected`, `plan.applied`, `task.usage`, `budget.exceeded`,

@@ -33,6 +33,7 @@ export const NeededKind = z.enum([
 
 export const EventType = z.enum([
   "incident.created",
+  "incident.blocked",
   "incident.closed",
   "unit.created",
   "unit.closed",

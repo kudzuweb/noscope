@@ -48,6 +48,7 @@ export const COMMANDS: readonly Command[] = [
     usage: "incident tree <id>",
     summary: "Print the unit tree with task marks",
     arrives: "PR 11",
+    handler: incident.tree,
   },
   {
     group: "incident",

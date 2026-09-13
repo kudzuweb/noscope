@@ -324,3 +324,33 @@ Not exactly to spec, with reasons:
   whose child unit still runs a task passes (the rule speaks of the unit's own tasks), and
   two tasks in one plan that each fit the remaining budget but together exceed it pass (the
   rule speaks of a task's budget).
+## PR 11: Apply and tree (#11, merged 2026-09-13)
+
+Built: `src/runtime.ts` with `applyPlan`, which applies a validated action plan in one
+transaction (units created and closed, tasks created and cancelled, questions and
+capability and grant requests recorded, the incident's status set, then `plan.applied`
+carrying the ids it made and `claimsToVerify`); `src/tree.ts` rendering the unit tree with
+each unit's status and purpose and each task's mark; `noscope incident tree`. Tests cover
+the design's acceptance criteria 2, 4 and 5 through the validator and the applier: a plan
+creating a unit and a task applies with ready and pending marks; a later plan closes the
+unit and `tree` and `events` show it; an eight-child plan is rejected and a regrouped plan
+passes; the three blocking channels block the incident, and `satisfied` closes it.
+
+Not exactly to spec, with reasons:
+
+- Ids are positional and readable: units `<incident>-u02` onward (the command unit is
+  `<incident>-command`), tasks `<incident>-t01` onward, questions `<incident>-q01` onward,
+  so the planner and Mauria can refer to them in a plan or a command without copying UUIDs.
+- A new task is `ready` when every dependency is already completed and `pending` otherwise;
+  the dispatcher (PR 12) promotes pending tasks as their dependencies finish.
+- A new event type, `incident.blocked`, records the status change when a plan asks a
+  question, requests a capability or requests a grant; the design's event list has it.
+  `satisfied` and `failed` write `incident.closed`, as before.
+- The tree also marks `failed` and `cancelled` tasks by those words, beside the design's
+  done, running, ready and pending, so a task that ended without finishing is visible.
+- `claimsToVerify` is recorded on `plan.applied` and not acted on here; scheduling the
+  deterministic check and recording the promotion is the dispatcher's, with the
+  claim-verification record Mauria asked for on 2026-09-13 (open item on the thread).
+- `applyPlan` trusts the verdict it is handed and does not re-run the validator; the caller
+  (`incident step`, PR 12) validates first, as the tests here do.
+
