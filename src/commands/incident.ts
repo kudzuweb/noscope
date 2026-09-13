@@ -108,6 +108,15 @@ function requireIncident(
   return incident;
 }
 
+const CLIP = 160;
+
+/** The incident file is for reading at a glance; a claim's object is shown to a fixed width and the store holds the rest. */
+function clip(text: string): string {
+  return text.length <= CLIP
+    ? text
+    : `${text.slice(0, CLIP)}… (${text.length} chars)`;
+}
+
 function renderIncidentFile(
   store: Store,
   incident: Incident,
@@ -164,7 +173,7 @@ function renderIncidentFile(
   );
   for (const c of claims)
     lines.push(
-      `  [${c.status}] ${c.subject} ${c.predicate} ${JSON.stringify(c.object)}`,
+      `  [${c.status}] ${c.subject} ${c.predicate} ${clip(JSON.stringify(c.object))}`,
     );
   lines.push("");
   lines.push("decisions:");

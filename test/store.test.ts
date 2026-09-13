@@ -254,6 +254,55 @@ describe("store", () => {
     store.close();
   });
 
+  it("refuses a claim created rejected, or verified without deterministic provenance", () => {
+    const store = new Store(":memory:");
+    scripted(store);
+    const base = {
+      id: "c3",
+      incidentId: "i1",
+      subject: "s",
+      predicate: "p",
+      object: null,
+      confidence: 1,
+      evidence: [],
+      createdAt: now(),
+    };
+    expect(() =>
+      store.createClaim(
+        {
+          ...base,
+          status: "verified",
+          provenance: {
+            capability: "investigate",
+            taskId: "t1",
+            sessionId: "x",
+          },
+        },
+        "verifier",
+      ),
+    ).toThrow(/deterministic provenance/);
+    expect(() =>
+      store.createClaim(
+        {
+          ...base,
+          status: "rejected",
+          provenance: { capability: "grep", taskId: "t1", inputs: {} },
+        },
+        "verifier",
+      ),
+    ).toThrow(/created rejected/);
+    store.createClaim(
+      {
+        ...base,
+        status: "verified",
+        provenance: { capability: "grep", taskId: "t1", inputs: {} },
+      },
+      "verifier",
+    );
+    expect(store.listClaims("i1").some((c) => c.id === "c3")).toBe(true);
+    store.close();
+  });
+
   it("stores a claim whose object is absent as null rather than failing the insert", () => {
     const store = new Store(":memory:");
     scripted(store);

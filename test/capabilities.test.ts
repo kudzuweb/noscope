@@ -246,7 +246,9 @@ describe("deterministic capabilities", () => {
       incidentId: task.incidentId,
       cwd: tree,
     });
-    const claims = recordClaims(store, task, capability, result.claims);
+    const claims = recordClaims(store, task, capability, result.claims, {
+      inputs: result.inputs,
+    });
     expect(claims).toHaveLength(1);
     const stored = store.listClaims("i1");
     expect(stored[0]).toMatchObject({
@@ -255,12 +257,28 @@ describe("deterministic capabilities", () => {
       provenance: {
         capability: "grep",
         taskId: "t1",
-        inputs: { root: tree, pattern: "delete" },
+        inputs: {
+          root: tree,
+          pattern: "delete",
+          glob: "*",
+          ignoreCase: false,
+          exclude: ["node_modules", ".git"],
+          maxMatches: 500,
+        },
       },
     });
+    expect(stored[0]?.provenance.sessionId).toBeUndefined();
     expect(store.listEvents("i1").map((e) => e.type)).toContain(
       "claim.verified",
     );
+    expect(() =>
+      recordClaims(store, task, capability, result.claims, { sessionId: "s" }),
+    ).toThrow(/inputs that ran/);
+    const read = getCapability("read");
+    if (read === undefined) throw new Error("read is registered");
+    expect(() =>
+      recordClaims(store, task, read, result.claims, { inputs: {} }),
+    ).toThrow(/ran grep, not read/);
     store.close();
   });
 
