@@ -2,12 +2,20 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { bashAllowlist } from "../equipment/index.js";
 import { Usage } from "../models.js";
-import {
-  type Provider,
-  type SessionOutcome,
-  type SessionRequest,
-  sessionSystemPrompt,
-} from "./base.js";
+import type { Provider, SessionOutcome, SessionRequest } from "./base.js";
+
+/** Every Anthropic model Claude Code serves as of 2026-09-13 (DESIGN.md Step 5). */
+const CLAUDE_CODE_MODELS = [
+  "claude-fable-5-1",
+  "claude-opus-5",
+  "claude-sonnet-5",
+  "claude-haiku-4-5",
+  "claude-fable-5",
+  "claude-opus-4-8",
+  "claude-opus-4-7",
+  "claude-opus-4-6",
+  "claude-sonnet-4-6",
+] as const;
 
 /**
  * The fixed isolation flags: together they drop a session's context from about 40k tokens to
@@ -37,7 +45,7 @@ export function renderClaudeCodeArgs(request: SessionRequest): string[] {
     "--model",
     request.model,
     "--system-prompt",
-    sessionSystemPrompt(request.role),
+    request.systemPrompt,
     "--tools",
     tools,
     "--json-schema",
@@ -160,6 +168,7 @@ function runProcess(
 export function claudeCodeProvider(binary = "claude"): Provider {
   return {
     name: "claude-code",
+    models: CLAUDE_CODE_MODELS,
     run: async (request) => {
       if (!existsSync(request.cwd))
         throw new Error(`session cwd ${request.cwd} does not exist`);

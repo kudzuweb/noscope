@@ -1,5 +1,9 @@
 import { jsonSchemaFor, type Task, type Unit, type Usage } from "../models.js";
-import type { Provider, SessionRequest } from "../providers/index.js";
+import {
+  type Provider,
+  type SessionRequest,
+  sessionSystemPrompt,
+} from "../providers/index.js";
 import type { SessionCapability } from "./registry.js";
 
 const DEFAULT_SESSION_SECONDS = 600;
@@ -33,7 +37,7 @@ export function buildSessionRequest(
     throw new Error(`task ${task.id} names no model for ${capability.name}`);
   return {
     model: task.model,
-    role: capability.session.systemPrompt,
+    systemPrompt: sessionSystemPrompt(capability.session.systemPrompt),
     prompt: renderTaskBrief(task, unit),
     tools: capability.equipment,
     bashAllowlist: capability.session.bashAllowlist ?? [],

@@ -2,8 +2,7 @@ import type { Incident, Task, Unit } from "../../src/models.js";
 import { now, type Store } from "../../src/store.js";
 
 /** An incident with its command unit in the store, returned with a task builder bound to them. */
-export function scriptedIncident(store: Store, id = "i1") {
-  const at = now();
+export function scriptedIncident(store: Store, id = "i1", at = now()) {
   const incident: Incident = {
     id,
     objective: "find where comment deletion scrolls the view",

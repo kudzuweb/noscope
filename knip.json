@@ -5,6 +5,7 @@
     "src/models.ts",
     "src/equipment/index.ts",
     "src/capabilities/index.ts",
+    "src/planner.ts",
     "test/**/*.test.ts"
   ],
   "project": ["src/**/*.ts", "test/**/*.ts"]
