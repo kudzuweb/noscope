@@ -10,3 +10,17 @@ have to zoom in. `DESIGN.md` is the design. `BUILD-PLAN.md` breaks it into fifte
 `spikes/` holds one-off verification scripts that back facts in `DESIGN.md`; each has a `run.sh`.
 
 `docs/architecture.html` is the flow diagram: the pieces, one cycle in order, what a session receives and returns, a claim's life, where the loop waits on Mauria, the tree changing shape. Opens straight from disk.
+
+## Install and run
+
+Node 24 and pnpm 10.
+
+```
+pnpm install
+pnpm build
+./bin/noscope --help
+```
+
+`pnpm check` runs lint (biome), typecheck, tests (vitest), unused-code detection (knip) and
+the build, which is what CI runs on every pull request. Commands that are not built yet
+print the PR that delivers them and exit 3.
