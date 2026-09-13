@@ -147,7 +147,7 @@ export const Claim = z.object({
   incidentId: z.string().min(1),
   subject: z.string().min(1),
   predicate: z.string().min(1),
-  object: z.unknown(),
+  object: z.unknown().default(null),
   status: ClaimStatus,
   confidence: z.number().min(0).max(1).nullable(),
   evidence: z.array(z.string()),

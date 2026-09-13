@@ -77,3 +77,31 @@ Not exactly to spec, with reasons:
 - `snapshot()` and `resolveDbPath()` were added; `record()` exists for events with no
   state change.
 
+
+## PR 4: Incident commands (#4, merged 2026-09-13)
+
+Built: `noscope incident create`, `show` and `events` over the store; handlers in
+`src/commands/incident.ts` that parse their own flags strictly; `src/context.ts` holding the
+shared types and the exit-code table; the incident file rendered with every section the
+design lists; tests for acceptance criterion 1 and the exit codes.
+
+Not exactly to spec, with reasons:
+
+- `--budget` is `--budget-tokens N` and `--budget-seconds N`, since a budget has two
+  dimensions in the contract.
+- Handlers receive the raw arguments after the command words and parse them themselves,
+  so `--constraint` repeats and an unknown flag exits 2; the top-level dispatcher knows only
+  help and version.
+- Incident ids are zero-padded ordinals, `001`, and the root unit is `001-command`.
+- "Capabilities registered" prints "(none yet)" until PR 6 lands the registry.
+- The store was hardened in this PR from the PR 3 review's final report, which arrived after
+  PR 3 merged: updates verify they changed exactly one row, so an event is never recorded for
+  a change that did not happen; writes validate their mutation before applying it, so a bad
+  status cannot reach a table and poison every later read; `replay()` sorts events itself
+  (system first, then per incident by sequence); the file carries a schema version and a
+  file from another version is refused with a message rather than failing on the first
+  write; `incident.questions` and `incident.capabilityRequests` mutations exist so PR 13 can
+  store answers in the table; `batch()` runs several writes as one transaction for PR 11;
+  the inserts name their columns; and the two task UPDATEs became one. A claim with no
+  object stores null.
+- The README's pun line now ends "not even to one-shot", at Mauria's ask.
