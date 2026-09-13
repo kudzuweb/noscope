@@ -1,11 +1,6 @@
 import type { z } from "zod";
 import { getEquipment, isBuiltinTool } from "../equipment/index.js";
-import {
-  type ClaimProposal,
-  Cost,
-  type Effect,
-  type Produces,
-} from "../models.js";
+import { type ClaimProposal, Cost, type Effect } from "../models.js";
 
 /** The role text a session-backed capability gives its session; the model comes from each task. */
 export type SessionSpec = {
@@ -13,6 +8,7 @@ export type SessionSpec = {
   bashAllowlist?: readonly string[];
 };
 
+/** What a deterministic run knows about where it runs: relative path inputs resolve against `cwd`. */
 export type RunContext = {
   taskId: string;
   incidentId: string;
@@ -25,51 +21,66 @@ export type CapabilityResult<O> = {
   claims: ClaimProposal[];
 };
 
+type Run<I extends z.ZodType, O extends z.ZodType> = (
+  input: z.output<I>,
+  ctx: RunContext,
+) => Promise<CapabilityResult<z.output<O>>>;
+
+type CapabilityBase<I extends z.ZodType, O extends z.ZodType> = {
+  name: string;
+  description: string;
+  equipment: readonly string[];
+  input: I;
+  output: O;
+  effect: Effect;
+  cost: Cost;
+};
+
 /**
  * The assignable thing: declared equipment plus, when judgment is needed, a session. A
- * capability with no session is deterministic and its claims are verified on arrival; one
- * with a session produces asserted claims (DESIGN.md Step 3).
+ * deterministic capability runs in process and its claims are verified on arrival; a
+ * session-backed one produces asserted claims (DESIGN.md Step 3). The kind is the type, so
+ * a capability cannot be both or neither.
  */
+export type DeterministicCapability<
+  I extends z.ZodType = z.ZodType,
+  O extends z.ZodType = z.ZodType,
+> = CapabilityBase<I, O> & {
+  kind: "deterministic";
+  produces: "verified_claims";
+  run: Run<I, O>;
+};
+
+export type SessionCapability<
+  I extends z.ZodType = z.ZodType,
+  O extends z.ZodType = z.ZodType,
+> = CapabilityBase<I, O> & {
+  kind: "session";
+  produces: "asserted_claims";
+  session: SessionSpec;
+};
+
 export type Capability<
   I extends z.ZodType = z.ZodType,
   O extends z.ZodType = z.ZodType,
-> = {
-  name: string;
-  description: string;
-  equipment: readonly string[];
-  input: I;
-  output: O;
-  effect: Effect;
-  produces: Produces;
-  cost: Cost;
-  session?: SessionSpec | undefined;
-  run?:
-    | ((
-        input: z.infer<I>,
-        ctx: RunContext,
-      ) => Promise<CapabilityResult<z.infer<O>>>)
-    | undefined;
-};
+> = DeterministicCapability<I, O> | SessionCapability<I, O>;
+
+type Spec<I extends z.ZodType, O extends z.ZodType> = Omit<
+  CapabilityBase<I, O>,
+  "cost"
+> & { cost?: Cost };
 
 const registry = new Map<string, Capability>();
 
-export function defineCapability<
-  I extends z.ZodType,
-  O extends z.ZodType,
->(spec: {
-  name: string;
-  description: string;
-  equipment: readonly string[];
-  input: I;
-  output: O;
-  effect: Effect;
-  cost?: Cost;
-  session?: SessionSpec;
-  run?: (
-    input: z.infer<I>,
-    ctx: RunContext,
-  ) => Promise<CapabilityResult<z.infer<O>>>;
-}): Capability<I, O> {
+export function defineCapability<I extends z.ZodType, O extends z.ZodType>(
+  spec: Spec<I, O> & { run: Run<I, O>; session?: never },
+): DeterministicCapability<I, O>;
+export function defineCapability<I extends z.ZodType, O extends z.ZodType>(
+  spec: Spec<I, O> & { session: SessionSpec; run?: never },
+): SessionCapability<I, O>;
+export function defineCapability<I extends z.ZodType, O extends z.ZodType>(
+  spec: Spec<I, O> & { run?: Run<I, O>; session?: SessionSpec },
+): Capability<I, O> {
   if (registry.has(spec.name))
     throw new Error(`capability ${spec.name} is already registered`);
   if ((spec.session === undefined) === (spec.run === undefined)) {
@@ -93,19 +104,29 @@ export function defineCapability<
       );
     }
   }
-  const capability: Capability<I, O> = {
+  const base: CapabilityBase<I, O> = {
     name: spec.name,
     description: spec.description,
     equipment: spec.equipment,
     input: spec.input,
     output: spec.output,
     effect: spec.effect,
-    produces:
-      spec.session === undefined ? "verified_claims" : "asserted_claims",
     cost: Cost.parse(spec.cost ?? {}),
-    session: spec.session,
-    run: spec.run,
   };
+  const capability: Capability<I, O> =
+    spec.run !== undefined
+      ? {
+          ...base,
+          kind: "deterministic",
+          produces: "verified_claims",
+          run: spec.run,
+        }
+      : {
+          ...base,
+          kind: "session",
+          produces: "asserted_claims",
+          session: spec.session as SessionSpec,
+        };
   registry.set(spec.name, capability as Capability);
   return capability;
 }
@@ -126,7 +147,7 @@ export async function runDeterministic(
 ): Promise<CapabilityResult<unknown>> {
   const capability = registry.get(name);
   if (capability === undefined) throw new Error(`no capability named ${name}`);
-  if (capability.run === undefined)
+  if (capability.kind !== "deterministic")
     throw new Error(
       `capability ${name} needs a session and cannot run deterministically`,
     );

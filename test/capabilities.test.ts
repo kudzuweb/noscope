@@ -21,14 +21,16 @@ const ctx = { taskId: "t1", incidentId: "i1", cwd: tree };
 describe("deterministic capabilities", () => {
   it("registers the four v0 deterministic capabilities as read-only producers of verified claims", () => {
     const names = listCapabilities()
-      .filter((c) => c.run !== undefined)
+      .filter((c) => c.kind === "deterministic")
       .map((c) => c.name);
     expect(names).toEqual(
       expect.arrayContaining(["check_path", "git_history", "grep", "read"]),
     );
     for (const c of listCapabilities()) {
       expect(c.effect).toBe("read_only");
-      if (c.run !== undefined) expect(c.produces).toBe("verified_claims");
+      if (c.kind === "deterministic")
+        expect(c.produces).toBe("verified_claims");
+      else expect(c.produces).toBe("asserted_claims");
     }
   });
 
@@ -135,6 +137,7 @@ describe("deterministic capabilities", () => {
       }),
     ).toThrow(/built-in/);
     expect(() =>
+      // @ts-expect-error a capability with neither a run nor a session is not a capability
       defineCapability({
         name: "bad3",
         description: "x",

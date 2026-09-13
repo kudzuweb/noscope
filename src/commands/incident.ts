@@ -192,8 +192,7 @@ function renderIncidentFile(
 
 const registeredCapabilities = (): readonly string[] =>
   listCapabilities().map(
-    (c) =>
-      `${c.name}: ${c.description} [${c.produces === "verified_claims" ? "deterministic" : "session"}, ${c.effect}]`,
+    (c) => `${c.name}: ${c.description} [${c.kind}, ${c.effect}]`,
   );
 
 export const show: Handler = async (args, ctx) => {
