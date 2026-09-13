@@ -95,8 +95,12 @@ describe("claude code provider", () => {
       expect(outcome.sessionId).toBe("stub-session");
       expect(outcome.usage).toEqual({
         inputTokens: 1500,
+        uncachedInputTokens: 1000,
+        cacheWriteTokens: 200,
+        cacheReadTokens: 300,
         outputTokens: 42,
         seconds: 1.5,
+        costUsd: 0.0123,
       });
       expect(SessionResult.parse(outcome.output)).toMatchObject({
         outcome: "answered",
@@ -123,6 +127,24 @@ describe("claude code provider", () => {
       delete process.env.NOSCOPE_STUB_FAIL;
     }
     expect(() => parseClaudeCodeResult("not json")).toThrow(/no JSON result/);
+    const noCost = parseClaudeCodeResult(
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        session_id: "s",
+        structured_output: {},
+        duration_ms: 500,
+        usage: { input_tokens: 7, output_tokens: 3 },
+      }),
+    );
+    expect(noCost.usage).toEqual({
+      inputTokens: 7,
+      uncachedInputTokens: 7,
+      cacheWriteTokens: 0,
+      cacheReadTokens: 0,
+      outputTokens: 3,
+      seconds: 0.5,
+    });
     expect(() =>
       parseClaudeCodeResult(
         JSON.stringify({ type: "result", subtype: "success", session_id: "s" }),

@@ -336,7 +336,13 @@ reason recorded as a `plan.rejected` event and fed back as input 9 on the next c
 ### Step 6: dispatch, record, verify
 Ready means every dependency is completed. v0 runs ready tasks sequentially. Each
 run writes `task.started`, then the result and `task.completed` or
-`task.failed` in one transaction.
+`task.failed` in one transaction, with a `task.usage` event carrying what the run spent:
+the whole input context (the figure a token budget counts) and its split into uncached,
+cache-write and cache-read tokens, output tokens, seconds, and the provider's own cost at
+list price when it reports one (`total_cost_usd` in the Claude Code envelope). The
+planner's call records the same shape on `plan.proposed`. A deterministic run spends no
+tokens and costs nothing; a run that fails before the provider answers records no cost,
+since none is known, and a spend summed from such events carries no cost either.
 
 The verifier turns results into claims. A deterministic capability's result becomes a `verified`
 claim with the capability and the effective inputs as provenance: the inputs as parsed, with

@@ -135,8 +135,12 @@ async function runTask(
       result: run.output,
       usage: {
         inputTokens: 0,
+        uncachedInputTokens: 0,
+        cacheWriteTokens: 0,
+        cacheReadTokens: 0,
         outputTokens: 0,
         seconds: (Date.now() - started) / 1000,
+        costUsd: 0,
       },
       record: () =>
         recordClaims(store, task, capability, run.claims, {
@@ -269,6 +273,9 @@ export async function dispatch(
           ? error.usage
           : {
               inputTokens: 0,
+              uncachedInputTokens: 0,
+              cacheWriteTokens: 0,
+              cacheReadTokens: 0,
               outputTokens: 0,
               seconds: (Date.now() - started) / 1000,
             };

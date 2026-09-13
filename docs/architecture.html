@@ -121,7 +121,7 @@ code{font:.9em ui-monospace,SFMono-Regular,Menlo,monospace}
 <li><code>outcome: answered | insufficient</code>.</li>
 <li>If answered: claims (subject, predicate, object, confidence, evidence pointers), all entered as <code>asserted</code>.</li>
 <li>If insufficient: <code>needed</code>, the evidence or access it lacked, and no claims. The planner sees this next cycle and creates the task that supplies it, or asks Mauria.</li>
-<li>Usage: tokens and time, recorded as <code>task.usage</code> against the budget.</li>
+<li>Usage: input tokens with their uncached, cache-write and cache-read split, output tokens, time, and the provider's cost at list price, recorded as <code>task.usage</code> against the budget.</li>
 <li>The provider's session id, as provenance on every claim.</li>
 </ul></div>
 </div>

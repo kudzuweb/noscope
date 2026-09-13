@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Claim, Incident, Task, Unit } from "../src/models.js";
-import { now, resolveDbPath, Store } from "../src/store.js";
+import { now, resolveDbPath, Store, sumUsage } from "../src/store.js";
 
 function scripted(store: Store): void {
   const at = now();
@@ -499,6 +499,48 @@ describe("store", () => {
     s1.db.pragma("user_version = 99");
     s1.close();
     expect(() => new Store(path)).toThrow(/schema version 99/);
+  });
+
+  it("sums task usage across old and new shapes, and reports cost only when some event carries one", () => {
+    const store = new Store(":memory:");
+    scripted(store);
+    store.record("i1", "task.usage", "dispatcher", {
+      taskId: "t1",
+      usage: { inputTokens: 100, outputTokens: 10, seconds: 1 },
+    });
+    expect(sumUsage(store.listEvents("i1"))).toEqual({
+      inputTokens: 100,
+      uncachedInputTokens: 0,
+      cacheWriteTokens: 0,
+      cacheReadTokens: 0,
+      outputTokens: 10,
+      seconds: 1,
+    });
+    store.record("i1", "plan.proposed", "planner", {
+      usage: { inputTokens: 999, outputTokens: 999, seconds: 9, costUsd: 9 },
+    });
+    store.record("i1", "task.usage", "dispatcher", {
+      taskId: "t1",
+      usage: {
+        inputTokens: 1500,
+        uncachedInputTokens: 1000,
+        cacheWriteTokens: 200,
+        cacheReadTokens: 300,
+        outputTokens: 42,
+        seconds: 1.5,
+        costUsd: 0.5,
+      },
+    });
+    expect(sumUsage(store.listEvents("i1"))).toEqual({
+      inputTokens: 1600,
+      uncachedInputTokens: 1000,
+      cacheWriteTokens: 200,
+      cacheReadTokens: 300,
+      outputTokens: 52,
+      seconds: 2.5,
+      costUsd: 0.5,
+    });
+    store.close();
   });
 
   it("rebuilds every current-state table by replaying the events (acceptance 7)", () => {

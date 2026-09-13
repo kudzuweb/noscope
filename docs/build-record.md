@@ -506,3 +506,28 @@ Not exactly to spec, with reasons:
 - Observations for the revisit, in the document: promotion by exact triple never fired, and
   grep's per-match claims took the planner's input from 7k tokens to 91k in one cycle and 111k by cycle 9.
 
+
+## PR 17: Usage split and cost (#17, merged 2026-09-13)
+
+Built: every `task.usage` and `plan.proposed` event now carries the input context split
+into uncached, cache-write and cache-read tokens, and the provider's own cost at list price
+(`total_cost_usd` from the Claude Code envelope) when it reports one. `Usage` in
+`src/models.ts` has the four new fields, `parseClaudeCodeResult` fills them, `sumUsage`
+folds them, and `incident show` prints the cost beside the spend when one is known.
+DESIGN.md Step 6 and the architecture page say what a usage carries. First of the three
+pieces from the first incident's audit, which could only bound the run's cost between $7
+and $22 because the provider's three input counts were collapsed into one.
+
+Not exactly to spec, with reasons:
+
+- `inputTokens` keeps its meaning as the whole context, so budgets and the planner's
+  remaining-budget line are unchanged; the split sits beside it rather than replacing it.
+- `costUsd` is optional on a usage and on a summed spend: a run that fails before the
+  provider answers, or an event recorded before this change (all of incident 001), has no
+  cost figure, and summing zeros for those would report a run as cheaper than it was. A
+  deterministic run records `costUsd: 0`, which is a fact.
+- The three split fields are required and zero on a deterministic run; a usage recorded
+  before this change is read with the parts as zero, since `sumUsage` reads events rather
+  than parsing them.
+- The stub binary now reports `total_cost_usd: 0.0123`, so the provider test pins the
+  whole shape; a second parse pins the no-cost case.
