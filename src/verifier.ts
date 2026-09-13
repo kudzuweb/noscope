@@ -1,5 +1,10 @@
-import type { Capability } from "./capabilities/registry.js";
-import { Claim, type ClaimProposal, type Task } from "./models.js";
+import type { Capability, SessionCapability } from "./capabilities/registry.js";
+import {
+  Claim,
+  type ClaimProposal,
+  type SessionResult,
+  type Task,
+} from "./models.js";
 import { now, type Store } from "./store.js";
 
 /** Where a run's claims came from: the effective inputs of a deterministic run, or the session that asserted them. */
@@ -52,4 +57,36 @@ export function recordClaims(
     for (const claim of claims) store.createClaim(claim, actor);
   });
   return claims;
+}
+
+/**
+ * A session's result becomes asserted claims with the session id as provenance; an
+ * `insufficient` result becomes no claims and a `task.insufficient` event carrying what was
+ * needed, each with its kind, so the planner's next task is precise (DESIGN.md Step 6).
+ */
+export function recordSessionResult(
+  store: Store,
+  task: Task,
+  capability: SessionCapability,
+  result: SessionResult,
+  sessionId: string,
+  actor = "verifier",
+): Claim[] {
+  if (result.outcome === "insufficient") {
+    store.record(task.incidentId, "task.insufficient", actor, {
+      taskId: task.id,
+      capability: capability.name,
+      sessionId,
+      needed: result.needed,
+    });
+    return [];
+  }
+  return recordClaims(
+    store,
+    task,
+    capability,
+    result.claims,
+    { sessionId },
+    actor,
+  );
 }

@@ -128,6 +128,9 @@ describe("claude code provider", () => {
     await expect(
       claudeCodeProvider("/nonexistent/claude").run(request()),
     ).rejects.toThrow(/ENOENT/);
+    await expect(
+      claudeCodeProvider(stub).run({ ...request(), cwd: "/nonexistent/cwd" }),
+    ).rejects.toThrow(/cwd \/nonexistent\/cwd does not exist/);
   });
 
   it("kills a session that outlives its timeout and reports the signal", async () => {

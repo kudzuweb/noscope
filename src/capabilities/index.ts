@@ -1,4 +1,5 @@
 export * from "./deterministic.js";
+export * from "./investigate.js";
 export type {
   Capability,
   CapabilityResult,
@@ -13,3 +14,9 @@ export {
   listCapabilities,
   runDeterministic,
 } from "./registry.js";
+export {
+  buildSessionRequest,
+  renderTaskBrief,
+  runSession,
+  type SessionRun,
+} from "./session.js";
