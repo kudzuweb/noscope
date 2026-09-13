@@ -313,23 +313,23 @@ The incident goes to `blocked` on any of the last three, `incident show` prints 
 every session is told the same four kinds in its preamble so that an `insufficient` answer
 names which one it hit.
 ### Step 5: the validator
-Every action plan passes all of these or is rejected whole, with the failing rule recorded as a
-`plan.rejected` event and fed back as input 9 on the next cycle:
+Every action plan passes all of these or is rejected whole, with each failing rule and its
+reason recorded as a `plan.rejected` event and fed back as input 9 on the next cycle:
 
 | Rule | Check |
 |---|---|
 | Capabilities exist | Every task names a registered capability. |
-| Units exist | Every task's unit and every new unit's parent exist or are created in this plan. |
-| No cycles | The tree stays a tree. |
-| No duplicates | No new task repeats an open or completed one with the same capability and inputs under the same unit. |
+| Units exist | Every task's unit and every new unit's parent is an active unit, or a unit created in this plan; a closed unit takes no new work. A `closeUnits` entry names a unit in the incident. |
+| No cycles | The tree stays a tree: no new unit is its own ancestor, and a ref is used once and is not an existing unit id. |
+| No duplicates | No new task repeats an open or completed one, or another new task in the same plan, with the same capability and effective inputs (as the capability's schema parses them) under the same unit. A task the plan cancels does not count. |
 | Inputs validate | Task inputs parse against the capability's input schema. |
 | Span of control | No unit ends the action plan with more than 7 direct children, units and tasks combined. Target is 5. |
 | Effect policy | v0 rejects any capability whose effect is not `read_only`. After v0, a task to a capability whose effect is `writes_local` or `writes_external` passes only with a grant on this incident for that capability. |
-| Budget respected | A task's budget fits inside the incident's remaining budget, and a session-backed task carries a time bound. |
-| Dependencies resolve | Every `depends_on` names a task in the incident. |
+| Budget respected | A task's budget, where it sets one, fits inside the incident's remaining budget. A session-backed task carries a time bound and, when the incident bounds tokens, a token bound. A deterministic task runs no model and needs neither. |
+| Dependencies resolve | Every `dependsOn` names a task in the incident that is completed or still open and not cancelled in this plan, so the new task can become ready. Every `cancelTasks` entry names an open task, once; every `claimsToVerify` entry names an asserted claim. |
 | Model known | Every task to a session-backed capability names a provider and model pair. The known list is every model the provider serves, never a curated subset, so Mauria can ask for whatever she wants and the planner sees every option. For Claude Code the known list is every Anthropic model currently served: `claude-fable-5-1`, `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5`, `claude-fable-5`, `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6`, `claude-sonnet-4-6`; Codex pairs are added when that provider is tested. A task to a deterministic capability has no model field at all, since nothing in it runs a model. |
-| Closing is clean | A closed unit has no running tasks. |
-| Status is earned | `satisfied` requires every open task completed or cancelled and at least one verified claim. |
+| Closing is clean | A unit closed in this plan is active, has no running task after the plan's cancels, is closed once, and is given no new unit or task in the same plan. |
+| Status is earned | `satisfied` requires every open task completed or cancelled, no new tasks in the plan, and at least one verified claim. |
 
 ### Step 6: dispatch, record, verify
 Ready means every dependency is completed. v0 runs ready tasks sequentially. Each

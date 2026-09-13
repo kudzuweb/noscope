@@ -278,29 +278,49 @@ Not exactly to spec, with reasons:
 ## PR 10: Validator (#10, merged 2026-09-13)
 
 Built: `src/validator.ts` with every Step 5 rule as a named check over the plan and the
-incident's state (units, tasks, claims, providers, usage); `validatePlan`, which passes the
-whole plan or rejects it with every failing rule and its reason; `validationContext`, the
-state read from the store; `validateAndRecord`, which writes one `plan.rejected` event per
-failing rule with `rule` and `reason`, the fields the planner's section 9 already reads. One
-test per rule with a plan that fails only that rule, a passing plan returned unchanged, and
-the event payloads pinned.
+incident's state (units, tasks, claims, providers, usage), keyed by the rule names the
+planner reads; `validatePlan`, which passes the whole plan or rejects it with every failing
+rule and its reason; `validationContext`, the state read from the store; `validateAndRecord`,
+which writes one `plan.rejected` event per failing rule with `rule` and `reason`, the fields
+the planner's section 9 already reads. One test per rule with a plan that fails only that
+rule, a passing plan returned unchanged, the widenings below each pinned by reason text,
+and the event payloads pinned. The review (three subagents, 2026-09-13) found three bad
+plans that passed and two valid plans rejected; all are fixed here and the design's Step 5
+table now states each check as applied.
 
 Not exactly to spec, with reasons:
 
-- The rule list is checked against `PLANNER_RULES` at module load, name for name and in
-  order, so the rules the planner reads and the rules applied cannot drift.
+- The rule names are derived from `PLANNER_RULES` (the text before each colon), the checks
+  are a record keyed by those names, and the rule list is built from the planner's list in
+  its order, so the rules the planner reads and the rules applied cannot drift, at compile
+  time.
 - A rejected plan writes one event per failing rule rather than one for the first, so the
   planner's next input shows everything wrong with the proposal in one cycle.
-- Dependencies resolve also covers `cancelTasks` naming a task in the incident and
-  `claimsToVerify` naming an asserted claim, since both are references the plan makes and
-  no other rule owns them.
-- Units exist also refuses a unit that is its own parent, and No cycles refuses a ref that
-  collides with an existing unit id or is used twice, since either would make the tree
-  ambiguous before any cycle could form.
-- Closing is clean also refuses a plan that closes a unit and places a new task under it.
-- Budget respected reads the incident's remaining budget from `sumUsage`; a task must name
-  a budget inside it only when the incident sets one, and a session-backed task always
-  needs `budget.seconds`, as the rule the planner reads says.
+- Units exist requires an active unit: a closed unit takes no new task or unit, in this
+  plan or a later one; before the review a closed unit accepted new work. It also refuses
+  a `closeUnits` entry naming a unit not in the incident.
+- No cycles refuses a ref that collides with an existing unit id or is used twice, since
+  either makes the tree ambiguous before any cycle could form; a unit that is its own
+  parent is a one-node cycle and is rejected here, once.
+- No duplicates keys on the inputs as the capability's schema parses them, so a spelled-out
+  default is the same task; it compares new tasks against each other; and a task the plan
+  cancels does not count, so cancel-and-reissue with the same inputs passes in one cycle.
+- Budget respected: a task's budget must fit only where it sets one; a session-backed task
+  needs a time bound and, when the incident bounds tokens, a token bound; a deterministic
+  task runs no model and needs neither. Before the review every task had to name a token
+  budget on a token-bounded incident, which would have rejected every grep.
+- Dependencies resolve: a dependency must be completed or still open and not cancelled in
+  this plan, so the new task can become ready (a dependency on a failed or cancelled task
+  would leave it pending forever); `cancelTasks` must name an open task, once; and
+  `claimsToVerify` must name an asserted claim. No other rule owns those references.
+- Closing is clean also refuses a unit that is already closed, a unit closed twice in one
+  plan, and new tasks or units placed under a unit closed in the same plan.
+- Status is earned also refuses `satisfied` while the plan creates tasks.
 - Span of control counts active child units and open tasks after the plan's closes and
   cancels, and the limit is `SPAN_OF_CONTROL` (7).
-
+- Model known's reasons name exactly what is missing or misplaced (a provider, a model, or
+  both), since the planner reads them.
+- Left as design questions for Mauria's revisit after the first incident: closing a unit
+  whose child unit still runs a task passes (the rule speaks of the unit's own tasks), and
+  two tasks in one plan that each fit the remaining budget but together exceed it pass (the
+  rule speaks of a task's budget).
