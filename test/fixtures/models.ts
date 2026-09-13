@@ -1,7 +1,17 @@
 import type { Incident, Task, Unit } from "../../src/models.js";
+import type { Provider } from "../../src/providers/index.js";
 import { now, type Store } from "../../src/store.js";
 
-/** An incident with its command unit in the store, returned with a task builder bound to them. */
+/** A provider that serves two models and must never be run, for validator and planner tests. */
+export const fakeProvider: Provider = {
+  name: "fake",
+  models: ["fake-large", "fake-small"],
+  run: async () => {
+    throw new Error("not run");
+  },
+};
+
+/** An incident with its command unit in the store, returned with unit and task builders bound to them. */
 export function scriptedIncident(store: Store, id = "i1", at = now()) {
   const incident: Incident = {
     id,
@@ -26,6 +36,20 @@ export function scriptedIncident(store: Store, id = "i1", at = now()) {
   };
   store.createIncident(incident, "cli");
   store.createUnit(unit, "runtime");
+  const addUnit = (
+    overrides: Partial<Unit> & Pick<Unit, "id" | "purpose">,
+  ): Unit => {
+    const u: Unit = {
+      incidentId: id,
+      parentId: unit.id,
+      status: "active",
+      createdAt: at,
+      closedAt: null,
+      ...overrides,
+    };
+    store.createUnit(u, "runtime");
+    return u;
+  };
   const task = (overrides: Partial<Task> & Pick<Task, "capability">): Task => {
     const t: Task = {
       id: `t-${overrides.capability}`,
@@ -50,5 +74,5 @@ export function scriptedIncident(store: Store, id = "i1", at = now()) {
     store.createTask(t, "planner");
     return t;
   };
-  return { incident, unit, task };
+  return { incident, unit, addUnit, task };
 }
