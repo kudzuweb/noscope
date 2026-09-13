@@ -4,6 +4,8 @@
     "src/cli.ts",
     "src/models.ts",
     "src/equipment/index.ts",
+    "src/capabilities/index.ts",
+    "src/verifier.ts",
     "test/**/*.test.ts"
   ],
   "project": ["src/**/*.ts", "test/**/*.ts"]

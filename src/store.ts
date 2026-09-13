@@ -370,7 +370,7 @@ export class Store {
   createClaim(claim: Claim, actor: string): void {
     this.write(
       claim.incidentId,
-      "claim.asserted",
+      `claim.${claim.status}`,
       actor,
       {},
       { kind: "claim.create", claim },

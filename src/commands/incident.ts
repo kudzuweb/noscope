@@ -1,4 +1,5 @@
 import { parseArgs } from "node:util";
+import { listCapabilities } from "../capabilities/index.js";
 import { type Context, EXIT, type Handler } from "../context.js";
 import { Budget, type Event, type Incident, type Unit } from "../models.js";
 import { now, resolveDbPath, Store } from "../store.js";
@@ -189,8 +190,11 @@ function renderIncidentFile(
   return lines;
 }
 
-/** PR 6 replaces this with the capability registry; until then nothing is registered. */
-const registeredCapabilities: () => readonly string[] = () => [];
+const registeredCapabilities = (): readonly string[] =>
+  listCapabilities().map(
+    (c) =>
+      `${c.name}: ${c.description} [${c.produces === "verified_claims" ? "deterministic" : "session"}, ${c.effect}]`,
+  );
 
 export const show: Handler = async (args, ctx) => {
   const store = openStore(ctx);
