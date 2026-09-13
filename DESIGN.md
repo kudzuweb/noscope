@@ -372,6 +372,7 @@ wants established, and proposes the deterministic task that would establish them
 | `noscope incident step <id>` | One cycle, then stop. Prints the action plan, the validator's verdict, what ran, what changed. |
 | `noscope incident run <id> [--max-cycles N]` | Repeats `step` until the incident leaves `open` or the cap is hit. |
 | `noscope incident events <id>` | The event log with timestamps and actors. |
+| `noscope incident review <id>` | The After Action Review computed from the event log: each cycle with its verdict, rejections, tasks run (capability, model, tokens with the cache split, seconds, cost, claims), questions and answers; totals by role and model; plan, task and claim counts; the cost, recorded where the provider priced it and bounded at list rates where it did not. Deterministic; the judged review is the session-backed `review` capability, after v0. |
 | `noscope incident sop <id> <name>` | Adds an SOP's unit and its tasks to the incident in one action plan. After v0. |
 | `noscope incident answer <id> "<text>"` | Answers the planner's open question and returns the incident to `open`. |
 | `noscope incident grant <id> <capability> [--per-task]` | Gives a grant for one capability on this incident, recording the planner's reason; `--per-task` makes each task under it ask again. After v0. |

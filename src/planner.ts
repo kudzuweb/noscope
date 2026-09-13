@@ -303,8 +303,9 @@ export async function proposePlan(
   provider: Provider,
   options: { providers?: readonly Provider[]; model?: string; cwd: string },
 ): Promise<PlanProposal> {
+  const model = options.model ?? PLANNER_MODEL;
   const outcome = await provider.run({
-    model: options.model ?? PLANNER_MODEL,
+    model,
     systemPrompt: PLANNER_SYSTEM_PROMPT,
     prompt: renderPlannerInput(
       store,
@@ -323,6 +324,7 @@ export async function proposePlan(
     plan,
     rationale: plan.rationale,
     sessionId: outcome.sessionId,
+    model,
     usage: outcome.usage,
   });
   return { plan, sessionId: outcome.sessionId, usage: outcome.usage };
