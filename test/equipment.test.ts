@@ -7,6 +7,7 @@ import {
   bashAllowlist,
   isBuiltinTool,
   listEquipment,
+  readFileEquipment,
   runEquipment,
 } from "../src/equipment/index.js";
 
@@ -45,9 +46,9 @@ describe("equipment", () => {
   });
 
   it("reads a file and reports truncation", async () => {
-    const full = (await runEquipment("read_file", {
+    const full = await runEquipment(readFileEquipment, {
       path: join(tree, "a.txt"),
-    })) as { text: string; truncated: boolean; bytes: number };
+    });
     expect(full.text).toContain("delete handler");
     expect(full.truncated).toBe(false);
     const cut = (await runEquipment("read_file", {
