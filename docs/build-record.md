@@ -275,3 +275,32 @@ Not exactly to spec, with reasons:
   header now says a heading's date is the merge date the entry was written for, since more
   than one PR can be in flight.
 
+## PR 10: Validator (#10, merged 2026-09-13)
+
+Built: `src/validator.ts` with every Step 5 rule as a named check over the plan and the
+incident's state (units, tasks, claims, providers, usage); `validatePlan`, which passes the
+whole plan or rejects it with every failing rule and its reason; `validationContext`, the
+state read from the store; `validateAndRecord`, which writes one `plan.rejected` event per
+failing rule with `rule` and `reason`, the fields the planner's section 9 already reads. One
+test per rule with a plan that fails only that rule, a passing plan returned unchanged, and
+the event payloads pinned.
+
+Not exactly to spec, with reasons:
+
+- The rule list is checked against `PLANNER_RULES` at module load, name for name and in
+  order, so the rules the planner reads and the rules applied cannot drift.
+- A rejected plan writes one event per failing rule rather than one for the first, so the
+  planner's next input shows everything wrong with the proposal in one cycle.
+- Dependencies resolve also covers `cancelTasks` naming a task in the incident and
+  `claimsToVerify` naming an asserted claim, since both are references the plan makes and
+  no other rule owns them.
+- Units exist also refuses a unit that is its own parent, and No cycles refuses a ref that
+  collides with an existing unit id or is used twice, since either would make the tree
+  ambiguous before any cycle could form.
+- Closing is clean also refuses a plan that closes a unit and places a new task under it.
+- Budget respected reads the incident's remaining budget from `sumUsage`; a task must name
+  a budget inside it only when the incident sets one, and a session-backed task always
+  needs `budget.seconds`, as the rule the planner reads says.
+- Span of control counts active child units and open tasks after the plan's closes and
+  cancels, and the limit is `SPAN_OF_CONTROL` (7).
+
