@@ -320,6 +320,69 @@ describe("dispatcher, from the review", () => {
   });
 });
 
+describe("dispatcher, interrupted and malformed runs", () => {
+  it("fails a task left running by an earlier pass, names a schema failure in one sentence, and treats a bound past the timer's limit as none", async () => {
+    defineCapability({
+      name: "bad_confidence",
+      description: "returns a claim the schema refuses",
+      equipment: [],
+      input: z.object({}),
+      output: z.object({}),
+      effect: "read_only",
+      run: async () => ({
+        output: {},
+        claims: [
+          {
+            subject: "/x",
+            predicate: "p",
+            object: 1,
+            confidence: 2,
+            evidence: [],
+          },
+        ],
+      }),
+    });
+    const store = new Store(":memory:");
+    const { incident, task } = scriptedIncident(store);
+    task({
+      id: "t-orphan",
+      capability: "grep",
+      inputs: { root: ".", pattern: "x" },
+      status: "running",
+    });
+    task({
+      id: "t-bad",
+      capability: "bad_confidence",
+      inputs: {},
+      status: "ready",
+    });
+    task({
+      id: "t-long",
+      capability: "slow_probe",
+      inputs: {},
+      budget: { seconds: 3_000_000 },
+      status: "ready",
+    });
+    const { ran } = await dispatch(store, incident, { cwd: tree });
+    expect(store.listTasks("i1").find((t) => t.id === "t-orphan")?.status).toBe(
+      "failed",
+    );
+    const orphan = store.listEvents("i1").find((e) => e.type === "task.failed");
+    expect(orphan?.payload).toMatchObject({
+      interrupted: true,
+      reason: "left running by a pass that did not finish",
+    });
+    expect(ran.map((r) => [r.taskId, r.status])).toEqual([
+      ["t-bad", "failed"],
+      ["t-long", "completed"],
+    ]);
+    expect(ran[0]?.reason).toBe(
+      "the result did not fit its schema: confidence Too big: expected number to be <=1",
+    );
+    store.close();
+  });
+});
+
 describe("incident step", () => {
   it("runs one cycle with the stub planner: plan, verdict, apply, dispatch, claims; then refuses a closed incident", async () => {
     const db = `${mkdtempSync(join(tmpdir(), "noscope-step-"))}/db.sqlite`;

@@ -386,7 +386,19 @@ Not exactly to spec, with reasons:
 - A deterministic run with no `budget.seconds` is unbounded, as the design's Budget row
   says unlimited is the v0 default; a session always runs under a bound, the task's own
   (the validator requires one) or ten minutes for a direct caller, since a hung process
-  must end. The provider kills the session's process group at the same bound.
+  must end. The provider kills the session's process group at the same bound. A
+  deterministic run that does carry a bound and passes it is abandoned, not killed: it keeps
+  executing while the next task starts, writes nothing to the store, and holds the process
+  open until it finishes. Only read-only capabilities exist in v0, so the overlap has no
+  effect on the record; a writing capability will need a cancellable run.
+- A task still `running` when a pass starts was left by a pass that died mid-run (v0 runs
+  one task at a time in one process), so the pass fails it with that reason rather than
+  skipping it forever, and the planner can reissue it.
+- A result that does not fit its schema fails the task with the issues in one sentence;
+  a bound longer than the timer can hold (about 24 days) is treated as no bound.
+- Set aside for Mauria: the planner's own tokens are recorded on `plan.proposed` and do
+  not count against the incident's budget, since the design's Budget row speaks of tasks;
+  whether an incident budget should include planning spend is a design call.
 - The budget check before a task uses the task's own bound where it sets one, which the
   validator has already fitted to the incident's remaining budget, and the capability's
   typical cost otherwise; before the review it always used the typical cost, so a session

@@ -1,3 +1,4 @@
+import { z } from "zod";
 import {
   type Capability,
   getCapability,
@@ -52,11 +53,14 @@ class TimeBound extends Error {
   }
 }
 
+/** The longest delay setTimeout honours; a bound past it is no bound. */
+const MAX_TIMER_MS = 2_147_483_647;
+
 function withinSeconds<T>(
   seconds: number | undefined,
   run: Promise<T>,
 ): Promise<T> {
-  if (seconds === undefined) return run;
+  if (seconds === undefined || seconds * 1000 > MAX_TIMER_MS) return run;
   let timer: NodeJS.Timeout | undefined;
   const bound = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new TimeBound(seconds)), seconds * 1000);
@@ -86,6 +90,29 @@ function overBudget(
   if (seconds !== undefined && usage.seconds + needSeconds > seconds)
     return `seconds: ${usage.seconds.toFixed(1)} spent of ${seconds}, ${task.id} needs ${needSeconds}`;
   return null;
+}
+
+/**
+ * v0 runs one task at a time in one process, so a task still `running` when a pass starts
+ * was left by a pass that died mid-run; it is failed with that reason rather than skipped
+ * forever, and the planner can reissue it.
+ */
+function failInterrupted(store: Store, incident: Incident, actor: string) {
+  for (const t of store.listTasks(incident.id))
+    if (t.status === "running")
+      store.setTaskStatus(incident.id, t.id, "failed", actor, "task.failed", {
+        extra: {
+          reason: "left running by a pass that did not finish",
+          interrupted: true,
+        },
+      });
+}
+
+/** A reason in one sentence: a schema failure names its issues rather than dumping them. */
+function describe(error: unknown): string {
+  if (error instanceof z.ZodError)
+    return `the result did not fit its schema: ${error.issues.map((i) => `${i.path.join(".") || "value"} ${i.message}`).join("; ")}`;
+  return error instanceof Error ? error.message : String(error);
 }
 
 type Outcome = { result: unknown; usage: Usage; record: () => Claim[] };
@@ -154,6 +181,7 @@ export async function dispatch(
   const actor = options.actor ?? "dispatcher";
   const ran: Ran[] = [];
   const attempted = new Set<string>();
+  failInterrupted(store, incident, actor);
   for (;;) {
     const tasks = store.listTasks(incident.id);
     const next = tasks.find(
@@ -235,7 +263,7 @@ export async function dispatch(
         claims: claims.length,
       });
     } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
+      const reason = describe(error);
       const usage: Usage =
         error instanceof SessionError && error.usage !== null
           ? error.usage

@@ -154,10 +154,14 @@ function runProcess(
         child.kill(sig);
       }
     };
-    const timer = setTimeout(() => {
-      signal("SIGTERM");
-      setTimeout(() => signal("SIGKILL"), KILL_GRACE_MS).unref();
-    }, timeoutMs);
+    // setTimeout honours at most 2^31-1 ms; a longer bound is no bound.
+    const timer = setTimeout(
+      () => {
+        signal("SIGTERM");
+        setTimeout(() => signal("SIGKILL"), KILL_GRACE_MS).unref();
+      },
+      Math.min(timeoutMs, 2_147_483_647),
+    );
     child.stdout.on("data", (b: Buffer) => out.push(b));
     child.stderr.on("data", (b: Buffer) => err.push(b));
     child.on("error", (e) => {
