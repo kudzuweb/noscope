@@ -28,6 +28,7 @@ Settled before this document, on the ics-runtime and quipu-cli threads:
 | TypeScript on Node, with `zod` for contracts and `better-sqlite3` for storage. | Ruled by Mauria 2026-09-12. Node is present wherever noscope can run, because Claude Code and Codex are both Node programs on this machine; it is her language and the language of roughdraftplus and the codebase-scan tooling; the MCP SDK is TypeScript-first. Python was inherited from the ChatGPT conversation, never ruled, and the machine has 3.11 where the draft assumed 3.12. `better-sqlite3` over `node:sqlite` because she would rather carry a dependency than have a built-in change under her; the comparison is in the Reference section. |
 | The planner sees each completed result as a summary against its task's contract plus pointers to the evidence, not the full text. | Approved by Mauria 2026-09-12 22:24. It is the cheaper prompt. The signal to widen to full text is the planner proposing the same tree again after new results arrive, which means the summaries are not carrying enough for it to react. |
 | Custom equipment reaches a session over MCP with `--tools ""`, so a session can be given nothing but the runtime's equipment. | Tested 2026-09-12 22:30 at Mauria's "test it": with a stdio MCP server passed by `--mcp-config` and `--strict-mcp-config`, the MCP tool stayed callable under no `--tools` flag, `--tools ""`, `--tools "Read"` and `--tools "mcp__noscope__echo"`; the filter touches built-in tools only. With `--tools ""` the session cost 2.5k tokens of context. The spike is `spikes/mcp-tools-filter/run.sh`. |
+| The planner has four channels for what it lacks: a task for retrievable facts, a grant request for permission, a capability request for missing means, a question for what only a human knows. The preamble orients every session in the ICS-inspired system and carries the term mapping. | Ruled by Mauria 2026-09-12 22:43. Questions for a human alone were the wrong channel for facts she does not hold but could get retrieved; a capability request separates "I need the means" from "I need your answer". |
 | The umbrella word is `incident`, ICS's own. | Ruled by Mauria 2026-09-12 at 22:13, after `op` was tried and the collision with ICS's Operations Section came up: every term in the preamble is now ICS's, which is the strongest position against training data. The preamble says an incident here is anything asked for and does not mean something went wrong. |
 | The organizer is the planner; claim statuses are `asserted`, `verified`, `rejected`; "action plan" stays the term, with "plan" as the everyday short form. | Ruled by Mauria 2026-09-12. The planner drafts the action plan, which is ICS's Planning Section, so the name says what it does and not more. `asserted` says who said it without saying it is true. |
 | Saved unit configurations, called SOPs after ICS's standard operating procedures, can be added to any incident. | Ruled by Mauria 2026-09-12. She wants a code review SOP she likes to be one action away on any incident: a unit template with its tasks and prompts ready, where the planner picks the angles that matter for this code. SOP over "protocol" because it is ICS's own word for a pre-written way of doing something, and agents know it. After v0. |
@@ -35,9 +36,9 @@ Settled before this document, on the ics-runtime and quipu-cli threads:
 | The framework is named `noscope`, one spelling for the repo, the npm package and the command. | Named by Mauria 2026-09-12, after FIRESCOPE, the interagency effort that produced ICS, and for the pun: the whole thing is built so she never has to zoom in. `noscope` is free on PATH, Homebrew and GitHub; PyPI has an unrelated `noscope`, so a PyPI release would be published as `no_scope` with the import name unchanged. |
 | Build this first, then use it to work on roughdraft, quipu and the codebase scan. | Sequencing set by Mauria on 2026-09-12. |
 
-Proposed in this document and not yet ruled: the schema, with storage once on `node:sqlite`, `zod` as
+{==Proposed in this document and not yet ruled: the schema, with storage once on `node:sqlite`, `zod` as
 the schema dependency, Opus 5 as the planner model, the model allowlist, the schema, the validator
-rules, the CLI surface, and the first incident.
+rules, the CLI surface, and the first incident.==}{>>didn't we rule on all this?<<}{id="c62" by="user" at="2026-09-13T03:30:47.936Z"}
 ## Vocabulary
 | Term | Meaning |
 |---|---|
@@ -49,7 +50,7 @@ rules, the CLI surface, and the first incident.
 | Provider | A program that can run a session: Claude Code first, Codex second, later an HTTP API or a human. A provider maps the session fields onto its own command line and turns its output back into the runtime's result shape. Everything above the session layer is provider-blind. |
 | Claim | A statement about reality with epistemic status `asserted`, `verified` or `rejected`, plus provenance. LLM output enters as `asserted`; only deterministic verification promotes it. |
 | Event | One append-only record of something that happened, written in the same transaction as the state change it describes. |
-| Action plan | The planner's plan for one cycle: units to create or close, tasks to create or cancel, questions for a human, grant requests, incident status. It is proposed by the planner and approved by the validator, and only an approved plan is applied. |
+| Action plan | The planner's plan for one cycle: units to create or close, tasks to create or cancel, questions for a human, grant requests, capability requests, incident status. It is proposed by the planner and approved by the validator, and only an approved plan is applied. |
 | Cycle | Observe, organize, validate, dispatch, record, stop. `incident step` runs exactly one. |
 | SOP, standard operating procedure | A saved unit configuration that can be added to any incident: the unit's purpose, the tasks it opens, each with its capability, instructions and equipment, the angles the planner may choose among for this incident, and the unit's completion criteria. A code review SOP, for example, opens a review unit whose tasks read the change from the angles that matter for it. Capabilities compose work into one assignable result; SOPs compose organization into a unit. Declared in code under `sops/`, applied by command or by the planner. After v0. |
 | Incident file | The one place command keeps the state of an incident: objective, constraints, priorities, budget and what is spent, the current tree, findings by status, every decision with its reason, questions waiting on a human, grants given, and pointers to evidence. The planner's input is rendered from it in full; a unit or task receives only its slice plus the objective in one line. Stored across the tables in Step 2 and printed by `incident show`. |
@@ -134,7 +135,7 @@ and the events explain how it got there.
 
 | Table | Columns |
 |---|---|
-| `incidents` | `id`, `objective`, `constraints_json`, `priorities_json`, `budget_json`, `questions_json`, `status` (`open`, `satisfied`, `failed`, `blocked`), `created_at`, `updated_at` |
+| `incidents` | `id`, `objective`, `constraints_json`, `priorities_json`, `budget_json`, `questions_json`, `capability_requests_json`, `status` (`open`, `satisfied`, `failed`, `blocked`), `created_at`, `updated_at` |
 | `units` | `id`, `incident_id`, `parent_id`, `purpose`, `status` (`active`, `closed`), `created_at`, `closed_at` |
 | `tasks` | `id`, `incident_id`, `unit_id`, `capability`, `objective`, `inputs_json`, `expected_output`, `completion_criteria_json`, `evidence_required_json`, `depends_on_json`, `provider`, `model` (both required for a session-backed capability), `instructions`, `budget_json`, `status` (`pending`, `ready`, `running`, `completed`, `failed`, `cancelled`), `result_json`, `created_at`, `completed_at` |
 | `claims` | `id`, `incident_id`, `subject`, `predicate`, `object_json`, `status` (`asserted`, `verified`, `rejected`), `confidence`, `provenance_json`, `created_at` |
@@ -145,7 +146,7 @@ Event types in v0: `incident.created`, `incident.closed`, `unit.created`, `unit.
 `task.created`, `task.started`, `task.completed`, `task.failed`,
 `task.cancelled`, `task.insufficient`, `claim.asserted`, `claim.verified`, `claim.rejected`,
 `plan.proposed`, `plan.rejected`, `plan.applied`, `task.usage`, `budget.exceeded`,
-`question.asked`, `question.answered`, `grant.requested`, `grant.given`.
+`question.asked`, `question.answered`, `grant.requested`, `grant.given`, `capability.requested`.
 
 Capabilities are not a table. The registry is code, and `incident show` prints what is
 registered.
@@ -216,13 +217,13 @@ provider, and the provider renders the fields onto its own command from them:
 | Field | Claude Code renders it to | Codex renders it to |
 |---|---|---|
 | `provider` | The choice of column. | The choice of column. |
-| session preamble, fixed in `providers/base.ts` | The first part of `--system-prompt`, identical for every session on every provider: this session is a resource assigned into an incident run by this runtime; the task follows; report only against the task's contract; findings are asserted claims until the runtime verifies them; the session cannot change the organization or take on work outside the task. It also carries the vocabulary, one line per term, so a session takes this runtime's meaning of incident, unit, task, capability, equipment and claim rather than its own. | Prepended to the prompt, since `codex exec` has no system-prompt flag in its help. |
+| session preamble, fixed in `providers/base.ts` | The first part of `--system-prompt`, identical for every session on every provider. It orients the session: this is an agentic runtime modeled on the Incident Command System; an incident is any objective Mauria asks to have pursued, not necessarily something gone wrong; a temporary organization of units is built around it and torn down when it is done; the planner drafts an action plan each cycle, a validator approves it, and tasks run through capabilities. Then the mapping of terms, one line each: incident, unit, task, capability, equipment, claim with its statuses, action plan, planner, grant, budget, SOP. Then the session's place: it is a resource assigned to one task inside one unit; the task follows; it reports only against the task's contract; its findings are asserted claims until the runtime verifies them; it cannot change the organization or take on work outside the task; when it lacks something it says so with the outcome `insufficient` and names which kind of thing is missing: a fact a capability could retrieve, permission, means that do not exist yet, or something only a human knows. | Prepended to the prompt, since `codex exec` has no system-prompt flag in its help. |
 | `system_prompt` | The rest of `--system-prompt`: the capability's own role text, after the preamble. | Prepended to the prompt after the preamble. |
 | `model` | `--model <id>`, always explicit, taken from the task. A capability declares no default. | `-m <model>`, same rule. |
 | `equipment` | `--tools "<list>"` naming the Claude Code built-in tools in the capability's equipment, or `--tools default` when the capability declares `default`. | `-s read-only` bounds what the built-in shell can do; per-tool selection is not in the help and is an open item for this provider. |
 | `bash_allowlist` | `--allowedTools` entries of the form `Bash(<command> *)`, so read-only tool calls need no approval. | Covered by `-s read-only`; a finer allowlist is an open item. |
 | `cwd`, `add_dirs` | The working directory and `--add-dir` entries. | `-C <dir>` and `--add-dir`. |
-| `output_schema` | `--json-schema <schema>`, so the result comes back structured. Every session schema carries `outcome: answered \| insufficient`; an insufficient result carries `needed`, a list of the evidence or access the session lacked, and no claims. | `--output-schema <file>` with the same schema written to a temp file, and `-o <file>` to collect the final message. |
+| `output_schema` | `--json-schema <schema>`, so the result comes back structured. Every session schema carries `outcome: answered \| insufficient`; an insufficient result carries `needed`, a list of what the session lacked, each tagged with its kind (a retrievable fact, permission, missing means, or a human's knowledge), and no claims. | `--output-schema <file>` with the same schema written to a temp file, and `-o <file>` to collect the final message. |
 
 Each provider has a fixed set of isolation flags, so no session inherits Mauria's personal
 setup. Claude Code: `--output-format json`, `--no-session-persistence`,
@@ -286,6 +287,7 @@ const ActionPlan = z.object({
   incidentStatus: z.enum(["continue", "blocked", "satisfied", "failed"]),
   questionsForHuman: z.array(z.string()),        // things only Mauria can supply; sets incidentStatus to blocked
   grantRequests: z.array(GrantRequest),          // capability, effect, and the reason it is needed; after v0
+  capabilityRequests: z.array(CapabilityRequest), // means the planner lacks: what it would need and why; blocks the incident
   applySops: z.array(SopApplication), // SOP name, parent unit, the angles chosen; after v0
   rationale: z.string(),                         // recorded on the action plan event, never acted on
 });
@@ -293,6 +295,20 @@ const ActionPlan = z.object({
 
 The planner proposes structure. It never runs a tool, never writes to the store, and never
 marks its own conclusions true.
+
+The planner is never without a way to get what it lacks, and each kind of lack has its own
+channel:
+
+| The planner lacks | The channel | Who resolves it |
+|---|---|---|
+| A fact a registered capability can retrieve, from the machine or anything its equipment reaches. | A task. | The runtime, next cycle. |
+| Permission for a capability that writes. | A grant request. | Mauria, with `incident grant`. After v0. |
+| The means: equipment or a capability that does not exist yet, stated as what it would need and why. | A capability request. | Mauria, by registering it; after v0 the planner itself when the missing equipment is an external MCP server it can declare. A capability request is also the runtime telling her what to build next. |
+| Something only a human knows or may decide. | A question for a human. | Mauria, with `incident answer`. |
+
+The incident goes to `blocked` on any of the last three, `incident show` prints them, and
+every session is told the same four kinds in its preamble so that an `insufficient` answer
+names which one it hit.
 ### Step 5: the validator
 Every action plan passes all of these or is rejected whole, with the failing rule recorded as a
 `plan.rejected` event and fed back as input 9 on the next cycle:
@@ -327,7 +343,7 @@ that through `claims_to_verify`, which schedules the deterministic check as a ta
 | Command | Does |
 |---|---|
 | `noscope incident create "<objective>" [--constraint ...]` | Creates the incident and its root unit, `command`. |
-| `noscope incident show <id>` | The incident file: objective, constraints, priorities, budget and spend, claims by status, open tasks, decisions with reasons, questions waiting on Mauria, grants, registered capabilities. |
+| `noscope incident show <id>` | The incident file: objective, constraints, priorities, budget and spend, claims by status, open tasks, decisions with reasons, questions waiting on Mauria, capability requests, grants, registered capabilities. |
 | `noscope incident tree <id>` | The unit tree with task marks: done, running, ready, pending. |
 | `noscope incident step <id>` | One cycle, then stop. Prints the action plan, the validator's verdict, what ran, what changed. |
 | `noscope incident run <id> [--max-cycles N]` | Repeats `step` until the incident leaves `open` or the cap is hit. |
@@ -450,7 +466,7 @@ which is untested for this use.
 
 ---
 counters:
-  comments: 61
+  comments: 62
 comments:
   c26:
     body: will this thing be slow as written?
