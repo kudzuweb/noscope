@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import type { z } from "zod";
 import { getEquipment, isBuiltinTool } from "../equipment/index.js";
 import { type ClaimProposal, Cost, type Effect } from "../models.js";
@@ -21,6 +22,24 @@ export type CapabilityResult<O> = {
   claims: ClaimProposal[];
 };
 
+/** A finished deterministic run: the result plus the effective inputs it ran with, which are its provenance. */
+export type DeterministicRun = CapabilityResult<unknown> & {
+  inputs: Record<string, unknown>;
+};
+
+function resolvePaths(
+  parsed: Record<string, unknown>,
+  paths: readonly string[],
+  cwd: string,
+): Record<string, unknown> {
+  const out = { ...parsed };
+  for (const key of paths) {
+    const value = out[key];
+    if (typeof value === "string") out[key] = resolve(cwd, value);
+  }
+  return out;
+}
+
 type Run<I extends z.ZodType, O extends z.ZodType> = (
   input: z.output<I>,
   ctx: RunContext,
@@ -30,6 +49,8 @@ type CapabilityBase<I extends z.ZodType, O extends z.ZodType> = {
   name: string;
   description: string;
   equipment: readonly string[];
+  /** The input fields that are paths; a relative value resolves against the incident's cwd before the run. */
+  paths: readonly string[];
   input: I;
   output: O;
   effect: Effect;
@@ -67,8 +88,8 @@ export type Capability<
 
 type Spec<I extends z.ZodType, O extends z.ZodType> = Omit<
   CapabilityBase<I, O>,
-  "cost"
-> & { cost?: Cost };
+  "cost" | "paths"
+> & { cost?: Cost; paths?: readonly string[] };
 
 const registry = new Map<string, Capability>();
 
@@ -108,6 +129,7 @@ export function defineCapability<I extends z.ZodType, O extends z.ZodType>(
     name: spec.name,
     description: spec.description,
     equipment: spec.equipment,
+    paths: spec.paths ?? [],
     input: spec.input,
     output: spec.output,
     effect: spec.effect,
@@ -139,22 +161,28 @@ export function listCapabilities(): Capability[] {
   return [...registry.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** Run a deterministic capability by name with validated inputs; a session-backed one needs a provider (PR 7). */
+/**
+ * Run a deterministic capability by name: inputs are validated, defaults applied and path
+ * fields resolved against the incident's cwd, so the inputs returned are exactly what ran. A
+ * session-backed capability needs a provider (PR 7).
+ */
 export async function runDeterministic(
   name: string,
   input: unknown,
   ctx: RunContext,
-): Promise<CapabilityResult<unknown>> {
+): Promise<DeterministicRun> {
   const capability = registry.get(name);
   if (capability === undefined) throw new Error(`no capability named ${name}`);
   if (capability.kind !== "deterministic")
     throw new Error(
       `capability ${name} needs a session and cannot run deterministically`,
     );
-  const parsed = capability.input.parse(input);
-  const result = await capability.run(parsed, ctx);
+  const parsed = capability.input.parse(input) as Record<string, unknown>;
+  const inputs = resolvePaths(parsed, capability.paths, ctx.cwd);
+  const result = await capability.run(inputs, ctx);
   return {
     output: capability.output.parse(result.output),
     claims: result.claims,
+    inputs,
   };
 }

@@ -3,6 +3,7 @@ export type {
   Capability,
   CapabilityResult,
   DeterministicCapability,
+  DeterministicRun,
   RunContext,
   SessionCapability,
   SessionSpec,

@@ -61,28 +61,57 @@ describe("deterministic capabilities", () => {
       { root: tree, pattern: "delete" },
       ctx,
     );
+    const at = `${join(tree, "a.txt")}:2`;
     expect(hits.claims).toEqual([
       {
-        subject: "a.txt:2",
+        subject: at,
         predicate: "matches",
         object: { pattern: "delete", text: "the delete handler lives here" },
         confidence: 1,
-        evidence: ["a.txt:2"],
+        evidence: [at],
       },
     ]);
     const none = await runDeterministic(
       "grep",
-      { root: tree, pattern: "zzz-not-here" },
+      { root: tree, pattern: "zzz-not-here", glob: "*.md" },
       ctx,
     );
     expect(none.claims).toEqual([
       {
         subject: tree,
         predicate: "has_no_match_for",
-        object: "zzz-not-here",
+        object: {
+          pattern: "zzz-not-here",
+          glob: "*.md",
+          ignoreCase: false,
+          exclude: ["node_modules", ".git"],
+        },
         confidence: 1,
         evidence: [tree],
       },
+    ]);
+    expect(none.inputs).toEqual({
+      root: tree,
+      pattern: "zzz-not-here",
+      glob: "*.md",
+      ignoreCase: false,
+      exclude: ["node_modules", ".git"],
+      maxMatches: 500,
+    });
+  });
+
+  it("relative path inputs resolve against the incident's cwd, never the process cwd", async () => {
+    const yes = await runDeterministic("check_path", { path: "a.txt" }, ctx);
+    expect(yes.output).toMatchObject({ exists: true, kind: "file" });
+    expect(yes.claims[0]?.subject).toBe(join(tree, "a.txt"));
+    expect(yes.inputs).toEqual({ path: join(tree, "a.txt") });
+    const hits = await runDeterministic(
+      "grep",
+      { root: "sub", pattern: "nothing" },
+      ctx,
+    );
+    expect(hits.claims.map((c) => c.subject)).toEqual([
+      `${join(tree, "sub", "b.md")}:1`,
     ]);
   });
 
@@ -102,14 +131,24 @@ describe("deterministic capabilities", () => {
     git("init", "-q", "-b", "main");
     git("config", "user.email", "t@example.com");
     git("config", "user.name", "T");
+    git("config", "commit.gpgsign", "false");
     writeFileSync(join(dir, "x"), "1\n");
     git("add", "x");
     git("commit", "-q", "-m", "Only commit");
+    writeFileSync(join(dir, "y"), "2\n");
     const h = await runDeterministic("git_history", { cwd: dir }, ctx);
-    expect(h.output).toMatchObject({ branch: "main", changes: [] });
-    expect(h.claims.map((c) => c.predicate)).toEqual([
-      "on_branch",
-      "recent_commits",
+    expect(h.output).toMatchObject({
+      branch: "main",
+      detached: false,
+      changes: [{ status: "??", path: "y", from: null }],
+    });
+    expect(h.claims.map((c) => [c.predicate, c.subject])).toEqual([
+      ["on_branch", dir],
+      ["working_tree_changes", dir],
+      ["recent_commits", dir],
+    ]);
+    expect(h.claims[1]?.object).toEqual([
+      { status: "??", path: "y", from: null },
     ]);
   });
 
@@ -212,7 +251,7 @@ describe("deterministic capabilities", () => {
     const stored = store.listClaims("i1");
     expect(stored[0]).toMatchObject({
       status: "verified",
-      subject: "a.txt:2",
+      subject: `${join(tree, "a.txt")}:2`,
       provenance: {
         capability: "grep",
         taskId: "t1",
