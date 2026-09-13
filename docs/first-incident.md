@@ -78,7 +78,7 @@ above, verified each of its code facts deterministically, and closed.
 | 11 | The synthesis unit closed and a verification unit opened; four greps pinned the app, TipTap and ProseMirror facts of the new chain, and an Opus `interpret` assembled the final statement. | 3 m 33 s |
 | 12 | `satisfied`, with the verification unit closed and the rationale citing verified claims for every link. | 42 s |
 
-Totals, from the event log:
+Totals, from the event log (`incident review 001` computes the same figures since PR 19, with the planner's per-cycle spend and the cost bounded at list rates):
 
 | Measure | Value |
 |---|---|

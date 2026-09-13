@@ -76,6 +76,15 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     group: "incident",
+    name: "review",
+    usage: "incident review <id>",
+    summary:
+      "The After Action Review from the log: each cycle, every run, totals by model, cost",
+    arrives: "PR 19",
+    handler: incident.review,
+  },
+  {
+    group: "incident",
     name: "sop",
     usage: "incident sop <id> <name>",
     summary:

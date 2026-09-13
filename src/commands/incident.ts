@@ -11,6 +11,7 @@ import {
 } from "../models.js";
 import { proposePlan } from "../planner.js";
 import { getProvider } from "../providers/index.js";
+import { renderReview } from "../review.js";
 import { applyPlan } from "../runtime.js";
 import { now, resolveDbPath, Store, sumUsage } from "../store.js";
 import { renderTree } from "../tree.js";
@@ -536,3 +537,21 @@ function pendingGrantRequests(store: Store, incidentId: string): number {
   const given = events.filter((e) => e.type === "grant.given").length;
   return Math.max(0, requested - given);
 }
+
+export const review: Handler = async (args, ctx) => {
+  const store = openStore(ctx);
+  try {
+    const incident = requireIncident(store, args, ctx, "review");
+    if (typeof incident === "number") return incident;
+    const lines = renderReview(
+      incident,
+      store.listEvents(incident.id),
+      store.listTasks(incident.id),
+      store.listClaims(incident.id),
+    );
+    for (const line of lines) ctx.io.out(line);
+    return EXIT.ok;
+  } finally {
+    store.close();
+  }
+};
