@@ -111,8 +111,49 @@ describe("equipment", () => {
       command: "cat",
       args: ["missing.txt"],
       cwd: tree,
-    })) as { exitCode: number };
+    })) as { exitCode: number; failure: null };
     expect(failing.exitCode).not.toBe(0);
+    expect(failing.failure).toBeNull();
+  });
+
+  it("refuses the find primaries that write, and names a timeout or an overflow", async () => {
+    await expect(
+      runEquipment("run_readonly", {
+        command: "find",
+        args: [".", "-name", "a.txt", "-delete"],
+        cwd: tree,
+      }),
+    ).rejects.toThrow(/not read-only/);
+    await expect(
+      runEquipment("run_readonly", {
+        command: "find",
+        args: [".", "-exec", "touch", "x", ";"],
+        cwd: tree,
+      }),
+    ).rejects.toThrow(/not read-only/);
+    const slow = (await runEquipment("run_readonly", {
+      command: "tail",
+      args: ["-f", "a.txt"],
+      cwd: tree,
+      timeoutSeconds: 0.2,
+    })) as { exitCode: number | null; failure: string; stderr: string };
+    expect(slow.failure).toBe("timeout");
+    expect(slow.exitCode).toBeNull();
+    expect(slow.stderr).toMatch(/killed after 0.2s/);
+    const big = (await runEquipment("run_readonly", {
+      command: "cat",
+      args: ["a.txt"],
+      cwd: tree,
+      maxBytes: 10,
+    })) as { failure: string; stdout: string };
+    expect(big.failure).toBe("output_too_large");
+    expect(big.stdout.length).toBeLessThanOrEqual(10);
+    await expect(
+      runEquipment("run_readonly", {
+        command: "ls",
+        cwd: join(tree, "nope"),
+      }),
+    ).rejects.toThrow(/ENOENT/);
   });
 
   it("reads git status, log and diff from a fixture repository", async () => {
@@ -142,6 +183,7 @@ describe("equipment", () => {
 
   it("names the provider built-in tools and renders the Bash allowlist", () => {
     expect(isBuiltinTool("Grep")).toBe(true);
+    expect(isBuiltinTool("Write")).toBe(false);
     expect(isBuiltinTool("grep_files")).toBe(false);
     expect(bashAllowlist(["ls", "cat"])).toEqual(["Bash(ls *)", "Bash(cat *)"]);
     expect(bashAllowlist()).toHaveLength(7);
