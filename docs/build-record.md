@@ -175,3 +175,32 @@ Not exactly to spec, with reasons:
   event) and every later planner cycle would carry; the fix is a design call about what a
   claim carries (a hash and size, with the text in the task result), so it waits.
 
+## PR 7: Claude Code provider (#7, merged 2026-09-13)
+
+Built: `src/providers/base.ts` with the provider interface (a `SessionRequest` in, a
+`SessionOutcome` of structured output, session id and usage out) and `SESSION_PREAMBLE`,
+the fixed first part of every session's system prompt; `src/providers/claude-code.ts`
+rendering a request onto `claude -p` with `--model`, `--system-prompt`, `--tools`,
+`--json-schema`, `--allowedTools`, `--add-dir` and the five isolation flags, running it, and
+parsing `structured_output`, `session_id` and the usage fields; `test/stub-claude`, a
+stand-in binary that records its arguments and stdin and prints the result envelope; one
+live smoke test behind `NOSCOPE_LIVE=1`, run once on 2026-09-13 against Haiku and green.
+
+Not exactly to spec, with reasons:
+
+- The prompt goes to `claude` on stdin, not as the `-p` argument, so a long task brief never
+  meets the argv limit; the stub records it from stdin the same way.
+- `--allowedTools` is rendered only when the request carries a Bash allowlist, and
+  `--add-dir` once per directory; the exact list is pinned by a test.
+- Usage `inputTokens` is the whole context (`input_tokens` plus the cache creation and
+  cache read counts), since that is what the design's context measurements count; `seconds`
+  is `duration_ms`.
+- A session that returns `is_error`, a non-success subtype, no session id or no structured
+  output is an error the caller sees, never an outcome; PR 8 decides what the task does
+  with it.
+- The provider's `run` takes the binary path so tests use the stub; the real name is the
+  default.
+- A session that outlives its timeout gets SIGTERM and, five seconds later, SIGKILL, so a
+  child that ignores the first cannot hold the runtime forever (from Mauria's review,
+  2026-09-13).
+

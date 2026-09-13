@@ -1,0 +1,39 @@
+#!/usr/bin/env node
+// A stand-in for the claude binary: records its argument list and stdin to NOSCOPE_STUB_LOG,
+// then prints the result envelope claude -p --output-format json prints, with
+// NOSCOPE_STUB_OUTPUT as the structured output (or a canned answered result).
+import { readFileSync, writeFileSync } from "node:fs";
+
+const prompt = readFileSync(0, "utf8");
+if (process.env.NOSCOPE_STUB_LOG)
+  writeFileSync(
+    process.env.NOSCOPE_STUB_LOG,
+    JSON.stringify({ args: process.argv.slice(2), prompt }),
+  );
+const output = process.env.NOSCOPE_STUB_OUTPUT
+  ? JSON.parse(process.env.NOSCOPE_STUB_OUTPUT)
+  : { outcome: "answered", claims: [], findings: { note: "stub" }, needed: [] };
+const envelope = process.env.NOSCOPE_STUB_FAIL
+  ? {
+      type: "result",
+      subtype: "error_during_execution",
+      is_error: true,
+      result: "stub failure",
+      session_id: "stub-session",
+    }
+  : {
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      result: JSON.stringify(output),
+      structured_output: output,
+      session_id: "stub-session",
+      duration_ms: 1500,
+      usage: {
+        input_tokens: 1000,
+        cache_creation_input_tokens: 200,
+        cache_read_input_tokens: 300,
+        output_tokens: 42,
+      },
+    };
+process.stdout.write(`${JSON.stringify(envelope)}\n`);
