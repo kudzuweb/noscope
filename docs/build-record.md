@@ -105,3 +105,21 @@ Not exactly to spec, with reasons:
   the inserts name their columns; and the two task UPDATEs became one. A claim with no
   object stores null.
 - The README's pun line now ends "not even to one-shot", at Mauria's ask.
+
+## PR 5: Equipment (#5, merged 2026-09-13)
+
+Built: `src/equipment/registry.ts` with `defineEquipment` and `runEquipment`, which validates
+inputs and outputs against each item's schemas; `read_file`, `list_directory`, `grep_files`,
+`git_status`, `git_log`, `git_diff`, `run_readonly` under the read-only allowlist; `builtin.ts`
+naming the provider built-in tools and rendering the `Bash(cmd *)` allowlist; tests on a
+fixture directory and a fixture git repository built in a temp directory at test time.
+
+Not exactly to spec, with reasons:
+
+- `runEquipment` validates both directions, so a capability cannot pass malformed inputs
+  and an item cannot return something off its contract; the plan only named the fields.
+- `grep_files` skips `node_modules` and `.git` and caps matches; `read_file` and `git_diff`
+  cap bytes, all reported as `truncated`, so a session's task is never flooded.
+- `run_readonly` returns the exit code and both streams instead of throwing on a non-zero
+  exit; a failed command is itself a reportable fact.
+- `src/equipment/index.ts` is the package surface and a knip entry, as `src/models.ts` is.
