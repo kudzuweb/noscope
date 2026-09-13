@@ -10,7 +10,7 @@ import {
   type Usage,
 } from "./models.js";
 import type { Provider } from "./providers/index.js";
-import type { Store } from "./store.js";
+import { type Store, sumUsage } from "./store.js";
 
 // The planner is ICS's Planning Section: one provider call per cycle that drafts an action
 // plan from the incident file. It proposes structure and never runs a tool, writes to the
@@ -83,30 +83,18 @@ function taskLine(t: Task): string {
   const deps =
     t.dependsOn.length === 0 ? "" : `; depends on ${t.dependsOn.join(", ")}`;
   const model = t.model === null ? "" : `; ${t.provider}/${t.model}`;
-  return `${t.id} [${t.status}] under ${t.unitId}: ${t.capability} — ${t.objective}${model}${deps}`;
+  return `${t.id} [${t.status}] under ${t.unitId}: ${t.capability} — ${t.objective}; inputs ${clip(t.inputs)}${model}${deps}`;
 }
 
-/** The sequence of the last planner call; everything after it is "since the last cycle". */
+/**
+ * The sequence of the last applied plan; everything after it is "since the last cycle". A
+ * rejected proposal does not move it, so a retry sees the same results the rejected plan saw.
+ */
 function lastCycleSequence(events: readonly Event[]): number {
   let last = -1;
-  for (const e of events) if (e.type === "plan.proposed") last = e.sequence;
+  for (const e of events) if (e.type === "plan.applied") last = e.sequence;
   return last;
 }
-
-const usageOf = (events: readonly Event[]): Usage =>
-  events
-    .filter((e) => e.type === "task.usage")
-    .reduce(
-      (acc, e) => {
-        const u = e.payload.usage as Partial<Usage> | undefined;
-        return {
-          inputTokens: acc.inputTokens + (u?.inputTokens ?? 0),
-          outputTokens: acc.outputTokens + (u?.outputTokens ?? 0),
-          seconds: acc.seconds + (u?.seconds ?? 0),
-        };
-      },
-      { inputTokens: 0, outputTokens: 0, seconds: 0 },
-    );
 
 /**
  * The incident file rendered as the nine labeled sections in the design's order, each in a
@@ -124,7 +112,7 @@ export function renderPlannerInput(
   const grants = store.listGrants(incident.id);
   const since = lastCycleSequence(events);
   const recent = events.filter((e) => e.sequence > since);
-  const usage = usageOf(events);
+  const usage = sumUsage(events);
   const spentTokens = usage.inputTokens + usage.outputTokens;
   const remaining = (limit: number | undefined, spent: number) =>
     limit === undefined ? "unlimited" : String(Math.max(0, limit - spent));
@@ -145,7 +133,7 @@ export function renderPlannerInput(
       const evidence = claims
         .filter((c) => c.provenance.taskId === t.id)
         .map((c) => c.id);
-      return `${t.id} (${t.capability}, under ${t.unitId}): objective "${t.objective}"; expected "${t.expectedOutput || "(per schema)"}"; criteria ${JSON.stringify(t.completionCriteria)}; result ${clip(t.result)}; claims ${evidence.join(", ") || "none"}`;
+      return `${t.id} (${t.capability}, under ${t.unitId}): objective "${t.objective}"; inputs ${clip(t.inputs)}; expected "${t.expectedOutput || "(per schema)"}"; criteria ${JSON.stringify(t.completionCriteria)}; result ${clip(t.result)}; claims ${evidence.join(", ") || "none"}`;
     });
 
   const insufficient = recent

@@ -17,6 +17,7 @@ import {
   TaskStatus,
   Timestamp,
   Unit,
+  type Usage,
 } from "./models.js";
 
 /** `$NOSCOPE_DB` when set, otherwise `~/.noscope/noscope.sqlite` (DESIGN.md Step 2). */
@@ -571,6 +572,7 @@ export class Store {
         );
         return;
       case "incident.questions":
+        owned(m.incidentId, `incident ${m.incidentId}`);
         one(
           this.db
             .prepare(
@@ -581,6 +583,7 @@ export class Store {
         );
         return;
       case "incident.capabilityRequests":
+        owned(m.incidentId, `incident ${m.incidentId}`);
         one(
           this.db
             .prepare(
@@ -806,4 +809,21 @@ function rowToGrant(r: Row): Grant {
     perTask: Number(r.per_task) === 1,
     createdAt: r.created_at,
   });
+}
+
+/** The incident's spend so far: every `task.usage` event summed. */
+export function sumUsage(events: readonly Event[]): Usage {
+  return events
+    .filter((e) => e.type === "task.usage")
+    .reduce<Usage>(
+      (acc, e) => {
+        const u = e.payload.usage as Partial<Usage> | undefined;
+        return {
+          inputTokens: acc.inputTokens + (u?.inputTokens ?? 0),
+          outputTokens: acc.outputTokens + (u?.outputTokens ?? 0),
+          seconds: acc.seconds + (u?.seconds ?? 0),
+        };
+      },
+      { inputTokens: 0, outputTokens: 0, seconds: 0 },
+    );
 }

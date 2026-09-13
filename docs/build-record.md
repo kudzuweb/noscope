@@ -246,8 +246,14 @@ incident one cycle in, and a stub-provider test that `plan.proposed` carries the
 
 Not exactly to spec, with reasons:
 
-- "Since the last cycle" is everything after the most recent `plan.proposed` event, so the
-  first cycle sees everything and each later cycle sees only what its predecessor caused.
+- "Since the last cycle" is everything after the most recent `plan.applied` event, so the
+  first cycle sees everything, each later cycle sees only what its predecessor caused, and a
+  retry after a rejected plan sees the same results the rejected plan saw (the review found
+  that cutting at `plan.proposed` lost a session's `insufficient` report on retry).
+- Task lines in sections 5 and 7 carry the task's inputs, since the duplicate and
+  inputs-validate rules the planner is shown key on them.
+- `sumUsage` in the store is the one fold over `task.usage` events; the planner and
+  `incident show` both read it, so the two views of spend cannot disagree.
 - The planner's system prompt replaces the task-session preamble rather than following it:
   the preamble tells a session it is a resource assigned to one task, which the Planning
   Section is not. `SessionRequest` therefore carries the whole `systemPrompt`; the session

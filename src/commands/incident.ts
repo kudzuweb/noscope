@@ -2,7 +2,7 @@ import { parseArgs } from "node:util";
 import { listCapabilities } from "../capabilities/index.js";
 import { type Context, EXIT, type Handler } from "../context.js";
 import { Budget, type Event, type Incident, type Unit } from "../models.js";
-import { now, resolveDbPath, Store } from "../store.js";
+import { now, resolveDbPath, Store, sumUsage } from "../store.js";
 
 const ACTOR = "cli";
 
@@ -129,20 +129,11 @@ function renderIncidentFile(
   const claims = store.listClaims(incident.id);
   const events = store.listEvents(incident.id);
   const grants = store.listGrants(incident.id);
-  const usage = events
-    .filter((e) => e.type === "task.usage")
-    .reduce(
-      (acc, e) => {
-        const u = e.payload.usage as
-          | { inputTokens?: number; outputTokens?: number; seconds?: number }
-          | undefined;
-        return {
-          tokens: acc.tokens + (u?.inputTokens ?? 0) + (u?.outputTokens ?? 0),
-          seconds: acc.seconds + (u?.seconds ?? 0),
-        };
-      },
-      { tokens: 0, seconds: 0 },
-    );
+  const spent = sumUsage(events);
+  const usage = {
+    tokens: spent.inputTokens + spent.outputTokens,
+    seconds: spent.seconds,
+  };
   const byStatus = (status: string) =>
     claims.filter((c) => c.status === status);
   const decisions = events.filter(

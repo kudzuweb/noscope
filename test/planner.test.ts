@@ -39,6 +39,7 @@ function cycledIncident(store: Store) {
     "runtime",
   );
   store.record("i1", "plan.proposed", "planner", { rationale: "first look" });
+  store.record("i1", "plan.applied", "runtime", { rationale: "first look" });
   const done = s.task({
     id: "t-grep",
     capability: "grep",
@@ -126,6 +127,7 @@ function cycledIncident(store: Store) {
   store.record("i1", "task.usage", "dispatcher", {
     usage: { inputTokens: 1200, outputTokens: 300, seconds: 4.5 },
   });
+  store.record("i1", "plan.proposed", "planner", { rationale: "too wide" });
   store.record("i1", "plan.rejected", "validator", {
     rule: "Span of control",
     reason: "u-scroll would have 8 children",
@@ -172,13 +174,13 @@ describe("planner", () => {
           u-scroll [active] where the scroll position is set after a delete
 
       ## 5. Tasks completed since the last cycle
-        - t-grep (grep, under u-scroll): objective "find scrollTo calls"; expected "every call site"; criteria ["each match cited"]; result {"matches":1}; claims c-verified
+        - t-grep (grep, under u-scroll): objective "find scrollTo calls"; inputs {"root":"src","pattern":"scrollTo"}; expected "every call site"; criteria ["each match cited"]; result {"matches":1}; claims c-verified
 
       ## 6. Tasks that came back insufficient since the last cycle
         - t-interp (interpret): "say why the view scrolls" needed retrievable_fact: the delete handler's body
 
       ## 7. Open tasks
-        - t-open [ready] under u-scroll: investigate — read the delete handler; fake/fake-small; depends on t-grep
+        - t-open [ready] under u-scroll: investigate — read the delete handler; inputs {"question":"what does deleteComment do?"}; fake/fake-small; depends on t-grep
 
       ## 8. Capabilities and models
       capabilities:
