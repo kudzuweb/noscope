@@ -82,7 +82,7 @@ CREATE TABLE IF NOT EXISTS claims (
 );
 CREATE TABLE IF NOT EXISTS events (
   id TEXT PRIMARY KEY,
-  incident_id TEXT NOT NULL REFERENCES incidents(id),
+  incident_id TEXT REFERENCES incidents(id),
   sequence INTEGER NOT NULL,
   type TEXT NOT NULL,
   actor TEXT NOT NULL,
@@ -176,12 +176,21 @@ export class Store {
     ).map(rowToClaim);
   }
 
-  listEvents(incidentId: string): Event[] {
-    return (
-      this.db
-        .prepare("SELECT * FROM events WHERE incident_id = ? ORDER BY sequence")
-        .all(incidentId) as Row[]
-    ).map(rowToEvent);
+  /** Events of one incident, or with `null` the system-level events that belong to none. */
+  listEvents(incidentId: string | null): Event[] {
+    const rows =
+      incidentId === null
+        ? (this.db
+            .prepare(
+              "SELECT * FROM events WHERE incident_id IS NULL ORDER BY sequence",
+            )
+            .all() as Row[])
+        : (this.db
+            .prepare(
+              "SELECT * FROM events WHERE incident_id = ? ORDER BY sequence",
+            )
+            .all(incidentId) as Row[]);
+    return rows.map(rowToEvent);
   }
 
   listGrants(incidentId: string | null): Grant[] {
@@ -315,28 +324,37 @@ export class Store {
   }
 
   createGrant(grant: Grant, actor: string): void {
-    const incidentId = grant.incidentId ?? grant.id;
     this.write(
-      incidentId,
+      grant.incidentId,
       { type: "grant.given", actor, payload: { grant } },
       () => this.applyGrantCreated(grant),
     );
   }
 
   /** An event with no state change of its own, such as plan.proposed or task.usage. */
-  record(incidentId: string, write: Write): void {
+  record(incidentId: string | null, write: Write): void {
     this.write(incidentId, write, () => {});
   }
 
-  private write(incidentId: string, write: Write, apply: () => void): void {
+  private write(
+    incidentId: string | null,
+    write: Write,
+    apply: () => void,
+  ): void {
     this.db.transaction(() => {
       apply();
       const sequence = (
-        this.db
-          .prepare(
-            "SELECT COALESCE(MAX(sequence), -1) + 1 AS s FROM events WHERE incident_id = ?",
-          )
-          .get(incidentId) as { s: number }
+        incidentId === null
+          ? (this.db
+              .prepare(
+                "SELECT COALESCE(MAX(sequence), -1) + 1 AS s FROM events WHERE incident_id IS NULL",
+              )
+              .get() as { s: number })
+          : (this.db
+              .prepare(
+                "SELECT COALESCE(MAX(sequence), -1) + 1 AS s FROM events WHERE incident_id = ?",
+              )
+              .get(incidentId) as { s: number })
       ).s;
       this.db
         .prepare(
@@ -642,7 +660,7 @@ function rowToClaim(r: Row): Claim {
 function rowToEvent(r: Row): Event {
   return {
     id: String(r.id),
-    incidentId: String(r.incident_id),
+    incidentId: r.incident_id === null ? null : String(r.incident_id),
     sequence: Number(r.sequence),
     type: r.type as EventType,
     actor: String(r.actor),

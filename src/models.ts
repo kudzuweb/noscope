@@ -157,7 +157,7 @@ export const Claim = z.object({
 
 export const Event = z.object({
   id: z.string().min(1),
-  incidentId: z.string().min(1),
+  incidentId: z.string().nullable(),
   sequence: z.number().int().nonnegative(),
   type: EventType,
   actor: z.string().min(1),

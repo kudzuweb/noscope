@@ -103,6 +103,20 @@ function scripted(store: Store): void {
     },
     "cli",
   );
+  store.createGrant(
+    {
+      id: "g0",
+      scope: "standing",
+      incidentId: null,
+      capability: "grep",
+      effect: "read_only",
+      reason: "always",
+      grantedBy: "mauria",
+      perTask: false,
+      createdAt: at,
+    },
+    "cli",
+  );
 }
 
 describe("store", () => {
@@ -140,7 +154,7 @@ describe("store", () => {
       matches: ["src/a.ts:12"],
     });
     expect(store.listClaims("i1")[0]?.status).toBe("verified");
-    expect(store.listGrants("i1")).toHaveLength(1);
+    expect(store.listGrants("i1")).toHaveLength(2);
     store.close();
   });
 
@@ -163,11 +177,32 @@ describe("store", () => {
     store.close();
   });
 
+  it("files a standing grant's event under no incident", () => {
+    const store = new Store(":memory:");
+    store.createGrant(
+      {
+        id: "g-standing",
+        scope: "standing",
+        incidentId: null,
+        capability: "grep",
+        effect: "read_only",
+        reason: "always fine",
+        grantedBy: "mauria",
+        perTask: false,
+        createdAt: now(),
+      },
+      "cli",
+    );
+    expect(store.listEvents(null).map((e) => e.type)).toEqual(["grant.given"]);
+    expect(store.listGrants(null)).toHaveLength(1);
+    store.close();
+  });
+
   it("rebuilds every current-state table by replaying the events (acceptance 7)", () => {
     const a = new Store(":memory:");
     scripted(a);
     const b = new Store(":memory:");
-    b.replay(a.listEvents("i1"));
+    b.replay([...a.listEvents(null), ...a.listEvents("i1")]);
     expect(b.snapshot()).toEqual(a.snapshot());
     expect(b.listEvents("i1")).toEqual(a.listEvents("i1"));
     a.close();
