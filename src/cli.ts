@@ -1,24 +1,11 @@
 import { createRequire } from "node:module";
-import { parseArgs } from "node:util";
+import * as incident from "./commands/incident.js";
+import { type Context, EXIT, type Handler } from "./context.js";
+
+export { type Context, EXIT, type Handler, type Io } from "./context.js";
 
 const require = createRequire(import.meta.url);
 export const VERSION: string = require("../package.json").version;
-
-export type Io = {
-  out: (line: string) => void;
-  err: (line: string) => void;
-};
-
-export type Context = {
-  io: Io;
-  cwd: string;
-  env: NodeJS.ProcessEnv;
-};
-
-export type Handler = (
-  positionals: readonly string[],
-  ctx: Context,
-) => Promise<number>;
 
 export type Command = {
   group: "incident" | "top";
@@ -29,20 +16,15 @@ export type Command = {
   handler?: Handler | undefined;
 };
 
-export const EXIT = {
-  ok: 0,
-  usage: 2,
-  notYetImplemented: 3,
-} as const;
-
 export const COMMANDS: readonly Command[] = [
   {
     group: "incident",
     name: "create",
     usage:
-      'incident create "<objective>" [--constraint ...] [--priority ...] [--budget ...]',
+      'incident create "<objective>" [--constraint ...] [--priority ...] [--budget-tokens N] [--budget-seconds N]',
     summary: "Create an incident and its root unit, command",
     arrives: "PR 4",
+    handler: incident.create,
   },
   {
     group: "incident",
@@ -50,6 +32,7 @@ export const COMMANDS: readonly Command[] = [
     usage: "incident show <id>",
     summary: "Print the incident file",
     arrives: "PR 4",
+    handler: incident.show,
   },
   {
     group: "incident",
@@ -57,6 +40,7 @@ export const COMMANDS: readonly Command[] = [
     usage: "incident events <id>",
     summary: "Print the event log",
     arrives: "PR 4",
+    handler: incident.events,
   },
   {
     group: "incident",
@@ -137,7 +121,7 @@ export function helpText(): string {
 function notYetImplemented(command: Command): Handler {
   const label =
     command.group === "incident" ? `incident ${command.name}` : command.name;
-  return async (_positionals, ctx) => {
+  return async (_args, ctx) => {
     ctx.io.err(
       `noscope ${label}: not yet implemented, arrives ${command.arrives}`,
     );
@@ -145,12 +129,25 @@ function notYetImplemented(command: Command): Handler {
   };
 }
 
-function findCommand(positionals: readonly string[]): Command | undefined {
-  const [first, second] = positionals;
-  if (first === "incident") {
+function findCommand(words: readonly string[]): Command | undefined {
+  const [first, second] = words;
+  if (first === "incident")
     return COMMANDS.find((c) => c.group === "incident" && c.name === second);
-  }
   return COMMANDS.find((c) => c.group === "top" && c.name === first);
+}
+
+/** Everything after the command words, flags included, in the order given. */
+function afterCommandWords(argv: readonly string[], count: number): string[] {
+  const out: string[] = [];
+  let seen = 0;
+  for (const a of argv) {
+    if (seen < count && !a.startsWith("-")) {
+      seen += 1;
+      continue;
+    }
+    out.push(a);
+  }
+  return out;
 }
 
 export async function run(
@@ -158,48 +155,28 @@ export async function run(
   ctx: Context,
 ): Promise<number> {
   const { io } = ctx;
-  let parsed: ReturnType<typeof parseArgs>;
-  try {
-    parsed = parseArgs({
-      args: [...argv],
-      allowPositionals: true,
-      strict: false,
-      options: {
-        help: { type: "boolean", short: "h" },
-        version: { type: "boolean", short: "V" },
-        v: { type: "boolean" },
-      },
-    });
-  } catch (error) {
-    io.err(
-      `noscope: ${error instanceof Error ? error.message : String(error)}`,
-    );
-    return EXIT.usage;
-  }
-  const positionals = parsed.positionals;
-  if (parsed.values.version === true || parsed.values.v === true) {
+  if (argv[0] === "--version" || argv[0] === "-v" || argv[0] === "-V") {
     io.out(VERSION);
     return EXIT.ok;
   }
+  const words = argv.filter((a) => !a.startsWith("-"));
   const wantsHelp =
-    parsed.values.help === true ||
-    positionals.length === 0 ||
-    positionals[0] === "help" ||
-    (positionals[0] === "incident" &&
-      (positionals.length === 1 || positionals[1] === "help"));
+    argv.some((a) => a === "--help" || a === "-h") ||
+    words.length === 0 ||
+    words[0] === "help" ||
+    (words[0] === "incident" && (words.length === 1 || words[1] === "help"));
   if (wantsHelp) {
     io.out(helpText());
     return EXIT.ok;
   }
-  const command = findCommand(positionals);
+  const command = findCommand(words);
   if (command === undefined) {
     io.err(
-      `noscope: unknown command ${JSON.stringify(positionals.slice(0, 2).join(" "))}`,
+      `noscope: unknown command ${JSON.stringify(words.slice(0, 2).join(" "))}`,
     );
     io.err(helpText());
     return EXIT.usage;
   }
-  const rest =
-    command.group === "incident" ? positionals.slice(2) : positionals.slice(1);
+  const rest = afterCommandWords(argv, command.group === "incident" ? 2 : 1);
   return (command.handler ?? notYetImplemented(command))(rest, ctx);
 }
