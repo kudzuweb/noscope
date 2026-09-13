@@ -1,3 +1,4 @@
+import type { z } from "zod";
 import { listCapabilities } from "./capabilities/index.js";
 import {
   ActionPlan,
@@ -55,6 +56,44 @@ function clip(value: unknown): string {
 
 function bullets(items: readonly string[], empty = "(none)"): string[] {
   return items.length === 0 ? [`  ${empty}`] : items.map((i) => `  - ${i}`);
+}
+
+type JsonSchema = Record<string, unknown>;
+
+/** A JSON Schema type on one line: nested objects show their fields, arrays their item type. */
+function describeType(schema: JsonSchema): string {
+  const options = (schema.anyOf ?? schema.oneOf) as JsonSchema[] | undefined;
+  if (options !== undefined) return options.map(describeType).join(" | ");
+  if (schema.type === "array") {
+    const item = describeType((schema.items as JsonSchema | undefined) ?? {});
+    return `${item.includes(" | ") ? `(${item})` : item}[]`;
+  }
+  if (schema.type === "object" && schema.properties !== undefined)
+    return `{ ${describeFields(schema).join("; ")} }`;
+  if (schema.const !== undefined) return JSON.stringify(schema.const);
+  if (Array.isArray(schema.enum))
+    return schema.enum.map((v) => JSON.stringify(v)).join(" | ");
+  if (Array.isArray(schema.type)) return schema.type.map(String).join(" | ");
+  return String(schema.type ?? "any");
+}
+
+function describeFields(schema: JsonSchema): string[] {
+  const properties = (schema.properties ?? {}) as Record<string, JsonSchema>;
+  const required = new Set((schema.required as string[] | undefined) ?? []);
+  return Object.entries(properties).map(([name, p]) => {
+    const tail = required.has(name)
+      ? ", required"
+      : p.default === undefined
+        ? ", optional"
+        : ` = ${JSON.stringify(p.default)}`;
+    return `${name}: ${describeType(p)}${tail}`;
+  });
+}
+
+/** A capability's input fields on one line: name, type, whether required, and the default, from its schema. */
+function describeInputs(schema: z.ZodType): string {
+  const fields = describeFields(jsonSchemaFor(schema));
+  return fields.length === 0 ? "(none)" : `{ ${fields.join("; ")} }`;
 }
 
 function claimLine(c: Claim): string {
@@ -230,13 +269,11 @@ export function renderPlannerInput(
     ...bullets(open.map(taskLine)),
     "",
     "## 8. Capabilities and models",
-    "capabilities:",
-    ...bullets(
-      listCapabilities().map(
-        (c) =>
-          `${c.name} [${c.kind}, ${c.effect}]: ${c.description}${c.cost.typicalSeconds === undefined ? "" : ` (typical ${c.cost.typicalSeconds}s${c.cost.typicalTokens === undefined ? "" : `, ${c.cost.typicalTokens} tokens`})`}`,
-      ),
-    ),
+    "capabilities, each with the inputs a task to it must carry:",
+    ...listCapabilities().flatMap((c) => [
+      `  - ${c.name} [${c.kind}, ${c.effect}]: ${c.description}${c.cost.typicalSeconds === undefined ? "" : ` (typical ${c.cost.typicalSeconds}s${c.cost.typicalTokens === undefined ? "" : `, ${c.cost.typicalTokens} tokens`})`}`,
+      `    inputs: ${describeInputs(c.input)}`,
+    ]),
     "providers and models:",
     ...bullets(providers.map((p) => `${p.name}: ${p.models.join(", ")}`)),
     "",

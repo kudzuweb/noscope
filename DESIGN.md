@@ -277,7 +277,7 @@ Input, rendered as labeled sections in a stable order so the prefix caches:
 5. Tasks completed since the last cycle, with results summarized against their contracts.
 6. Tasks that came back `insufficient`, each with what the session said it needed.
 7. Open tasks.
-8. The capability registry, names and descriptions only, and for each provider every model it serves with its cost, so every option is on the table.
+8. The capability registry, each with its description and the input fields a task to it must carry (name, type, required or default), and for each provider every model it serves with its cost, so every option is on the table and no task is proposed with inputs the capability cannot take.
 9. The rules the validator will apply, so the planner does not propose what will be rejected.
 
 Output:
