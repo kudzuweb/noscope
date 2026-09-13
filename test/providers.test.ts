@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -129,6 +129,16 @@ describe("claude code provider", () => {
       claudeCodeProvider("/nonexistent/claude").run(request()),
     ).rejects.toThrow(/ENOENT/);
   });
+
+  it("kills a session that outlives its timeout and reports the signal", async () => {
+    const hang = join(mkdtempSync(join(tmpdir(), "noscope-hang-")), "hang");
+    writeFileSync(hang, "#!/bin/sh\ntrap '' TERM\nsleep 30\n", { mode: 0o755 });
+    const started = Date.now();
+    await expect(
+      claudeCodeProvider(hang).run({ ...request(), timeoutSeconds: 0.2 }),
+    ).rejects.toThrow(/exited on a signal/);
+    expect(Date.now() - started).toBeLessThan(20_000);
+  }, 25_000);
 
   it.skipIf(process.env.NOSCOPE_LIVE !== "1")(
     "live: a Haiku session answers with an outcome",

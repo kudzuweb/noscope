@@ -13,6 +13,9 @@ import {
  * about 3k and keep Mauria's settings, skills and hooks out (DESIGN.md Step 3, verified
  * 2026-09-12 on Claude Code 2.1.270).
  */
+/** After a timeout's SIGTERM, how long the child has to exit before SIGKILL. */
+const KILL_GRACE_MS = 5_000;
+
 export const CLAUDE_CODE_ISOLATION_FLAGS = [
   "--output-format",
   "json",
@@ -105,23 +108,48 @@ function runProcess(
   timeoutMs: number,
 ): Promise<{ stdout: string; stderr: string; code: number | null }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(binary, args, { cwd, stdio: ["pipe", "pipe", "pipe"] });
+    // Its own process group, so a timeout kills the session and everything it spawned.
+    const child = spawn(binary, args, {
+      cwd,
+      stdio: ["pipe", "pipe", "pipe"],
+      detached: true,
+    });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
-    const timer = setTimeout(() => child.kill("SIGTERM"), timeoutMs);
-    child.stdout.on("data", (b: Buffer) => out.push(b));
-    child.stderr.on("data", (b: Buffer) => err.push(b));
-    child.on("error", (e) => {
-      clearTimeout(timer);
-      reject(e);
-    });
-    child.on("close", (code) => {
+    let settled = false;
+    const finish = (code: number | null) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       resolve({
         stdout: Buffer.concat(out).toString("utf8"),
         stderr: Buffer.concat(err).toString("utf8"),
         code,
       });
+    };
+    const signal = (sig: NodeJS.Signals) => {
+      if (child.pid === undefined) return;
+      try {
+        process.kill(-child.pid, sig);
+      } catch {
+        child.kill(sig);
+      }
+    };
+    const timer = setTimeout(() => {
+      signal("SIGTERM");
+      setTimeout(() => signal("SIGKILL"), KILL_GRACE_MS).unref();
+    }, timeoutMs);
+    child.stdout.on("data", (b: Buffer) => out.push(b));
+    child.stderr.on("data", (b: Buffer) => err.push(b));
+    child.on("error", (e) => {
+      settled = true;
+      clearTimeout(timer);
+      reject(e);
+    });
+    child.on("close", (code) => finish(code));
+    // A grandchild holding the pipes open must not hold the runtime: exit settles after a moment.
+    child.on("exit", (code) => {
+      setTimeout(() => finish(code), 1_000).unref();
     });
     child.stdin.end(stdin);
   });

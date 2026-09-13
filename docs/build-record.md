@@ -200,4 +200,7 @@ Not exactly to spec, with reasons:
   with it.
 - The provider's `run` takes the binary path so tests use the stub; the real name is the
   default.
+- A session that outlives its timeout gets SIGTERM and, five seconds later, SIGKILL, so a
+  child that ignores the first cannot hold the runtime forever (from Mauria's review,
+  2026-09-13).
 
