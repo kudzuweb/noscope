@@ -125,11 +125,13 @@ function runProcess(
   stdin: string,
   cwd: string,
   timeoutMs: number,
+  env: NodeJS.ProcessEnv,
 ): Promise<{ stdout: string; stderr: string; code: number | null }> {
   return new Promise((resolve, reject) => {
     // Its own process group, so a timeout kills the session and everything it spawned.
     const child = spawn(binary, args, {
       cwd,
+      env,
       stdio: ["pipe", "pipe", "pipe"],
       detached: true,
     });
@@ -178,8 +180,15 @@ function runProcess(
   });
 }
 
-/** The Claude Code provider: `claude -p` on Mauria's subscription, with the prompt on stdin. */
-export function claudeCodeProvider(binary = "claude"): Provider {
+/**
+ * The Claude Code provider: `claude -p` on Mauria's subscription, with the prompt on stdin.
+ * The session runs under the environment the command was given, over the process's own, so
+ * a test's variables reach the stub and the real binary still finds its PATH.
+ */
+export function claudeCodeProvider(
+  binary = "claude",
+  env: NodeJS.ProcessEnv = process.env,
+): Provider {
   return {
     name: "claude-code",
     models: CLAUDE_CODE_MODELS,
@@ -192,6 +201,7 @@ export function claudeCodeProvider(binary = "claude"): Provider {
         request.prompt,
         request.cwd,
         request.timeoutSeconds * 1000,
+        { ...process.env, ...env },
       );
       if (code !== 0)
         throw new Error(

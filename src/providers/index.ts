@@ -7,7 +7,7 @@ export { claudeCodeProvider } from "./claude-code.js";
 
 const providers: Record<string, (env: NodeJS.ProcessEnv) => Provider> = {
   "claude-code": (env) =>
-    claudeCodeProvider(env.NOSCOPE_CLAUDE_BIN ?? "claude"),
+    claudeCodeProvider(env.NOSCOPE_CLAUDE_BIN ?? "claude", env),
 };
 
 /**

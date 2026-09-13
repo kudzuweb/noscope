@@ -179,6 +179,16 @@ export function renderPlannerInput(
         (g) => `${g.scope} ${g.capability} (${g.effect}): ${g.reason}`,
       ),
     ),
+    "grant requests waiting:",
+    ...bullets(
+      events
+        .filter((e) => e.type === "grant.requested")
+        .slice(events.filter((e) => e.type === "grant.given").length)
+        .map(
+          (e) =>
+            `${String(e.payload.capability)} (${String(e.payload.effect)}): ${String(e.payload.reason)}`,
+        ),
+    ),
     "questions still unanswered:",
     ...bullets(
       incident.questions

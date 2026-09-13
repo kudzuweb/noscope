@@ -64,6 +64,7 @@ export const COMMANDS: readonly Command[] = [
     usage: 'incident answer <id> "<text>"',
     summary: "Answer the planner's open question and reopen the incident",
     arrives: "PR 13",
+    handler: incident.answer,
   },
   {
     group: "incident",

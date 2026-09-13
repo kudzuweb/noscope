@@ -358,3 +358,87 @@ export const step: Handler = async (args, ctx) => {
     store.close();
   }
 };
+
+/**
+ * Answer the planner's oldest open question (DESIGN.md Step 7): the answer is stored on the
+ * question, where the planner's next input reads it, `question.answered` is written, and
+ * the incident returns to `open` once no question is waiting.
+ */
+export const answer: Handler = async (args, ctx) => {
+  const store = openStore(ctx);
+  try {
+    const incident = requireIncident(store, args, ctx, "answer");
+    if (typeof incident === "number") return incident;
+    if (incident.status === "satisfied" || incident.status === "failed") {
+      ctx.io.err(
+        `noscope incident answer: incident ${incident.id} is ${incident.status} and takes no answer`,
+      );
+      return EXIT.cannotProceed;
+    }
+    const text = args.slice(1).join(" ").trim();
+    if (text === "") {
+      ctx.io.err(
+        'noscope incident answer: an answer is required, e.g. noscope incident answer 001 "keep the view where it was"',
+      );
+      return EXIT.usage;
+    }
+    const open = incident.questions.find((q) => q.answer === undefined);
+    if (open === undefined) {
+      ctx.io.err(
+        `noscope incident answer: incident ${incident.id} has no question waiting${incident.status === "blocked" ? "; it is blocked on a capability or grant request" : ""}`,
+      );
+      return EXIT.cannotProceed;
+    }
+    const questions = incident.questions.map((q) =>
+      q.id === open.id ? { ...q, answer: text } : q,
+    );
+    const stillWaiting = questions.filter((q) => q.answer === undefined).length;
+    const grantsWaiting = pendingGrantRequests(store, incident.id);
+    const holds = [
+      ...(stillWaiting > 0 ? [`${stillWaiting} question(s)`] : []),
+      ...(incident.capabilityRequests.length > 0
+        ? [`${incident.capabilityRequests.length} capability request(s)`]
+        : []),
+      ...(grantsWaiting > 0 ? [`${grantsWaiting} grant request(s)`] : []),
+    ];
+    const reopen = incident.status === "blocked" && holds.length === 0;
+    store.batch(() => {
+      store.setIncidentQuestions(
+        incident.id,
+        questions,
+        ACTOR,
+        "question.answered",
+        { questionId: open.id, answer: text },
+      );
+      if (reopen)
+        store.setIncidentStatus(
+          incident.id,
+          "open",
+          ACTOR,
+          "question.answered",
+          {
+            questionId: open.id,
+          },
+        );
+    });
+    ctx.io.out(`answered ${open.id}: ${open.text}`);
+    ctx.io.out(
+      reopen
+        ? `incident ${incident.id} is open again`
+        : holds.length > 0
+          ? `incident ${incident.id} still waits on ${holds.join(", ")}`
+          : `incident ${incident.id} stays ${incident.status}`,
+    );
+    return EXIT.ok;
+  } finally {
+    store.close();
+  }
+};
+
+/** Grant requests the planner raised that no grant has answered: `grant.requested` events beyond `grant.given` ones. */
+function pendingGrantRequests(store: Store, incidentId: string): number {
+  const events = store.listEvents(incidentId);
+  const requested = events.filter((e) => e.type === "grant.requested").length;
+  const given = events.filter((e) => e.type === "grant.given").length;
+  return Math.max(0, requested - given);
+}
