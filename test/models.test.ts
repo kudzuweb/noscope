@@ -1,0 +1,165 @@
+import { describe, expect, it } from "vitest";
+import { z } from "zod";
+import {
+  ActionPlan,
+  Claim,
+  EventType,
+  Grant,
+  Incident,
+  jsonSchemaFor,
+  SessionResult,
+  sessionResult,
+  Task,
+  Timestamp,
+} from "../src/models.js";
+
+const plan = {
+  createUnits: [
+    { ref: "u1", purpose: "delete-handler investigation", parent: "command" },
+  ],
+  closeUnits: [],
+  createTasks: [
+    {
+      unit: "u1",
+      capability: "grep",
+      objective: "find where comment deletion is handled",
+      inputs: { root: "packages/app/src", pattern: "delete" },
+      expectedOutput: "matching file and line list",
+      completionCriteria: ["at least one match or a verified absence"],
+      evidenceRequired: ["file and line for each match"],
+      dependsOn: [],
+      instructions: "",
+      provider: null,
+      model: null,
+      budget: {},
+    },
+  ],
+  cancelTasks: [],
+  claimsToVerify: [],
+  questionsForHuman: [],
+  grantRequests: [],
+  capabilityRequests: [],
+  applySops: [],
+  incidentStatus: "continue",
+  rationale: "Two symptoms, so two units to start.",
+};
+
+describe("contracts", () => {
+  it("parses a well-formed action plan", () => {
+    const parsed = ActionPlan.parse(plan);
+    expect(parsed.createUnits[0]?.ref).toBe("u1");
+  });
+
+  it("rejects an action plan with an unknown incident status", () => {
+    expect(() =>
+      ActionPlan.parse({ ...plan, incidentStatus: "done" }),
+    ).toThrow();
+  });
+
+  it("rejects a task with a status outside the design's list", () => {
+    const task = {
+      id: "t1",
+      incidentId: "i1",
+      unitId: "u1",
+      capability: "grep",
+      objective: "x",
+      inputs: {},
+      expectedOutput: "",
+      completionCriteria: [],
+      evidenceRequired: [],
+      dependsOn: [],
+      provider: null,
+      model: null,
+      instructions: "",
+      budget: {},
+      status: "paused",
+      result: null,
+      createdAt: new Date().toISOString(),
+      completedAt: null,
+    };
+    expect(() => Task.parse(task)).toThrow();
+  });
+
+  it("accepts both session outcomes and enforces what each must carry", () => {
+    const answered = SessionResult.parse({
+      outcome: "answered",
+      claims: [],
+      findings: {},
+    });
+    expect(answered.outcome).toBe("answered");
+    expect(() =>
+      SessionResult.parse({ outcome: "answered", claims: [] }),
+    ).toThrow();
+    const insufficient = SessionResult.parse({
+      outcome: "insufficient",
+      needed: [
+        { kind: "human_knowledge", what: "which branch is the release" },
+      ],
+    });
+    expect(insufficient.needed[0]?.kind).toBe("human_knowledge");
+    expect(() =>
+      SessionResult.parse({ outcome: "insufficient", needed: [] }),
+    ).toThrow();
+  });
+
+  it("parameterizes a session result by the capability's findings", () => {
+    const Result = sessionResult(z.object({ codePath: z.string() }));
+    const ok = Result.parse({
+      outcome: "answered",
+      claims: [],
+      findings: { codePath: "src/x.ts" },
+    });
+    expect(ok.findings?.codePath).toBe("src/x.ts");
+    expect(() =>
+      Result.parse({ outcome: "answered", claims: [], findings: {} }),
+    ).toThrow();
+  });
+
+  it("ties a grant's incident id to its scope", () => {
+    const base = {
+      id: "g1",
+      capability: "send_email",
+      effect: "writes_external",
+      reason: "the incident needs to notify the author",
+      grantedBy: "mauria",
+      perTask: false,
+      createdAt: new Date().toISOString(),
+    };
+    expect(
+      Grant.parse({ ...base, scope: "incident", incidentId: "i1" }).scope,
+    ).toBe("incident");
+    expect(
+      Grant.parse({ ...base, scope: "standing", incidentId: null }).scope,
+    ).toBe("standing");
+    expect(() =>
+      Grant.parse({ ...base, scope: "incident", incidentId: null }),
+    ).toThrow();
+    expect(() =>
+      Grant.parse({ ...base, scope: "standing", incidentId: "i1" }),
+    ).toThrow();
+  });
+
+  it("accepts ISO 8601 timestamps with Z or an offset and rejects SQLite's bare format", () => {
+    expect(Timestamp.parse("2026-09-12T10:00:00.000Z")).toBeTruthy();
+    expect(Timestamp.parse("2026-09-12T10:00:00+02:00")).toBeTruthy();
+    expect(() => Timestamp.parse("2026-09-12 10:00:00")).toThrow();
+  });
+
+  it("names every event type the design lists", () => {
+    expect(EventType.options).toContain("capability.requested");
+    expect(EventType.options).toContain("plan.rejected");
+    expect(EventType.options).toHaveLength(23);
+  });
+
+  it("exports provider-facing JSON Schema as a top-level object with no $schema key", () => {
+    for (const schema of [ActionPlan, SessionResult, Incident, Claim]) {
+      const json = jsonSchemaFor(schema);
+      expect(json.$schema).toBeUndefined();
+      expect(json.type).toBe("object");
+    }
+    const planSchema = jsonSchemaFor(ActionPlan) as { required?: string[] };
+    expect(planSchema.required).toContain("incidentStatus");
+    expect(() => jsonSchemaFor(z.object({ when: z.date() }))).toThrow();
+    expect(() => jsonSchemaFor(z.union([z.string(), z.number()]))).toThrow();
+  });
+});

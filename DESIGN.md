@@ -195,7 +195,7 @@ export const investigate = defineCapability({
   session: { systemPrompt: INVESTIGATE_PROMPT },
   effect: "read_only",
   input: InvestigateInput,
-  output: SessionResult(InvestigateFindings),
+  output: sessionResult(InvestigateFindings),
 });
 ```
 

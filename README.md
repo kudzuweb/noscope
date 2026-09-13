@@ -13,6 +13,8 @@ configure lint, unused-code detection, the build and the typecheck that includes
 
 `spikes/` holds one-off verification scripts that back facts in `DESIGN.md`; each has a `run.sh`. They are kept as they ran and are excluded from lint.
 
+`docs/build-record.md` is one entry per merged PR: what was built and where it departs from the plan and why.
+
 `docs/architecture.html` is the flow diagram: the pieces, one cycle in order, what a session receives and returns, a claim's life, where the loop waits on Mauria, the tree changing shape. Opens straight from disk.
 
 ## Install and run
