@@ -146,6 +146,9 @@ describe("store", () => {
       "grant.given",
     ]);
     expect(events.map((e) => e.sequence)).toEqual([...events.keys()]);
+    expect(
+      events.every((e) => e.scope === "incident" && e.incidentId === "i1"),
+    ).toBe(true);
     expect(store.getIncident("i1")?.status).toBe("blocked");
     expect(store.listUnits("i1").find((u) => u.id === "u1")?.status).toBe(
       "closed",
@@ -193,7 +196,17 @@ describe("store", () => {
       },
       "cli",
     );
-    expect(store.listEvents(null).map((e) => e.type)).toEqual(["grant.given"]);
+    expect(store.listEvents(null).map((e) => [e.scope, e.type])).toEqual([
+      ["system", "grant.given"],
+    ]);
+    expect(store.listEvents("i1")).toHaveLength(0);
+    expect(() =>
+      store.db
+        .prepare(
+          "INSERT INTO events (id, scope, incident_id, sequence, type, actor, payload_json, created_at) VALUES ('x', 'incident', NULL, 99, 'plan.proposed', 't', '{}', '2026-01-01T00:00:00Z')",
+        )
+        .run(),
+    ).toThrow(/CHECK/);
     expect(store.listGrants(null)).toHaveLength(1);
     store.close();
   });

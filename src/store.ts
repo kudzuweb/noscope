@@ -82,13 +82,15 @@ CREATE TABLE IF NOT EXISTS claims (
 );
 CREATE TABLE IF NOT EXISTS events (
   id TEXT PRIMARY KEY,
+  scope TEXT NOT NULL CHECK (scope IN ('incident', 'system')),
   incident_id TEXT REFERENCES incidents(id),
   sequence INTEGER NOT NULL,
   type TEXT NOT NULL,
   actor TEXT NOT NULL,
   payload_json TEXT NOT NULL,
   created_at TEXT NOT NULL,
-  UNIQUE (incident_id, sequence)
+  UNIQUE (incident_id, sequence),
+  CHECK ((scope = 'incident' AND incident_id IS NOT NULL) OR (scope = 'system' AND incident_id IS NULL))
 );
 CREATE TABLE IF NOT EXISTS grants (
   id TEXT PRIMARY KEY,
@@ -358,10 +360,11 @@ export class Store {
       ).s;
       this.db
         .prepare(
-          "INSERT INTO events (id, incident_id, sequence, type, actor, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO events (id, scope, incident_id, sequence, type, actor, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .run(
           crypto.randomUUID(),
+          incidentId === null ? "system" : "incident",
           incidentId,
           sequence,
           write.type,
@@ -569,10 +572,11 @@ export class Store {
         }
         this.db
           .prepare(
-            "INSERT INTO events (id, incident_id, sequence, type, actor, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO events (id, scope, incident_id, sequence, type, actor, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
           )
           .run(
             e.id,
+            e.scope,
             e.incidentId,
             e.sequence,
             e.type,
@@ -660,6 +664,7 @@ function rowToClaim(r: Row): Claim {
 function rowToEvent(r: Row): Event {
   return {
     id: String(r.id),
+    scope: r.scope as Event["scope"],
     incidentId: r.incident_id === null ? null : String(r.incident_id),
     sequence: Number(r.sequence),
     type: r.type as EventType,
