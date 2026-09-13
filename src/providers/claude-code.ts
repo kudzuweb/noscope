@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { bashAllowlist } from "../equipment/index.js";
 import { Usage } from "../models.js";
 import {
@@ -160,6 +161,8 @@ export function claudeCodeProvider(binary = "claude"): Provider {
   return {
     name: "claude-code",
     run: async (request) => {
+      if (!existsSync(request.cwd))
+        throw new Error(`session cwd ${request.cwd} does not exist`);
       const { stdout, stderr, code } = await runProcess(
         binary,
         renderClaudeCodeArgs(request),

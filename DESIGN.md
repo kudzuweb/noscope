@@ -117,7 +117,8 @@ noscope/
 │   ├── providers/
 │   │   ├── base.ts       # the provider interface and the shared session preamble
 │   │   ├── claude-code.ts
-│   │   └── codex.ts
+│   │   ├── codex.ts
+│   │   └── index.ts      # the package surface and the provider lookup by name
 │   ├── sops/
 │   │   └── code-review.ts    # after v0: a saved review unit with its tasks and prompts
 │   └── capabilities/
@@ -194,8 +195,7 @@ export const investigate = defineCapability({
   name: "investigate",
   description: "Read the files a question points at and return what they show",
   equipment: ["Read", "Grep", "Glob", "Bash"],
-  bashAllowlist: ["ls", "cat", "head", "tail", "wc", "find", "stat"],
-  session: { systemPrompt: INVESTIGATE_PROMPT },
+  session: { systemPrompt: INVESTIGATE_ROLE, bashAllowlist: READ_ONLY_COMMANDS },
   effect: "read_only",
   input: InvestigateInput,
   output: sessionResult(InvestigateFindings),

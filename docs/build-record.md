@@ -204,3 +204,29 @@ Not exactly to spec, with reasons:
   child that ignores the first cannot hold the runtime forever (from Mauria's review,
   2026-09-13).
 
+## PR 8: Session capabilities (#8, merged 2026-09-13)
+
+Built: `src/capabilities/investigate.ts` with `investigate` (equipment `Read`, `Grep`,
+`Glob`, `Bash` under the read-only allowlist) and `interpret` (no equipment), each with its
+role text and a `sessionResult` output schema carrying `outcome`; `src/capabilities/session.ts`
+rendering the task brief as the user message with the owning unit's purpose line, building
+the provider request from the task's model, and running it through a provider;
+`src/providers/index.ts` looking a provider up by the name a task carries; the verifier's
+`recordSessionResult`, which records asserted claims with the session id as provenance or,
+on `insufficient`, no claims and one `task.insufficient` event carrying `needed`;
+`test/fixtures/models.ts`, a shared incident, unit and task fixture for tests.
+
+Not exactly to spec, with reasons:
+
+- The Bash allowlist lives inside the capability's `session` field rather than beside it, as
+  the registry already defined `SessionSpec` in PR 6; the design's sketch now shows that.
+- A session's timeout is the task's `budget.seconds`, or ten minutes when the task sets
+  none; the dispatcher (PR 12) enforces the same bound.
+- `runSession` parses the provider's output through the capability's own schema, so an
+  `answered` result without findings, or an `insufficient` one naming nothing, is an error
+  before the verifier sees it.
+- The Claude Code provider now names a missing session cwd rather than surfacing a bare
+  ENOENT, which reads as a missing binary.
+- Task status changes on a session's result belong to the dispatcher (PR 12); this PR
+  records the claims and the event only.
+
