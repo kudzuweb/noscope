@@ -1,118 +1,187 @@
-# Handoff: noscope, from the idea to PR 6
+# Handoff: noscope, v0 built and first incident run; the audit is next
 
-Written 2026-09-13 00:20 CDT by the session home-laptop:~/.claude/projects/-Users-mauriaparker/26e50a66-d147-4afe-b214-2080346affdc.jsonl (itself a fork of 81e5955c-083d-4aa9-83fa-e1e626c32953, which holds the quipu-cli reframe context and sits idle). Read this whole file before doing anything. It is written so the next session is the previous one without the back-and-forth.
+Refreshed 2026-09-13 09:50 CDT by session mauriaparker-97 [22585b] (transcript
+home-laptop:~/.claude/projects/-Users-mauriaparker/8befa8f7-a5b0-4c68-a2ba-73ed4aa7199f.jsonl),
+which took over from the design session at 00:23 and built PRs 6 through 15. Read this whole
+file before doing anything.
 
-**First action: name this session `noscope-build`** (the session name, so other sessions can address it with SendMessage). The previous session appears in `ListAgents` as "ChatGPT conversation review ⑂" (Mauria named it "agentic-ics"); it is still running the PR 5 and PR 6 code reviews and will send their results to `noscope-build` as cross-session messages once Mauria says this session is up. Treat those messages as the review findings described in §4 and §5.
+**First actions, in order:** (1) `/warp-pin title noscope-audit`, the name this session was
+launched with. (2) One `SendMessage` to `mauriaparker-97 [22585b]` saying "noscope-audit is up,
+send the pending results here". Nothing is pending from background agents (every reviewer
+finished and every report was applied), so that message is only the readiness signal.
 
 ## 1. GOAL
 
-Build noscope v0, an agent runtime with the Incident Command System (ICS) as its primitive, by working through the fifteen PRs in `BUILD-PLAN.md` at `~/Documents/Projects/noscope`, merging each as it passes CI and review. After v0 works, Mauria uses noscope itself to work on roughdraft, quipu and her codebase scan, and only then builds a new Agent Dash board for it.
+Audit the first incident's run and decide, with Mauria, what to build from it before using
+noscope on roughdraft, quipu and the codebase scan. Mauria's questions (09:32): what models
+were used for what, tokens and cost, were all the steps necessary, was the reasoning sound,
+does ICS have a post-mortem protocol. The answer was given (digest in §4); a proposal is
+waiting for her go-ahead (§5).
 
-## 2. HOW THIS STARTED, AND WHY IT IS SHAPED THIS WAY
+## 2. WHAT NOSCOPE IS (the settled design; DESIGN.md is the contract)
 
-On 2026-09-12 Mauria asked this session to read a ChatGPT share (https://chatgpt.com/share/6aa59980-2f4c-83e9-80b5-6f69a05147b5; full transcript preserved at `~/Documents/Projects/my-quipu/assets/ics-runtime/chatgpt-police-response-on-9-11.md`). It began as "what were the police doing on 9/11", ran through the WTC's fragmented command (three agencies, separate command posts and radios, named by the 9/11 Commission as a systems failure) versus the Pentagon's mature ICS response (Arlington County Fire took command, ordered everyone out two minutes before a collapse, held command ten days), then the origin of ICS in FIRESCOPE after the 1970 California fire siege (the insight: change the unit of organization from institution to problem), then "is there a software analogue", and landed on an agent runtime where the organization is derived state recomputed each cycle around an objective. Mauria: "this resonates. can't believe i stumbled into unifying everything i've been thinking about while reading about 9/11 of all things." She decided to build it on her machine, clean slate (not on her old "glove" project; ChatGPT's glove advice was retracted as unverified).
+An agent runtime with the Incident Command System as its primitive. Vocabulary, all ICS's
+own except claim, fought over and not to be reopened: incident (anything asked for), unit
+(a box in the incident's temporary tree; root is `<id>-command`), task (owned by one unit,
+bound to one capability), capability (declared equipment plus, when judgment is needed, a
+session; deterministic ones produce verified claims, session-backed ones asserted), equipment
+(the primitive, never assigned), claim (subject, predicate, object, status asserted or
+verified or rejected, confidence, evidence, provenance), action plan, planner (Planning
+Section; one Opus 5 call per cycle), validator (12 rules, Step 5), provider (Claude Code
+first; Codex untested), SOP, grant, budget (after v0 mostly), incident file. Mauria is the
+Agency Administrator. The cycle (`incident step`): observe, plan, validate, apply, dispatch,
+verify, record, stop. Four channels for what the planner lacks: a task, a grant request, a
+capability request, a question for a human (`incident answer` reopens).
 
-The name: noscope, after FIRESCOPE, and for the pun that it is built so she never has to zoom in, "not even to one-shot" (README wording she chose; "prompt" dropped as dorky). Earlier candidates: scope, no-scope, no_scope; `noscope` is free on PATH, Homebrew, GitHub; PyPI has an unrelated `noscope` (publish as `no_scope` if ever); npm `noscope` is a placeholder, `no-scope` free; npm not planned.
+Stack: TypeScript, Node 24, pnpm, zod 4, better-sqlite3, biome, vitest, knip, CI runs `pnpm
+check`. Repo https://github.com/kudzuweb/noscope (private).
 
-Every vocabulary word was fought over and is ICS's own except claim (ICS trusts human reports; a model's statements need epistemic status). Mauria cares about this because ICS is in the training data and she does not want agents confused: "op"/"operation" was tried and dropped because an ICS-trained agent reads "operations" as the Operations Section. Do not reopen any of these.
+## 3. STATE
 
-## 3. THE SETTLED DESIGN (DESIGN.md is the contract; this is the summary you must hold)
+All fifteen build-plan PRs plus a docs PR (#16) are merged; main is `fb17e96`, clean, no
+branches. `pnpm check` exit 0, 115 tests. Every PR from 10 on was reviewed by direct
+subagents before merge with findings applied and listed in `docs/build-record.md` (the
+`/code-review` skill's orchestrator stalls before its verify stage; do not use it).
 
-Vocabulary and roles:
-- incident: the umbrella; anything Mauria asks for, a build as much as a failure. Not "case", "op", "mission".
-- unit: a box in the incident's temporary tree that owns a slice of the problem (ICS Branch/Group). Nothing runs as a unit; it has a purpose, a parent, children; opens, subdivides, closes. Root unit is `command` (`<incidentId>-command`).
-- task: ICS's "assignment", Mauria's word. Owned by one unit, bound to one capability: objective, inputs, expected output, completion criteria, evidence required, dependsOn, instructions, provider+model (for session-backed), budget.
-- capability: the assignable thing. Declared equipment plus, when judgment is needed, a session with a system prompt. Deterministic (has `run`, no session) produces verified claims; session-backed produces asserted claims. May include other capabilities. Later, a human.
-- equipment: the primitive, never assigned. Kinds: a function the runtime calls in-process (`read_file`, `grep_files`, `list_directory`, `git_status`, `git_log`, `git_diff`, `run_readonly`); a provider built-in tool (`Read`, `Grep`, `Glob`, `Bash` under an allowlist) usable only inside a session; after v0, an external MCP server (Craft, GitHub, a browser). Function equipment reaches a session only through the runtime's own MCP equipment server (after v0). Each declares `cost` facts (rate limit, typical tokens, seconds, money).
-- claim: subject, predicate, object, status asserted | verified | rejected, confidence, evidence, provenance. Verified only through deterministic equipment.
-- action plan: the planner's output per cycle (proposed, then approved by the validator, then applied). "plan" is the short form. Not "patch".
-- planner: ICS Planning Section; drafts the action plan. Command (root unit + incident file) holds objectives and priorities like the Incident Commander; validator + Mauria approve, which is the commander's approval. One model call per cycle in v0.
-- provider: the program that runs a session. Claude Code first; Codex second (flags verified in `codex exec --help`, untested); later HTTP or a human. Everything above the session layer is provider-blind.
-- SOP: a saved unit configuration (e.g. a code review SOP) addable to any incident; after v0. Not "protocol", not "bundle".
-- grant: Mauria's permission for a capability whose effect is not read_only. Levels stack: per incident per capability (default), standing whitelist, per-task option; auto-whitelist later; v0 is read-only so unused.
-- budget: tokens/seconds bound on incident or task; unlimited default; costs live on the equipment/capabilities.
-- incident file: the one place command keeps an incident's state; the planner's input is rendered from it; `incident show` prints it.
-- Mauria = ICS Agency Administrator (above the Incident Commander): delegates authority via grants, sets priorities, gets briefed, answers questions. No PIO. Safety Officer = validator effect policy + grants.
+The first incident (Step 8: why Roughdraft scrolls to the bottom comment after a delete)
+ran live on the real Claude Code provider from `~/Documents/Projects/roughdraftplus` on
+`NOSCOPE_DB=~/.noscope/first-incident.sqlite`, incident `001`, twelve cycles, 13:33 to
+14:27 UTC, ended `satisfied`. Record: `docs/first-incident.md` (answer, cycle table, totals,
+the eight criteria, event excerpts). Two tuning changes came out of it and are merged:
+planner section 8 shows each capability's input fields (nested shapes, unions, enums,
+literals), and claims get positional ids `001-c381` instead of UUIDs. No prompt text changed.
 
-The cycle (`incident step` runs one): observe (render the incident file into nine labeled planner-input sections in stable order so the prompt prefix caches) → plan (headless Opus 5, no tools, `--json-schema`) → validate (rules below; whole plan rejected or applied; `plan.rejected` fed back) → apply (units/tasks in one transaction with events) → dispatch (ready tasks, sequential in v0, time bound) → verify (deterministic → verified claims; session → asserted; insufficient → no claims + `task.insufficient`) → record → stop.
+Root cause found (verified from source except two runtime links): `deleteComment` at
+`packages/app/src/PageCard.tsx:1884` runs a TipTap chain starting with a bare `focus()`,
+whose default scrolls the existing selection into view; the selection rests at the document
+end because the mount effect at lines 1421-1422 calls `setContent` (YAML endmatter makes the
+JSON differ) and the full-range replace maps the caret to the end; nothing on the delete path
+moves it. Fix shape: `focus(undefined, { scrollIntoView: false })` as `focusComment` does at
+2054/2065. Recorded on the quipu roughdraft thread. Mauria's answer to the one question
+("no, it happens after every deleted comment") falsified the planner's earlier inferred link
+(selection on the last-added comment) and produced the document-end finding.
 
-The planner's four channels for what it lacks: a task (retrievable fact), grantRequests (permission), capabilityRequests (missing means; also "what to build next"), questionsForHuman (only Mauria knows). Incident goes `blocked` on the last three; `incident answer` resumes.
+Quipu: `~/Documents/Projects/my-quipu/ics-runtime.md` Head current to 09:27 with a knot for
+this stretch; `roughdraft.md` carries the defect's cause. Commit `045c88c` and `aa60f2f`.
 
-Session contract: system prompt = fixed preamble (orientation: this is an ICS-modeled runtime, incident means anything asked for, temporary organization built and torn down, planner drafts/validator approves/tasks run through capabilities; the term mapping one line each; the session's place: a resource assigned to one task in one unit, report only against the contract, findings are asserted until verified, cannot change the organization; the four kinds of lack) + the capability's role text. User message = the task brief plus one line saying what the owning unit is trying to establish. Output schema via `--json-schema`; every session schema is ONE object: `{ outcome: answered|insufficient, claims[], findings (per-capability, nullable), needed[] with kind ∈ retrievable_fact|permission|missing_means|human_knowledge }`. `interpret` (no equipment) stays in v0 because "cannot answer, here is what I need" is the diagnostic Mauria wants.
+## 4. THE AUDIT, AS DELIVERED (09:45; from the event log, verified)
 
-Validator rules: capabilities exist; units exist; no cycles; no duplicates; inputs validate; span of control ≤7 direct children, target 5; effect policy (v0: read_only only; later grants); budget respected; dependencies resolve; closing is clean; status earned (`satisfied` needs every task done/cancelled and ≥1 verified claim); model known (provider+model pair the provider serves; the list is every model, not curated, Mauria can ask for anything; no defaults on capabilities).
+| Role | Model | Calls | Input | Output | Time |
+|---|---|---|---|---|---|
+| Planner | Opus 5 | 12 | 1.09M | 74k | 15.5 min |
+| investigate | Opus 5 | 3 | 2.24M | 86k | 15.9 min |
+| investigate | Sonnet 5 | 2 | 0.55M | 20k | 3.2 min |
+| interpret | Opus 5 | 2 | 15k | 15k | 2.6 min |
+| deterministic | none | 22 | 0 | 0 | 2 s |
 
-Provider facts (all verified by test on home-laptop 2026-09-12, Claude Code 2.1.270):
-- Headless `claude -p` runs on Mauria's subscription (no API key set; it worked). `--bare` and the Agent SDK need an API key: out.
-- Isolation flags: `--output-format json --no-session-persistence --setting-sources "" --disable-slash-commands --exclude-dynamic-system-prompt-sections`; context drops from ~40k (56k in home dir) to ~3k; probe confirmed no CLAUDE.md/hooks visible. `--system-prompt` alone does NOT isolate. With `--setting-sources ""` the model falls back to Opus 5, so pass `--model` always.
-- `--json-schema` works and returns `structured_output`; it REJECTS a `$schema` key and requires a top-level object (a discriminated union is refused). `jsonSchemaFor()` strips `$schema` and throws on non-objects.
-- `--tools ""` removes built-ins but MCP tools from `--mcp-config --strict-mcp-config` stay callable (spike `spikes/mcp-tools-filter/run.sh`): a session can be given nothing but the runtime's equipment (2.5k tokens).
-- Speed: ~3 s process startup per headless call; Haiku session with one Bash call 4.4 s API; Opus organizer call 14.2 s. Prompt caching is real in Claude Code (cache_creation/cache_read fields).
-- Codex CLI at `~/.local/bin/codex`: `codex exec` has `-m`, `-s read-only`, `-C`, `--add-dir`, `--ignore-user-config`, `--ignore-rules`, `--ephemeral`, `--output-schema FILE`, `--json`, `-o`; no system-prompt flag (prepend to prompt). Nothing run through it yet.
+Planner input per cycle: 4k, 7k, 91k, 99k, 101k, 103k, 105k, 106k, 111k, 108k, 122k, 130k
+(the 291 grep claims of cycle 2 ride in every later prompt). Cost: subscription quota, not
+dollars; at API rates (claude-api skill table cached 2026-06-24: Opus 5 $5/$25, Sonnet 5
+$2/$10 per MTok, cache reads ~0.1x) roughly $7 to $22; the range is wide because the provider
+collapses uncached, cache-write and cache-read tokens into one `inputTokens` and drops
+`total_cost_usd` (an audit gap to fix).
 
-After-v0 open questions (do not design now): Situation Unit role; cross-incident priorities (MACS); Codex provider tests. First incident (PR 15): "Determine why Roughdraft scrolls to the bottom comment after a comment is deleted, instead of staying where the deleted comment was, and identify the code path responsible, in ~/Documents/Projects/roughdraftplus."
+Necessity: cycles 1 and 5 wasted on planner-input gaps (fixed); cycle 2's greps too broad;
+cycle 3's four `read` tasks redundant with the two Opus traces; cycles 6 and 8 (about 9 min)
+chased a link only a browser can prove; cycle 9's question was askable at cycle 3; cycles
+10-12 productive. About 14 of 54 minutes avoidable; 15 minutes are planner overhead (78 s per
+Opus call). Reasoning: sound at the end; wrong from cycle 6 to 9, holding a false link at
+confidence 0.85 while verifying a different one. Lessons: session confidence is not
+calibrated; verify the link whose failure changes the conclusion; ask the human as soon as a
+link is unprovable from the repository. Promotion by exact triple never fired (0 of many
+`claimsToVerify`); planner tokens do not count against the budget.
 
-Stack rulings: TypeScript on Node 24, pnpm, zod 4, better-sqlite3 (over node:sqlite, "rather carry a dependency than have a built-in change under me"), biome, vitest, knip, GitHub Actions running `pnpm check`. Python was inherited from ChatGPT and dropped.
-
-## 4. STATE OF THE BUILD
-
-Repo `~/Documents/Projects/noscope`, remote https://github.com/kudzuweb/noscope (private; public later when she uses it at work). Files: `DESIGN.md` (the contract, with a few leftover CriticMarkup threads from Roughdraft review; harmless), `BUILD-PLAN.md` (15 PRs), `docs/architecture.html` (flow diagram), `docs/build-record.md` (one entry per merged PR: built, deviations with reasons), `README.md`, `spikes/`, `src/`, `test/`, `bin/noscope.mjs`.
-
-Merged (squash, branches deleted): PR 1 skeleton, PR 2 contracts (`src/models.ts`), PR 3 store (`src/store.ts`), PR 4 incident commands (`src/context.ts`, `src/commands/incident.ts`, `create/show/events` work on a real file), PR 5 equipment (`src/equipment/*`). Build record has 1 through 5.
-
-OPEN: PR 6, https://github.com/kudzuweb/noscope/pull/6, branch `pr-6-deterministic-capabilities`, commit `157356c`: `src/capabilities/registry.ts` (`defineCapability`; `produces` derived from session/run; refuses unknown equipment, built-ins on deterministic, both-or-neither session/run), `src/capabilities/deterministic.ts` (`check_path`, `read`, `grep`, `git_history`), `src/capabilities/index.ts`, `src/verifier.ts` (`recordClaims`: deterministic → verified with capability+inputs provenance; session → asserted with sessionId), store `createClaim` now writes `claim.<status>`, `incident show` lists the registry, 49 tests green, `pnpm check` exit 0. CI not yet confirmed. Build-record entry for PR 6 NOT yet written. Review `/code-review pr-6-deterministic-capabilities medium` was launched in the previous session and will finish there; that session forwards the results to you.
-
-PR 5's review (also finishing in the previous session) already found real problems in the merged equipment that must be fixed in PR 6's branch before it merges:
-- `run_readonly` allowlists the command but not its arguments: `find <dir> -delete` deleted a file with exit 0; `find -exec` and `-ok` are the same hole. Fix: reject find actions (`-delete`, `-exec`, `-execdir`, `-ok`, `-okdir`, `-fprint`, `-fprintf`, `-fls`) and probably any argument starting with `-` that is not in a per-command allowlist.
-- `git_diff` with `from: "--output=/tmp/x"` wrote a file: revision and path arguments must not start with `-` (reject, or pass `--end-of-options`).
-- `git_status` branch parsing: "No commits yet on main" and "HEAD (no branch)" come back as the branch string; renames come back as status "R", path "a.txt -> b.txt". Parse these.
-- `run_readonly` timeouts and maxBuffer overflows collapse to exitCode 1 with empty stderr; surface the reason.
-Their full finder reports may arrive as forwarded messages; apply what holds, add tests, commit on `pr-6-deterministic-capabilities`.
-
-PR 6's review finders (received 2026-09-13 00:18, verified by them with probes on this machine unless noted) found these in the OPEN PR 6 code; fix on the branch before merging:
-- `check_path` decides existence by matching a `readdir` dirent name in the parent instead of `stat`-ing the path: wrong for symlinks (`/tmp`, `/etc` come back "other"), case-insensitive APFS (`A.TXT` reported missing while `read` of it succeeds), `/` and `.` (basename empty, reported missing). Its bare `catch` turns any parent-read error (EACCES, a racing sibling delete) into a verified "exists: false". Fix: add a `stat_path` equipment (fs.stat and fs.lstat, reporting kind and the error distinctly), make `check_path` use it, treat only ENOENT as missing, and change the design's Step 3 v0 table row for `check_path` from `list_directory` to `stat_path`.
-- None of the four `run` functions read `RunContext`, so relative `path`/`root`/`cwd` inputs resolve against the noscope process cwd, not the incident's `ctx.cwd`; tests pass only because they use absolute paths. Fix: resolve every path-typed input against `ctx.cwd` at the top of each run (one shared helper), and emit resolved absolute paths as claim subjects, so two greps in different roots never produce identical subjects like `a.txt:2`. Write the convention once in DESIGN.md Step 6.
-- `grep`'s absence claim (`root has_no_match_for pattern`) omits the glob, ignoreCase and skipped-directory bounds the search ran under, and the verifier stores raw `task.inputs` rather than the effective parsed inputs with defaults. Fix: `runDeterministic` returns the parsed inputs, `recordClaims` stores those as provenance, and the absence claim's object carries the search parameters; capability input schemas should reuse the equipment schemas (with defaults) rather than hand-copied optional versions.
-- `Capability` should be a discriminated union (`kind: "deterministic"` with `run` | `kind: "session"` with `session`) so exactly-one is a compile-time property and `produces` a literal; three places currently re-derive it at runtime (registry.ts exactly-one check, `produces` computation, `runDeterministic`'s `run === undefined`, incident.ts's `produces ===` test). The finder typechecked the union form under the repo's tsconfig; it compiles.
-- `git_history`'s conditional spreads for `limit`/`path` are unnecessary: zod 4 applies defaults to explicit `undefined` and drops undefined optionals, so pass `{ cwd, limit, path }`. The verifier's conditional spreads likely the same (report truncated).
-- `list_directory` stats every sibling for size, so `check_path` on one file in a huge directory did thousands of stats; the `stat_path` fix removes that.
-Truncated reports not captured: pr6-reuse, pr6-angleB, pr6-angleC, pr6-efficiency, pr6-conventions; the orchestrator's consolidated report will follow as a forwarded message.
+ICS: the After Action Review (Army origin; what was planned, what happened, why, what to
+sustain or improve), hot wash (immediate), After Action Report with Improvement Plan (FEMA,
+formal). The ICS-214 Activity Log feeds the AAR; noscope's event log is its ICS-214.
+Sources given to Mauria: FEMA ICS forms descriptions PDF, FEMA preptoolkit AAR page,
+Wikipedia After-action review and Incident Command System.
 
 ## 5. NEXT STEP, IN ORDER
 
-1. `cd ~/Documents/Projects/noscope && git status && git branch --show-current` (expect `pr-6-deterministic-capabilities`, clean). `gh pr checks 6`.
-2. Receive the forwarded review results for PR 5 and PR 6 from the previous session (they arrive as cross-session messages; also see §4). Apply what holds on the PR 6 branch, one concern per commit, `pnpm check` must print exit 0 before each commit (capture with `pnpm check >/tmp/c.log 2>&1; echo $?`).
-3. Append the PR 6 entry to `docs/build-record.md` (format: "## PR N: Title (#N, merged DATE)", "Built:", "Not exactly to spec, with reasons:" bullets). Include the PR 5 fixes as a bullet.
-4. Push; `gh pr edit 6 --body` if deviations changed; wait CI; `gh pr merge 6 --squash --delete-branch`; `git checkout main && git pull`.
-5. PR 7, Claude Code provider, per `BUILD-PLAN.md`: `src/providers/base.ts` (provider interface: session request in → SessionResult + usage + session id out; the fixed preamble text from DESIGN.md's session-fields row), `src/providers/claude-code.ts` (render the request onto `claude -p` with `--model`, `--system-prompt`, `--tools`, `--allowedTools`, `--json-schema`, `--add-dir`, the five isolation flags; run; parse `structured_output` and usage), `test/stub-claude` (a stub binary echoing a canned result so tests need no network), one opt-in live smoke test behind `NOSCOPE_LIVE=1`. Then PRs 8–15 in order.
+Mauria has not yet answered the proposal. Wait for her ruling on these three, then build
+the ones she takes as PRs on `main` (branch `pr-<slug>`, review by direct subagents, merge on
+green; standing merge permission covers "this build plan", so ask whether it extends):
 
-## 6. WORKING AGREEMENTS WITH MAURIA (standing consent; do not re-ask)
+1. `noscope incident review <id>`: deterministic AAR from the log (per-cycle plan, verdict,
+   tasks, models, tokens, seconds, claims; per-model totals; rejections; questions; cost
+   estimate at API rates). Small; the numbers above were computed by
+   `/private/tmp/.../scratchpad/audit.cjs`, which is gone with the session, so rewrite it as
+   `src/commands/review.ts` or similar, reading `plan.proposed.usage`, `task.usage`,
+   `plan.rejected`, tasks' model, claims' provenance.
+2. Store the usage split (uncached, cache write, cache read) and the provider's
+   `total_cost_usd` on every `task.usage` and `plan.proposed` event: `Usage` in
+   `src/models.ts`, `parseClaudeCodeResult` in `src/providers/claude-code.ts` (the envelope
+   has `usage.input_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`,
+   `output_tokens`, `total_cost_usd`), `sumUsage` in `src/store.ts`; DESIGN.md and the
+   models test (`Usage` shape) follow.
+3. A session-backed `review` capability answering the four AAR questions from the log.
+   First use of noscope on itself; design it with her.
 
-- Build here, in the session, one PR at a time on branch `pr-N-slug`, targeting main, no stacking. "merge as you go fam": merge after CI green and review findings applied. A new Agent Dash board only after noscope works.
-- Every PR: commit; `/code-review <branch> medium` (the built-in skill; NOT her `/fresh-eyes`, which is for prose); push; `gh pr create` with body = the plan's PR step text verbatim, then "## Deviations, with reasons"; build-record entry on the branch before merge; CI; merge.
-- Code review mechanics: the skill forks and spawns ~8 finder agents (angleA, finderReuse, finderConventions-store, etc.) that send findings as teammate messages, often truncated at 16k; the orchestrator's consolidated report arrives 10–20 minutes later as a task notification. Treat findings as secondhand; the ones so far were almost all real. Fix on the PR branch; if the PR already merged, fix in the next PR and say so in the build record.
-- Docs travel with the change: if code changes a table, flag or rule, update `DESIGN.md`, `docs/architecture.html`, README in the same PR. Never `git add -A`; stage named files. Never commit in the same command as an edit. Sentence-case commit messages, no emoji, no attribution.
-- Provenance labels in chat (verified / inferred / secondhand); answer first; tables for parallel items; no em-dashes.
-- Quipu: thread `~/Documents/Projects/my-quipu/ics-runtime.md` (Head current to 23:00 2026-09-12 plus PR 1–4 not yet reflected: update the Sequencing paragraph when PRs land; write Head edits directly with exact anchors; the Haiku keeper agent invented content three times, papercut pc-e7b9f1; pull `--ff-only` first, a sibling session also writes there). Thread `roughdraft.md` (coiled) holds the scroll-after-delete defect and the nested-comment-id idea. Agent Dash postmortem on the first Dash run is deferred, on `agent-dash/agent-dash-board.md`.
-- Roughdraft: reviews of DESIGN.md are done; if reopened, `roughdraft open <file>` blocks; Roughdraft holds its own copy with no file watcher, so stop the background wait (TaskStop) before editing the file, or the next save overwrites; tables do not render there (papercut pc-490f5c), so render with marked from `~/Documents/Projects/roughdraftplus/packages/app/node_modules` to `~/Downloads/noscope-design.html` (script: strip `{>>…<<}{id=…}` and `{==…==}` markers, wrap body).
+Then her scheduled revisit: Opus as planner and the Step 5 rules accepted "for now";
+promotion needing a looser notion of "established" (or the planner proposing the exact
+triple); grep's per-match claims (what a claim carries; the `read` claim carries whole file
+text too); planner tokens versus budget; two validator design calls (closing a unit whose
+child still runs a task passes; two tasks that each fit the budget but together exceed it
+pass). All on the quipu thread's open items. Then noscope on roughdraft, quipu, the scan.
+
+## 6. WORKING AGREEMENTS (standing; do not re-ask)
+
+- One PR at a time on `pr-<slug>` targeting main, no stacking on GitHub (a local chain
+  rebased with `git rebase --onto` as each merges is fine; use a separate `git worktree`
+  when subagents are probing the main tree). "Merge as you go": merge after CI green and
+  review findings applied; Mauria granted merge permission for the build plan at 01:11.
+- Every PR: commit; review by direct subagents (spawn `general-purpose` agents named
+  `review<N>-<angle>` with the design context in the brief, correctness plus conformance
+  for large PRs; findings are secondhand until reconciled; their final reports often fail
+  to arrive as notifications, so read `~/.claude/projects/-Users-mauriaparker/<session>/subagents/agent-a<name>-*.jsonl`
+  or SendMessage "resend"); push; `gh pr create` with body = plan step text verbatim then
+  "## Deviations, with reasons"; build-record entry on the branch; CI; `gh pr merge N
+  --squash --delete-branch`; `git pull --ff-only`.
+- Docs travel with the change (DESIGN.md, docs/architecture.html, README, build record).
+  Never `git add -A`. Never commit in the same command as an edit. Sentence-case commit
+  messages, no emoji, no attribution.
+- Chat: provenance labels, answer first, tables for parallel items, no em-dashes.
+- Quipu: write Head edits directly with exact anchors (the keeper invents content,
+  papercut pc-e7b9f1); `git pull --ff-only` first.
 
 ## 7. ANCHORS
 
-- Commands: `pnpm check` (lint, typecheck incl. tests, vitest, knip, build), `pnpm lint:fix`, `./bin/noscope.mjs --help`, `NOSCOPE_DB=/tmp/x.sqlite ./bin/noscope.mjs incident create "…" --constraint "…"`, `gh pr checks N`, `gh pr merge N --squash --delete-branch`.
-- Code map: `src/cli.ts` (command table, optional handler per row, help/version; handlers get raw args), `src/context.ts` (Io, Context, Handler, EXIT: 0 ok, 2 usage, 3 not built, 4 not found, 5 cannot proceed), `src/models.ts` (all zod contracts; `sessionResult(findings)`; `jsonSchemaFor`; `Timestamp` accepts offsets; `Claim.object` defaults null; `Event` has `scope` incident|system with refine), `src/store.ts` (named write methods each with a zod `Mutation` in the event payload; `replay()` sorts and applies exactly the mutations; `batch()`; `record()`; schema `user_version` 1, file at another version refused; updates must change one row; reads parse through contracts; `resolveDbPath`: `$NOSCOPE_DB` else `~/.noscope/noscope.sqlite`), `src/commands/incident.ts` (create/show/events; `renderIncidentFile`), `src/equipment/*` (`defineEquipment`, `runEquipment` validates both ways; `builtin.ts` names provider tools and `bashAllowlist()`), `src/capabilities/*`, `src/verifier.ts`.
-- Tests: `test/*.test.ts`, fixtures `test/fixtures/tree`; git fixtures built in temp dirs.
-- knip: entries are `src/cli.ts`, `src/models.ts`, `src/equipment/index.ts`, `src/capabilities/index.ts`, `src/verifier.ts`, tests; unexport anything else nothing uses yet.
-- Renders: `~/Downloads/noscope-design.html`, `~/Downloads/noscope-build-plan.html`.
-- Papercuts: pc-176e29 (ChatGPT share extraction), pc-490f5c (Roughdraft tables), pc-e7b9f1 (keeper invents).
+- Repo `~/Documents/Projects/noscope`; `pnpm check`; `./bin/noscope.mjs --help`;
+  `NOSCOPE_DB=<file>` and `NOSCOPE_CLAUDE_BIN=<binary>` (tests use `test/stub-claude`, which
+  serves `NOSCOPE_STUB_PLAN`/`NOSCOPE_STUB_PLANS` to planner calls and `NOSCOPE_STUB_OUTPUT`
+  to sessions, `NOSCOPE_STUB_COUNTER` as the plan index file, `NOSCOPE_STUB_LOG`).
+- Live incident: `cd ~/Documents/Projects/roughdraftplus && NOSCOPE_DB=~/.noscope/first-incident.sqlite ~/Documents/Projects/noscope/bin/noscope.mjs incident show 001` (also `tree`, `events`).
+- Code map: `src/cli.ts` (command table), `src/context.ts` (EXIT 0 ok, 1 failed outside
+  the record, 2 usage, 3 not built, 4 not found, 5 cannot proceed), `src/models.ts`,
+  `src/store.ts` (events with mutations, `sumUsage`, `replay`), `src/equipment/*`,
+  `src/capabilities/{registry,deterministic,investigate,session}.ts`, `src/verifier.ts`
+  (recordClaims with promotion, recordSessionResult), `src/planner.ts` (PLANNER_RULES, the
+  nine sections, `describeInputs`), `src/validator.ts` (CHECKS keyed by rule name),
+  `src/runtime.ts` (applyPlan), `src/dispatcher.ts`, `src/tree.ts`,
+  `src/commands/incident.ts` (create, show, events, tree, step, answer, run; `cycle`),
+  `src/providers/{base,claude-code,index}.ts`; tests in `test/`, fixtures in
+  `test/fixtures/{tree,models.ts}`.
+- Docs: `DESIGN.md`, `BUILD-PLAN.md`, `docs/build-record.md` (one entry per PR),
+  `docs/first-incident.md`, `docs/architecture.html`, README.
+- Quipu threads: `ics-runtime.md` (open items list the revisit), `roughdraft.md`.
+  Papercuts: pc-176e29, pc-490f5c, pc-e7b9f1, pc-d04913.
 
 ## 8. GOTCHAS
 
-- biome reflows code after every `lint:fix`; exact-string anchors on TS files miss constantly. Rewrite small files whole, or use regex anchors on signatures; put size guards on edits but set them loosely.
-- `exactOptionalPropertyTypes` is on: optional fields need `| undefined`.
-- `util.parseArgs` strict mode is used inside handlers; the top-level dispatcher only scans for help/version flags.
-- Node 24 type stripping cannot run `src/*.ts` directly (parameter properties); use `pnpm build` and `dist/`.
-- `pnpm check | grep` hides the exit code; always echo `$?`.
-- Zod 4: `z.unknown()` fields with absent keys parse to undefined; `.default(null)` where null is meant. `z.discriminatedUnion` is not allowed as a provider-facing schema.
-- SQLite `UNIQUE` ignores NULLs; the events uniqueness is an index on `COALESCE(incident_id,'')`.
-- Standing grants are system-scope events (`incidentId` null, `scope` "system").
-- Context cost has been about 6% of the window per PR at this pace.
+- biome reflows code after `lint:fix`; exact-string edits on TS miss; rewrite small files
+  whole or anchor loosely. `exactOptionalPropertyTypes` is on. knip fails the build on any
+  unused export (unexport rather than add entries). Node 24 cannot run `src/*.ts` directly;
+  use `dist/`. `pnpm check | grep` hides the exit code.
+- A heredoc containing certain characters is refused by the Bash tool ("control
+  characters"); use the Write tool for such files.
+- The planner input's snapshot test (`test/planner.test.ts`) pins sections 8 and 9 text;
+  update with `pnpm vitest run test/planner.test.ts -u` and read the diff.
+- Reviewer subagents share the working tree: one checked out a branch under the build; use
+  `git worktree add` for parallel work and tell reviewers not to switch branches.
+- A session's `budget.seconds` is also the provider's kill bound; a deterministic run past
+  a bound is abandoned, not killed.
+- Old claims in incident 001 have UUID ids (before the positional-id change); new ones are
+  `001-cNNN`.
+- Open questions: whether Mauria's merge permission extends past the build plan; what a
+  claim should carry (read text, grep matches); how promotion should match.
