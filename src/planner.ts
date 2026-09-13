@@ -62,11 +62,18 @@ type JsonSchema = Record<string, unknown>;
 
 /** A JSON Schema type on one line: nested objects show their fields, arrays their item type. */
 function describeType(schema: JsonSchema): string {
-  if (schema.type === "array")
-    return `${describeType((schema.items as JsonSchema | undefined) ?? {})}[]`;
+  const options = (schema.anyOf ?? schema.oneOf) as JsonSchema[] | undefined;
+  if (options !== undefined) return options.map(describeType).join(" | ");
+  if (schema.type === "array") {
+    const item = describeType((schema.items as JsonSchema | undefined) ?? {});
+    return `${item.includes(" | ") ? `(${item})` : item}[]`;
+  }
   if (schema.type === "object" && schema.properties !== undefined)
     return `{ ${describeFields(schema).join("; ")} }`;
-  if (Array.isArray(schema.enum)) return schema.enum.map(String).join(" | ");
+  if (schema.const !== undefined) return JSON.stringify(schema.const);
+  if (Array.isArray(schema.enum))
+    return schema.enum.map((v) => JSON.stringify(v)).join(" | ");
+  if (Array.isArray(schema.type)) return schema.type.map(String).join(" | ");
   return String(schema.type ?? "any");
 }
 
