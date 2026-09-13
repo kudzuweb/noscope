@@ -25,7 +25,8 @@ const CLAUDE_CODE_MODELS = [
 /**
  * The fixed isolation flags: together they drop a session's context from about 40k tokens to
  * about 3k and keep Mauria's settings, skills and hooks out (DESIGN.md Step 3, verified
- * 2026-09-12 on Claude Code 2.1.270).
+ * 2026-09-12 on Claude Code 2.1.270). Transcripts are kept on purpose: every session's
+ * record under Claude Code's project directory is the material for refining the runtime.
  */
 /** After a timeout's SIGTERM, how long the child has to exit before SIGKILL. */
 const KILL_GRACE_MS = 5_000;
@@ -33,7 +34,6 @@ const KILL_GRACE_MS = 5_000;
 export const CLAUDE_CODE_ISOLATION_FLAGS = [
   "--output-format",
   "json",
-  "--no-session-persistence",
   "--setting-sources",
   "",
   "--disable-slash-commands",

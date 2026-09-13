@@ -49,7 +49,6 @@ describe("claude code provider", () => {
       JSON.stringify(r.outputSchema),
       "--output-format",
       "json",
-      "--no-session-persistence",
       "--setting-sources",
       "",
       "--disable-slash-commands",
@@ -59,7 +58,7 @@ describe("claude code provider", () => {
       "--add-dir",
       "/tmp/extra",
     ]);
-    expect(CLAUDE_CODE_ISOLATION_FLAGS).toHaveLength(7);
+    expect(CLAUDE_CODE_ISOLATION_FLAGS).toHaveLength(6);
     expect(
       renderClaudeCodeArgs({
         ...r,
