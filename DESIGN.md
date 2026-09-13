@@ -340,7 +340,7 @@ run writes `task.started`, then the result and `task.completed` or
 the whole input context (the figure a token budget counts) and its split into uncached,
 cache-write and cache-read tokens, output tokens, seconds, and the provider's own cost at
 list price when it reports one (`total_cost_usd` in the Claude Code envelope). The
-planner's call records the same shape on `plan.proposed`. A deterministic run spends no
+planner's call records the same shape, and the model it ran on, on `plan.proposed`. A deterministic run spends no
 tokens and costs nothing; a run that fails before the provider answers records no cost,
 since none is known, and a spend summed with such an event in it carries no cost, so a
 figure is never printed that a failed session would have raised. The spend `incident show`

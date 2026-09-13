@@ -80,7 +80,7 @@ export const COMMANDS: readonly Command[] = [
     usage: "incident review <id>",
     summary:
       "The After Action Review from the log: each cycle, every run, totals by model, cost",
-    arrives: "PR 18",
+    arrives: "PR 19",
     handler: incident.review,
   },
   {

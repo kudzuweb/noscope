@@ -539,29 +539,32 @@ Not exactly to spec, with reasons:
 - The stub binary now reports `total_cost_usd: 0.0123`, so the provider test pins the
   whole shape; a second parse pins the no-cost case.
 
-## PR 18: Incident review (#18, merged 2026-09-13)
+## PR 19: Incident review (#19, merged 2026-09-13)
 
 Built: `noscope incident review <id>`, the After Action Review computed from the event log
 by `renderReview` in `src/review.ts`: each cycle with its verdict (applied with the unit,
-task and claimsToVerify counts, or rejected with every rule line), the planner's model and
-usage, every task run with its capability, model, tokens (with the cache split when
-recorded), seconds, cost, outcome and the claims it entered, budget stops, questions and
-answers; totals by role and model; plan, task and claim counts with promotions; the cost.
-`plan.proposed` now records the planner's model. Second of the three pieces from the first
-incident's audit; on incident 001 it reproduces the audit's table exactly (planner 12 calls,
-1.09M in, 74k out, 930 s; investigate on Opus 3 calls, 2.24M in, 86k out, 956 s; Sonnet 2
-calls; interpret 2 calls; 22 deterministic runs), replacing the scratch script that computed
-it.
+task and claimsToVerify counts, or rejected with every rule line), the planner's model,
+session id and usage, every task run with its capability, model, session id, tokens (with
+the cache split when recorded), seconds, cost, outcome and the claims it entered, tasks
+that failed before running, budget stops, questions and answers; totals by role and model;
+plan, task and claim counts with promotions; the cost. `plan.proposed` now records the
+planner's model. The session ids are the keys to the transcripts PR 18 keeps. Second of the
+three pieces from the first incident's audit; on incident 001 it reproduces the audit's
+table exactly (planner 12 calls, 1.09M in, 74k out, 930 s; investigate on Opus 3 calls,
+2.24M in, 86k out, 956 s; Sonnet 2 calls; interpret 2 calls; 22 deterministic runs),
+replacing the scratch script that computed it.
 
 Not exactly to spec, with reasons:
 
 - Cost is the provider's recorded figure where every usage carries one, and otherwise an
   estimate at list rates (the claude-api skill's table cached 2026-06-24, kept in
   `src/review.ts` with that date). A usage recorded before PR 17 has no cache split, so its
-  input is bounded between all cache reads (0.1x) and all cache writes (1.25x); the report
-  says which case applies. A model with no known rate is counted as unpriced rather than
-  guessed. Incident 001 comes out at $6.37 to $26.82 against the audit's $7 to $22, which
-  used 1x rather than 1.25x as the upper factor.
+  input is bounded between all cache reads (0.1x) and all cache writes (2x: Claude Code
+  writes the one-hour cache, seen as `cache_creation.ephemeral_1h_input_tokens` in its
+  envelope on 2026-09-13); the report says which case applies. A model with no known rate
+  is counted as unpriced rather than guessed. Fable 5.1's cheaper cache reads (0.025x) are
+  not modeled; no incident has run on it. Incident 001 comes out at $6.37 to $40.15 against the
+  audit's $7 to $22, which used 1x as the upper factor.
 - The planner's model is taken from `plan.proposed` and, for events recorded before this
   PR, assumed to be the default `claude-opus-5`, with the assumption stated in the cost
   line.
@@ -570,3 +573,10 @@ Not exactly to spec, with reasons:
 - The computation lives in `src/review.ts` rather than under `src/commands/`, so the
   handler in `src/commands/incident.ts` stays a few lines and the report is tested on
   synthetic events without a store.
+- From the review: a task that fails before it runs (interrupted by an earlier pass, or
+  its capability missing) writes `task.failed` and no `task.usage`, so those are listed
+  from `task.failed` with their reason; a task with a usage but no outcome event, which
+  the dispatcher never writes, prints "no outcome recorded" rather than "completed". That
+  default had hidden a lookup bug: an outcome event names its task inside its recorded
+  mutation, not at the top of its payload, so no outcome was ever matched and every run
+  printed "completed"; the review now reads the id from either place.
