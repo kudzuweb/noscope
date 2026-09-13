@@ -539,7 +539,7 @@ Not exactly to spec, with reasons:
 - The stub binary now reports `total_cost_usd: 0.0123`, so the provider test pins the
   whole shape; a second parse pins the no-cost case.
 
-## PR 19: Keep session transcripts (#19, merged 2026-09-13)
+## PR 18: Keep session transcripts (#18, merged 2026-09-13)
 
 Built: `--no-session-persistence` is no longer among the Claude Code provider's fixed
 flags, so every planner and task session leaves its transcript under Claude Code's project
