@@ -36,9 +36,7 @@ Settled before this document, on the ics-runtime and quipu-cli threads:
 | The framework is named `noscope`, one spelling for the repo, the npm package and the command. | Named by Mauria 2026-09-12, after FIRESCOPE, the interagency effort that produced ICS, and for the pun: the whole thing is built so she never has to zoom in. `noscope` is free on PATH, Homebrew and GitHub; PyPI has an unrelated `noscope`, so a PyPI release would be published as `no_scope` with the import name unchanged. |
 | Build this first, then use it to work on roughdraft, quipu and the codebase scan. | Sequencing set by Mauria on 2026-09-12. |
 
-{==Proposed in this document and not yet ruled: the schema, with storage once on `node:sqlite`, `zod` as
-the schema dependency, Opus 5 as the planner model, the model allowlist, the schema, the validator
-rules, the CLI surface, and the first incident.==}{>>didn't we rule on all this?<<}{id="c62" by="user" at="2026-09-13T03:30:47.936Z"}
+{==Still proposed rather than ruled, and settled by building them: the schema, Opus 5 as the planner model, the validator rules, the CLI surface, and the first incident. Everything else in this document is a ruling.==}{>>didn't we rule on all this?<<}{id="c62" by="user" at="2026-09-13T03:30:47.936Z"}{>>Most of it, yes: storage, zod and the model list were ruled after this paragraph was written and it was not updated. Trimmed to the five things that are still proposals, which the build settles.<<}{id="r66" by="AI" at="2026-09-13T03:55:00.000Z" re="c62"}
 ## Vocabulary
 | Term | Meaning |
 |---|---|
