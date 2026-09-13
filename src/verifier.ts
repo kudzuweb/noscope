@@ -39,9 +39,10 @@ export function recordClaims(
     taskId: task.id,
     ...source,
   };
-  const claims = proposals.map((p) =>
+  const existing = store.listClaims(task.incidentId).length;
+  const claims = proposals.map((p, i) =>
     Claim.parse({
-      id: crypto.randomUUID(),
+      id: `${task.incidentId}-c${String(existing + i + 1).padStart(3, "0")}`,
       incidentId: task.incidentId,
       subject: p.subject,
       predicate: p.predicate,

@@ -58,26 +58,34 @@ function bullets(items: readonly string[], empty = "(none)"): string[] {
   return items.length === 0 ? [`  ${empty}`] : items.map((i) => `  - ${i}`);
 }
 
-/** A capability's input fields on one line: name, type, whether required, and the default, from its schema. */
-function describeInputs(schema: z.ZodType): string {
-  const json = jsonSchemaFor(schema);
-  const properties = (json.properties ?? {}) as Record<
-    string,
-    Record<string, unknown>
-  >;
-  const required = new Set((json.required as string[] | undefined) ?? []);
-  const fields = Object.entries(properties).map(([name, p]) => {
-    const type =
-      p.type === "array"
-        ? `${String((p.items as Record<string, unknown> | undefined)?.type ?? "any")}[]`
-        : String(p.type ?? "any");
+type JsonSchema = Record<string, unknown>;
+
+/** A JSON Schema type on one line: nested objects show their fields, arrays their item type. */
+function describeType(schema: JsonSchema): string {
+  if (schema.type === "array")
+    return `${describeType((schema.items as JsonSchema | undefined) ?? {})}[]`;
+  if (schema.type === "object" && schema.properties !== undefined)
+    return `{ ${describeFields(schema).join("; ")} }`;
+  if (Array.isArray(schema.enum)) return schema.enum.map(String).join(" | ");
+  return String(schema.type ?? "any");
+}
+
+function describeFields(schema: JsonSchema): string[] {
+  const properties = (schema.properties ?? {}) as Record<string, JsonSchema>;
+  const required = new Set((schema.required as string[] | undefined) ?? []);
+  return Object.entries(properties).map(([name, p]) => {
     const tail = required.has(name)
       ? ", required"
       : p.default === undefined
         ? ", optional"
         : ` = ${JSON.stringify(p.default)}`;
-    return `${name}: ${type}${tail}`;
+    return `${name}: ${describeType(p)}${tail}`;
   });
+}
+
+/** A capability's input fields on one line: name, type, whether required, and the default, from its schema. */
+function describeInputs(schema: z.ZodType): string {
+  const fields = describeFields(jsonSchemaFor(schema));
   return fields.length === 0 ? "(none)" : `{ ${fields.join("; ")} }`;
 }
 
