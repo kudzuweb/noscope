@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { z } from "zod";
 import {
+  CapabilityRequest,
   Claim,
   ClaimStatus,
   Event,
@@ -11,6 +12,7 @@ import {
   Grant,
   Incident,
   IncidentStatus,
+  Question,
   Task,
   TaskStatus,
   Timestamp,
@@ -27,6 +29,9 @@ export function resolveDbPath(env: NodeJS.ProcessEnv): string {
 export function now(): string {
   return new Date().toISOString();
 }
+
+/** Bumped whenever a table changes shape; a file at another version is refused, not migrated, for now. */
+const SCHEMA_VERSION = 1;
 
 const STATE_TABLES = [
   "incidents",
@@ -134,6 +139,18 @@ export const Mutation = z.discriminatedUnion("kind", [
     status: IncidentStatus,
     at: Timestamp,
   }),
+  z.object({
+    kind: z.literal("incident.questions"),
+    incidentId: z.string(),
+    questions: z.array(Question),
+    at: Timestamp,
+  }),
+  z.object({
+    kind: z.literal("incident.capabilityRequests"),
+    incidentId: z.string(),
+    capabilityRequests: z.array(CapabilityRequest),
+    at: Timestamp,
+  }),
   z.object({ kind: z.literal("unit.create"), unit: Unit }),
   z.object({
     kind: z.literal("unit.close"),
@@ -169,7 +186,20 @@ export class Store {
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
     this.db.pragma("busy_timeout = 5000");
+    const version = this.db.pragma("user_version", { simple: true }) as number;
+    const tables = (
+      this.db
+        .prepare("SELECT COUNT(*) AS c FROM sqlite_master WHERE type = 'table'")
+        .get() as { c: number }
+    ).c;
+    if (tables > 0 && version !== SCHEMA_VERSION) {
+      this.db.close();
+      throw new Error(
+        `${path} was written by noscope schema version ${version}, and this build uses ${SCHEMA_VERSION}; there is no migration yet, so move or delete the file`,
+      );
+    }
     this.db.exec(SCHEMA);
+    this.db.pragma(`user_version = ${SCHEMA_VERSION}`);
   }
 
   close(): void {
@@ -255,6 +285,35 @@ export class Store {
     });
   }
 
+  setIncidentQuestions(
+    incidentId: string,
+    questions: Question[],
+    actor: string,
+    type: EventType,
+    extra: Extra = {},
+  ): void {
+    this.write(incidentId, type, actor, extra, {
+      kind: "incident.questions",
+      incidentId,
+      questions,
+      at: now(),
+    });
+  }
+
+  setIncidentCapabilityRequests(
+    incidentId: string,
+    capabilityRequests: CapabilityRequest[],
+    actor: string,
+    extra: Extra = {},
+  ): void {
+    this.write(incidentId, "capability.requested", actor, extra, {
+      kind: "incident.capabilityRequests",
+      incidentId,
+      capabilityRequests,
+      at: now(),
+    });
+  }
+
   createUnit(unit: Unit, actor: string): void {
     this.write(
       unit.incidentId,
@@ -296,17 +355,16 @@ export class Store {
     status: TaskStatus,
     actor: string,
     type: EventType,
-    result?: unknown,
-    extra: Extra = {},
+    options: { result?: unknown; extra?: Extra } = {},
   ): void {
     const mutation: Mutation = {
       kind: "task.status",
       taskId,
       status,
       at: now(),
-      ...(result === undefined ? {} : { result }),
+      ...("result" in options ? { result: options.result } : {}),
     };
-    this.write(incidentId, type, actor, extra, mutation);
+    this.write(incidentId, type, actor, options.extra ?? {}, mutation);
   }
 
   createClaim(claim: Claim, actor: string): void {
@@ -353,14 +411,26 @@ export class Store {
     this.write(incidentId, type, actor, payload, undefined);
   }
 
+  /** Several writes as one transaction: all of them land with their events, or none do. */
+  batch(fn: () => void): void {
+    this.db.transaction(fn).immediate();
+  }
+
   /**
-   * Rebuild state from an event log into this store. Applies each event's recorded mutation
-   * and re-inserts the event as it was; throws on an event whose mutation does not parse.
+   * Rebuild state from an event log into this store, in system-first, per-incident sequence
+   * order whatever order the caller passed. Applies each event's recorded mutation and
+   * re-inserts the event as it was; throws on an event whose mutation does not parse.
    */
   replay(events: readonly Event[]): void {
+    const ordered = [...events].sort(
+      (a, b) =>
+        (a.incidentId === null ? 0 : 1) - (b.incidentId === null ? 0 : 1) ||
+        (a.incidentId ?? "").localeCompare(b.incidentId ?? "") ||
+        a.sequence - b.sequence,
+    );
     this.db
       .transaction(() => {
-        for (const raw of events) {
+        for (const raw of ordered) {
           const event = Event.parse(raw);
           const mutation = event.payload.mutation;
           if (mutation !== undefined) this.apply(Mutation.parse(mutation));
@@ -391,13 +461,13 @@ export class Store {
     extra: Extra,
     mutation: Mutation | undefined,
   ): void {
-    for (const reserved of ["mutation"]) {
-      if (reserved in extra)
-        throw new Error(`event payload key "${reserved}" is reserved`);
-    }
+    if ("mutation" in extra)
+      throw new Error('event payload key "mutation" is reserved');
+    const checked =
+      mutation === undefined ? undefined : Mutation.parse(mutation);
     this.db
       .transaction(() => {
-        if (mutation !== undefined) this.apply(mutation);
+        if (checked !== undefined) this.apply(checked);
         const { s: sequence } = this.db
           .prepare(
             "SELECT COALESCE(MAX(sequence), -1) + 1 AS s FROM events WHERE incident_id IS ?",
@@ -411,7 +481,8 @@ export class Store {
             sequence,
             type,
             actor,
-            payload: mutation === undefined ? extra : { ...extra, mutation },
+            payload:
+              checked === undefined ? extra : { ...extra, mutation: checked },
             createdAt: now(),
           }),
         );
@@ -437,12 +508,18 @@ export class Store {
   }
 
   private apply(m: Mutation): void {
+    const one = (info: Database.RunResult, what: string) => {
+      if (info.changes !== 1)
+        throw new Error(
+          `${what}: expected to change one row, changed ${info.changes}`,
+        );
+    };
     switch (m.kind) {
       case "incident.create": {
         const i = m.incident;
         this.db
           .prepare(
-            "INSERT INTO incidents VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO incidents (id, objective, constraints_json, priorities_json, budget_json, questions_json, capability_requests_json, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           )
           .run(
             i.id,
@@ -459,16 +536,41 @@ export class Store {
         return;
       }
       case "incident.status":
-        this.db
-          .prepare(
-            "UPDATE incidents SET status = ?, updated_at = ? WHERE id = ?",
-          )
-          .run(m.status, m.at, m.incidentId);
+        one(
+          this.db
+            .prepare(
+              "UPDATE incidents SET status = ?, updated_at = ? WHERE id = ?",
+            )
+            .run(m.status, m.at, m.incidentId),
+          `incident ${m.incidentId}`,
+        );
+        return;
+      case "incident.questions":
+        one(
+          this.db
+            .prepare(
+              "UPDATE incidents SET questions_json = ?, updated_at = ? WHERE id = ?",
+            )
+            .run(j(m.questions), m.at, m.incidentId),
+          `incident ${m.incidentId}`,
+        );
+        return;
+      case "incident.capabilityRequests":
+        one(
+          this.db
+            .prepare(
+              "UPDATE incidents SET capability_requests_json = ?, updated_at = ? WHERE id = ?",
+            )
+            .run(j(m.capabilityRequests), m.at, m.incidentId),
+          `incident ${m.incidentId}`,
+        );
         return;
       case "unit.create": {
         const u = m.unit;
         this.db
-          .prepare("INSERT INTO units VALUES (?, ?, ?, ?, ?, ?, ?)")
+          .prepare(
+            "INSERT INTO units (id, incident_id, parent_id, purpose, status, created_at, closed_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          )
           .run(
             u.id,
             u.incidentId,
@@ -481,17 +583,20 @@ export class Store {
         return;
       }
       case "unit.close":
-        this.db
-          .prepare(
-            "UPDATE units SET status = 'closed', closed_at = ? WHERE id = ?",
-          )
-          .run(m.at, m.unitId);
+        one(
+          this.db
+            .prepare(
+              "UPDATE units SET status = 'closed', closed_at = ? WHERE id = ? AND status = 'active'",
+            )
+            .run(m.at, m.unitId),
+          `unit ${m.unitId}`,
+        );
         return;
       case "task.create": {
         const t = m.task;
         this.db
           .prepare(
-            "INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO tasks (id, incident_id, unit_id, capability, objective, inputs_json, expected_output, completion_criteria_json, evidence_required_json, depends_on_json, provider, model, instructions, budget_json, status, result_json, created_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           )
           .run(
             t.id,
@@ -519,25 +624,23 @@ export class Store {
         const completedAt = TERMINAL_TASK.safeParse(m.status).success
           ? m.at
           : null;
-        if ("result" in m) {
+        const result = "result" in m ? j(m.result) : null;
+        one(
           this.db
             .prepare(
-              "UPDATE tasks SET status = ?, completed_at = COALESCE(?, completed_at), result_json = ? WHERE id = ?",
+              "UPDATE tasks SET status = ?, completed_at = COALESCE(?, completed_at), result_json = COALESCE(?, result_json) WHERE id = ?",
             )
-            .run(m.status, completedAt, j(m.result), m.taskId);
-        } else {
-          this.db
-            .prepare(
-              "UPDATE tasks SET status = ?, completed_at = COALESCE(?, completed_at) WHERE id = ?",
-            )
-            .run(m.status, completedAt, m.taskId);
-        }
+            .run(m.status, completedAt, result, m.taskId),
+          `task ${m.taskId}`,
+        );
         return;
       }
       case "claim.create": {
         const c = m.claim;
         this.db
-          .prepare("INSERT INTO claims VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+          .prepare(
+            "INSERT INTO claims (id, incident_id, subject, predicate, object_json, status, confidence, evidence_json, provenance_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          )
           .run(
             c.id,
             c.incidentId,
@@ -553,14 +656,19 @@ export class Store {
         return;
       }
       case "claim.status":
-        this.db
-          .prepare("UPDATE claims SET status = ? WHERE id = ?")
-          .run(m.status, m.claimId);
+        one(
+          this.db
+            .prepare("UPDATE claims SET status = ? WHERE id = ?")
+            .run(m.status, m.claimId),
+          `claim ${m.claimId}`,
+        );
         return;
       case "grant.create": {
         const g = m.grant;
         this.db
-          .prepare("INSERT INTO grants VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+          .prepare(
+            "INSERT INTO grants (id, scope, incident_id, capability, effect, reason, granted_by, per_task, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          )
           .run(
             g.id,
             g.scope,

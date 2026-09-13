@@ -60,7 +60,7 @@ function scripted(store: Store): void {
   store.createTask(task, "planner");
   store.setTaskStatus("i1", "t1", "running", "dispatcher", "task.started");
   store.setTaskStatus("i1", "t1", "completed", "dispatcher", "task.completed", {
-    matches: ["src/a.ts:12"],
+    result: { matches: ["src/a.ts:12"] },
   });
   const claim: Claim = {
     id: "c1",
@@ -287,6 +287,118 @@ describe("store", () => {
     expect(a.listEvents(null).map((e) => e.sequence)).toEqual([0, 1, 2]);
     a.close();
     b.close();
+  });
+
+  it("refuses an update that would change no row, and records no event for it", () => {
+    const store = new Store(":memory:");
+    scripted(store);
+    const before = store.listEvents("i1").length;
+    expect(() => store.closeUnit("i1", "no-such-unit", "r", "test")).toThrow(
+      /expected to change one row/,
+    );
+    expect(() =>
+      store.setTaskStatus(
+        "i1",
+        "no-such-task",
+        "failed",
+        "test",
+        "task.failed",
+      ),
+    ).toThrow(/expected to change one row/);
+    expect(store.listEvents("i1")).toHaveLength(before);
+    store.close();
+  });
+
+  it("validates a mutation before applying it, so a bad status never reaches the table", () => {
+    const store = new Store(":memory:");
+    scripted(store);
+    expect(() =>
+      store.setIncidentStatus(
+        "i1",
+        "bogus" as never,
+        "test",
+        "incident.closed",
+      ),
+    ).toThrow();
+    expect(store.getIncident("i1")?.status).toBe("blocked");
+    store.close();
+  });
+
+  it("stores questions and capability requests through mutations that replay in any order", () => {
+    const a = new Store(":memory:");
+    scripted(a);
+    a.setIncidentQuestions(
+      "i1",
+      [{ id: "q1", text: "which branch?" }],
+      "planner",
+      "question.asked",
+    );
+    a.setIncidentQuestions(
+      "i1",
+      [{ id: "q1", text: "which branch?", answer: "main" }],
+      "cli",
+      "question.answered",
+    );
+    a.setIncidentCapabilityRequests(
+      "i1",
+      [{ need: "read GitHub issues", why: "the answer is in an issue" }],
+      "planner",
+    );
+    expect(a.getIncident("i1")?.questions[0]?.answer).toBe("main");
+    expect(a.getIncident("i1")?.capabilityRequests).toHaveLength(1);
+    const b = new Store(":memory:");
+    b.replay([...a.listEvents("i1"), ...a.listEvents(null)].reverse());
+    expect(b.snapshot()).toEqual(a.snapshot());
+    a.close();
+    b.close();
+  });
+
+  it("applies a batch of writes as one transaction", () => {
+    const store = new Store(":memory:");
+    scripted(store);
+    const before = store.snapshot();
+    const events = store.listEvents("i1").length;
+    expect(() =>
+      store.batch(() => {
+        store.createUnit(
+          {
+            id: "u2",
+            incidentId: "i1",
+            parentId: "u-command",
+            purpose: "a",
+            status: "active",
+            createdAt: now(),
+            closedAt: null,
+          },
+          "planner",
+        );
+        store.createUnit(
+          {
+            id: "u3",
+            incidentId: "i1",
+            parentId: "missing",
+            purpose: "b",
+            status: "active",
+            createdAt: now(),
+            closedAt: null,
+          },
+          "planner",
+        );
+      }),
+    ).toThrow();
+    expect(store.snapshot()).toEqual(before);
+    expect(store.listEvents("i1")).toHaveLength(events);
+    store.close();
+  });
+
+  it("refuses a file written by another schema version", async () => {
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const path = `${mkdtempSync(`${tmpdir()}/noscope-`)}/old.sqlite`;
+    const s1 = new Store(path);
+    s1.db.pragma("user_version = 99");
+    s1.close();
+    expect(() => new Store(path)).toThrow(/schema version 99/);
   });
 
   it("rebuilds every current-state table by replaying the events (acceptance 7)", () => {

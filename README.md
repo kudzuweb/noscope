@@ -5,7 +5,7 @@ assembles a temporary organization around an objective, with capabilities, state
 as the durable layer and the organization tree as derived state.
 
 Named after FIRESCOPE, the effort that produced ICS, and for the pun: it is built so you never
-have to zoom in. `DESIGN.md` is the design. `BUILD-PLAN.md` breaks it into fifteen PR-sized steps and says which are built.
+have to zoom in, not even to one-shot. `DESIGN.md` is the design. `BUILD-PLAN.md` breaks it into fifteen PR-sized steps and says which are built.
 
 Layout: `src/` is the runtime, `test/` its vitest tests, `bin/noscope.mjs` the launcher that
 loads the built `dist/`; `biome.json`, `knip.json`, `tsconfig.json` and `tsconfig.typecheck.json`
