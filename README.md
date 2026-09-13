@@ -28,8 +28,8 @@ pnpm build
 ```
 
 Environment: `NOSCOPE_DB` is the SQLite file (default `~/.noscope/noscope.sqlite`);
-`NOSCOPE_CLAUDE_BIN` is the Claude Code binary a session runs on (default `claude`; tests
-point it at `test/stub-claude`).
+`NOSCOPE_CLAUDE_BIN` is the Claude Code binary every provider call runs on, the planner's
+as well as each task session's (default `claude`; tests point it at `test/stub-claude`).
 
 `pnpm check` runs lint (biome), typecheck, tests (vitest), unused-code detection (knip) and
 the build, which is what CI runs on every pull request. Every command in the design's

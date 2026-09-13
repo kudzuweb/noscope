@@ -132,7 +132,9 @@ noscope/
 
 ### Step 2: storage
 One SQLite file per installation, WAL mode, at `$NOSCOPE_DB` when that is set and otherwise
-`~/.noscope/noscope.sqlite`, created on first use; tests point `NOSCOPE_DB` at a temp file. Current-state tables plus an append-only event
+`~/.noscope/noscope.sqlite`, created on first use; tests point `NOSCOPE_DB` at a temp file.
+`NOSCOPE_CLAUDE_BIN` names the Claude Code binary every provider call runs on, the planner's
+and each task session's; tests point it at the stub. Current-state tables plus an append-only event
 table, updated in the same immediate transaction. No event sourcing: state is read from the
 tables, and the events explain how it got there. Every event that changes state records its
 mutation in its payload, which is what makes the tables rebuildable from the events.
@@ -147,7 +149,7 @@ mutation in its payload, which is what makes the tables rebuildable from the eve
 | `grants` | `id`, `scope` (`incident` or `standing`), `incident_id` (null for standing), `capability`, `effect`, `reason`, `granted_by`, `per_task` (boolean), `created_at`. Empty in v0. |
 
 Event types in v0: `incident.created`, `incident.blocked`, `incident.closed`, `unit.created`, `unit.closed`,
-`task.created`, `task.started`, `task.completed`, `task.failed`,
+`task.created`, `task.ready`, `task.started`, `task.completed`, `task.failed`,
 `task.cancelled`, `task.insufficient`, `claim.asserted`, `claim.verified`, `claim.rejected`,
 `plan.proposed`, `plan.rejected`, `plan.applied`, `task.usage`, `budget.exceeded`,
 `question.asked`, `question.answered`, `grant.requested`, `grant.given`, `capability.requested`.
@@ -346,9 +348,12 @@ session's assertion can match a later deterministic result. A claim can only ent
 as `asserted` or `verified`, and `verified` on entry requires deterministic provenance. A
 session-backed capability's result
 becomes `asserted` claims with the session id as provenance; an `insufficient` result becomes
-no claims and an `task.insufficient` event carrying what was needed. Promotion of an asserted in
-v0 happens only when a later deterministic result matches it; the planner can request
-that through `claims_to_verify`, which schedules the deterministic check as a task.
+no claims and an `task.insufficient` event carrying what was needed. Promotion of an asserted
+claim in v0 happens only when a later deterministic result matches it on subject, predicate
+and object; the promotion's `claim.verified` event records the task, its effective inputs,
+the matching verified claim and its time, so a promotion can be audited without rerunning
+anything. The planner asks for it through `claimsToVerify`, naming the asserted claims it
+wants established, and proposes the deterministic task that would establish them.
 ### Step 7: the command surface
 | Command | Does |
 |---|---|
@@ -371,6 +376,7 @@ Exit codes, the same for every command:
 | Code | Meaning |
 |---|---|
 | 0 | The command did what it says. |
+| 1 | The command failed for a reason outside the incident's record: a provider could not be run, the store could not be opened; stderr names it. |
 | 2 | Usage: an unknown command or bad arguments; help goes to stderr. |
 | 3 | The command is in the design but not built yet; stderr names what delivers it. |
 | 4 | The incident, unit or task named does not exist. |

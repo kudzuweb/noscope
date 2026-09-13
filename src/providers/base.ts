@@ -70,3 +70,18 @@ When you lack something, say so: set outcome to "insufficient", make no claims, 
 export function sessionSystemPrompt(role: string): string {
   return `${SESSION_PREAMBLE}\n\n${role}`;
 }
+
+/**
+ * A session that ran but produced no usable outcome: the provider reported an error, or the
+ * output did not fit the schema. It carries what the session still spent, so a failed task's
+ * usage is recorded against the incident's budget.
+ */
+export class SessionError extends Error {
+  constructor(
+    message: string,
+    readonly sessionId: string | null,
+    readonly usage: Usage | null,
+  ) {
+    super(message);
+  }
+}

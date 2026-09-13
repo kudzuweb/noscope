@@ -1,6 +1,7 @@
 import { jsonSchemaFor, type Task, type Unit, type Usage } from "../models.js";
 import {
   type Provider,
+  SessionError,
   type SessionRequest,
   sessionSystemPrompt,
 } from "../providers/index.js";
@@ -65,8 +66,15 @@ export async function runSession(
   const outcome = await provider.run(
     buildSessionRequest(capability, task, unit, cwd),
   );
+  const parsed = capability.output.safeParse(outcome.output);
+  if (!parsed.success)
+    throw new SessionError(
+      `session ${outcome.sessionId} returned output that does not fit ${capability.name}: ${parsed.error.issues.map((i) => `${i.path.join(".") || "output"} ${i.message}`).join("; ")}`,
+      outcome.sessionId,
+      outcome.usage,
+    );
   return {
-    result: capability.output.parse(outcome.output),
+    result: parsed.data,
     sessionId: outcome.sessionId,
     usage: outcome.usage,
   };

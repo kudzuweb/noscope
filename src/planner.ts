@@ -154,6 +154,12 @@ export function renderPlannerInput(
   const rejections = recent
     .filter((e) => e.type === "plan.rejected")
     .map((e) => `${String(e.payload.rule)}: ${String(e.payload.reason)}`);
+  const budgetStops = recent
+    .filter((e) => e.type === "budget.exceeded")
+    .map(
+      (e) =>
+        `budget stopped the last pass before ${String(e.payload.taskId)}: ${String(e.payload.reason)}`,
+    );
 
   const lines: string[] = [
     "# Incident file",
@@ -166,6 +172,7 @@ export function renderPlannerInput(
     "priorities:",
     ...bullets(incident.priorities),
     `budget remaining: tokens ${remaining(incident.budget.tokens, spentTokens)}, seconds ${remaining(incident.budget.seconds, usage.seconds)} (spent tokens ${spentTokens}, seconds ${usage.seconds.toFixed(1)})`,
+    ...budgetStops,
     "grants:",
     ...bullets(
       grants.map(

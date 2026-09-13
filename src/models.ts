@@ -38,6 +38,7 @@ export const EventType = z.enum([
   "unit.created",
   "unit.closed",
   "task.created",
+  "task.ready",
   "task.started",
   "task.completed",
   "task.failed",

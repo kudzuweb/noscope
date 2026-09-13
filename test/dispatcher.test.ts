@@ -59,7 +59,8 @@ describe("dispatcher", () => {
       dependsOn: ["t-never"],
       status: "pending",
     });
-    const ran = await dispatch(store, incident, { cwd: tree });
+    const { ran, stopped } = await dispatch(store, incident, { cwd: tree });
+    expect(stopped).toBeNull();
     expect(ran).toEqual([
       { taskId: "t1", capability: "grep", status: "completed", claims: 1 },
       {
@@ -85,6 +86,10 @@ describe("dispatcher", () => {
     const types = store.listEvents("i1").map((e) => e.type);
     expect(types.filter((t) => t === "task.started")).toHaveLength(2);
     expect(types.filter((t) => t === "task.usage")).toHaveLength(2);
+    expect(types.filter((t) => t === "task.ready")).toHaveLength(1);
+    expect(types.indexOf("task.ready")).toBeLessThan(
+      types.lastIndexOf("task.started"),
+    );
     expect(types.indexOf("claim.verified")).toBeLessThan(
       types.indexOf("task.completed"),
     );
@@ -101,7 +106,7 @@ describe("dispatcher", () => {
       budget: { seconds: 0.1 },
       status: "ready",
     });
-    const ran = await dispatch(store, incident, { cwd: tree });
+    const { ran } = await dispatch(store, incident, { cwd: tree });
     expect(ran).toEqual([
       {
         taskId: "t-slow",
@@ -129,7 +134,7 @@ describe("dispatcher", () => {
       budget: { seconds: 30 },
       status: "ready",
     });
-    const ran = await withStubOutput(
+    const { ran } = await withStubOutput(
       {
         outcome: "answered",
         claims: [
@@ -184,14 +189,133 @@ describe("dispatcher", () => {
       taskId: "t0",
       usage: { inputTokens: 90, outputTokens: 20, seconds: 1 },
     });
-    const ran = await dispatch(
+    const { ran, stopped } = await dispatch(
       store,
       { ...incident, budget: { tokens: 100 } },
       { cwd: tree },
     );
     expect(ran).toEqual([]);
+    expect(stopped).toBe("tokens: 110 spent of 100, t1 needs 0");
     expect(store.listEvents("i1").at(-1)?.type).toBe("budget.exceeded");
     expect(store.listTasks("i1")[0]?.status).toBe("ready");
+    store.close();
+  });
+});
+
+describe("dispatcher, from the review", () => {
+  it("a deterministic task with no budget runs unbounded, and a session that fails after spending keeps its usage", async () => {
+    const store = new Store(":memory:");
+    const { incident, task } = scriptedIncident(store);
+    task({
+      id: "t-slow",
+      capability: "slow_probe",
+      inputs: {},
+      status: "ready",
+    });
+    task({
+      id: "t-inv",
+      capability: "investigate",
+      inputs: { question: "why?" },
+      provider: "claude-code",
+      model: "claude-haiku-4-5",
+      budget: { seconds: 30 },
+      status: "ready",
+    });
+    const { ran } = await withStubOutput(
+      { outcome: "answered", claims: [], findings: null, needed: [] },
+      () =>
+        dispatch(store, incident, {
+          cwd: tree,
+          env: { NOSCOPE_CLAUDE_BIN: stub },
+        }),
+    );
+    expect(ran.map((r) => [r.taskId, r.status])).toEqual([
+      ["t-inv", "failed"],
+      ["t-slow", "completed"],
+    ]);
+    expect(ran[0]?.reason).toMatch(/does not fit investigate/);
+    const usage = store
+      .listEvents("i1")
+      .filter((e) => e.type === "task.usage")
+      .map((e) => e.payload);
+    expect(usage[0]).toMatchObject({
+      taskId: "t-inv",
+      usage: { inputTokens: 1500, outputTokens: 42, seconds: 1.5 },
+    });
+    const failed = store.listEvents("i1").find((e) => e.type === "task.failed");
+    expect(failed?.payload).toMatchObject({
+      sessionId: "stub-session",
+      timedOut: false,
+    });
+    store.close();
+  });
+
+  it("a deterministic result promotes a matching asserted claim, and the event records how", async () => {
+    const store = new Store(":memory:");
+    const { incident, task } = scriptedIncident(store);
+    const subject = `${join(tree, "a.txt")}:2`;
+    store.createClaim(
+      {
+        id: "c-guess",
+        incidentId: "i1",
+        subject,
+        predicate: "matches",
+        object: { pattern: "delete", text: "the delete handler lives here" },
+        status: "asserted",
+        confidence: 0.6,
+        evidence: [],
+        provenance: {
+          capability: "investigate",
+          taskId: "t-earlier",
+          sessionId: "s",
+        },
+        createdAt: incident.createdAt,
+      },
+      "verifier",
+    );
+    store.createClaim(
+      {
+        id: "c-other",
+        incidentId: "i1",
+        subject,
+        predicate: "matches",
+        object: { pattern: "delete", text: "something else" },
+        status: "asserted",
+        confidence: 0.6,
+        evidence: [],
+        provenance: {
+          capability: "investigate",
+          taskId: "t-earlier",
+          sessionId: "s",
+        },
+        createdAt: incident.createdAt,
+      },
+      "verifier",
+    );
+    task({
+      id: "t-grep",
+      capability: "grep",
+      inputs: { root: ".", pattern: "delete" },
+      status: "ready",
+    });
+    await dispatch(store, incident, { cwd: tree });
+    const claims = store.listClaims("i1");
+    expect(claims.find((c) => c.id === "c-guess")?.status).toBe("verified");
+    expect(claims.find((c) => c.id === "c-other")?.status).toBe("asserted");
+    const promotion = store
+      .listEvents("i1")
+      .find(
+        (e) =>
+          e.type === "claim.verified" && e.payload.promotedBy !== undefined,
+      );
+    expect(promotion?.payload).toMatchObject({
+      promotedBy: {
+        taskId: "t-grep",
+        capability: "grep",
+        inputs: { root: tree, pattern: "delete" },
+        matchingClaimId: expect.any(String),
+      },
+    });
     store.close();
   });
 });
@@ -243,7 +367,9 @@ describe("incident step", () => {
     ).toBe(EXIT.ok);
     expect(out).toEqual([
       "plan proposed (session stub-session): grep first",
-      "  1 unit(s) to create, 0 to close; 1 task(s) to create, 0 to cancel; 0 question(s); status continue",
+      "  create unit find under 001-command: locate the handler",
+      "  create task under find: grep: find delete",
+      "  status: continue",
       "plan approved",
       "  unit 001-u02 created under 001-command: locate the handler",
       "  task 001-t01 [ready] under 001-u02: grep: find delete",
@@ -259,8 +385,8 @@ describe("incident step", () => {
     expect(
       await withStubOutput(bad, () => run(["incident", "step", "001"], ctx)),
     ).toBe(EXIT.ok);
-    expect(out[2]).toBe("plan rejected:");
-    expect(out[3]).toMatch(/^ {2}- Units exist: /);
+    expect(out[3]).toBe("plan rejected:");
+    expect(out[4]).toMatch(/^ {2}- Units exist: /);
     out.length = 0;
     const done: ActionPlan = {
       ...plan,

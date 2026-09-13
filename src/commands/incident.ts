@@ -266,11 +266,17 @@ export const tree: Handler = async (args, ctx) => {
  * record, then stop. Prints the action plan, the verdict, what changed and what ran. Exit 5
  * when the incident is not open, since only Mauria can move it (`incident answer`).
  */
+/**
+ * One cycle (DESIGN.md Step 1): observe and plan, validate, apply, dispatch, verify and
+ * record, then stop. Prints the proposed plan, the verdict, what changed and what ran. Exit 5
+ * when the incident is not open, since only Mauria can move it (`incident answer`); exit 1
+ * when the provider could not be run at all, with nothing written for the cycle.
+ */
 export const step: Handler = async (args, ctx) => {
   const store = openStore(ctx);
   try {
     const incident = requireIncident(store, args, ctx, "step");
-    if (incident === undefined) return EXIT.notFound;
+    if (typeof incident === "number") return incident;
     if (incident.status !== "open") {
       ctx.io.err(
         `noscope incident step: incident ${incident.id} is ${incident.status}; a step needs an open incident`,
@@ -279,17 +285,36 @@ export const step: Handler = async (args, ctx) => {
     }
     const planner = getProvider("claude-code", ctx.env);
     const providers = [planner];
-    const proposal = await proposePlan(store, incident, planner, {
-      providers,
-      cwd: ctx.cwd,
-    });
+    let proposal: Awaited<ReturnType<typeof proposePlan>>;
+    try {
+      proposal = await proposePlan(store, incident, planner, {
+        providers,
+        cwd: ctx.cwd,
+      });
+    } catch (error) {
+      ctx.io.err(
+        `noscope incident step: the planner could not run: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return EXIT.failed;
+    }
     const { plan } = proposal;
     ctx.io.out(
       `plan proposed (session ${proposal.sessionId}): ${plan.rationale}`,
     );
-    ctx.io.out(
-      `  ${plan.createUnits.length} unit(s) to create, ${plan.closeUnits.length} to close; ${plan.createTasks.length} task(s) to create, ${plan.cancelTasks.length} to cancel; ${plan.questionsForHuman.length} question(s); status ${plan.incidentStatus}`,
-    );
+    for (const u of plan.createUnits)
+      ctx.io.out(`  create unit ${u.ref} under ${u.parent}: ${u.purpose}`);
+    for (const c of plan.closeUnits)
+      ctx.io.out(`  close unit ${c.unitId}: ${c.reason}`);
+    for (const t of plan.createTasks)
+      ctx.io.out(
+        `  create task under ${t.unit}: ${t.capability}: ${t.objective}${t.model === null ? "" : ` (${t.provider}/${t.model})`}`,
+      );
+    for (const id of plan.cancelTasks) ctx.io.out(`  cancel task ${id}`);
+    for (const q of plan.questionsForHuman) ctx.io.out(`  ask: ${q}`);
+    for (const r of plan.capabilityRequests)
+      ctx.io.out(`  request capability: ${r.need} (${r.why})`);
+    for (const id of plan.claimsToVerify) ctx.io.out(`  verify claim ${id}`);
+    ctx.io.out(`  status: ${plan.incidentStatus}`);
     const verdict = validateAndRecord(store, incident, plan, providers);
     if (!verdict.ok) {
       ctx.io.out("plan rejected:");
@@ -314,12 +339,16 @@ export const step: Handler = async (args, ctx) => {
       ctx.io.out(`incident ${incident.id} is now ${applied.incidentStatus}`);
       return EXIT.ok;
     }
-    const ran = await dispatch(store, incident, { cwd: ctx.cwd, env: ctx.env });
+    const { ran, stopped } = await dispatch(store, incident, {
+      cwd: ctx.cwd,
+      env: ctx.env,
+    });
     for (const r of ran)
       ctx.io.out(
         `  ran ${r.taskId} (${r.capability}): ${r.status}${r.reason === undefined ? "" : `, ${r.reason}`}; ${r.claims} claim(s)`,
       );
-    if (ran.length === 0) ctx.io.out("  nothing ready to run");
+    if (stopped !== null) ctx.io.out(`  budget stopped the pass: ${stopped}`);
+    else if (ran.length === 0) ctx.io.out("  nothing ready to run");
     const claims = store.listClaims(incident.id);
     ctx.io.out(
       `claims: ${claims.filter((c) => c.status === "verified").length} verified, ${claims.filter((c) => c.status === "asserted").length} asserted`,

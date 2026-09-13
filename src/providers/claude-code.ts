@@ -2,7 +2,12 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { bashAllowlist } from "../equipment/index.js";
 import { Usage } from "../models.js";
-import type { Provider, SessionOutcome, SessionRequest } from "./base.js";
+import {
+  type Provider,
+  SessionError,
+  type SessionOutcome,
+  type SessionRequest,
+} from "./base.js";
 
 /** Every Anthropic model Claude Code serves as of 2026-09-13 (DESIGN.md Step 5). */
 const CLAUDE_CODE_MODELS = [
@@ -86,27 +91,32 @@ export function parseClaudeCodeResult(stdout: string): SessionOutcome {
   }
   if (envelope.type !== "result")
     throw new Error(`claude returned a ${String(envelope.type)} message`);
-  if (envelope.is_error === true || envelope.subtype !== "success")
-    throw new Error(
-      `claude session failed (${String(envelope.subtype)}): ${String(envelope.result)}`,
-    );
-  if (typeof envelope.session_id !== "string")
-    throw new Error("claude result carries no session id");
-  if (envelope.structured_output === undefined)
-    throw new Error("claude result carries no structured output");
+  const sessionId =
+    typeof envelope.session_id === "string" ? envelope.session_id : null;
   const u = envelope.usage ?? {};
-  return {
-    sessionId: envelope.session_id,
-    output: envelope.structured_output,
-    usage: Usage.parse({
-      inputTokens:
-        int(u.input_tokens) +
-        int(u.cache_creation_input_tokens) +
-        int(u.cache_read_input_tokens),
-      outputTokens: int(u.output_tokens),
-      seconds: int(envelope.duration_ms) / 1000,
-    }),
-  };
+  const usage = Usage.parse({
+    inputTokens:
+      int(u.input_tokens) +
+      int(u.cache_creation_input_tokens) +
+      int(u.cache_read_input_tokens),
+    outputTokens: int(u.output_tokens),
+    seconds: int(envelope.duration_ms) / 1000,
+  });
+  if (envelope.is_error === true || envelope.subtype !== "success")
+    throw new SessionError(
+      `claude session failed (${String(envelope.subtype)}): ${String(envelope.result)}`,
+      sessionId,
+      usage,
+    );
+  if (sessionId === null)
+    throw new SessionError("claude result carries no session id", null, usage);
+  if (envelope.structured_output === undefined)
+    throw new SessionError(
+      "claude result carries no structured output",
+      sessionId,
+      usage,
+    );
+  return { sessionId, output: envelope.structured_output, usage };
 }
 
 function runProcess(
