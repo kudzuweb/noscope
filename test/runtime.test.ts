@@ -136,6 +136,49 @@ describe("apply and tree", () => {
     store.close();
   });
 
+  it("resolves a parent named by a ref defined later in the same plan", () => {
+    const { apply } = fresh();
+    const applied = apply({
+      ...empty,
+      createUnits: [
+        { ref: "child", purpose: "the child", parent: "later" },
+        { ref: "later", purpose: "the parent", parent: "i1-command" },
+      ],
+      createTasks: [grepTask("child", "scrollTo")],
+    });
+    expect(applied.units.map((u) => [u.id, u.parentId])).toEqual([
+      ["i1-u03", "i1-command"],
+      ["i1-u02", "i1-u03"],
+    ]);
+    expect(applied.tasks[0]?.unitId).toBe("i1-u02");
+  });
+
+  it("reads the incident from the store, so a stale argument cannot drop a question, and refuses a non-open incident", () => {
+    const { store, incident, apply } = fresh();
+    apply({ ...empty, questionsForHuman: ["first?"] });
+    expect(() =>
+      applyPlan(store, incident, { ...empty, questionsForHuman: ["second?"] }),
+    ).toThrow(/is blocked; a plan applies only to an open incident/);
+    const current = store.getIncident("i1");
+    expect(current?.questions).toEqual([{ id: "i1-q01", text: "first?" }]);
+    store.setIncidentQuestions(
+      "i1",
+      [{ id: "i1-q01", text: "first?", answer: "yes" }],
+      "cli",
+      "question.answered",
+    );
+    store.setIncidentStatus("i1", "open", "cli", "question.answered");
+    applyPlan(store, incident, { ...empty, questionsForHuman: ["second?"] });
+    expect(store.getIncident("i1")?.questions).toEqual([
+      { id: "i1-q01", text: "first?", answer: "yes" },
+      { id: "i1-q02", text: "second?" },
+    ]);
+    expect(() => applyPlan(store, { id: "nope" }, empty)).toThrow(
+      /no incident nope/,
+    );
+    store.close();
+  });
+
   it("a later plan closes a unit that served its purpose, and tree and events show it", async () => {
     const db = `${mkdtempSync(join(tmpdir(), "noscope-tree-"))}/db.sqlite`;
     const out: string[] = [];
@@ -196,6 +239,7 @@ describe("apply and tree", () => {
       ),
     ).toBe(true);
     expect(await run(["incident", "tree", "nope"], ctx)).toBe(EXIT.notFound);
+    expect(await run(["incident", "tree"], ctx)).toBe(EXIT.usage);
   });
 
   it("a plan giving one unit eight children is rejected and a regrouped plan passes", () => {
@@ -257,6 +301,7 @@ describe("apply and tree", () => {
       "plan.applied",
     ])
       expect(types).toContain(t);
+    store.setIncidentStatus("i1", "open", "cli", "question.answered");
     store.createClaim(
       {
         id: "c1",

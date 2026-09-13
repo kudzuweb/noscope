@@ -486,6 +486,53 @@ describe("validator", () => {
     ).toEqual([]);
   });
 
+  it("Status is earned: blocked needs a channel, and a closing plan raises none", () => {
+    expect(reasonsOf({ ...empty, incidentStatus: "blocked" })).toEqual([
+      "Status is earned: blocked with no question, capability request or grant request, so nothing could unblock it",
+    ]);
+    expect(
+      rulesHit({
+        ...empty,
+        incidentStatus: "blocked",
+        questionsForHuman: ["which?"],
+      }),
+    ).toEqual([]);
+    expect(
+      rulesHit({
+        ...empty,
+        incidentStatus: "failed",
+        capabilityRequests: [{ need: "x", why: "y" }],
+      }),
+    ).toEqual(["Status is earned"]);
+    const { store, ctx } = seeded();
+    store.setTaskStatus(
+      "i1",
+      "t-running",
+      "completed",
+      "dispatcher",
+      "task.completed",
+    );
+    const verdict = validatePlan(
+      { ...empty, incidentStatus: "satisfied", questionsForHuman: ["still?"] },
+      ctx(),
+    );
+    expect(verdict.ok ? [] : verdict.rejections.map((r) => r.reason)).toEqual([
+      "satisfied while raising a question, which nobody could answer",
+    ]);
+    store.close();
+  });
+
+  it("No cycles: a ref that starts with the incident id is refused, so it cannot shadow a new unit's id", () => {
+    expect(
+      reasonsOf({
+        ...empty,
+        createUnits: [{ ref: "i1-u03", purpose: "x", parent: "i1-command" }],
+      }),
+    ).toEqual([
+      "No cycles: ref i1-u03 starts with the incident id and could be mistaken for a unit id",
+    ]);
+  });
+
   it("Status is earned passes once every task is done and a verified claim exists", () => {
     const { store, ctx } = seeded();
     store.setTaskStatus(

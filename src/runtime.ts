@@ -20,42 +20,73 @@ export type Applied = {
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
+/** New units ordered so every parent created in the same plan is written before its children; the validator has ruled out cycles. */
+function parentsFirst(
+  proposals: ActionPlan["createUnits"],
+): ActionPlan["createUnits"] {
+  const ordered: ActionPlan["createUnits"] = [];
+  const placed = new Set<string>();
+  let pending = proposals;
+  while (pending.length > 0) {
+    const ready = pending.filter(
+      (u) => placed.has(u.parent) || !proposals.some((p) => p.ref === u.parent),
+    );
+    for (const u of ready) {
+      ordered.push(u);
+      placed.add(u.ref);
+    }
+    pending = pending.filter((u) => !placed.has(u.ref));
+  }
+  return ordered;
+}
+
 /**
  * Apply a validated action plan in one transaction: units created and closed, tasks created
  * and cancelled, questions and requests recorded, the incident's status set, then
  * `plan.applied` (DESIGN.md Step 4). The validator has already passed the plan; this trusts
- * it and only writes. `claimsToVerify` is recorded on the applied event for the dispatcher.
+ * it and only writes. The incident is read from the store, not the argument, so a stale
+ * caller cannot overwrite questions; only an open incident takes a plan.
+ * `claimsToVerify` is recorded on the applied event for the dispatcher.
  */
 export function applyPlan(
   store: Store,
-  incident: Incident,
+  incidentRef: Pick<Incident, "id">,
   plan: ActionPlan,
   actor = "runtime",
 ): Applied {
+  const incident = store.getIncident(incidentRef.id);
+  if (incident === undefined)
+    throw new Error(`no incident ${incidentRef.id} to apply a plan to`);
+  if (incident.status !== "open")
+    throw new Error(
+      `incident ${incident.id} is ${incident.status}; a plan applies only to an open incident`,
+    );
   const at = now();
   const existingUnits = store.listUnits(incident.id);
   const existingTasks = store.listTasks(incident.id);
-  const unitIds = new Map<string, string>();
-  const units: Unit[] = plan.createUnits.map((u, i) => {
-    const id = `${incident.id}-u${pad(existingUnits.length + i + 1)}`;
-    unitIds.set(u.ref, id);
-    return {
-      id,
-      incidentId: incident.id,
-      parentId: unitIds.get(u.parent) ?? u.parent,
-      purpose: u.purpose,
-      status: "active",
-      createdAt: at,
-      closedAt: null,
-    };
-  });
+  const unitIds = new Map(
+    plan.createUnits.map((u, i) => [
+      u.ref,
+      `${incident.id}-u${pad(existingUnits.length + i + 1)}`,
+    ]),
+  );
+  const resolveUnit = (ref: string) => unitIds.get(ref) ?? ref;
+  const units: Unit[] = parentsFirst(plan.createUnits).map((u) => ({
+    id: resolveUnit(u.ref),
+    incidentId: incident.id,
+    parentId: resolveUnit(u.parent),
+    purpose: u.purpose,
+    status: "active",
+    createdAt: at,
+    closedAt: null,
+  }));
   const completed = new Set(
     existingTasks.filter((t) => t.status === "completed").map((t) => t.id),
   );
   const tasks: Task[] = plan.createTasks.map((t, i) => ({
     id: `${incident.id}-t${pad(existingTasks.length + i + 1)}`,
     incidentId: incident.id,
-    unitId: unitIds.get(t.unit) ?? t.unit,
+    unitId: resolveUnit(t.unit),
     capability: t.capability,
     objective: t.objective,
     inputs: t.inputs,
@@ -84,7 +115,7 @@ export function applyPlan(
   const incidentStatus: IncidentStatus =
     plan.incidentStatus === "satisfied" || plan.incidentStatus === "failed"
       ? plan.incidentStatus
-      : blocked || plan.incidentStatus === "blocked"
+      : blocked
         ? "blocked"
         : "open";
 
@@ -98,9 +129,7 @@ export function applyPlan(
         "cancelled",
         actor,
         "task.cancelled",
-        {
-          extra: { rationale: plan.rationale },
-        },
+        { extra: { rationale: plan.rationale } },
       );
     for (const c of plan.closeUnits)
       store.closeUnit(incident.id, c.unitId, c.reason, actor);
@@ -121,7 +150,7 @@ export function applyPlan(
       );
     for (const g of plan.grantRequests)
       store.record(incident.id, "grant.requested", actor, g);
-    if (incidentStatus !== incident.status)
+    if (incidentStatus !== "open")
       store.setIncidentStatus(
         incident.id,
         incidentStatus,

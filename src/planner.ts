@@ -34,7 +34,7 @@ When you lack something, use the channel for it: a task to a capability for a fa
 export const PLANNER_RULES = [
   "Capabilities exist: every task names a registered capability.",
   "Units exist: every task's unit and every new unit's parent is an active unit id or the ref of a unit created in this plan; a closed unit takes no new work.",
-  "No cycles: the tree stays a tree.",
+  "No cycles: the tree stays a tree; a ref is used once, is not an existing unit id, and does not start with the incident id.",
   "No duplicates: no new task repeats an open or completed one, or another new task, with the same capability and effective inputs under the same unit; a task this plan cancels does not count.",
   "Inputs validate: task inputs parse against the capability's input schema.",
   "Span of control: no unit ends the plan with more than 7 direct children, units and tasks combined; target 5.",
@@ -43,7 +43,7 @@ export const PLANNER_RULES = [
   "Dependencies resolve: every dependsOn names a task in the incident that is completed or still open and not cancelled in this plan; every cancelTasks names an open task, once; every claimsToVerify names an asserted claim.",
   "Model known: every task to a session-backed capability names a provider and a model that provider serves; a task to a deterministic capability names neither.",
   "Closing is clean: a unit closed in this plan is active, has no running task after this plan's cancels, is closed once, and is given no new unit or task in the same plan.",
-  "Status is earned: satisfied requires every open task completed or cancelled, no new tasks, and at least one verified claim.",
+  "Status is earned: satisfied requires every open task completed or cancelled, no new tasks, and at least one verified claim; satisfied or failed raises no question, capability request or grant request; blocked raises at least one.",
 ] as const;
 
 function clip(value: unknown): string {

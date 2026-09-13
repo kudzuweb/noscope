@@ -353,4 +353,12 @@ Not exactly to spec, with reasons:
   claim-verification record Mauria asked for on 2026-09-13 (open item on the thread).
 - `applyPlan` trusts the verdict it is handed and does not re-run the validator; the caller
   (`incident step`, PR 12) validates first, as the tests here do.
+- From the review (2026-09-13): new units are written parents-first, so a parent named by
+  a ref defined later in the same list applies (it failed the foreign key before);
+  `applyPlan` reads the incident from the store and refuses one that is not open, so a
+  stale caller cannot drop an earlier question or mislabel a status change; the validator
+  refuses a bare `blocked` with no question, capability request or grant request (nothing
+  could unblock it), a `satisfied` or `failed` plan that raises one (nobody could answer
+  it), and a ref that starts with the incident id (it could shadow the id a new unit
+  receives); `incident show`, `events` and `tree` exit 2, not 4, when no id is given.
 
