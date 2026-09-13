@@ -112,7 +112,8 @@ noscope/
 │   │   ├── filesystem.ts # read_file, stat_path, list_directory, grep_files
 │   │   ├── git.ts        # git_status, git_log, git_diff
 │   │   ├── shell.ts      # allowlisted read-only commands
-│   │   └── builtin.ts    # names and allowlists for the providers' own tools
+│   │   ├── builtin.ts    # names and allowlists for the providers' own tools
+│   │   └── index.ts      # the package surface
 │   ├── providers/
 │   │   ├── base.ts       # the provider interface and the shared session preamble
 │   │   ├── claude-code.ts
@@ -123,7 +124,8 @@ noscope/
 │       ├── registry.ts   # defineCapability, contract, lookup
 │       ├── session.ts    # builds a session request and hands it to a provider
 │       ├── deterministic.ts  # check_path, read, grep, git_history
-│       └── investigate.ts    # investigate, interpret
+│       ├── investigate.ts    # investigate, interpret
+│       └── index.ts          # the package surface
 └── test/
 ```
 
@@ -247,7 +249,7 @@ v0 capabilities:
 | `check_path` | `stat_path` | none; produces verified claims |
 | `read` | `read_file` | none; produces verified claims |
 | `grep` | `grep_files` | none; produces verified claims |
-| `git_history` | `git_log`, `git_diff` | none; produces verified claims |
+| `git_history` | `git_status`, `git_log` | none; produces verified claims |
 | `investigate` | `Read`, `Grep`, `Glob`, `Bash` under the read-only allowlist | yes, model named per task; produces asserted claims with evidence |
 | `interpret` | none | yes, model named per task; given evidence and nothing else, produces what it implies as asserted claims, or `insufficient` with what it would need |
 
@@ -335,7 +337,14 @@ run writes `task.started`, then the result and `task.completed` or
 `task.failed` in one transaction.
 
 The verifier turns results into claims. A deterministic capability's result becomes a `verified`
-claim with the capability and inputs as provenance. A session-backed capability's result
+claim with the capability and the effective inputs as provenance: the inputs as parsed, with
+defaults applied and every path field resolved against the incident's working directory, so
+the record says exactly what ran. Path inputs are declared per capability (`paths`) and
+resolved before the run, and every claim subject is an absolute path (`/abs/file` or
+`/abs/file:line`), so claims about one file from different tasks compare equal and a
+session's assertion can match a later deterministic result. A claim can only enter the store
+as `asserted` or `verified`, and `verified` on entry requires deterministic provenance. A
+session-backed capability's result
 becomes `asserted` claims with the session id as provenance; an `insufficient` result becomes
 no claims and an `task.insufficient` event carrying what was needed. Promotion of an asserted in
 v0 happens only when a later deterministic result matches it; the planner can request
