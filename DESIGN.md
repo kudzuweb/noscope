@@ -229,8 +229,8 @@ setup. Claude Code: `--output-format json`, `--no-session-persistence`,
 40k tokens to about 3k and keep her CLAUDE.md, skills and hooks out; `--bare` is not used
 because it authenticates only with an API key. Codex: `--ignore-user-config`,
 `--ignore-rules`, `--ephemeral`, `--json`, verified present in `codex exec --help` on
-2026-09-12 and not yet tested for context size or subscription billing. {==Permissions come only
-from the capability's declaration;==}{>>should follow a principle of least perms necessary, or however you say it. for now destructive perms should be gated by me; if the proposed needs for equipment or capability include something destructive it should ask me for it and say why it needs it. i'm open to discussion on what level the destructive perms requests should live at though<<}{id="c43" by="user" at="2026-09-13T00:22:42.230Z"} with the isolation flags, Mauria's own permission settings
+2026-09-12 and not yet tested for context size or subscription billing. Permissions come only
+from the capability's declaration; with the isolation flags, Mauria's own permission settings
 do not load on either provider.
 
 The task is the user message: objective, inputs, expected output, completion
@@ -306,7 +306,7 @@ Every action plan passes all of these or is rejected whole, with the failing rul
 | Effect policy | v0 rejects any capability whose effect is not `read_only`. After v0, a task to a capability whose effect is `writes_local` or `writes_external` passes only with a grant on this incident for that capability. |
 | Budget respected | A task's budget fits inside the incident's remaining budget, and a session-backed task carries a time bound. |
 | Dependencies resolve | Every `depends_on` names a task in the incident. |
-| Model known | Every task to a session-backed capability names a provider and model pair. The known list is every model the provider serves, never a curated subset, so Mauria can ask for whatever she wants and the planner sees every option. For Claude Code the {==known list is every Anthropic model currently served: `claude-fable-5-1`, `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5`, `claude-fable-5`, `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6`, `claude-sonnet-4-6`==}{>>are there any other anthropic models available?<<}{id="c48" by="user" at="2026-09-13T00:32:32.470Z"}{>>Yes. Current generation: Fable 5.1, Opus 5, Sonnet 5, Haiku 4.5. Still served: Fable 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6. Mythos 5.1 is Project Glasswing only. Claude Code takes any of them by full name with --model. The allowlist keeps the current generation because the older ones cost the same or more for less; add one by name if a job wants it.<<}{id="r58" by="AI" at="2026-09-13T00:55:00.000Z" re="c48"}{>>i want all the models in the allowlist so i can ask for whatever i want and so we have all options available when planning<<}{id="c57" by="user" at="2026-09-13T03:16:17.933Z" re="r58"}{>>Done. The rule now says the known list is every model the provider serves, the row lists all nine Anthropic models Claude Code accepts today, and the planner's input (item 8) now carries the model list with costs so every option is on the table when it plans.<<}{id="r62" by="AI" at="2026-09-13T03:25:00.000Z" re="c57"}; Codex pairs are added when that provider is tested. A task to a deterministic capability names none. |
+| Model known | Every task to a session-backed capability names a provider and model pair. The known list is every model the provider serves, never a curated subset, so Mauria can ask for whatever she wants and the planner sees every option. For Claude Code the known list is every Anthropic model currently served: `claude-fable-5-1`, `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5`, `claude-fable-5`, `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6`, `claude-sonnet-4-6`; Codex pairs are added when that provider is tested. {==A task to a deterministic capability has no model field at all, since nothing in it runs a model.==}{>>confusing sentence<<}{id="c58" by="user" at="2026-09-13T03:22:07.199Z"}{>>Reworded: a task to a deterministic capability has no model field at all, since nothing in it runs a model.<<}{id="r63" by="AI" at="2026-09-13T03:28:00.000Z" re="c58"} |
 | Closing is clean | A closed unit has no running tasks. |
 | Status is earned | `satisfied` requires every open task completed or cancelled and at least one verified claim. |
 
@@ -437,7 +437,7 @@ That is slow for a daemon and right for v0, which is stepped by hand to be watch
 lever after v0 is running ready tasks in parallel, which turns the sum into a
 maximum; the startup cost per session stays unless sessions are reused with `--resume`,
 which is untested for this use.
-## {==Open questions==}{>>i don't understand your suggestions under "blocks", too compressed<<}{id="c30" by="user" at="2026-09-12T22:19:17.566Z"}{>>Rewritten: each row now says what is undecided, which step cannot be finished until it is, and what the build assumes in the meantime.<<}{id="r38" by="AI" at="2026-09-12T22:22:00.000Z" re="c30"}{>>this is no longer rendering, i'll need to see it in chat<<}{id="c32" by="user" at="2026-09-12T22:32:42.594Z" re="r38"}{>>Shown in chat, with the new column.<<}{id="r40" by="AI" at="2026-09-12T22:35:00.000Z" re="c32"}
+## {==Open questions==}{>>i don't understand your suggestions under "blocks", too compressed<<}{id="c30" by="user" at="2026-09-12T22:19:17.566Z"}{>>Rewritten: each row now says what is undecided, which step cannot be finished until it is, and what the build assumes in the meantime.<<}{id="r38" by="AI" at="2026-09-12T22:22:00.000Z" re="c30"}{>>this is no longer rendering, i'll need to see it in chat<<}{id="c32" by="user" at="2026-09-12T22:32:42.594Z" re="r38"}{>>Shown in chat, with the new column.<<}{id="r40" by="AI" at="2026-09-12T22:35:00.000Z" re="c32"}{>>did we answer at least some of these now<<}{id="c59" by="user" at="2026-09-13T03:22:59.132Z" re="r40"}{>>Yes. Answered since this comment: the repository name, the umbrella word, claim versus assertion, planner versus organizer, sqlite, the MCP path, and interpret staying in v0. Still open: for v0, how much result text the planner sees; after v0, the Situation Unit, cross-incident priorities, the Codex provider tests, and whether a provider tool filter also filters MCP tools. The table below is the current list.<<}{id="r64" by="AI" at="2026-09-13T03:28:00.000Z" re="c59"}
 | What is undecided | Needed for v0? | What waits on it, and what the build assumes meanwhile |
 |---|---|---|
 | Whether the planner should see the full text of every completed result, or only a summary of each result against its task's contract plus pointers to the evidence. | Yes. | Step 4 cannot fix the planner's input rendering until this is decided. The build starts with summaries plus evidence pointers, because that is the cheaper prompt. The signal to widen is the planner proposing the same tree again after new results arrive, which means the summaries are not carrying enough for it to react. |
@@ -448,7 +448,7 @@ which is untested for this use.
 
 ---
 counters:
-  comments: 57
+  comments: 59
 comments:
   c26:
     body: will this thing be slow as written?
