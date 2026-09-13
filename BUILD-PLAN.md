@@ -37,8 +37,8 @@ targeting Node 24, biome and knip configs copied in shape from roughdraftplus, v
 GitHub Actions workflow running lint, typecheck and test, `src/cli.ts` with `--help` and
 `--version`, README updated with install and run.
 
-Acceptance: `pnpm install && pnpm build && ./bin/noscope --help` prints the command list
-from Step 7 as "not yet implemented" stubs; CI is green on the PR.
+Acceptance: `pnpm install && pnpm build && ./bin/noscope.mjs --help` prints the command list
+from Step 7, every command a registered stub that names what delivers it; CI is green on the PR.
 
 ### PR 2: Contracts
 
@@ -197,7 +197,7 @@ Acceptance: all eight criteria observed on the live run and checked off in
 
 | Rule | Detail |
 |---|---|
-| One PR per row, targeting `main`, no stacking. | Each PR leaves the CLI working: a stub command prints "not yet implemented" rather than failing. |
+| One PR per row, targeting `main`, no stacking. | Each PR leaves the CLI working: a command not built yet is a registered stub that names what delivers it and exits 3, per the exit-code table in the design's Step 7. |
 | Tests run with no network. | Every provider call in tests goes through the stub binary; the one live test is opt-in behind `NOSCOPE_LIVE=1`. |
 | Commit messages are sentence-case descriptions, as in roughdraftplus. | No emoji, no attribution footers. |
 | Docs travel with the change. | A PR that changes a command, a flag, a table or a schema updates `DESIGN.md`, `docs/architecture.html` and the README in the same PR. |

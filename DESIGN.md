@@ -128,7 +128,8 @@ noscope/
 ```
 
 ### Step 2: storage
-One SQLite file per installation, WAL mode. Current-state tables plus an append-only event
+One SQLite file per installation, WAL mode, at `$NOSCOPE_DB` when that is set and otherwise
+`~/.noscope/noscope.sqlite`, created on first use; tests point `NOSCOPE_DB` at a temp file. Current-state tables plus an append-only event
 table, updated in the same transaction. No event sourcing: state is read from the tables,
 and the events explain how it got there.
 
@@ -354,6 +355,21 @@ that through `claims_to_verify`, which schedules the deterministic check as a ta
 
 `step` is the primary command in v0. `run` exists so the milestone can be demonstrated
 end to end, not for daily use.
+
+Exit codes, the same for every command:
+
+| Code | Meaning |
+|---|---|
+| 0 | The command did what it says. |
+| 2 | Usage: an unknown command or bad arguments; help goes to stderr. |
+| 3 | The command is in the design but not built yet; stderr names what delivers it. |
+| 4 | The incident, unit or task named does not exist. |
+| 5 | The command could not proceed because the incident is `blocked`, `satisfied` or `failed`. |
+
+Every command receives a context: the working directory, the environment, and where to
+write stdout and stderr. Commands are registered in one table with an optional handler; a
+command without a handler is the exit-3 stub, so a later PR lands a command by filling in
+its handler and touches neither help nor dispatch.
 ### Step 8: the first incident
 A real, read-only investigation on this machine, so every step can be checked by hand:
 

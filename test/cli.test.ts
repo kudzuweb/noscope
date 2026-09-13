@@ -1,81 +1,99 @@
 import { describe, expect, it } from "vitest";
 import {
+  COMMANDS,
+  type Context,
+  EXIT,
   helpText,
-  INCIDENT_COMMANDS,
   run,
-  TOP_LEVEL_COMMANDS,
   VERSION,
 } from "../src/cli.js";
 
-function capture() {
+function ctx() {
   const out: string[] = [];
   const err: string[] = [];
-  return {
-    out: (l: string) => out.push(l),
-    err: (l: string) => err.push(l),
-    lines: { out, err },
+  const context: Context = {
+    io: { out: (l) => out.push(l), err: (l) => err.push(l) },
+    cwd: process.cwd(),
+    env: {},
   };
+  return { context, out, err };
 }
 
 describe("noscope cli", () => {
-  it("prints help with every incident command when given no arguments", async () => {
-    const io = capture();
-    expect(await run([], io)).toBe(0);
-    const text = io.lines.out.join("\n");
-    for (const command of INCIDENT_COMMANDS) {
-      expect(text).toContain(`noscope incident ${command.name}`);
-    }
-    for (const command of TOP_LEVEL_COMMANDS) {
+  it("prints help with every command in the design's list when given no arguments", async () => {
+    const c = ctx();
+    expect(await run([], c.context)).toBe(EXIT.ok);
+    const text = c.out.join("\n");
+    for (const command of COMMANDS) {
       expect(text).toContain(`noscope ${command.usage}`);
     }
     expect(text).toBe(helpText());
   });
 
-  it("prints the version for --version, -v and -V", async () => {
-    for (const flag of ["--version", "-v", "-V"]) {
-      const io = capture();
-      expect(await run([flag], io)).toBe(0);
-      expect(io.lines.out).toEqual([VERSION]);
-    }
-  });
-
-  it("names after v0 for commands the design lists beyond v0", async () => {
-    const io = capture();
-    expect(await run(["incident", "sop", "1", "code-review"], io)).toBe(3);
-    expect(io.lines.err[0]).toContain("after v0");
-    const top = capture();
-    expect(await run(["grant", "standing", "send_email"], top)).toBe(3);
-    expect(top.lines.err[0]).toContain("after v0");
-  });
-
-  it("names the PR that delivers a known but unimplemented command", async () => {
-    const io = capture();
-    expect(await run(["incident", "step", "7"], io)).toBe(3);
-    expect(io.lines.err[0]).toContain("not yet implemented");
-    expect(io.lines.err[0]).toContain("arrives PR 12");
-  });
-
-  it("treats incident with no subcommand or --help as help", async () => {
+  it("treats --help anywhere, help, incident alone and incident help as help", async () => {
     for (const argv of [
+      ["--help"],
+      ["-h"],
+      ["help"],
       ["incident"],
+      ["incident", "help"],
       ["incident", "--help"],
-      ["incident", "-h"],
+      ["incident", "step", "--help"],
     ]) {
-      const io = capture();
-      expect(await run(argv, io)).toBe(0);
-      expect(io.lines.out.join("\n")).toBe(helpText());
+      const c = ctx();
+      expect(await run(argv, c.context)).toBe(EXIT.ok);
+      expect(c.out.join("\n")).toBe(helpText());
     }
   });
 
-  it("rejects an unknown incident command with help on stderr", async () => {
-    const io = capture();
-    expect(await run(["incident", "frobnicate"], io)).toBe(2);
-    expect(io.lines.err[0]).toContain("unknown command");
-    expect(io.lines.err.join("\n")).toContain("Usage:");
+  it("prints the version from package.json for --version, -v and -V", async () => {
+    for (const flag of ["--version", "-v", "-V"]) {
+      const c = ctx();
+      expect(await run([flag], c.context)).toBe(EXIT.ok);
+      expect(c.out).toEqual([VERSION]);
+    }
+    expect(VERSION).toMatch(/^\d+\.\d+\.\d+/);
   });
 
-  it("rejects an unknown top-level command", async () => {
-    const io = capture();
-    expect(await run(["nope"], io)).toBe(2);
+  it("names what delivers a known but unimplemented command and exits 3", async () => {
+    const c = ctx();
+    expect(await run(["incident", "step", "7"], c.context)).toBe(
+      EXIT.notYetImplemented,
+    );
+    expect(c.err[0]).toBe(
+      "noscope incident step: not yet implemented, arrives PR 12",
+    );
+    const top = ctx();
+    expect(await run(["grant", "standing", "send_email"], top.context)).toBe(
+      EXIT.notYetImplemented,
+    );
+    expect(top.err[0]).toContain("arrives after v0");
+  });
+
+  it("dispatches to a handler when a command has one", async () => {
+    const command = COMMANDS.find((c) => c.name === "show");
+    if (command === undefined) throw new Error("show is registered");
+    const seen: string[][] = [];
+    const original = command.handler;
+    command.handler = async (positionals) => {
+      seen.push([...positionals]);
+      return EXIT.ok;
+    };
+    try {
+      const c = ctx();
+      expect(await run(["incident", "show", "42"], c.context)).toBe(EXIT.ok);
+      expect(seen).toEqual([["42"]]);
+    } finally {
+      command.handler = original;
+    }
+  });
+
+  it("rejects an unknown command with help on stderr and exit 2", async () => {
+    for (const argv of [["incident", "frobnicate"], ["nope"]]) {
+      const c = ctx();
+      expect(await run(argv, c.context)).toBe(EXIT.usage);
+      expect(c.err[0]).toContain("unknown command");
+      expect(c.err.join("\n")).toContain("Usage:");
+    }
   });
 });
