@@ -47,3 +47,33 @@ Not exactly to spec, with reasons:
 - `UnitProposal` carries a `ref` so a plan's new tasks can name a unit created in the same
   plan; the design did not say how that reference works.
 - `Usage` (tokens and seconds) is a schema so `task.usage` events have a shape.
+
+## PR 3: Store (#3, merged 2026-09-12)
+
+Built: `src/store.ts` on `better-sqlite3` with the six tables, every write a named method
+that performs its state change and records its event in one immediate transaction,
+`replay()` that rebuilds the tables from the events, contract-parsed reads, and tests
+including the replay test of acceptance criterion 7.
+
+Not exactly to spec, with reasons:
+
+- Not a general `transact(fn)`: writes are named methods, and each event's payload carries
+  a `mutation` that says exactly what changed. A free-form transaction cannot be replayed
+  because the event would not know what the function did. Replay applies the recorded
+  mutation and nothing else; the review found that dispatching on event type applied a
+  status live and dropped it on replay, and that a missing payload key became the string
+  "undefined". The mutation is validated by a zod schema, so replay throws on either.
+- Events carry a `scope`, `incident` or `system`, with a CHECK tying it to `incident_id`,
+  at Mauria's call: a bare nullable column could not tell an intended system event from a
+  bug that forgot its incident. A standing grant's `grant.given` is a system event.
+- `UNIQUE (incident_id, sequence)` does not constrain NULLs in SQLite, so the uniqueness is
+  an index on `COALESCE(incident_id, '')` and `sequence`.
+- Transactions are `immediate`, and `busy_timeout` is 5 s, so a second process writing to
+  the same file waits instead of failing on a snapshot conflict.
+- Reads go through the contracts (`Incident.parse` and the rest), so a corrupt row or a
+  hand-edited payload is caught on the way out, not silently returned.
+- `claims` has `evidence_json`, missing from the design's table until now; a claim whose
+  object is absent is stored as null rather than failing the NOT NULL constraint.
+- `snapshot()` and `resolveDbPath()` were added; `record()` exists for events with no
+  state change.
+

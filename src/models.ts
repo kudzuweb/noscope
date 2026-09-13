@@ -155,15 +155,23 @@ export const Claim = z.object({
   createdAt: Timestamp,
 });
 
-export const Event = z.object({
-  id: z.string().min(1),
-  incidentId: z.string().min(1),
-  sequence: z.number().int().nonnegative(),
-  type: EventType,
-  actor: z.string().min(1),
-  payload: z.record(z.string(), z.unknown()),
-  createdAt: Timestamp,
-});
+export const EventScope = z.enum(["incident", "system"]);
+
+export const Event = z
+  .object({
+    id: z.string().min(1),
+    scope: EventScope,
+    incidentId: z.string().nullable(),
+    sequence: z.number().int().nonnegative(),
+    type: EventType,
+    actor: z.string().min(1),
+    payload: z.record(z.string(), z.unknown()),
+    createdAt: Timestamp,
+  })
+  .refine((e) => (e.scope === "system") === (e.incidentId === null), {
+    message:
+      "an incident event names its incident and a system event names none",
+  });
 
 export const Grant = z
   .object({
@@ -304,6 +312,7 @@ export type Produces = z.infer<typeof Produces>;
 export type GrantScope = z.infer<typeof GrantScope>;
 export type NeededKind = z.infer<typeof NeededKind>;
 export type EventType = z.infer<typeof EventType>;
+export type EventScope = z.infer<typeof EventScope>;
 export type Budget = z.infer<typeof Budget>;
 export type Cost = z.infer<typeof Cost>;
 export type Usage = z.infer<typeof Usage>;
