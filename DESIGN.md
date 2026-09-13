@@ -6,7 +6,7 @@ organization is a tree of responsibility recomputed each cycle. One LLM call per
 proposes changes to that tree as a structured action plan; deterministic code validates the action plan,
 commits it, dispatches the resulting tasks, records results, and repeats.
 
-v0 proves one thing: that an organizer restructuring responsibility in response to evidence
+v0 proves one thing: that an planner restructuring responsibility in response to evidence
 produces better investigation than a flat agent picking tools. v0 is read-only, manually
 stepped, and visible at every step. Side effects, memory across cases, recursion, parallel
 workers and human participation come after v0 works.
@@ -22,32 +22,35 @@ Settled before this document, on the ics-runtime and quipu-cli threads:
 | New repo under kudzuweb, cloned to `~/Documents/Projects/noscope`. | It keeps the runtime separate from lil-guy-quipu and roughdraftplus, which will later be its users. |
 | Equipment is the primitive and is never assigned; a capability is declared equipment plus, when judgment is needed, a headless session with a prompt. | Ruled by Mauria in review, 2026-09-12: one word for the assignable thing, and `send_email` is the shape, the mail equipment plus an Opus session that receives a brief and applies it. "Equipment" rather than "tool" so it is not confused with Claude Code's tools and does not narrow what counts. |
 | The repository is `kudzuweb/noscope`, private for now, public later. | Ruled by Mauria 2026-09-12. She expects to use it at work if it proves out, and that is the point at which it goes public. |
-| Every session-backed capability can answer "insufficient": its output schema carries an outcome of `answered` or `insufficient`, and an insufficient result names what evidence it would need. `interpret`, the sandboxed capability with no equipment, stays in v0 because of this. | Ruled by Mauria 2026-09-12. A sandboxed "tell me what you think" cannot go and get more, and that is the point: when it says it cannot answer and why, the organizer gets a precise next task and Mauria gets a diagnostic on prompts and tasks. |
+| Every session-backed capability can answer "insufficient": its output schema carries an outcome of `answered` or `insufficient`, and an insufficient result names what evidence it would need. `interpret`, the sandboxed capability with no equipment, stays in v0 because of this. | Ruled by Mauria 2026-09-12. A sandboxed "tell me what you think" cannot go and get more, and that is the point: when it says it cannot answer and why, the planner gets a precise next task and Mauria gets a diagnostic on prompts and tasks. |
 | Platform-agnostic: a session runs on a provider, and Claude Code is the first provider, not the only one. Codex is the second. | Ruled by Mauria 2026-09-12. She wants to deploy Codex, or anything else, as a capability. Nothing above the session layer knows which provider ran it. |
 | Custom equipment reaches a session over MCP, and any external MCP server can itself be equipment. | Ruled by Mauria 2026-09-12. Her reason: MCP means other MCP servers, Craft, GitHub, a browser, can be handed to a capability as equipment with no adapter, and both providers already speak it. The CLI-command path stays as the fallback if headless MCP misbehaves. After v0. |
 | TypeScript on Node, with `zod` for contracts and `better-sqlite3` for storage. | Ruled by Mauria 2026-09-12. Node is present wherever noscope can run, because Claude Code and Codex are both Node programs on this machine; it is her language and the language of roughdraftplus and the codebase-scan tooling; the MCP SDK is TypeScript-first. Python was inherited from the ChatGPT conversation, never ruled, and the machine has 3.11 where the draft assumed 3.12. `better-sqlite3` over `node:sqlite` because she would rather carry a dependency than have a built-in change under her; the comparison is in the Reference section. |
+| The organizer is the planner; claim statuses are `asserted`, `verified`, `rejected`; "action plan" stays the term, with "plan" as the everyday short form. | Ruled by Mauria 2026-09-12. The planner drafts the action plan, which is ICS's Planning Section, so the name says what it does and not more. `asserted` says who said it without saying it is true. |
+| Saved unit configurations, called protocols, can be added to any case. | Ruled by Mauria 2026-09-12. She wants a code review protocol she likes to be one action away on any case: a unit template with its tasks and prompts ready, where the planner picks the angles that matter for this code. After v0. |
 | The framework is named `noscope`, one spelling for the repo, the npm package and the command. | Named by Mauria 2026-09-12, after FIRESCOPE, the interagency effort that produced ICS, and for the pun: the whole thing is built so she never has to zoom in. `noscope` is free on PATH, Homebrew and GitHub; PyPI has an unrelated `noscope`, so a PyPI release would be published as `no_scope` with the import name unchanged. |
 | Build this first, then use it to work on roughdraft, quipu and the codebase scan. | Sequencing set by Mauria on 2026-09-12. |
 
 Proposed in this document and not yet ruled: the schema, with storage once on {==`node:sqlite`==}{>>i thought you wanted bettersqlite? what are the tradeoffs? also the above table didn't render. answer and show it in chat<<}{id="c33" by="user" at="2026-09-12T23:58:38.864Z"}{>>node:sqlite is the choice because it ships inside Node 24 with no native build, so nothing to compile on any machine; better-sqlite3 is the fallback because it is mature, fast and stable while node:sqlite still prints an experimental warning and its API may change. Tradeoffs table in chat. Rendered whole at ~/Downloads/noscope-design.html, which opened in your browser; also shown in chat where the content changed.<<}{id="r41" by="AI" at="2026-09-13T00:55:00.000Z" re="c33"}{>>is that information anywhere in the design doc? is there anything else missing from it?<<}{id="c53" by="user" at="2026-09-13T01:03:31.558Z" re="r41"}{>>hello? is there any other information in the chat that's missing from the design doc?<<}{id="c56" by="user" at="2026-09-13T02:31:57.604Z" re="c53"}{>>Audited the chat against the document and moved in everything design-relevant that was missing: the sqlite comparison (now a Reference table), why zod over TypeBox and plain JSON Schema (Step 1), the full model list (Model choices), the shape of the MCP equipment server as one server per session filtered by the capability and its cost (Reference), and the three vocabulary choices still open (Open questions). Everything else from chat was already in.<<}{id="r60" by="AI" at="2026-09-13T02:45:00.000Z" re="c56"}, `zod` as
-the schema dependency, Opus 5 as the organizer model, the model allowlist, the schema, the validator
+the schema dependency, Opus 5 as the planner model, the model allowlist, the schema, the validator
 rules, the CLI surface, and the first case.
 ## Vocabulary
 | Term | Meaning |
 |---|---|
 | {==Case==}{>>why case?<<}{id="c34" by="user" at="2026-09-13T00:00:33.414Z"}{>>Not ICS; ICS says incident, which implies something went wrong, and a case can be a build or an investigation. Candidates for you to choose from are in chat; the rename waits on you.<<}{id="r42" by="AI" at="2026-09-13T00:55:00.000Z" re="c34"} | An objective pursued over time, with constraints. One row; many cycles. |
-| Unit | A box in the case's temporary tree that owns one slice of the problem, the way an ICS Branch or Group does. It has a purpose, a parent and children, and it opens, subdivides and closes as the organizer's picture of the problem changes. Nothing runs as a unit: tasks run, and their capabilities carry the prompts. The root unit, `command`, owns the objective and is created with the case. |
+| Unit | A box in the case's temporary tree that owns one slice of the problem, the way an ICS Branch or Group does. It has a purpose, a parent and children, and it opens, subdivides and closes as the planner's picture of the problem changes. Nothing runs as a unit: tasks run, and their capabilities carry the prompts. The root unit, `command`, owns the objective and is created with the case. |
 | {==Task==}{>>is this ICS terminology? if these are mostly not ICS and we're mapping terms, i prefer to choose terms more like software or agentic systems(and yes i want to choose them). i also want to consider the terms from the angle of their connotation so we don't accidentally put landmines in the vibes of the prompts we write and poison what any agent thinks it's doing. the mapping of terms will need to be passed to them so they know how to think of them<<}{id="c35" by="user" at="2026-09-13T00:01:22.966Z"}{>>Assignment is ICS, verified in NIMS 2017: a task given to a person or team based on the objectives in the plan. Case, claim, patch, event, cycle, provider and organizer are ours. A terms table with each word's origin, its connotation risk, and candidates is in chat for you to choose from. And yes: the session preamble now carries the vocabulary, one line per term, so a session takes our meaning and not its own.<<}{id="r43" by="AI" at="2026-09-13T00:55:00.000Z" re="c35"} | A bounded piece of work owned by one unit and bound to one capability: objective, inputs, expected output, completion criteria, evidence required, dependencies, and for a session-backed capability the model and any instructions. It is the worker's brief, and for a session it is the prompt the session receives. |
-| Equipment | A primitive: a function the runtime calls in-process, a Claude Code built-in tool such as Read, Grep or Bash under an allowlist, or later anything else a capability needs to do its work. Registered by name. Never assigned by the organizer. |
-| Capability | The assignable thing: declared equipment plus, when judgment is needed, a headless session with a system prompt; the model comes from each task. A capability with no session is deterministic and produces verified claims; one with a session produces candidate claims. A capability may include other capabilities. Later, a human. |
+| Equipment | A primitive: a function the runtime calls in-process, a Claude Code built-in tool such as Read, Grep or Bash under an allowlist, or later anything else a capability needs to do its work. Registered by name. Never assigned by the planner. |
+| Capability | The assignable thing: declared equipment plus, when judgment is needed, a headless session with a system prompt; the model comes from each task. A capability with no session is deterministic and produces verified claims; one with a session produces asserted claims. A capability may include other capabilities. Later, a human. |
 | Provider | A program that can run a session: Claude Code first, Codex second, later an HTTP API or a human. A provider maps the session fields onto its own command line and turns its output back into the runtime's result shape. Everything above the session layer is provider-blind. |
-| {==Claim==}{>>is this an ICS construct? if not why do we have it when they don't?<<}{id="c36" by="user" at="2026-09-13T00:04:20.450Z"}{>>Not ICS. ICS gets its situation picture from humans through a Situation Unit that vets what comes in. We need a construct they do not because a model's statements are not trustworthy by default, so each one carries an epistemic status and provenance until deterministic equipment confirms it. Candidates for the word are in the chat table.<<}{id="r44" by="AI" at="2026-09-13T00:55:00.000Z" re="c36"}{>>okay that makes sense. i want to revisit the situation unit concept in chat possibly for a later version, could be good for keeping perspective maybe or triage for more autonomous work<<}{id="c54" by="user" at="2026-09-13T01:14:39.212Z" re="r44"}{>>Added as an after-v0 open item: a Situation Unit role, a periodic session that reads the case file and produces the situation picture, so it can keep perspective across cycles and triage when noscope runs autonomously. Discussion in chat.<<}{id="r61" by="AI" at="2026-09-13T02:45:00.000Z" re="c54"} | A statement about reality with epistemic status `candidate`, `verified` or `rejected`, plus provenance. LLM output enters as `candidate`; only deterministic verification promotes it. |
+| {==Claim==}{>>is this an ICS construct? if not why do we have it when they don't?<<}{id="c36" by="user" at="2026-09-13T00:04:20.450Z"}{>>Not ICS. ICS gets its situation picture from humans through a Situation Unit that vets what comes in. We need a construct they do not because a model's statements are not trustworthy by default, so each one carries an epistemic status and provenance until deterministic equipment confirms it. Candidates for the word are in the chat table.<<}{id="r44" by="AI" at="2026-09-13T00:55:00.000Z" re="c36"}{>>okay that makes sense. i want to revisit the situation unit concept in chat possibly for a later version, could be good for keeping perspective maybe or triage for more autonomous work<<}{id="c54" by="user" at="2026-09-13T01:14:39.212Z" re="r44"}{>>Added as an after-v0 open item: a Situation Unit role, a periodic session that reads the case file and produces the situation picture, so it can keep perspective across cycles and triage when noscope runs autonomously. Discussion in chat.<<}{id="r61" by="AI" at="2026-09-13T02:45:00.000Z" re="c54"} | A statement about reality with epistemic status `asserted`, `verified` or `rejected`, plus provenance. LLM output enters as `asserted`; only deterministic verification promotes it. |
 | Event | One append-only record of something that happened, written in the same transaction as the state change it describes. |
-| Action plan | The organizer's plan for one cycle: units to create or close, tasks to create or cancel, questions for a human, grant requests, case status. It is proposed by the organizer and approved by the validator, and only an approved plan is applied. |
+| Action plan | The planner's plan for one cycle: units to create or close, tasks to create or cancel, questions for a human, grant requests, case status. It is proposed by the planner and approved by the validator, and only an approved plan is applied. |
 | Cycle | Observe, organize, validate, dispatch, record, stop. `case step` runs exactly one. |
-| Case file | The one place command keeps the state of a case: objective, constraints, priorities, budget and what is spent, the current tree, findings by status, every decision with its reason, questions waiting on a human, grants given, and pointers to evidence. The organizer's input is rendered from it in full; a unit or task receives only its slice plus the objective in one line. Stored across the tables in Step 2 and printed by `case show`. |
-| Budget | A bound on tokens, wall time or both, set on a case or on a task. The organizer sees what remains and plans inside it; the validator rejects a task that does not fit; the dispatcher enforces the time bound and records usage. The costs it reasons with are facts stored on the equipment and capabilities themselves (see `cost` in Step 3), never estimated elsewhere. Unlimited is allowed and is the v0 default. |
-| Grant | Permission from Mauria for a capability whose effect is not `read_only`, with the organizer's stated reason attached. Least privilege: nothing that writes runs without one. Three levels stack: a case grant covers every task on that case for that capability, which is the default; a standing grant in a config file whitelists a capability everywhere, so she stops approving the same thing; and per-task approval can be switched on for a capability when a single use deserves its own yes. Auto-whitelisting after some number of unqualified approvals is a later feature, and whether its count is per case or global is decided after she has used it. v0 registers only `read_only` capabilities, so no grants are needed until after v0. |
+| Protocol | A saved unit configuration that can be added to any case: the unit's purpose, the tasks it opens, each with its capability, instructions and equipment, the angles the planner may choose among for this case, and the unit's completion criteria. A code review protocol, for example, opens a review unit whose tasks read the change from the angles that matter for it. Capabilities compose work into one assignable result; protocols compose organization into a unit. Declared in code under `protocols/`, applied by command or by the planner. After v0. |
+| Case file | The one place command keeps the state of a case: objective, constraints, priorities, budget and what is spent, the current tree, findings by status, every decision with its reason, questions waiting on a human, grants given, and pointers to evidence. The planner's input is rendered from it in full; a unit or task receives only its slice plus the objective in one line. Stored across the tables in Step 2 and printed by `case show`. |
+| Budget | A bound on tokens, wall time or both, set on a case or on a task. The planner sees what remains and plans inside it; the validator rejects a task that does not fit; the dispatcher enforces the time bound and records usage. The costs it reasons with are facts stored on the equipment and capabilities themselves (see `cost` in Step 3), never estimated elsewhere. Unlimited is allowed and is the v0 default. |
+| Grant | Permission from Mauria for a capability whose effect is not `read_only`, with the planner's stated reason attached. Least privilege: nothing that writes runs without one. Three levels stack: a case grant covers every task on that case for that capability, which is the default; a standing grant in a config file whitelists a capability everywhere, so she stops approving the same thing; and per-task approval can be switched on for a capability when a single use deserves its own yes. Auto-whitelisting after some number of unqualified approvals is a later feature, and whether its count is per case or global is decided after she has used it. v0 registers only `read_only` capabilities, so no grants are needed until after v0. |
 
 ### ICS mapping
 Definitions checked against the NIMS Third Edition (FEMA, October 2017) on 2026-09-12.
@@ -55,23 +58,23 @@ Definitions checked against the NIMS Third Edition (FEMA, October 2017) on 2026-
 | ICS term | Here |
 |---|---|
 | Incident: an occurrence that necessitates a response. | Case. |
-| Incident Commander: develops objectives, orders and releases resources. Planning Section: collects the situation picture, tracks resources, drafts the Incident Action Plan for the commander to approve. | {==Command, the root unit with its case file, holds the objective and priorities as the Incident Commander does. The organizer drafts the action plan as the Planning Section does. The validator, and Mauria for grants and questions, approve it, which is the commander's approval of the plan. One model call per cycle in v0; a separate commander call that revises objectives and priorities is after v0, with the cross-case layer.==}{>>one or both of these should be receiving some kind of awareness of the broader situation relative to their level. like the unit doesn't need to hold the whole picture, but the command unit does. that's how everyone else is kept on track and who keeps their eye on the ball wrt priorities, not just for an individual assignment or case but for the broader system. the tough call maker<<}{id="c37" by="user" at="2026-09-13T00:06:23.285Z"}{>>Agreed and written in as the case file: command holds the whole picture for its case (objective, constraints, priorities, budget, tree, findings, decisions with reasons, open questions, grants, pointers), the organizer reads it in full every cycle, and a unit or assignment gets only its slice plus the objective in one line. The picture across cases, priorities for the whole system rather than one case, is ICS's MACS layer above incidents and is listed after v0 in the open questions.<<}{id="r46" by="AI" at="2026-09-13T00:55:00.000Z" re="c37"} |
+| Incident Commander: develops objectives, orders and releases resources. Planning Section: collects the situation picture, tracks resources, drafts the Incident Action Plan for the commander to approve. | Command, the root unit with its case file, holds the objective and priorities as the Incident Commander does. The planner drafts the action plan as the Planning Section does. The validator, and Mauria for grants and questions, approve it, which is the commander's approval of the plan. One model call per cycle in v0; a separate commander call that revises objectives and priorities is after v0, with the cross-case layer. |
 | Section, Branch, Division, Group, Unit: the organizational levels, distinguished by depth and by functional versus geographic responsibility. | All are the one thing called a unit here. Depth is whatever the tree needs, and a unit's purpose says what it is responsible for. |
 | Single Resource, Strike Team (same kind and type, one leader), Task Force (mixed kinds for one mission). | A capability is a single resource, and equipment is equipment; the word is ICS's. A capability that includes other capabilities is the strike team or task force. |
 | Resource typing: categorizing resources by capability so everyone means the same thing by a name. | The capability registry: name, description, schemas, side effects. |
 | Assignment: a task given to a person or team based on the objectives in the Incident Action Plan. | Task, ruled by Mauria as the software word for the same thing. |
-| Incident Action Plan and Operational Period: the objectives and tactics for one period, then a new plan. | Action plan, same word: the organizer's proposed plan for the next cycle, approved by the validator before it is applied. One cycle is the operational period. |
+| Incident Action Plan and Operational Period: the objectives and tactics for one period, then a new plan. | Action plan, same word: the planner's proposed plan for the next cycle, approved by the validator before it is applied. One cycle is the operational period. |
 | The Planning P: objectives, tactics meeting, planning meeting, plan approval, briefing, execute, repeat. | The cycle: observe, organize, validate, dispatch, record. |
 | Span of control: one supervisor to five is the guideline, not a rule. | Validator rule: target 5 direct children, maximum 7. |
 | Demobilization: the orderly release of a resource when no longer needed. | Closing a unit and cancelling its tasks. |
 | Situation Unit and Resources Unit: who tracks what is known and where every resource is. | The store. Claims are the situation; tasks and their statuses are the resource tracking. |
 | Unified Command, Staging Area. | No equivalent in v0. |
-| No ICS term. | {==Claim, event, cycle, provider and organizer are ours; task is our word for ICS's assignment.==}{>>hmm. i don't know that i love all of them per my prior comments<<}{id="c38" by="user" at="2026-09-13T00:11:39.472Z"}{>>Held for your choice; candidates for each are in the chat table.<<}{id="r45" by="AI" at="2026-09-13T00:55:00.000Z" re="c38"} |
+| No ICS term. | {==Claim, event, cycle, provider and planner are ours; task is our word for ICS's assignment.==}{>>hmm. i don't know that i love all of them per my prior comments<<}{id="c38" by="user" at="2026-09-13T00:11:39.472Z"}{>>Held for your choice; candidates for each are in the chat table.<<}{id="r45" by="AI" at="2026-09-13T00:55:00.000Z" re="c38"} |
 
 ## Build steps
 ### Step 1: repository skeleton
 TypeScript on Node 24, a pnpm package. Runtime dependencies: {==`zod`==}{>>why zod?<<}{id="c39" by="user" at="2026-09-13T00:12:05.489Z"}{>>Because one zod schema gives three things the design needs from one definition: the TypeScript type, runtime validation of every contract, and the JSON Schema that --json-schema and --output-schema take (z.toJSONSchema, in zod 4, verified on zod.dev today). Alternatives and tradeoffs in chat.<<}{id="r47" by="AI" at="2026-09-13T00:55:00.000Z" re="c39"} for every contract and the
-JSON schemas the organizer and sessions receive, `better-sqlite3` for storage, and
+JSON schemas the planner and sessions receive, `better-sqlite3` for storage, and
 `@modelcontextprotocol/sdk` only when custom equipment for sessions arrives after v0.
 `better-sqlite3` is a native addon with prebuilt binaries; it is chosen over Node 24's built-in
 `node:sqlite`, which works on this machine but is experimental, because a dependency we pin
@@ -91,7 +94,7 @@ noscope/
 │   ├── runtime.ts        # the cycle
 │   ├── store.ts          # SQLite: schema, transactions, queries
 │   ├── models.ts         # zod contracts shared by every module
-│   ├── organizer.ts      # the one provider call per cycle
+│   ├── planner.ts      # the one provider call per cycle
 │   ├── validator.ts      # action plan rules
 │   ├── dispatcher.ts     # runs ready tasks through capabilities
 │   ├── verifier.ts       # turns results into claims
@@ -106,6 +109,8 @@ noscope/
 │   │   ├── base.ts       # the provider interface and the shared session preamble
 │   │   ├── claude-code.ts
 │   │   └── codex.ts
+│   ├── protocols/
+│   │   └── code-review.ts    # after v0: a saved review unit with its tasks and prompts
 │   └── capabilities/
 │       ├── registry.ts   # defineCapability, contract, lookup
 │       ├── session.ts    # builds a session request and hands it to a provider
@@ -124,13 +129,13 @@ and the events explain how i{==t got there.==}{>>table's not rendering, show in 
 | `cases` | `id`, `objective`, `constraints_json`, `priorities_json`, `budget_json`, `questions_json`, `status` (`open`, `satisfied`, `failed`, `blocked`), `created_at`, `updated_at` |
 | `units` | `id`, `case_id`, `parent_id`, `purpose`, `status` (`active`, `closed`), `created_at`, `closed_at` |
 | `tasks` | `id`, `case_id`, `unit_id`, `capability`, `objective`, `inputs_json`, `expected_output`, `completion_criteria_json`, `evidence_required_json`, `depends_on_json`, `provider`, `model` (both required for a session-backed capability), `instructions`, `budget_json`, `status` (`pending`, `ready`, `running`, `completed`, `failed`, `cancelled`), `result_json`, `created_at`, `completed_at` |
-| `claims` | `id`, `case_id`, `subject`, `predicate`, `object_json`, `status` (`candidate`, `verified`, `rejected`), `confidence`, `provenance_json`, `created_at` |
+| `claims` | `id`, `case_id`, `subject`, `predicate`, `object_json`, `status` (`asserted`, `verified`, `rejected`), `confidence`, `provenance_json`, `created_at` |
 | `events` | `id`, `case_id`, `sequence`, `type`, `actor`, `payload_json`, `created_at` |
 | `grants` | `id`, `scope` (`case` or `standing`), `case_id` (null for standing), `capability`, `effect`, `reason`, `granted_by`, `per_task` (boolean), `created_at`. Empty in v0. |
 
 Event types in v0: `case.created`, `case.closed`, `unit.created`, `unit.closed`,
 `task.created`, `task.started`, `task.completed`, `task.failed`,
-`task.cancelled`, `task.insufficient`, `claim.proposed`, `claim.verified`, `claim.rejected`,
+`task.cancelled`, `task.insufficient`, `claim.asserted`, `claim.verified`, `claim.rejected`,
 `plan.proposed`, `plan.rejected`, `plan.applied`, `task.usage`, `budget.exceeded`,
 `question.asked`, `question.answered`, `grant.requested`, `grant.given`.
 
@@ -138,7 +143,7 @@ Capabilities are not a table. The registry is code, and `case show` prints what 
 registered.
 ### Step 3: equipment and capabilities
 Every piece of equipment and every capability is registered by a define call. Equipment is
-primitive and the organizer never assigns it. Capabilities are what the organizer assigns.
+primitive and the planner never assigns it. Capabilities are what the planner assigns.
 The registries describe what can be done, never when.
 
 Equipment kinds in v0:
@@ -189,12 +194,12 @@ F{==ields on every capability:==}{>>didn't render show in chat<<}{id="c41" by="u
 
 | Field | Meaning |
 |---|---|
-| `name` | The identifier the organizer uses in a plan. |
-| `description` | One sentence the organizer sees. |
+| `name` | The identifier the planner uses in a plan. |
+| `description` | One sentence the planner sees. |
 | `equipment` | What this capability may use. A deterministic capability calls it in code; a session-backed one exposes exactly this to its session. |
 | `input`, `output` | zod schemas. The validator checks task inputs against the input schema before dispatch, and the output schema is what a session receives as its JSON schema. |
 | `effect` | `read_only`, `writes_local` or `writes_external`. v0 registers only `read_only`. |
-| `produces` | `verified_claims` for a deterministic capability, whose output is a fact about the machine; `candidate_claims` for a session-backed one. |
+| `produces` | `verified_claims` for a deterministic capability, whose output is a fact about the machine; `asserted_claims` for a session-backed one. |
 | `cost` | Facts that live with the thing so they are at hand whenever it is equipped: rate limit, typical tokens, typical seconds, money per call if any. Equipment declares the same field. The budget logic reads these and nothing else. |
 
 A {==capability with a session adds the fields that define its setup. The session names a
@@ -203,7 +208,7 @@ provider, and the provider renders the fields onto its own command from them:==}
 | Field | Claude Code renders it to | Codex renders it to |
 |---|---|---|
 | `provider` | The choice of column. | The choice of column. |
-| session preamble, fixed in `providers/base.ts` | The first part of `--system-prompt`, identical for every session on every provider: this session is a resource assigned into a case run by this runtime; the task follows; report only against the task's contract; findings are candidate claims until the runtime verifies them; the session cannot change the organization or take on work outside the task. It also carries the vocabulary, one line per term, so a session takes this runtime's meaning of case, unit, task, capability, equipment and claim rather than its own. | Prepended to the prompt, since `codex exec` has no system-prompt flag in its help. |
+| session preamble, fixed in `providers/base.ts` | The first part of `--system-prompt`, identical for every session on every provider: this session is a resource assigned into a case run by this runtime; the task follows; report only against the task's contract; findings are asserted claims until the runtime verifies them; the session cannot change the organization or take on work outside the task. It also carries the vocabulary, one line per term, so a session takes this runtime's meaning of case, unit, task, capability, equipment and claim rather than its own. | Prepended to the prompt, since `codex exec` has no system-prompt flag in its help. |
 | `system_prompt` | The rest of `--system-prompt`: the capability's own role text, after the preamble. | Prepended to the prompt after the preamble. |
 | `model` | `--model <id>`, always explicit, taken from the task. A capability declares no default. | `-m <model>`, same rule. |
 | `equipment` | `--tools "<list>"` naming the Claude Code built-in tools in the capability's equipment, or `--tools default` when the capability declares `default`. | `-s read-only` bounds what the built-in shell can do; per-tool selection is not in the help and is an open item for this provider. |
@@ -233,33 +238,33 @@ v{==0 capabilities:==}{>>didn't render<<}{id="c45" by="user" at="2026-09-13T00:2
 | `read` | `read_file` | none; produces verified claims |
 | `grep` | `grep_files` | none; produces verified claims |
 | `git_history` | `git_log`, `git_diff` | none; produces verified claims |
-| `investigate` | `Read`, `Grep`, `Glob`, `Bash` under the read-only allowlist | yes, model named per task; produces candidate claims with evidence |
-| `interpret` | none | yes, model named per task; given evidence and nothing else, produces what it implies as candidate claims, or `insufficient` with what it would need |
+| `investigate` | `Read`, `Grep`, `Glob`, `Bash` under the read-only allowlist | yes, model named per task; produces asserted claims with evidence |
+| `interpret` | none | yes, model named per task; given evidence and nothing else, produces what it implies as asserted claims, or `insufficient` with what it would need |
 
 The four deterministic capabilities exist so the verifier has something to promote claims
-with, and so the organizer can ask a precise question without spending a session on it.
+with, and so the planner can ask a precise question without spending a session on it.
 
 A capability may include other capabilities, composed in code. The event log records which
 capabilities every case used under which unit purposes; a composition that recurs across
-cases with the same shape is a candidate for a new capability, and one whose shape varies
-with context stays with the organizer. The quipu CLI's objective catalog is the first
+cases with the same shape is an asserted for a new capability, and one whose shape varies
+with context stays with the planner. The quipu CLI's objective catalog is the first
 planned set of such capabilities. v0 registers none.
-### Step 4: the organizer
+### Step 4: the planner
 One call per cycle, through a provider, as a headless Claude Code call on the subscription, with `--json-schema` so the
 response is a validated `ActionPlan` and never prose. Model `claude-opus-5`, {==no tools,==}{>>does it need tools to gather info? no, better for it to say it needs more info and ask for it(agent message? are those in transcripts?) before proceeding, so it gets everything it needs to make a good decision<<}{id="c46" by="user" at="2026-09-13T00:26:42.166Z"}{>>Agreed, no tools. Two kinds of missing information. Facts about the machine it gets by creating assignments, which is the normal cycle. Things only you can supply it asks for: the patch now carries questionsForHuman, the case goes to blocked, case show prints the questions, and when noscope is run from inside a Claude Code session the runtime can send them as an agent message. Agent messages do land in the receiving session's transcript, verified in this session, which has received several today.<<}{id="r56" by="AI" at="2026-09-13T00:55:00.000Z" re="c46"}
 the same five fixed flags as every session. Tested 2026-09-12 with an
-organizer-shaped prompt: 3.6k tokens of context and a valid action plan back.
+planner-shaped prompt: 3.6k tokens of context and a valid action plan back.
 Input, rendered as labeled sections in a stable order {==so the prefix caches==}{>>huh? in claude code?<<}{id="c47" by="user" at="2026-09-13T00:28:30.284Z"}{>>Yes, in Claude Code too. Every headless test call today reported cache_creation_input_tokens and cache_read_input_tokens with a one-hour ephemeral cache, so the organizer prompt keeps its stable sections first and the per-cycle sections last to get cache reads on repeat cycles.<<}{id="r57" by="AI" at="2026-09-13T00:55:00.000Z" re="c47"}:
 
 1. The case file's command picture: objective, constraints, priorities, budget remaining, grants given, questions still unanswered.
 2. Verified claims.
-3. Candidate claims, each with its provenance.
+3. Asserted claims, each with its provenance.
 4. The current unit tree with each unit's purpose and status.
 5. Tasks completed since the last cycle, with results summarized against their contracts.
 6. Tasks that came back `insufficient`, each with what the session said it needed.
 7. Open tasks.
 8. The capability registry, names and descriptions only.
-9. The rules the validator will apply, so the organizer does not propose what will be rejected.
+9. The rules the validator will apply, so the planner does not propose what will be rejected.
 
 Output:
 
@@ -269,15 +274,16 @@ const ActionPlan = z.object({
   closeUnits: z.array(UnitClose),                // unit id, with a reason each
   createTasks: z.array(TaskProposal),// unit, capability, objective, inputs, criteria, instructions, provider, model
   cancelTasks: z.array(z.string()),
-  claimsToVerify: z.array(z.string()),           // candidate claim ids worth promoting
+  claimsToVerify: z.array(z.string()),           // asserted claim ids worth promoting
   caseStatus: z.enum(["continue", "blocked", "satisfied", "failed"]),
   questionsForHuman: z.array(z.string()),        // things only Mauria can supply; sets caseStatus to blocked
   grantRequests: z.array(GrantRequest),          // capability, effect, and the reason it is needed; after v0
+  applyProtocols: z.array(ProtocolApplication), // protocol name, parent unit, the angles chosen; after v0
   rationale: z.string(),                         // recorded on the action plan event, never acted on
 });
 ```
 
-The organizer proposes structure. It never runs a tool, never writes to the store, and never
+The planner proposes structure. It never runs a tool, never writes to the store, and never
 marks its own conclusions true.
 ### Step 5: the validator
 Every action plan passes all of these or is rejected whole, with the failing rule recorded as a
@@ -305,9 +311,9 @@ run writes `task.started`, then the result and `task.completed` or
 
 The verifier turns results into claims. A deterministic capability's result becomes a `verified`
 claim with the capability and inputs as provenance. A session-backed capability's result
-becomes `candidate` claims with the session id as provenance; an `insufficient` result becomes
-no claims and an `task.insufficient` event carrying what was needed. Promotion of a candidate in
-v0 happens only when a later deterministic result matches it; the organizer can request
+becomes `asserted` claims with the session id as provenance; an `insufficient` result becomes
+no claims and an `task.insufficient` event carrying what was needed. Promotion of an asserted in
+v0 happens only when a later deterministic result matches it; the planner can request
 that through `claims_to_verify`, which schedules the deterministic check as a task.
 ### Step 7: {==the command surface==}{>>didn't render<<}{id="c50" by="user" at="2026-09-13T00:39:48.143Z"}{>>Rendered whole at ~/Downloads/noscope-design.html, which opened in your browser; also shown in chat where the content changed.<<}{id="r52" by="AI" at="2026-09-13T00:55:00.000Z" re="c50"}
 | Command | Does |
@@ -318,8 +324,9 @@ that through `claims_to_verify`, which schedules the deterministic check as a ta
 | `noscope case step <id>` | One cycle, then stop. Prints the action plan, the validator's verdict, what ran, what changed. |
 | `noscope case run <id> [--max-cycles N]` | Repeats `step` until the case leaves `open` or the cap is hit. |
 | `noscope case events <id>` | The event log with timestamps and actors. |
-| `noscope case answer <id> "<text>"` | Answers the organizer's open question and returns the case to `open`. |
-| `noscope case grant <id> <capability> [--per-task]` | Gives a grant for one capability on this case, recording the organizer's reason; `--per-task` makes each task under it ask again. After v0. |
+| `noscope case protocol <id> <name>` | Adds a protocol's unit and its tasks to the case in one action plan. After v0. |
+| `noscope case answer <id> "<text>"` | Answers the planner's open question and returns the case to `open`. |
+| `noscope case grant <id> <capability> [--per-task]` | Gives a grant for one capability on this case, recording the planner's reason; `--per-task` makes each task under it ask again. After v0. |
 | `noscope grant standing <capability>` | Whitelists a capability everywhere. After v0. |
 
 `step` is the primary command in v0. `run` exists so the milestone can be demonstrated
@@ -332,7 +339,7 @@ A real, read-only investigation on this machine, so every step can be checked by
 
 This is upstream issues 98 and 100, already known to be real, and the answer is
 verifiable by reading the code the case points at. The interesting output is not the answer
-but the tree: whether the organizer opens separate units for the save path and the
+but the tree: whether the planner opens separate units for the save path and the
 formatter, closes the one that turns out irrelevant, and stops when a verified claim names
 the code path.
 ### v0 acceptance
@@ -359,14 +366,14 @@ v0 is done when all of these hold on the first case:
 | Codex is installed and `codex exec` has `-m`, `-s read-only`, `-C`, `--add-dir`, `--ignore-user-config`, `--ignore-rules`, `--ephemeral`, `--output-schema`, `--json` and `-o`. | `codex exec --help` on this machine, 2026-09-12. Nothing run through it yet. |
 | The Claude Agent SDK requires an API key. | The SDK quickstart, read by a docs subagent; not read directly. |
 | zod 4 converts a schema to JSON Schema with `z.toJSONSchema`, targets draft-2020-12 by default, and cannot represent dates, maps, sets, transforms or bigints. | The zod.dev JSON Schema page, fetched 2026-09-12. |
-| `--json-schema` returns a schema-valid `structured_output` field, and `--tools ""` plus the five fixed flags work with it. | A test call on the installed version with an organizer-shaped prompt and action plan schema, 2026-09-12. |
+| `--json-schema` returns a schema-valid `structured_output` field, and `--tools ""` plus the five fixed flags work with it. | A test call on the installed version with an planner-shaped prompt and action plan schema, 2026-09-12. |
 
 ### Model choices
 | Role | Model | Because |
 |---|---|---|
-| Organizer | `claude-opus-5` | The action plan is the judgment in the system; Opus 5 is the default for anything nontrivial, and it ran the test action plan well. |
-| `investigate`, `interpret` | Named per task by the organizer, any model the provider serves | No defaults, ruled 2026-09-12. Haiku for a narrow read with little equipment; Opus when the read is subtle. |
-| Anthropic models Claude Code accepts by full name, as of 2026-09-12 | Current generation: `claude-fable-5-1`, `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5`. Still served: `claude-fable-5`, `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6`, `claude-sonnet-4-6`. | All are known to the validator. The older ones cost the same or more for less, so the organizer is told to prefer the current generation unless a task says otherwise. |
+| Planner | `claude-opus-5` | The action plan is the judgment in the system; Opus 5 is the default for anything nontrivial, and it ran the test action plan well. |
+| `investigate`, `interpret` | Named per task by the planner, any model the provider serves | No defaults, ruled 2026-09-12. Haiku for a narrow read with little equipment; Opus when the read is subtle. |
+| Anthropic models Claude Code accepts by full name, as of 2026-09-12 | Current generation: `claude-fable-5-1`, `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5`. Still served: `claude-fable-5`, `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6`, `claude-sonnet-4-6`. | All are known to the validator. The older ones cost the same or more for less, so the planner is told to prefer the current generation unless a task says otherwise. |
 | Later builder, reviewer and `send_email`-shaped capabilities | `claude-fable-5-1` or `claude-opus-5` with the equipment the job needs | Not in v0. |
 
 ### Custom equipment for sessions (after v0)
@@ -378,7 +385,7 @@ first time.
 |---|---|---|
 | The runtime serves its equipment registry as an MCP server, passed with `--mcp-config` and `--strict-mcp-config`. | As native tools with names and input schemas, exactly like `Read` or `Grep`, invoked without any syntax to learn. | The most obvious for the session, and the schema validates inputs before the equipment runs. Costs: the runtime must implement an MCP stdio server, every session pays its startup, each tool definition adds context tokens, and whether `--tools` filtering also filters MCP tools is untested. |
 | The runtime exposes equipment as one CLI command, `noscope equipment <name> --arg value`, and the capability allowlists exactly that command in Bash. | As a shell command it must be told about in the capability's prompt, called through the `Bash` tool, returning JSON on stdout. | Uses only mechanisms verified today, no server to write, and one allowlist entry bounds it. Costs: the session has to learn the command's syntax from the prompt, argument errors surface as text rather than schema rejections, and every call spawns a process. |
-| No custom equipment in sessions at all: split the work into a deterministic capability that runs the equipment and a session that interprets its output, sequenced by the organizer. | The session never calls equipment; it receives results as evidence in its task. | The purest ICS shape, and it keeps facts on the verified side. Costs: it fails wherever judgment and equipment must interleave, as in `send_email`, where composing needs the model and sending needs the equipment in the same stretch. |
+| No custom equipment in sessions at all: split the work into a deterministic capability that runs the equipment and a session that interprets its output, sequenced by the planner. | The session never calls equipment; it receives results as evidence in its task. | The purest ICS shape, and it keeps facts on the verified side. Costs: it fails wherever judgment and equipment must interleave, as in `send_email`, where composing needs the model and sending needs the equipment in the same stretch. |
 | The Claude Agent SDK's in-process custom tools. | As native tools. | Ruled out: the SDK requires an API key, so it leaves the subscription. |
 
 Ruled: the MCP server, with the CLI command as the fallback if MCP proves awkward in headless
@@ -389,7 +396,6 @@ server, so Craft, GitHub or a browser needs no adapter. The third option is not 
 but the default shape: a session gets custom equipment only when its judgment and the
 equipment must interleave.
 ### Storage: `better-sqlite3` versus `node:sqlite`
-
 | Consideration | `better-sqlite3` | `node:sqlite` |
 |---|---|---|
 | Install | A native addon with prebuilt binaries per Node version, and a compile when no prebuilt matches. | Built into Node 24. Nothing to install. Verified working on this machine 2026-09-12. |
@@ -398,7 +404,6 @@ equipment must interleave.
 | Ruling | Chosen 2026-09-12: a dependency we pin cannot change under us. | Not used. |
 
 ### The MCP equipment server, once built
-
 One server implementation, one process per session. The session's MCP config launches
 `noscope equipment-server` with the capability's equipment list and the task id, so the
 server advertises only that equipment; `investigate` might expose `grep_files` and
@@ -409,7 +414,6 @@ capability's. Cost: a Node process start, on the order of tens of milliseconds, 
 handshake of a few JSON messages, and one pipe round trip per call, against a session that
 already costs seconds. A server per capability would duplicate the registry and turn every
 new capability into a new process type.
-
 ### Speed
 Measured 2026-09-12 on this machine, all with the five fixed flags:
 
@@ -417,10 +421,10 @@ Measured 2026-09-12 on this machine, all with the five fixed flags:
 |---|---|
 | A minimal Haiku session that only replies | 3.8 s wall, of which 1.0 s is API time. The rest is process startup, paid by every headless invocation. |
 | A Haiku session that makes one Bash call and reports | 4.4 s of API time over two turns, plus startup. |
-| The Opus organizer returning six units and five tasks | 14.2 s of API time, plus startup. |
+| The Opus planner returning six units and five tasks | 14.2 s of API time, plus startup. |
 | A deterministic capability | Milliseconds. |
 
-So one cycle as written is the organizer, about 15 to 20 s, plus its tasks run one
+So one cycle as written is the planner, about 15 to 20 s, plus its tasks run one
 after another, each session-backed one roughly 7 to 30 s and each deterministic one
 negligible. A case that takes five cycles with two sessions each runs three to four minutes.
 That is slow for a daemon and right for v0, which is stepped by hand to be watched. The
@@ -430,12 +434,12 @@ which is untested for this use.
 ## {==Open questions==}{>>i don't understand your suggestions under "blocks", too compressed<<}{id="c30" by="user" at="2026-09-12T22:19:17.566Z"}{>>Rewritten: each row now says what is undecided, which step cannot be finished until it is, and what the build assumes in the meantime.<<}{id="r38" by="AI" at="2026-09-12T22:22:00.000Z" re="c30"}{>>this is no longer rendering, i'll need to see it in chat<<}{id="c32" by="user" at="2026-09-12T22:32:42.594Z" re="r38"}{>>Shown in chat, with the new column.<<}{id="r40" by="AI" at="2026-09-12T22:35:00.000Z" re="c32"}
 | What is undecided | Needed for v0? | What waits on it, and what the build assumes meanwhile |
 |---|---|---|
-| Three vocabulary choices Mauria has reserved: an umbrella word to replace `case`, covering anything from a project to a single task to research; `claim` versus `assertion`; and whether the organizer is renamed `planner`, since it is ICS's Planning Section and not its commander. | Yes, since the words go into the preamble and the code. | The build uses the current words until she rules, and a rename is one commit. |
-| Whether the organizer should see the full text of every completed result, or only a summary of each result against its task's contract plus pointers to the evidence. | Yes. | Step 4 cannot fix the organizer's input rendering until this is decided. The build starts with summaries plus evidence pointers, because that is the cheaper prompt. The signal to widen is the organizer proposing the same tree again after new results arrive, which means the summaries are not carrying enough for it to react. |
-| A Situation Unit: ICS gives it the job of collecting and summarizing the situation so command sees a picture rather than raw reports. Here it would be a periodic session-backed capability that reads the case file and writes a situation summary, for keeping perspective across many cycles and for triage when noscope runs with little supervision. Whether it earns a call of its own or folds into the organizer's input rendering is the question. | No. | Autonomous operation cannot be designed until this is settled; v0 is stepped by hand and the case file is the picture. |
+| One vocabulary choice Mauria has reserved: an umbrella word to replace `case`, covering anything from a project to a single task to research. Candidates offered: `pursuit` (recommended), `undertaking`, `mission`, `ask`, `matter`. | Yes, since the word goes into the preamble and the code. | The build uses `case` until she rules, and the rename is one commit. |
+| Whether the planner should see the full text of every completed result, or only a summary of each result against its task's contract plus pointers to the evidence. | Yes. | Step 4 cannot fix the planner's input rendering until this is decided. The build starts with summaries plus evidence pointers, because that is the cheaper prompt. The signal to widen is the planner proposing the same tree again after new results arrive, which means the summaries are not carrying enough for it to react. |
+| A Situation Unit: ICS gives it the job of collecting and summarizing the situation so command sees a picture rather than raw reports. Here it would be a periodic session-backed capability that reads the case file and writes a situation summary, for keeping perspective across many cycles and for triage when noscope runs with little supervision. Whether it earns a call of its own or folds into the planner's input rendering is the question. | No. | Autonomous operation cannot be designed until this is settled; v0 is stepped by hand and the case file is the picture. |
 | Priorities across cases: the picture above any one case, which ICS calls the Multi-Agency Coordination System, so that a case's command knows what matters system-wide and not only for its own objective. | No. v0 runs one case at a time. | Multi-case operation cannot be designed until this exists; the case file is built so a system-level standing-priorities document can be rendered into it later. |
 | The Codex provider's untested parts: per-tool selection and a finer command allowlist beyond `-s read-only`, context size under its isolation flags, and whether it bills the ChatGPT subscription. | No. v0 runs on Claude Code only. | The Codex provider cannot be declared working until one test session runs through it, the same tests run for Claude Code today. |
-| The MCP equipment server, now ruled, still has one untested part: whether a provider's built-in tool filter also filters MCP tools in headless mode. The options that were weighed are under "Custom equipment for sessions" in the Reference section. | No. v0 sessions use built-in tools only. | Any session-backed capability that needs function equipment cannot be written until one path is chosen and tested. The leading candidate is the runtime serving its equipment registry as an MCP server, because the session then sees each piece of equipment as a native tool with a schema and nothing to learn. |
+| The MCP equipment server, now ruled, still has one untested part: whether a provider's built-in tool filter also filters MCP tools in headless mode. The options that were weighed are under "Custom equipment for sessions" in the Reference section. | No. v0 sessions use built-in tools only. | Any session-backed capability that needs function equipment cannot be written until one path is chosen and tested. The leading asserted is the runtime serving its equipment registry as an MCP server, because the session then sees each piece of equipment as a native tool with a schema and nothing to learn. |
 
 ---
 counters:
