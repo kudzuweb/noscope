@@ -1,5 +1,5 @@
-import type { Dirent } from "node:fs";
-import { open, readdir, readFile, stat } from "node:fs/promises";
+import type { Dirent, Stats } from "node:fs";
+import { lstat, open, readdir, readFile, stat } from "node:fs/promises";
 import { join, matchesGlob, relative, resolve } from "node:path";
 import { z } from "zod";
 import { defineEquipment } from "./registry.js";
@@ -38,11 +38,72 @@ export const readFileEquipment = defineEquipment({
 
 const EntryKind = z.enum(["file", "directory", "other"]);
 
-function kindOf(d: Dirent): z.infer<typeof EntryKind> {
+function kindOf(d: Dirent | Stats): z.infer<typeof EntryKind> {
   if (d.isFile()) return "file";
   if (d.isDirectory()) return "directory";
   return "other";
 }
+
+export const PathKind = z.enum([...EntryKind.options, "missing"]);
+
+function isMissing(error: unknown): boolean {
+  const code = (error as { code?: unknown }).code;
+  return code === "ENOENT" || code === "ENOTDIR";
+}
+
+export const statPathEquipment = defineEquipment({
+  name: "stat_path",
+  description:
+    "Whether a path exists and what it is, following symlinks; only a missing path or component reads as missing, any other failure is an error",
+  input: PathInput,
+  output: z.object({
+    path: z.string(),
+    exists: z.boolean(),
+    kind: PathKind,
+    symlink: z.boolean(),
+    bytes: z.number().int().nullable(),
+  }),
+  cost: { typicalSeconds: 0.001 },
+  run: async ({ path }) => {
+    let link: Stats;
+    try {
+      link = await lstat(path);
+    } catch (error) {
+      if (isMissing(error))
+        return {
+          path,
+          exists: false,
+          kind: "missing" as const,
+          symlink: false,
+          bytes: null,
+        };
+      throw error;
+    }
+    const symlink = link.isSymbolicLink();
+    let target: Stats;
+    try {
+      target = symlink ? await stat(path) : link;
+    } catch (error) {
+      if (isMissing(error))
+        return {
+          path,
+          exists: false,
+          kind: "missing" as const,
+          symlink,
+          bytes: null,
+        };
+      throw error;
+    }
+    const kind = kindOf(target);
+    return {
+      path,
+      exists: true,
+      kind,
+      symlink,
+      bytes: kind === "file" ? target.size : null,
+    };
+  },
+});
 
 export const listDirectoryEquipment = defineEquipment({
   name: "list_directory",

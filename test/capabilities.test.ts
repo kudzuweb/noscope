@@ -39,18 +39,18 @@ describe("deterministic capabilities", () => {
       ctx,
     );
     expect(yes.output).toMatchObject({ exists: true, kind: "file" });
-    expect(yes.claims[0]).toMatchObject({
-      predicate: "exists",
-      object: true,
-      confidence: 1,
-    });
+    expect(yes.claims).toMatchObject([
+      { predicate: "exists", object: true, confidence: 1 },
+      { predicate: "is_a", object: "file", confidence: 1 },
+    ]);
     const no = await runDeterministic(
       "check_path",
       { path: join(tree, "nope.txt") },
       ctx,
     );
     expect(no.output).toMatchObject({ exists: false, kind: "missing" });
-    expect(no.claims[0]).toMatchObject({ predicate: "exists", object: false });
+    expect(no.claims).toMatchObject([{ predicate: "exists", object: false }]);
+    expect(no.claims).toHaveLength(1);
   });
 
   it("grep records one claim per match and a verified absence when there is none", async () => {

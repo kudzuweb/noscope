@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -9,6 +9,7 @@ import {
   listEquipment,
   readFileEquipment,
   runEquipment,
+  statPathEquipment,
 } from "../src/equipment/index.js";
 
 const tree = resolve("test/fixtures/tree");
@@ -31,7 +32,7 @@ function fixtureRepo(): string {
 }
 
 describe("equipment", () => {
-  it("registers the seven function equipment items with cost facts", () => {
+  it("registers the eight function equipment items with cost facts", () => {
     expect(listEquipment().map((e) => e.name)).toEqual([
       "git_diff",
       "git_log",
@@ -40,6 +41,7 @@ describe("equipment", () => {
       "list_directory",
       "read_file",
       "run_readonly",
+      "stat_path",
     ]);
     for (const e of listEquipment())
       expect(e.cost.typicalSeconds).toBeGreaterThan(0);
@@ -57,6 +59,54 @@ describe("equipment", () => {
     })) as { text: string; truncated: boolean };
     expect(cut.text).toBe("alpha");
     expect(cut.truncated).toBe(true);
+  });
+
+  it("stat_path follows symlinks, reads case-insensitively where the filesystem does, and only calls a missing path missing", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "noscope-stat-"));
+    writeFileSync(join(dir, "f.txt"), "12345");
+    symlinkSync(join(dir, "f.txt"), join(dir, "link"));
+    symlinkSync(join(dir, "gone"), join(dir, "dangling"));
+    const st = (path: string) =>
+      runEquipment(statPathEquipment, { path }).then(
+        ({ exists, kind, symlink, bytes }) => ({
+          exists,
+          kind,
+          symlink,
+          bytes,
+        }),
+      );
+    expect(await st(join(dir, "f.txt"))).toEqual({
+      exists: true,
+      kind: "file",
+      symlink: false,
+      bytes: 5,
+    });
+    expect(await st(join(dir, "link"))).toEqual({
+      exists: true,
+      kind: "file",
+      symlink: true,
+      bytes: 5,
+    });
+    expect(await st(join(dir, "dangling"))).toEqual({
+      exists: false,
+      kind: "missing",
+      symlink: true,
+      bytes: null,
+    });
+    expect(await st("/")).toMatchObject({ exists: true, kind: "directory" });
+    expect(await st(join(dir, "f.txt", "below"))).toMatchObject({
+      exists: false,
+      kind: "missing",
+    });
+    expect(await st(join(dir, "nope"))).toMatchObject({ exists: false });
+    const upper = await st(join(dir, "F.TXT"));
+    const readable = await runEquipment(readFileEquipment, {
+      path: join(dir, "F.TXT"),
+    }).then(
+      () => true,
+      () => false,
+    );
+    expect(upper.exists).toBe(readable);
   });
 
   it("lists a directory with kinds and sizes", async () => {

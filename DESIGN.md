@@ -109,7 +109,7 @@ noscope/
 │   ├── tree.ts           # renders the unit tree and the event log
 │   ├── equipment/
 │   │   ├── registry.ts   # defineEquipment and lookup
-│   │   ├── filesystem.ts # read_file, list_directory, grep_files
+│   │   ├── filesystem.ts # read_file, stat_path, list_directory, grep_files
 │   │   ├── git.ts        # git_status, git_log, git_diff
 │   │   ├── shell.ts      # allowlisted read-only commands
 │   │   └── builtin.ts    # names and allowlists for the providers' own tools
@@ -160,7 +160,7 @@ Equipment kinds in v0:
 
 | Kind | Where it runs |
 |---|---|
-| Function | In-process, called by a deterministic capability: `read_file`, `grep_files`, `list_directory`, `git_status`, `git_log`, `git_diff`, `run_readonly`. A session reaches function equipment only through the runtime's own MCP equipment server, after v0: one process per session, advertising exactly the capability's declared function equipment, every call logged as an event. |
+| Function | In-process, called by a deterministic capability: `read_file`, `stat_path`, `grep_files`, `list_directory`, `git_status`, `git_log`, `git_diff`, `run_readonly`. A session reaches function equipment only through the runtime's own MCP equipment server, after v0: one process per session, advertising exactly the capability's declared function equipment, every call logged as an event. |
 | Claude Code built-in tool | Only inside a capability's session, named in that capability's equipment: `Read`, `Grep`, `Glob`, and `Bash` under an allowlist of read-only commands. A capability may instead declare `default` to give its session Claude Code's whole built-in set. |
 | External MCP server, after v0 | Only inside a session. Declared as equipment by name and launch command, passed to the provider alongside the runtime's own equipment server. This is how Craft, GitHub, a browser or anything else with an MCP server becomes equipment without an adapter. |
 
@@ -244,7 +244,7 @@ v0 capabilities:
 
 | Capability | Equipment | Session |
 |---|---|---|
-| `check_path` | `list_directory` | none; produces verified claims |
+| `check_path` | `stat_path` | none; produces verified claims |
 | `read` | `read_file` | none; produces verified claims |
 | `grep` | `grep_files` | none; produces verified claims |
 | `git_history` | `git_log`, `git_diff` | none; produces verified claims |

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { runEquipment } from "../equipment/index.js";
+import { runEquipment, statPathEquipment } from "../equipment/index.js";
 import { defineCapability } from "./registry.js";
 
 // Each deterministic capability composes equipment in-process and states what it found as
@@ -8,41 +8,34 @@ import { defineCapability } from "./registry.js";
 export const checkPath = defineCapability({
   name: "check_path",
   description: "Establish whether a path exists and what it is",
-  equipment: ["list_directory"],
-  input: z.object({ path: z.string().min(1) }),
-  output: z.object({
-    path: z.string(),
-    exists: z.boolean(),
-    kind: z.enum(["file", "directory", "other", "missing"]),
-  }),
+  equipment: ["stat_path"],
+  input: statPathEquipment.input,
+  output: statPathEquipment.output,
   effect: "read_only",
-  cost: { typicalSeconds: 0.01 },
-  run: async ({ path }) => {
-    const { dirname, basename } = await import("node:path");
-    let kind: "file" | "directory" | "other" | "missing" = "missing";
-    try {
-      const listing = (await runEquipment("list_directory", {
-        path: dirname(path),
-      })) as {
-        entries: { name: string; kind: "file" | "directory" | "other" }[];
-      };
-      kind =
-        listing.entries.find((e) => e.name === basename(path))?.kind ??
-        "missing";
-    } catch {
-      kind = "missing";
-    }
-    const exists = kind !== "missing";
+  cost: { typicalSeconds: 0.001 },
+  run: async (input) => {
+    const out = await runEquipment(statPathEquipment, input);
     return {
-      output: { path, exists, kind },
+      output: out,
       claims: [
         {
-          subject: path,
+          subject: out.path,
           predicate: "exists",
-          object: exists,
+          object: out.exists,
           confidence: 1,
-          evidence: [path],
+          evidence: [out.path],
         },
+        ...(out.exists
+          ? [
+              {
+                subject: out.path,
+                predicate: "is_a",
+                object: out.kind,
+                confidence: 1,
+                evidence: [out.path],
+              },
+            ]
+          : []),
       ],
     };
   },
