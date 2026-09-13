@@ -539,6 +539,29 @@ Not exactly to spec, with reasons:
 - The stub binary now reports `total_cost_usd: 0.0123`, so the provider test pins the
   whole shape; a second parse pins the no-cost case.
 
+## PR 18: Keep session transcripts (#18, merged 2026-09-13)
+
+Built: `--no-session-persistence` is no longer among the Claude Code provider's fixed
+flags, so every planner and task session leaves its transcript under Claude Code's project
+directory for the session's working directory, keyed by the session id the event log
+already records. Mauria's decision on 2026-09-13, when the first incident's audit wanted
+the planner's transcripts and found none: while the runtime is being refined, the
+transcripts are the material.
+
+Not exactly to spec, with reasons:
+
+- DESIGN.md Step 3 listed five fixed flags and its Reference table measured context with
+  all five; the flag stops only the transcript write and changes no context measurement,
+  so the measurements stand and the rows say which flag was dropped since.
+- Transcripts land under `~/.claude/projects/<directory with slashes as dashes>/`, which
+  for an incident run from a repository is that repository's own Claude Code project
+  directory, beside Mauria's interactive sessions there; they are told apart by the
+  session id on `plan.proposed`, `task.completed`, `task.failed`, `task.insufficient` and
+  claim provenance.
+- From the review: `task.completed` did not carry the session id before this PR, so a
+  session that completed with no claims left no way to its transcript; the dispatcher now
+  writes it there, which is the one behavior change beyond the flag.
+
 ## PR 19: Incident review (#19, merged 2026-09-13)
 
 Built: `noscope incident review <id>`, the After Action Review computed from the event log

@@ -231,11 +231,16 @@ provider, and the provider renders the fields onto its own command from them:
 | `output_schema` | `--json-schema <schema>`, so the result comes back structured. Every session schema carries `outcome: answered \| insufficient`; an insufficient result carries `needed`, a list of what the session lacked, each tagged with its kind (a retrievable fact, permission, missing means, or a human's knowledge), and no claims. | `--output-schema <file>` with the same schema written to a temp file, and `-o <file>` to collect the final message. |
 
 Each provider has a fixed set of isolation flags, so no session inherits Mauria's personal
-setup. Claude Code: `--output-format json`, `--no-session-persistence`,
-`--setting-sources ""`, `--disable-slash-commands`,
-`--exclude-dynamic-system-prompt-sections`, which together drop a session's context from about
-40k tokens to about 3k and keep her CLAUDE.md, skills and hooks out; `--bare` is not used
-because it authenticates only with an API key. Codex: `--ignore-user-config`,
+setup. Claude Code: `--output-format json`, `--setting-sources ""`,
+`--disable-slash-commands`, `--exclude-dynamic-system-prompt-sections`, which together drop
+a session's context from about 40k tokens to about 3k and keep her CLAUDE.md, skills and
+hooks out; `--bare` is not used because it authenticates only with an API key. Sessions are
+not made ephemeral: every planner and task session leaves its transcript under Claude Code's
+project directory for the session's working directory (`~/.claude/projects/<directory with
+slashes as dashes>/<session id>.jsonl`), and the session id is on `plan.proposed`, on
+`task.completed`, `task.failed` and `task.insufficient`, and in every asserted claim's
+provenance, so a run can
+be read back call by call while the runtime is being refined (Mauria, 2026-09-13). Codex: `--ignore-user-config`,
 `--ignore-rules`, `--ephemeral`, `--json`, verified present in `codex exec --help` on
 2026-09-12 and not yet tested for context size or subscription billing. Permissions come only
 from the capability's declaration; with the isolation flags, Mauria's own permission settings
@@ -266,7 +271,7 @@ planned set of such capabilities. v0 registers none.
 ### Step 4: the planner
 One call per cycle, through a provider, as a headless Claude Code call on the subscription, with `--json-schema` so the
 response is a validated `ActionPlan` and never prose. Model `claude-opus-5`, no tools,
-the same five fixed flags as every session. Tested 2026-09-12 with an
+the same four fixed flags as every session. Tested 2026-09-12 with an
 planner-shaped prompt: 3.6k tokens of context and a valid action plan back.
 Input, rendered as labeled sections in a stable order so the prefix caches:
 
@@ -426,14 +431,14 @@ v0 is done when all of these hold on the first incident:
 | Headless Claude Code runs on the subscription when no API key is set. | A `claude -p` call succeeded on this machine with no `ANTHROPIC_API_KEY` in the environment, 2026-09-12. |
 | Default headless context is about 40k tokens in an empty directory and about 56k in the home directory. | Usage fields of test calls, 2026-09-12. |
 | `--system-prompt` on its own, without the other four fixed flags, leaves CLAUDE.md and hook output in the session's context. | A probe session answered yes to seeing both, 2026-09-12. |
-| The five fixed flags in Step 3 bring context to about 3k and remove both. | Usage fields and a probe answering no to both, 2026-09-12. |
+| The four fixed flags in Step 3 bring context to about 3k and remove both. | Usage fields and a probe answering no to both, 2026-09-12, with `--no-session-persistence` also set; that flag only stops the transcript being written and was dropped 2026-09-13 so runs can be studied. |
 | With `--setting-sources ""` the model falls back to Opus 5. | The `modelUsage` field of the test call. |
 | `--bare` authenticates only with an API key. | `claude --help`. |
 | Codex is installed and `codex exec` has `-m`, `-s read-only`, `-C`, `--add-dir`, `--ignore-user-config`, `--ignore-rules`, `--ephemeral`, `--output-schema`, `--json` and `-o`. | `codex exec --help` on this machine, 2026-09-12. Nothing run through it yet. |
 | The Claude Agent SDK requires an API key. | The SDK quickstart, read by a docs subagent; not read directly. |
 | zod 4 converts a schema to JSON Schema with `z.toJSONSchema`, targets draft-2020-12 by default, and cannot represent dates, maps, sets, transforms or bigints. | The zod.dev JSON Schema page, fetched 2026-09-12. |
 | Headless `--tools` filters built-in tools only; MCP tools from `--mcp-config` stay available even with `--tools ""`. | Four test calls against a minimal stdio MCP server, 2026-09-12; `spikes/mcp-tools-filter/run.sh` reproduces them. |
-| `--json-schema` returns a schema-valid `structured_output` field, and `--tools ""` plus the five fixed flags work with it. | A test call on the installed version with an planner-shaped prompt and action plan schema, 2026-09-12. |
+| `--json-schema` returns a schema-valid `structured_output` field, and `--tools ""` plus the five flags then fixed (the four of Step 3 and `--no-session-persistence`, since dropped) work with it. | A test call on the installed version with an planner-shaped prompt and action plan schema, 2026-09-12. |
 
 ### Model choices
 | Role | Model | Because |
@@ -482,7 +487,7 @@ handshake of a few JSON messages, and one pipe round trip per call, against a se
 already costs seconds. A server per capability would duplicate the registry and turn every
 new capability into a new process type.
 ### Speed
-Measured 2026-09-12 on this machine, all with the five fixed flags:
+Measured 2026-09-12 on this machine, all with the five flags then fixed (the four of Step 3 and `--no-session-persistence`, dropped 2026-09-13):
 
 | Call | Time |
 |---|---|
