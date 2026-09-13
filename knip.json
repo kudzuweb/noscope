@@ -1,6 +1,5 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "entry": ["bin/noscope.mjs", "src/models.ts", "test/**/*.test.ts"],
-  "project": ["src/**/*.ts", "test/**/*.ts", "bin/*.mjs"],
-  "ignore": ["spikes/**"]
+  "entry": ["src/cli.ts", "src/models.ts", "test/**/*.test.ts"],
+  "project": ["src/**/*.ts", "test/**/*.ts"]
 }
