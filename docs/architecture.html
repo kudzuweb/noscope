@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>noscope architecture</title>
+<style>
+:root{--bg:#fff;--fg:#1c1c1c;--muted:#5a5a5a;--line:#c9c9c9;--box:#f6f6f6;--accent:#2b5fd9;--warn:#b25e00;--ok:#2a7d3f;--dash:#8a8a8a}
+@media (prefers-color-scheme:dark){:root{--bg:#141414;--fg:#e8e8e8;--muted:#a8a8a8;--line:#3d3d3d;--box:#1f1f1f;--accent:#7aa2ff;--warn:#e0a24a;--ok:#6fc48a;--dash:#7a7a7a}}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+main{max-width:1100px;margin:0 auto;padding:1.5rem}
+h1{font-size:1.6rem;margin:.2rem 0 .4rem} h2{font-size:1.2rem;margin:2.2rem 0 .6rem;border-bottom:1px solid var(--line);padding-bottom:.3rem}
+p.lead{color:var(--muted);margin:0 0 1rem}
+.legend{display:flex;gap:1.2rem;flex-wrap:wrap;font-size:.9em;color:var(--muted);margin:.4rem 0 1rem}
+.legend span{display:inline-flex;align-items:center;gap:.4rem}
+.sw{width:26px;height:14px;border:2px solid var(--fg);border-radius:3px;display:inline-block}
+.sw.after{border-style:dashed;border-color:var(--dash)}
+.sw.human{border-color:var(--warn)} .sw.model{border-color:var(--accent)} .sw.fact{border-color:var(--ok)}
+.flow{display:flex;flex-direction:column;gap:0;margin:0 0 1rem}
+.step{display:grid;grid-template-columns:2.2rem 1fr;gap:.6rem;align-items:start;padding:.55rem .7rem;border:2px solid var(--line);border-radius:6px;background:var(--box)}
+.step.model{border-color:var(--accent)} .step.human{border-color:var(--warn)} .step.fact{border-color:var(--ok)} .step.after{border-style:dashed;border-color:var(--dash)}
+.n{font-weight:700;color:var(--muted);text-align:right;padding-top:.05rem}
+.step b{display:block}
+.carry{color:var(--muted);font-size:.92em;margin-top:.15rem}
+.carry code{font-size:.92em}
+.arrow{text-align:center;color:var(--muted);line-height:1.1;font-size:1.3em;padding:.15rem 0}
+.arrow small{display:block;font-size:.62em;line-height:1.2}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:1rem}
+.card{border:2px solid var(--line);border-radius:6px;background:var(--box);padding:.7rem .9rem}
+.card.after{border-style:dashed;border-color:var(--dash)}
+.card h3{margin:0 0 .4rem;font-size:1em}
+.card ul{margin:.2rem 0 0 1.1rem;padding:0} .card li{margin:.15rem 0}
+pre{background:var(--box);border:1px solid var(--line);border-radius:6px;padding:.7rem .9rem;overflow-x:auto;font:.85em/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;margin:.4rem 0}
+code{font:.9em ui-monospace,SFMono-Regular,Menlo,monospace}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:1rem} @media(max-width:760px){.two{grid-template-columns:1fr}}
+.tag{display:inline-block;font-size:.75em;padding:.05rem .4rem;border-radius:3px;border:1px solid var(--dash);color:var(--muted);margin-left:.4rem;vertical-align:middle}
+svg text{font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;fill:var(--fg)}
+svg .box{fill:var(--box);stroke:var(--line);stroke-width:2} svg .box.model{stroke:var(--accent)} svg .box.human{stroke:var(--warn)} svg .box.fact{stroke:var(--ok)}
+svg .edge{stroke:var(--muted);stroke-width:1.8;fill:none;marker-end:url(#ah)} svg .edge.after{stroke-dasharray:6 5;stroke:var(--dash)}
+svg .lbl{fill:var(--muted);font-size:11.5px}
+</style>
+</head>
+<body>
+<main>
+<h1>noscope architecture</h1>
+<p class="lead">How an incident moves through the runtime, what each part receives and returns, and where humans and models sit in the loop. Companion to <code>DESIGN.md</code>; vocabulary is ICS's throughout.</p>
+<div class="legend">
+  <span><i class="sw"></i> deterministic code (v0)</span>
+  <span><i class="sw model"></i> a model call</span>
+  <span><i class="sw human"></i> Mauria, the Agency Administrator</span>
+  <span><i class="sw fact"></i> a verified fact about the machine</span>
+  <span><i class="sw after"></i> after v0</span>
+</div>
+
+<h2>1. The pieces and who talks to whom</h2>
+<svg viewBox="0 0 1060 470" width="100%" role="img" aria-label="Component diagram">
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--muted)"/></marker></defs>
+<!-- Mauria -->
+<rect class="box human" x="20" y="20" width="200" height="70" rx="6"/><text x="120" y="48" text-anchor="middle" font-weight="700">Mauria</text><text x="120" y="68" text-anchor="middle" class="lbl">Agency Administrator: objectives, grants, answers, budgets</text>
+<!-- CLI -->
+<rect class="box" x="300" y="20" width="220" height="70" rx="6"/><text x="410" y="48" text-anchor="middle" font-weight="700">CLI  noscope incident …</text><text x="410" y="68" text-anchor="middle" class="lbl">create · show · tree · step · run · events · answer · grant · sop</text>
+<path class="edge" d="M220,55 L298,55"/>
+<!-- Runtime -->
+<rect class="box" x="300" y="130" width="220" height="70" rx="6"/><text x="410" y="158" text-anchor="middle" font-weight="700">Runtime: the cycle</text><text x="410" y="178" text-anchor="middle" class="lbl">observe → plan → validate → dispatch → verify → record</text>
+<path class="edge" d="M410,90 L410,128"/>
+<!-- Store -->
+<rect class="box fact" x="600" y="130" width="440" height="70" rx="6"/><text x="820" y="158" text-anchor="middle" font-weight="700">Incident file  (SQLite, better-sqlite3)</text><text x="820" y="178" text-anchor="middle" class="lbl">incidents · units · tasks · claims · events · grants — every change writes an event in the same transaction</text>
+<path class="edge" d="M520,165 L598,165"/><path class="edge" d="M598,150 L520,150"/>
+<!-- Planner -->
+<rect class="box model" x="20" y="250" width="240" height="70" rx="6"/><text x="140" y="278" text-anchor="middle" font-weight="700">Planner  (Planning Section)</text><text x="140" y="298" text-anchor="middle" class="lbl">one headless call per cycle, returns an action plan as JSON</text>
+<path class="edge" d="M330,200 L200,248"/><text x="230" y="222" class="lbl">incident file, rendered</text>
+<path class="edge" d="M260,270 L340,205"/><text x="300" y="255" class="lbl">action plan</text>
+<!-- Validator -->
+<rect class="box" x="300" y="250" width="220" height="70" rx="6"/><text x="410" y="278" text-anchor="middle" font-weight="700">Validator  (Safety Officer)</text><text x="410" y="298" text-anchor="middle" class="lbl">rules; rejects the whole plan or applies it</text>
+<path class="edge" d="M410,200 L410,248"/>
+<!-- Dispatcher -->
+<rect class="box" x="300" y="360" width="220" height="70" rx="6"/><text x="410" y="388" text-anchor="middle" font-weight="700">Dispatcher + Verifier</text><text x="410" y="408" text-anchor="middle" class="lbl">runs ready tasks, turns results into claims</text>
+<path class="edge" d="M410,320 L410,358"/>
+<!-- Capabilities -->
+<rect class="box" x="600" y="250" width="200" height="70" rx="6"/><text x="700" y="278" text-anchor="middle" font-weight="700">Deterministic capability</text><text x="700" y="298" text-anchor="middle" class="lbl">equipment in-process → verified claims</text>
+<rect class="box model" x="840" y="250" width="200" height="70" rx="6"/><text x="940" y="278" text-anchor="middle" font-weight="700">Session-backed capability</text><text x="940" y="298" text-anchor="middle" class="lbl">equipment + session → asserted claims</text>
+<path class="edge" d="M520,380 C560,380 570,285 598,285"/><path class="edge" d="M520,395 C700,395 760,300 838,290"/>
+<!-- Providers -->
+<rect class="box model" x="600" y="360" width="200" height="70" rx="6"/><text x="700" y="388" text-anchor="middle" font-weight="700">Provider: Claude Code</text><text x="700" y="408" text-anchor="middle" class="lbl">claude -p, five isolation flags, --json-schema</text>
+<rect class="box model after" x="840" y="360" width="200" height="70" rx="6" stroke-dasharray="6 5"/><text x="940" y="388" text-anchor="middle" font-weight="700">Provider: Codex</text><text x="940" y="408" text-anchor="middle" class="lbl">codex exec, --output-schema, isolation flags</text>
+<path class="edge" d="M900,320 L720,358"/><path class="edge after" d="M950,320 L950,358"/>
+<!-- Equipment server -->
+<rect class="box after" x="600" y="440" width="440" height="24" rx="6" stroke-dasharray="6 5"/><text x="820" y="457" text-anchor="middle" class="lbl">MCP equipment server, one per session, exposes only the capability's equipment; external MCP servers are equipment too (after v0)</text>
+</svg>
+
+<h2>2. One cycle, in order  <span class="tag">noscope incident step</span></h2>
+<p class="lead">Every <code>step</code> runs exactly this and stops. <code>run</code> repeats it until the incident leaves <code>open</code>.</p>
+<div class="flow">
+  <div class="step"><span class="n">1</span><div><b>Observe: render the incident file into the planner's input</b><div class="carry">Carries, in a stable order so the prompt prefix caches: objective, constraints, priorities, budget remaining, grants given, unanswered questions · verified claims · asserted claims with provenance · the unit tree with each unit's purpose and status · tasks completed since last cycle, each as a summary against its contract plus evidence pointers · tasks that came back <code>insufficient</code> with what they needed · open tasks · the capability registry, and every model each provider serves with its cost · the validator's rules.</div></div></div>
+  <div class="arrow">↓</div>
+  <div class="step model"><span class="n">2</span><div><b>Plan: one headless provider call returns an action plan</b><div class="carry">Claude Code, <code>--model claude-opus-5</code>, no tools, <code>--json-schema</code>, the five isolation flags. Returns <code>ActionPlan</code>: <code>createUnits</code> (purpose, parent) · <code>closeUnits</code> (id, reason) · <code>createTasks</code> (unit, capability, objective, inputs, completion criteria, evidence required, instructions, provider, model) · <code>cancelTasks</code> · <code>claimsToVerify</code> · <code>questionsForHuman</code> · <code>grantRequests</code> · <code>applySops</code> · <code>incidentStatus</code> · <code>rationale</code>. The planner never runs a tool or writes to the store.</div></div></div>
+  <div class="arrow">↓</div>
+  <div class="step"><span class="n">3</span><div><b>Validate: every rule passes or the whole plan is rejected</b><div class="carry">Capabilities exist · units and parents exist · no cycles · no duplicate task · inputs parse against the capability's input schema · span of control ≤ 7 direct children, target 5 · effect policy (v0: <code>read_only</code> only; later: a grant on this incident) · budget fits · dependencies resolve · closing is clean · status is earned · model known (provider and model pair the provider serves). A rejection writes <code>plan.rejected</code> with the failing rule and is fed back as input next cycle.</div></div></div>
+  <div class="arrow">↓</div>
+  <div class="step"><span class="n">4</span><div><b>Apply: the tree changes shape</b><div class="carry">Units created and closed, tasks created and cancelled, all in one transaction with their events: <code>unit.created</code>, <code>unit.closed</code>, <code>task.created</code>, <code>task.cancelled</code>, <code>plan.applied</code>. If the plan carried questions for a human, the incident goes to <code>blocked</code> and stops here (see §5).</div></div></div>
+  <div class="arrow">↓</div>
+  <div class="step"><span class="n">5</span><div><b>Dispatch: run every ready task</b><div class="carry">Ready means every <code>depends_on</code> task is completed. v0 runs them one after another (parallel is the after-v0 lever). Each run writes <code>task.started</code>, then the result with <code>task.completed</code>, <code>task.failed</code> or <code>task.insufficient</code>, plus <code>task.usage</code> from the provider's usage fields, and the time bound is enforced.</div></div></div>
+  <div class="arrow">↓</div>
+  <div class="step fact"><span class="n">6</span><div><b>Verify: results become claims</b><div class="carry">A deterministic capability's result → <code>verified</code> claims, provenance = capability + inputs. A session's result → <code>asserted</code> claims, provenance = session id. An <code>insufficient</code> result → no claims, an event carrying what was needed. A <code>claimsToVerify</code> entry schedules a deterministic task whose match promotes the asserted claim (§4).</div></div></div>
+  <div class="arrow">↓</div>
+  <div class="step"><span class="n">7</span><div><b>Record and stop</b><div class="carry">The incident file now holds the new tree, claims and events. <code>step</code> prints the plan, the validator's verdict, what ran and what changed. <code>satisfied</code> requires every open task completed or cancelled and at least one verified claim.</div></div></div>
+  <div class="arrow">↺<small>next step reads the updated incident file</small></div>
+</div>
+
+<h2>3. What a session receives and returns</h2>
+<div class="two">
+<div class="card model"><h3>Into the session</h3>
+<ul>
+<li><b>System prompt</b> = the fixed preamble (you are a resource assigned into an incident run by this runtime; the task follows; report only against its contract; findings are asserted claims until verified; you cannot change the organization; one line per vocabulary term) + the capability's own role text.</li>
+<li><b>User message</b> = the task: objective, inputs, expected output, completion criteria, evidence required, instructions, and one line saying what the owning unit is trying to establish.</li>
+<li><b>Equipment</b> = exactly what the capability declares: built-in tools via <code>--tools</code>, Bash under <code>--allowedTools Bash(cmd *)</code>, and after v0 the runtime's MCP server and any external MCP servers via <code>--mcp-config --strict-mcp-config</code>. <code>--tools ""</code> leaves only MCP equipment.</li>
+<li><b>Model</b> named by the task, any the provider serves. <b>Isolation</b>: <code>--setting-sources ""</code>, <code>--disable-slash-commands</code>, <code>--exclude-dynamic-system-prompt-sections</code>, <code>--no-session-persistence</code>; Mauria's CLAUDE.md, skills, hooks and permissions never load (≈3k tokens of context, 2.5k with no built-ins).</li>
+<li><b>Output schema</b> via <code>--json-schema</code>.</li>
+</ul></div>
+<div class="card model"><h3>Out of the session</h3>
+<ul>
+<li><code>outcome: answered | insufficient</code>.</li>
+<li>If answered: claims (subject, predicate, object, confidence, evidence pointers), all entered as <code>asserted</code>.</li>
+<li>If insufficient: <code>needed</code>, the evidence or access it lacked, and no claims. The planner sees this next cycle and creates the task that supplies it, or asks Mauria.</li>
+<li>Usage: tokens and time, recorded as <code>task.usage</code> against the budget.</li>
+<li>The provider's session id, as provenance on every claim.</li>
+</ul></div>
+</div>
+
+<h2>4. A claim's life</h2>
+<div class="flow">
+  <div class="step model"><span class="n">a</span><div><b>Asserted</b><div class="carry">A session says "the save path calls <code>normalize()</code> before writing". Entered as <code>asserted</code> with the session id. The planner sees it under asserted claims and may list it in <code>claimsToVerify</code>.</div></div></div>
+  <div class="arrow">↓<small>planner requests verification</small></div>
+  <div class="step fact"><span class="n">b</span><div><b>A deterministic task checks it</b><div class="carry">The validator admits a task to <code>grep</code> or <code>read</code> with inputs derived from the claim; the equipment runs in-process, milliseconds, no model.</div></div></div>
+  <div class="arrow">↓</div>
+  <div class="step fact"><span class="n">c</span><div><b>Verified, or rejected</b><div class="carry">A match promotes the claim to <code>verified</code> (<code>claim.verified</code>); a mismatch marks it <code>rejected</code> (<code>claim.rejected</code>). Only verified claims can satisfy an incident. Nothing a model said becomes true without this step.</div></div></div>
+</div>
+
+<h2>5. Where the loop waits on Mauria</h2>
+<div class="grid">
+<div class="card human"><h3>A question only she can answer</h3><ul><li>Planner puts it in <code>questionsForHuman</code>; the incident goes <code>blocked</code>; <code>question.asked</code>.</li><li><code>noscope incident show</code> prints it; when noscope runs inside a Claude Code session the runtime can send it as an agent message.</li><li><code>noscope incident answer &lt;id&gt; "…"</code> records <code>question.answered</code> and returns the incident to <code>open</code>; the answer enters the planner's input next cycle.</li></ul></div>
+<div class="card human after"><h3>A grant for a capability that writes  <span class="tag">after v0</span></h3><ul><li>Planner puts a <code>grantRequest</code> (capability, effect, reason) in the plan; the validator holds any task needing it; <code>grant.requested</code>.</li><li><code>noscope incident grant &lt;id&gt; &lt;capability&gt;</code> gives a per-incident grant covering every task on it; <code>--per-task</code> makes each task ask again; <code>noscope grant standing</code> whitelists everywhere. The three stack.</li><li>v0 registers only <code>read_only</code> capabilities, so this path is never taken yet.</li></ul></div>
+<div class="card human"><h3>Budgets she sets</h3><ul><li>Tokens, time or both, on the incident or a task; unlimited by default in v0.</li><li>The planner sees what remains and the <code>cost</code> facts stored on each capability and piece of equipment; the validator rejects a task that does not fit; the dispatcher enforces the time bound and records usage.</li></ul></div>
+</div>
+
+<h2>6. The tree changing shape (the thing v0 exists to show)</h2>
+<div class="two">
+<pre>incident 001 — why does saving in Roughdraft drop blank lines?
+
+[active] command
+├── [active] save-path investigation
+│   ├── ✓ grep      "writeFile|save" in packages/app     (verified)
+│   ├── → investigate: read the save handler, Haiku     (running)
+│   └── ○ read      the file grep pointed at             (pending)
+└── [active] formatter investigation
+    └── → investigate: find where blank lines are cut   (running)</pre>
+<pre>incident 001 — after two more steps
+
+[active] command
+└── [active] normalize() investigation        ← opened from an asserted claim
+    ├── ✓ read      src/markdown/normalize.ts            (verified)
+    ├── ✓ grep      callers of normalize()               (verified)
+    └── → interpret: does this explain both symptoms?   (running)
+
+closed: save-path investigation   (served its purpose)
+closed: formatter investigation   (asserted claim verified: same code path)</pre>
+</div>
+<p class="lead">Events tell why the topology changed: <code>unit.created</code>, <code>claim.verified</code>, <code>unit.closed</code>, each with the plan's rationale. Span of control keeps any unit at ≤ 7 direct children, so twelve tasks force the planner to invent branches.</p>
+
+<h2>7. Equipment and capabilities</h2>
+<div class="grid">
+<div class="card"><h3>Equipment (primitive, never assigned)</h3><ul><li><b>Function</b>: <code>read_file</code>, <code>grep_files</code>, <code>list_directory</code>, <code>git_status</code>, <code>git_log</code>, <code>git_diff</code>, <code>run_readonly</code>; in-process, milliseconds.</li><li><b>Provider built-in tool</b>: <code>Read</code>, <code>Grep</code>, <code>Glob</code>, <code>Bash</code> under an allowlist; only inside a session.</li><li><b>External MCP server</b> <span class="tag">after v0</span>: Craft, GitHub, a browser, declared by name and launch command.</li><li>Each declares <code>cost</code> facts: rate limit, typical tokens and seconds, money per call.</li></ul></div>
+<div class="card"><h3>Capability (the assignable thing)</h3><ul><li><code>name</code>, <code>description</code>, <code>equipment</code>, <code>input</code>/<code>output</code> zod schemas, <code>effect</code> (<code>read_only</code> | <code>writes_local</code> | <code>writes_external</code>), <code>produces</code> (<code>verified_claims</code> | <code>asserted_claims</code>), <code>cost</code>, and optionally a <code>session</code> with its system prompt.</li><li>v0: <code>check_path</code>, <code>read</code>, <code>grep</code>, <code>git_history</code> (deterministic) · <code>investigate</code>, <code>interpret</code> (session-backed, model per task).</li><li>A capability may include other capabilities.</li></ul></div>
+<div class="card after"><h3>SOP  <span class="tag">after v0</span></h3><ul><li>A saved unit configuration: purpose, the tasks it opens with their capabilities, instructions and equipment, the angles the planner may choose among, completion criteria.</li><li>Added by <code>noscope incident sop &lt;id&gt; code-review</code> or by the planner's <code>applySops</code>; the whole unit lands in one action plan.</li></ul></div>
+</div>
+
+<h2>8. Speed, measured on this machine</h2>
+<p class="lead">Headless startup ≈ 3 s per session · Haiku session with one Bash call 4.4 s API · Opus planner call 14.2 s API · deterministic capability: milliseconds. One cycle ≈ planner + tasks in sequence; five cycles with two sessions each ≈ 3–4 minutes. After v0, parallel dispatch turns the sum into a maximum.</p>
+</main>
+</body>
+</html>
