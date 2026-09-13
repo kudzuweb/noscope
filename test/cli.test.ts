@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { helpText, INCIDENT_COMMANDS, run, VERSION } from "../src/cli.js";
+import {
+  helpText,
+  INCIDENT_COMMANDS,
+  run,
+  TOP_LEVEL_COMMANDS,
+  VERSION,
+} from "../src/cli.js";
 
 function capture() {
   const out: string[] = [];
@@ -19,20 +25,34 @@ describe("noscope cli", () => {
     for (const command of INCIDENT_COMMANDS) {
       expect(text).toContain(`noscope incident ${command.name}`);
     }
+    for (const command of TOP_LEVEL_COMMANDS) {
+      expect(text).toContain(`noscope ${command.usage}`);
+    }
     expect(text).toBe(helpText());
   });
 
-  it("prints the version", async () => {
+  it("prints the version for --version, -v and -V", async () => {
+    for (const flag of ["--version", "-v", "-V"]) {
+      const io = capture();
+      expect(await run([flag], io)).toBe(0);
+      expect(io.lines.out).toEqual([VERSION]);
+    }
+  });
+
+  it("names after v0 for commands the design lists beyond v0", async () => {
     const io = capture();
-    expect(await run(["--version"], io)).toBe(0);
-    expect(io.lines.out).toEqual([VERSION]);
+    expect(await run(["incident", "sop", "1", "code-review"], io)).toBe(3);
+    expect(io.lines.err[0]).toContain("after v0");
+    const top = capture();
+    expect(await run(["grant", "standing", "send_email"], top)).toBe(3);
+    expect(top.lines.err[0]).toContain("after v0");
   });
 
   it("names the PR that delivers a known but unimplemented command", async () => {
     const io = capture();
     expect(await run(["incident", "step", "7"], io)).toBe(3);
     expect(io.lines.err[0]).toContain("not yet implemented");
-    expect(io.lines.err[0]).toContain("PR 12");
+    expect(io.lines.err[0]).toContain("arrives PR 12");
   });
 
   it("treats incident with no subcommand or --help as help", async () => {

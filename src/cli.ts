@@ -56,12 +56,37 @@ export const INCIDENT_COMMANDS: readonly Command[] = [
     summary: "Repeat step until the incident leaves open or the cap is hit",
     arrives: "PR 14",
   },
+  {
+    name: "sop",
+    usage: "sop <id> <name>",
+    summary:
+      "Add an SOP's unit and its tasks to the incident in one action plan",
+    arrives: "after v0",
+  },
+  {
+    name: "grant",
+    usage: "grant <id> <capability> [--per-task]",
+    summary: "Give a grant for one capability on this incident",
+    arrives: "after v0",
+  },
+];
+
+export const TOP_LEVEL_COMMANDS: readonly Command[] = [
+  {
+    name: "grant",
+    usage: "grant standing <capability>",
+    summary: "Whitelist a capability everywhere",
+    arrives: "after v0",
+  },
 ];
 
 export function helpText(): string {
   const width = Math.max(...INCIDENT_COMMANDS.map((c) => c.usage.length));
   const lines = INCIDENT_COMMANDS.map(
     (c) => `  noscope incident ${c.usage.padEnd(width)}  ${c.summary}`,
+  );
+  const top = TOP_LEVEL_COMMANDS.map(
+    (c) => `  noscope ${c.usage.padEnd(width + 9)}  ${c.summary}`,
   );
   return [
     `noscope ${VERSION}`,
@@ -72,8 +97,9 @@ export function helpText(): string {
     "  noscope --help",
     "  noscope --version",
     ...lines,
+    ...top,
     "",
-    "Commands print the PR that delivers them until they are implemented.",
+    'Commands print the PR that delivers them, or "after v0", until they are implemented.',
   ].join("\n");
 }
 
@@ -88,7 +114,7 @@ export async function run(argv: readonly string[], io: Io): Promise<number> {
     io.out(helpText());
     return 0;
   }
-  if (first === "--version" || first === "-v") {
+  if (first === "--version" || first === "-v" || first === "-V") {
     io.out(VERSION);
     return 0;
   }
@@ -111,8 +137,13 @@ export async function run(argv: readonly string[], io: Io): Promise<number> {
       return 2;
     }
     io.err(
-      `noscope incident ${command.name}: not yet implemented, arrives in ${command.arrives}`,
+      `noscope incident ${command.name}: not yet implemented, arrives ${command.arrives}`,
     );
+    return 3;
+  }
+  const top = TOP_LEVEL_COMMANDS.find((c) => c.name === first);
+  if (top !== undefined) {
+    io.err(`noscope ${top.name}: not yet implemented, arrives ${top.arrives}`);
     return 3;
   }
   io.err(`noscope: unknown command ${JSON.stringify(first)}`);
