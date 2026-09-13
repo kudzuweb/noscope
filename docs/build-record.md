@@ -454,3 +454,26 @@ Not exactly to spec, with reasons:
   takes no answer. A reopening answer writes two `question.answered` events, one for the
   answer and one for the status, since v0 has no reopen event type.
 
+## PR 14: Run to completion (#14, merged 2026-09-13)
+
+Built: `noscope incident run <id> [--max-cycles N]`, repeating the cycle until the incident
+leaves `open` or the cap is hit, re-reading the incident each cycle and saying why it
+stopped; `step` and `run` share one `cycle` function, so a step and a run's cycle print the
+same lines. Tests: criterion 6 on scripted plans (a grep, then `satisfied`; the incident
+ends satisfied with the verified claim naming the code path and `incident.closed` carrying
+the planner's rationale), the cap stopping a runaway loop of plans the validator rejects,
+and `failed` recorded with the rationale.
+
+Not exactly to spec, with reasons:
+
+- The cap defaults to 10 cycles when `--max-cycles` is not given, since `run` exists to
+  demonstrate the milestone end to end and an unbounded loop on a real planner would spend
+  without a check; the design names no default.
+- `run` on an incident that is not open exits 5, as `step` does, and a cycle that blocks or
+  closes the incident ends the run before the cap.
+- From the review (2026-09-13): a budget stop ends the run, since another cycle could only
+  plan and never run (before, `run` called the planner every cycle to the cap with tasks
+  sitting ready); a cycle whose provider cannot run ends the run with exit 1 and the reason
+  on stderr, as `step` does, with the store consistent; `--max-cycles` accepts only a
+  positive whole number written as digits.
+
