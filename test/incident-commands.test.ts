@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import { EXIT, run } from "../src/cli.js";
 import type { Context } from "../src/context.js";
+import { Store } from "../src/store.js";
 
 function ctx(db: string) {
   const out: string[] = [];
@@ -74,6 +75,27 @@ describe("incident commands", () => {
       expect(text).toContain(section);
     }
     expect(text).toContain("(none yet)");
+    const store = new Store(db);
+    store.record("001", "task.usage", "dispatcher", {
+      taskId: "001-t01",
+      usage: {
+        inputTokens: 10,
+        uncachedInputTokens: 10,
+        cacheWriteTokens: 0,
+        cacheReadTokens: 0,
+        outputTokens: 5,
+        seconds: 2,
+        costUsd: 1.234,
+      },
+    });
+    store.close();
+    const priced = ctx(db);
+    expect(await run(["incident", "show", "001"], priced.context)).toBe(
+      EXIT.ok,
+    );
+    expect(priced.out.join("\n")).toContain(
+      "spent tokens 15, seconds 2.0, task cost $1.23 at list price",
+    );
   });
 
   it("numbers incidents in order and accepts budgets", async () => {

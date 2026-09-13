@@ -501,7 +501,7 @@ describe("store", () => {
     expect(() => new Store(path)).toThrow(/schema version 99/);
   });
 
-  it("sums task usage across old and new shapes, and reports cost only when some event carries one", () => {
+  it("sums task usage across old and new shapes, and reports cost only when every event carries one", () => {
     const store = new Store(":memory:");
     scripted(store);
     store.record("i1", "task.usage", "dispatcher", {
@@ -538,8 +538,28 @@ describe("store", () => {
       cacheReadTokens: 300,
       outputTokens: 52,
       seconds: 2.5,
+    });
+    const priced = new Store(":memory:");
+    scripted(priced);
+    for (const costUsd of [0, 0.5])
+      priced.record("i1", "task.usage", "dispatcher", {
+        taskId: "t1",
+        usage: {
+          inputTokens: 10,
+          uncachedInputTokens: 10,
+          cacheWriteTokens: 0,
+          cacheReadTokens: 0,
+          outputTokens: 1,
+          seconds: 1,
+          costUsd,
+        },
+      });
+    expect(sumUsage(priced.listEvents("i1"))).toMatchObject({
+      inputTokens: 20,
       costUsd: 0.5,
     });
+    expect(sumUsage([])).not.toHaveProperty("costUsd");
+    priced.close();
     store.close();
   });
 

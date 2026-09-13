@@ -86,6 +86,10 @@ describe("dispatcher", () => {
     const types = store.listEvents("i1").map((e) => e.type);
     expect(types.filter((t) => t === "task.started")).toHaveLength(2);
     expect(types.filter((t) => t === "task.usage")).toHaveLength(2);
+    for (const e of store
+      .listEvents("i1")
+      .filter((e) => e.type === "task.usage"))
+      expect(e.payload.usage).toMatchObject({ inputTokens: 0, costUsd: 0 });
     expect(types.filter((t) => t === "task.ready")).toHaveLength(1);
     expect(types.indexOf("task.ready")).toBeLessThan(
       types.lastIndexOf("task.started"),
@@ -119,6 +123,8 @@ describe("dispatcher", () => {
     const failed = store.listEvents("i1").find((e) => e.type === "task.failed");
     expect(failed?.payload).toMatchObject({ timedOut: true });
     expect(store.listTasks("i1")[0]?.status).toBe("failed");
+    const usage = store.listEvents("i1").find((e) => e.type === "task.usage");
+    expect(usage?.payload.usage).toMatchObject({ inputTokens: 0, costUsd: 0 });
     store.close();
   });
 
@@ -169,7 +175,7 @@ describe("dispatcher", () => {
     });
     const usage = store.listEvents("i1").find((e) => e.type === "task.usage");
     expect(usage?.payload).toMatchObject({
-      usage: { inputTokens: 1500, outputTokens: 42 },
+      usage: { inputTokens: 1500, outputTokens: 42, costUsd: 0.0123 },
     });
     store.close();
   });

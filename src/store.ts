@@ -813,17 +813,19 @@ function rowToGrant(r: Row): Grant {
 
 /**
  * The incident's spend so far: every `task.usage` event summed. A usage recorded before the
- * split and cost existed counts its parts as zero; `costUsd` is present only when at least
- * one event carries one, so a run with no cost figures is not reported as free.
+ * split and cost existed counts its parts as zero. `costUsd` is present only when every
+ * event carries one: a run with no cost figures is not reported as free, and one whose
+ * session failed before the provider answered is not reported as cheaper than it was.
  */
 export function sumUsage(events: readonly Event[]): Usage {
-  let costUsd: number | undefined;
+  let costUsd: number | undefined = 0;
   const total = events
     .filter((e) => e.type === "task.usage")
     .reduce<Usage>(
       (acc, e) => {
         const u = e.payload.usage as Partial<Usage> | undefined;
-        if (u?.costUsd !== undefined) costUsd = (costUsd ?? 0) + u.costUsd;
+        if (costUsd !== undefined)
+          costUsd = u?.costUsd === undefined ? undefined : costUsd + u.costUsd;
         return {
           inputTokens: acc.inputTokens + (u?.inputTokens ?? 0),
           uncachedInputTokens:
@@ -843,5 +845,6 @@ export function sumUsage(events: readonly Event[]): Usage {
         seconds: 0,
       },
     );
-  return costUsd === undefined ? total : { ...total, costUsd };
+  const ran = events.some((e) => e.type === "task.usage");
+  return costUsd === undefined || !ran ? total : { ...total, costUsd };
 }

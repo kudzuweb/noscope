@@ -342,7 +342,10 @@ cache-write and cache-read tokens, output tokens, seconds, and the provider's ow
 list price when it reports one (`total_cost_usd` in the Claude Code envelope). The
 planner's call records the same shape on `plan.proposed`. A deterministic run spends no
 tokens and costs nothing; a run that fails before the provider answers records no cost,
-since none is known, and a spend summed from such events carries no cost either.
+since none is known, and a spend summed with such an event in it carries no cost, so a
+figure is never printed that a failed session would have raised. The spend `incident show`
+prints, and a budget counts, is the tasks'; the planner's usage is recorded on
+`plan.proposed` and not counted, a design call on the revisit list.
 
 The verifier turns results into claims. A deterministic capability's result becomes a `verified`
 claim with the capability and the effective inputs as provenance: the inputs as parsed, with

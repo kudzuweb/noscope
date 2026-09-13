@@ -278,6 +278,8 @@ export async function dispatch(
               cacheReadTokens: 0,
               outputTokens: 0,
               seconds: (Date.now() - started) / 1000,
+              // A deterministic run costs nothing; a session that failed before answering cost something unknown.
+              ...(capability.kind === "deterministic" ? { costUsd: 0 } : {}),
             };
       store.batch(() => {
         store.setTaskStatus(
