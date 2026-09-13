@@ -11,6 +11,7 @@ import {
   sessionResult,
   Task,
   Timestamp,
+  Usage,
 } from "../src/models.js";
 
 const plan = {
@@ -143,6 +144,25 @@ describe("contracts", () => {
     expect(Timestamp.parse("2026-09-12T10:00:00.000Z")).toBeTruthy();
     expect(Timestamp.parse("2026-09-12T10:00:00+02:00")).toBeTruthy();
     expect(() => Timestamp.parse("2026-09-12 10:00:00")).toThrow();
+  });
+
+  it("a usage carries the context split and the provider's cost when it reports one", () => {
+    const full = {
+      inputTokens: 1500,
+      uncachedInputTokens: 1000,
+      cacheWriteTokens: 200,
+      cacheReadTokens: 300,
+      outputTokens: 42,
+      seconds: 1.5,
+      costUsd: 0.0123,
+    };
+    expect(Usage.parse(full)).toEqual(full);
+    const { costUsd: _, ...withoutCost } = full;
+    expect(Usage.parse(withoutCost)).toEqual(withoutCost);
+    expect(() =>
+      Usage.parse({ inputTokens: 1500, outputTokens: 42, seconds: 1.5 }),
+    ).toThrow();
+    expect(() => Usage.parse({ ...full, costUsd: -1 })).toThrow();
   });
 
   it("names every event type the design lists", () => {

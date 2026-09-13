@@ -167,7 +167,7 @@ function renderIncidentFile(
   for (const p of incident.priorities) lines.push(`  - ${p}`);
   if (incident.priorities.length === 0) lines.push("  (none)");
   lines.push(
-    `budget: tokens ${incident.budget.tokens ?? "unlimited"}, seconds ${incident.budget.seconds ?? "unlimited"}; spent tokens ${usage.tokens}, seconds ${usage.seconds.toFixed(1)}`,
+    `budget: tokens ${incident.budget.tokens ?? "unlimited"}, seconds ${incident.budget.seconds ?? "unlimited"}; spent tokens ${usage.tokens}, seconds ${usage.seconds.toFixed(1)}${spent.costUsd === undefined ? "" : `, task cost $${spent.costUsd.toFixed(2)} at list price`}`,
   );
   lines.push("");
   lines.push(

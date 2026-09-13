@@ -71,6 +71,7 @@ type ResultEnvelope = {
   session_id?: unknown;
   structured_output?: unknown;
   duration_ms?: unknown;
+  total_cost_usd?: unknown;
   usage?: {
     input_tokens?: unknown;
     cache_creation_input_tokens?: unknown;
@@ -94,13 +95,19 @@ export function parseClaudeCodeResult(stdout: string): SessionOutcome {
   const sessionId =
     typeof envelope.session_id === "string" ? envelope.session_id : null;
   const u = envelope.usage ?? {};
+  const uncachedInputTokens = int(u.input_tokens);
+  const cacheWriteTokens = int(u.cache_creation_input_tokens);
+  const cacheReadTokens = int(u.cache_read_input_tokens);
   const usage = Usage.parse({
-    inputTokens:
-      int(u.input_tokens) +
-      int(u.cache_creation_input_tokens) +
-      int(u.cache_read_input_tokens),
+    inputTokens: uncachedInputTokens + cacheWriteTokens + cacheReadTokens,
+    uncachedInputTokens,
+    cacheWriteTokens,
+    cacheReadTokens,
     outputTokens: int(u.output_tokens),
     seconds: int(envelope.duration_ms) / 1000,
+    ...(typeof envelope.total_cost_usd === "number"
+      ? { costUsd: envelope.total_cost_usd }
+      : {}),
   });
   if (envelope.is_error === true || envelope.subtype !== "success")
     throw new SessionError(

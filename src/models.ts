@@ -71,10 +71,19 @@ export const Cost = z.object({
   moneyPerCall: z.number().nonnegative().optional(),
 });
 
+/**
+ * What a run spent. `inputTokens` is the whole context (uncached plus cache write plus cache
+ * read), the figure budgets count; the three parts are kept because they cost differently.
+ * `costUsd` is the provider's own figure at list price, present only when it reports one.
+ */
 export const Usage = z.object({
   inputTokens: z.number().int().nonnegative(),
+  uncachedInputTokens: z.number().int().nonnegative(),
+  cacheWriteTokens: z.number().int().nonnegative(),
+  cacheReadTokens: z.number().int().nonnegative(),
   outputTokens: z.number().int().nonnegative(),
   seconds: z.number().nonnegative(),
+  costUsd: z.number().nonnegative().optional(),
 });
 
 export const ProviderModel = z.object({
