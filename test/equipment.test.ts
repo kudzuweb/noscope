@@ -19,6 +19,7 @@ function fixtureRepo(): string {
   git("init", "-q", "-b", "main");
   git("config", "user.email", "test@example.com");
   git("config", "user.name", "Test");
+  git("config", "commit.gpgsign", "false");
   writeFileSync(join(dir, "a.txt"), "one\n");
   git("add", "a.txt");
   git("commit", "-q", "-m", "First commit");
@@ -163,7 +164,9 @@ describe("equipment", () => {
       changes: { status: string; path: string }[];
     };
     expect(status.branch).toBe("main");
-    expect(status.changes).toEqual([{ status: "??", path: "b.txt" }]);
+    expect(status.changes).toEqual([
+      { status: "??", path: "b.txt", from: null },
+    ]);
     const log = (await runEquipment("git_log", { cwd: repo, limit: 5 })) as {
       commits: { subject: string; hash: string }[];
     };
@@ -179,6 +182,60 @@ describe("equipment", () => {
     })) as { diff: string; truncated: boolean };
     expect(diff.diff).toContain("+two");
     expect(diff.truncated).toBe(false);
+  });
+
+  it("git_status names the branch on an unborn or detached HEAD and reads renames and quoted paths", async () => {
+    const fresh = mkdtempSync(join(tmpdir(), "noscope-git-"));
+    const git = (...args: string[]) =>
+      execFileSync("git", args, { cwd: fresh, stdio: "pipe" });
+    git("init", "-q", "-b", "main");
+    git("config", "user.email", "test@example.com");
+    git("config", "user.name", "Test");
+    git("config", "commit.gpgsign", "false");
+    const unborn = (await runEquipment("git_status", { cwd: fresh })) as {
+      branch: string;
+      detached: boolean;
+    };
+    expect(unborn).toMatchObject({ branch: "main", detached: false });
+    writeFileSync(join(fresh, "a.txt"), "one\n");
+    git("add", "a.txt");
+    git("commit", "-q", "-m", "First");
+    git("mv", "a.txt", "renamed.txt");
+    writeFileSync(join(fresh, "caf\u00e9 space.txt"), "x\n");
+    git("checkout", "-q", "--detach");
+    const detached = (await runEquipment("git_status", { cwd: fresh })) as {
+      branch: string;
+      detached: boolean;
+      changes: { status: string; path: string; from: string | null }[];
+    };
+    expect(detached).toMatchObject({ branch: "HEAD", detached: true });
+    expect(detached.changes).toEqual([
+      { status: "R", path: "renamed.txt", from: "a.txt" },
+      { status: "??", path: "caf\u00e9 space.txt", from: null },
+    ]);
+  });
+
+  it("git_diff and git_log refuse option-shaped revisions and paths, and git_diff caps by bytes", async () => {
+    const repo = fixtureRepo();
+    await expect(
+      runEquipment("git_diff", { cwd: repo, from: "--output=/tmp/x" }),
+    ).rejects.toThrow(/cannot start with -/);
+    await expect(
+      runEquipment("git_log", { cwd: repo, path: "--all" }),
+    ).rejects.toThrow(/cannot start with -/);
+    writeFileSync(join(repo, "a.txt"), "\u00e9\u00e9\u00e9\u00e9\n");
+    const cut = (await runEquipment("git_diff", {
+      cwd: repo,
+      maxBytes: 40,
+    })) as { diff: string; truncated: boolean };
+    expect(cut.truncated).toBe(true);
+    expect(Buffer.byteLength(cut.diff)).toBeLessThanOrEqual(40);
+    const whole = (await runEquipment("git_diff", { cwd: repo })) as {
+      diff: string;
+      truncated: boolean;
+    };
+    expect(whole.truncated).toBe(false);
+    expect(whole.diff).toContain("+\u00e9\u00e9\u00e9\u00e9");
   });
 
   it("names the provider built-in tools and renders the Bash allowlist", () => {
