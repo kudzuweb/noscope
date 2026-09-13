@@ -358,3 +358,68 @@ export const step: Handler = async (args, ctx) => {
     store.close();
   }
 };
+
+/**
+ * Answer the planner's oldest open question (DESIGN.md Step 7): the answer is stored on the
+ * question, where the planner's next input reads it, `question.answered` is written, and
+ * the incident returns to `open` once no question is waiting.
+ */
+export const answer: Handler = async (args, ctx) => {
+  const store = openStore(ctx);
+  try {
+    const incident = requireIncident(store, args, ctx, "answer");
+    if (incident === undefined) return EXIT.notFound;
+    const text = args.slice(1).join(" ").trim();
+    if (text === "") {
+      ctx.io.err(
+        'noscope incident answer: an answer is required, e.g. noscope incident answer 001 "keep the view where it was"',
+      );
+      return EXIT.usage;
+    }
+    const open = incident.questions.find((q) => q.answer === undefined);
+    if (open === undefined) {
+      ctx.io.err(
+        `noscope incident answer: incident ${incident.id} has no question waiting${incident.status === "blocked" ? "; it is blocked on a capability or grant request" : ""}`,
+      );
+      return EXIT.cannotProceed;
+    }
+    const questions = incident.questions.map((q) =>
+      q.id === open.id ? { ...q, answer: text } : q,
+    );
+    const stillWaiting = questions.some((q) => q.answer === undefined);
+    const reopen =
+      incident.status === "blocked" &&
+      !stillWaiting &&
+      incident.capabilityRequests.length === 0;
+    store.batch(() => {
+      store.setIncidentQuestions(
+        incident.id,
+        questions,
+        ACTOR,
+        "question.answered",
+        { questionId: open.id, answer: text },
+      );
+      if (reopen)
+        store.setIncidentStatus(
+          incident.id,
+          "open",
+          ACTOR,
+          "question.answered",
+          {
+            questionId: open.id,
+          },
+        );
+    });
+    ctx.io.out(`answered ${open.id}: ${open.text}`);
+    ctx.io.out(
+      reopen
+        ? `incident ${incident.id} is open again`
+        : stillWaiting
+          ? `incident ${incident.id} still waits on ${questions.filter((q) => q.answer === undefined).length} question(s)`
+          : `incident ${incident.id} stays ${incident.status}`,
+    );
+    return EXIT.ok;
+  } finally {
+    store.close();
+  }
+};

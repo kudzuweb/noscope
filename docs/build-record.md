@@ -421,3 +421,30 @@ Not exactly to spec, with reasons:
   verdict, so a rejected plan can be read without opening the event log.
 - `NOSCOPE_CLAUDE_BIN` names the binary every provider call runs on, the planner's and
   each task session's; the README and the design's Step 2 say so beside `NOSCOPE_DB`.
+## PR 13: Blocking channels (#13, merged 2026-09-13)
+
+Built: `noscope incident answer <id> "<text>"`, which answers the planner's oldest open
+question, stores the answer on the question where the planner's next input reads it, writes
+`question.answered`, and returns the incident to `open` once no question waits; the stub
+binary now serves a scripted plan to a planner call (recognised by its system prompt) and
+a session output to a task, with `NOSCOPE_STUB_PLANS` walked in order across cycles, so a
+test can run several steps. Tests: criterion 8 (an `interpret` task answering
+`insufficient` leads the next step's planner input to carry what was needed and the
+scripted plan to supply it), and a plan with two questions blocks the incident, `show`
+prints them, `step` refuses with exit 5, and two answers reopen it with the answers in the
+next planner input.
+
+Not exactly to spec, with reasons:
+
+- Blocking itself landed in PR 11 (`applyPlan` sets `blocked` and writes `question.asked`,
+  `capability.requested` and `grant.requested`), since applying a plan is where the status
+  is decided; this PR adds the way back.
+- `answer` answers one question per call, the oldest without an answer, so each answer is
+  its own event and the planner sees which question it belongs to; several questions take
+  several calls, and the command says how many still wait.
+- An incident blocked only by a capability or grant request has no v0 way back: `answer`
+  exits 5 and says so. Registering the capability, or `incident grant`, is after v0.
+- The provider runs a session under the environment the command was given, merged over
+  the process's own, so a test's stub variables reach the stub through the CLI and the
+  real binary keeps its PATH.
+

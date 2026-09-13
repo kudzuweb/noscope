@@ -1,18 +1,36 @@
 #!/usr/bin/env node
 // A stand-in for the claude binary: records its argument list and stdin to NOSCOPE_STUB_LOG,
-// then prints the result envelope claude -p --output-format json prints, with
-// NOSCOPE_STUB_OUTPUT as the structured output (or a canned answered result).
-import { readFileSync, writeFileSync } from "node:fs";
+// then prints the result envelope claude -p --output-format json prints. The structured
+// output is NOSCOPE_STUB_OUTPUT (or a canned answered result); a planner call, recognised by
+// its system prompt, gets NOSCOPE_STUB_PLAN instead, or the next entry of NOSCOPE_STUB_PLANS
+// (a JSON array walked in order, the position kept in the file NOSCOPE_STUB_COUNTER).
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
+const args = process.argv.slice(2);
 const prompt = readFileSync(0, "utf8");
 if (process.env.NOSCOPE_STUB_LOG)
-  writeFileSync(
-    process.env.NOSCOPE_STUB_LOG,
-    JSON.stringify({ args: process.argv.slice(2), prompt }),
-  );
-const output = process.env.NOSCOPE_STUB_OUTPUT
-  ? JSON.parse(process.env.NOSCOPE_STUB_OUTPUT)
-  : { outcome: "answered", claims: [], findings: { note: "stub" }, needed: [] };
+  writeFileSync(process.env.NOSCOPE_STUB_LOG, JSON.stringify({ args, prompt }));
+
+const systemPrompt = args[args.indexOf("--system-prompt") + 1] ?? "";
+const isPlanner = systemPrompt.startsWith("You are the Planning Section");
+
+function nextPlan() {
+  if (process.env.NOSCOPE_STUB_PLANS) {
+    const plans = JSON.parse(process.env.NOSCOPE_STUB_PLANS);
+    const counter = process.env.NOSCOPE_STUB_COUNTER ?? "";
+    const i = counter && existsSync(counter) ? Number(readFileSync(counter, "utf8")) : 0;
+    if (counter) writeFileSync(counter, String(i + 1));
+    return plans[Math.min(i, plans.length - 1)];
+  }
+  return JSON.parse(process.env.NOSCOPE_STUB_PLAN ?? "null");
+}
+
+const planned = isPlanner ? nextPlan() : null;
+const output =
+  planned ??
+  (process.env.NOSCOPE_STUB_OUTPUT
+    ? JSON.parse(process.env.NOSCOPE_STUB_OUTPUT)
+    : { outcome: "answered", claims: [], findings: { note: "stub" }, needed: [] });
 const envelope = process.env.NOSCOPE_STUB_FAIL
   ? {
       type: "result",
