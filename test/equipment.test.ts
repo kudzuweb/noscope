@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -84,6 +84,49 @@ describe("equipment", () => {
       ignoreCase: true,
     })) as { matches: unknown[] };
     expect(md.matches).toHaveLength(1);
+  });
+
+  it("grep_files honours CRLF, trailing newlines, separator globs, brace globs and declared exclusions", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "noscope-grep-"));
+    mkdirSync(join(dir, "node_modules"));
+    mkdirSync(join(dir, "sub"));
+    writeFileSync(join(dir, "crlf.txt"), "x\r\ny\r\n");
+    writeFileSync(join(dir, "sub", "s.md"), "hit\n");
+    writeFileSync(join(dir, "node_modules", "v.md"), "hit\n");
+    const grep = async (input: Record<string, unknown>) =>
+      (
+        (await runEquipment("grep_files", { root: dir, ...input })) as {
+          matches: { file: string; line: number; text: string }[];
+        }
+      ).matches;
+    expect(await grep({ pattern: "x$" })).toEqual([
+      { file: "crlf.txt", line: 1, text: "x" },
+    ]);
+    expect(await grep({ pattern: "^$" })).toEqual([]);
+    expect(await grep({ pattern: "hit", glob: "sub/*.md" })).toEqual([
+      { file: "sub/s.md", line: 1, text: "hit" },
+    ]);
+    expect(await grep({ pattern: "hit", glob: "**/*.{md,txt}" })).toEqual([
+      { file: "sub/s.md", line: 1, text: "hit" },
+    ]);
+    expect(
+      (await grep({ pattern: "hit", exclude: [] })).map((m) => m.file),
+    ).toEqual(["node_modules/v.md", "sub/s.md"]);
+  });
+
+  it("read_file reads only up to the cap and never ends a cut in a broken character", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "noscope-read-"));
+    writeFileSync(join(dir, "e.txt"), "a\u00e9\u00e9");
+    const cut = (await runEquipment("read_file", {
+      path: join(dir, "e.txt"),
+      maxBytes: 2,
+    })) as { text: string; truncated: boolean; bytes: number };
+    expect(cut).toEqual({
+      path: join(dir, "e.txt"),
+      text: "a",
+      truncated: true,
+      bytes: 5,
+    });
   });
 
   it("validates inputs against the equipment's schema", async () => {
