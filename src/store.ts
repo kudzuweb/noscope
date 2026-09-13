@@ -367,10 +367,21 @@ export class Store {
     this.write(incidentId, type, actor, options.extra ?? {}, mutation);
   }
 
+  /** A claim enters asserted or verified, never rejected; verified on entry means deterministic provenance (DESIGN.md Step 6). */
   createClaim(claim: Claim, actor: string): void {
+    if (claim.status === "rejected")
+      throw new Error(`claim ${claim.id} cannot be created rejected`);
+    if (
+      claim.status === "verified" &&
+      (claim.provenance.inputs === undefined ||
+        claim.provenance.sessionId !== undefined)
+    )
+      throw new Error(
+        `claim ${claim.id} cannot enter verified without deterministic provenance`,
+      );
     this.write(
       claim.incidentId,
-      "claim.asserted",
+      `claim.${claim.status}`,
       actor,
       {},
       { kind: "claim.create", claim },
@@ -470,9 +481,9 @@ export class Store {
         if (checked !== undefined) this.apply(checked);
         const { s: sequence } = this.db
           .prepare(
-            "SELECT COALESCE(MAX(sequence), -1) + 1 AS s FROM events WHERE incident_id IS ?",
+            "SELECT COALESCE(MAX(sequence), -1) + 1 AS s FROM events WHERE COALESCE(incident_id, '') = ?",
           )
-          .get(incidentId) as { s: number };
+          .get(incidentId ?? "") as { s: number };
         this.insertEvent(
           Event.parse({
             id: crypto.randomUUID(),

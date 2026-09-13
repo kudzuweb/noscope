@@ -1,4 +1,5 @@
 import { parseArgs } from "node:util";
+import { listCapabilities } from "../capabilities/index.js";
 import { type Context, EXIT, type Handler } from "../context.js";
 import { Budget, type Event, type Incident, type Unit } from "../models.js";
 import { now, resolveDbPath, Store } from "../store.js";
@@ -107,6 +108,15 @@ function requireIncident(
   return incident;
 }
 
+const CLIP = 160;
+
+/** The incident file is for reading at a glance; a claim's object is shown to a fixed width and the store holds the rest. */
+function clip(text: string): string {
+  return text.length <= CLIP
+    ? text
+    : `${text.slice(0, CLIP)}… (${text.length} chars)`;
+}
+
 function renderIncidentFile(
   store: Store,
   incident: Incident,
@@ -163,7 +173,7 @@ function renderIncidentFile(
   );
   for (const c of claims)
     lines.push(
-      `  [${c.status}] ${c.subject} ${c.predicate} ${JSON.stringify(c.object)}`,
+      `  [${c.status}] ${c.subject} ${c.predicate} ${clip(JSON.stringify(c.object))}`,
     );
   lines.push("");
   lines.push("decisions:");
@@ -189,8 +199,10 @@ function renderIncidentFile(
   return lines;
 }
 
-/** PR 6 replaces this with the capability registry; until then nothing is registered. */
-const registeredCapabilities: () => readonly string[] = () => [];
+const registeredCapabilities = (): readonly string[] =>
+  listCapabilities().map(
+    (c) => `${c.name}: ${c.description} [${c.kind}, ${c.effect}]`,
+  );
 
 export const show: Handler = async (args, ctx) => {
   const store = openStore(ctx);

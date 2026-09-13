@@ -123,3 +123,55 @@ Not exactly to spec, with reasons:
 - `run_readonly` returns the exit code and both streams instead of throwing on a non-zero
   exit; a failed command is itself a reportable fact.
 - `src/equipment/index.ts` is the package surface and a knip entry, as `src/models.ts` is.
+
+## PR 6: Deterministic capabilities (#6, merged 2026-09-13)
+
+Built: `src/capabilities/registry.ts` with `defineCapability`, `runDeterministic` and the
+`Capability` type; `deterministic.ts` with `check_path`, `read`, `grep`, `git_history`
+composing equipment in-process; `src/verifier.ts` recording a deterministic run's claims as
+verified with the capability and effective inputs as provenance; `incident show` lists the
+registry. The PR 5 review's findings on the merged equipment were fixed here too.
+
+Not exactly to spec, with reasons:
+
+- `Capability` is a discriminated union on `kind` (`deterministic` with `run`, `session`
+  with `session`) and `produces` is derived from it, not declared: exactly-one is then a
+  compile-time property and the two cannot disagree. The plan listed `produces` as a
+  `defineCapability` argument.
+- Each capability declares its path input fields (`paths`); `runDeterministic` resolves
+  them against the incident's cwd before the run and returns the effective inputs, which
+  the verifier stores as provenance. Every claim subject is an absolute path. Written into
+  DESIGN.md Step 6.
+- `check_path` uses a new `stat_path` equipment (one `lstat` and `stat`, symlinks followed,
+  only ENOENT and ENOTDIR read as missing) instead of listing the parent, which mis-answered
+  symlinks, case-insensitive names, `/` and any unreadable parent, and stat-ed every sibling.
+  The DESIGN.md capability table row changed with it, and the `git_history` row now names
+  the equipment it actually uses (`git_status`, `git_log`); it also claims working-tree
+  changes, which its description promised.
+- Capability input and output schemas are the equipment's own, so defaults are one fact;
+  `grep`'s absence claim carries the bounds it ran under (glob, ignoreCase, exclude).
+- The store refuses a claim created `rejected`, or `verified` without deterministic
+  provenance, and its next-sequence query matches the events index (it scanned the table).
+  `incident show` clips a claim's object to 160 characters.
+- `runEquipment` accepts the equipment handle and is typed end to end, so capabilities carry
+  no hand-written casts; the by-name form stays for the MCP equipment server.
+- `src/verifier.ts` is not a knip entry after all: the tests import it, and an entry would
+  hide a dead export.
+- Fixes to PR 5's equipment, from its review: `run_readonly` refuses the `find` primaries
+  that write (`-delete`, `-exec`, `-execdir`, `-ok`, `-okdir`, `-fprint`, `-fprint0`,
+  `-fprintf`, `-fls`) and reports a timeout or output overflow as `failure` with a null
+  exit code rather than exit 1; `git_diff` and `git_log` refuse option-shaped revisions and
+  paths and pass `--end-of-options`; `git_status` parses an unborn branch, a detached HEAD,
+  renames (`from`) and quoted paths through `-z`; `git_diff` caps by bytes and returns
+  `truncated` instead of throwing past 8 MB; every git call has a 60 s timeout; `read_file`
+  reads only up to its cap and never ends a cut mid-character; `grep_files` declares its
+  skipped directories as an `exclude` input, handles CRLF and trailing newlines, matches
+  separator and brace globs through Node's `matchesGlob`, and stops walking once truncated.
+  `BUILTIN_TOOLS` is the design's four (`Read`, `Grep`, `Glob`, `Bash`); the writing tools
+  arrive with the effect levels that govern them. The command allowlist lives in
+  `builtin.ts`, so importing the allowlist no longer registers equipment as a side effect.
+- Set aside, for Mauria: `read` puts the whole file text (up to 200 KB) in its claim object
+  and `grep` emits one claim per match (up to 500), which the store holds twice (claim and
+  event) and every later planner cycle would carry; the fix is a design call about what a
+  claim carries (a hash and size, with the text in the task result), so it waits.
+
