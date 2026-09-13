@@ -185,13 +185,19 @@ describe("planner", () => {
         - t-open [ready] under u-scroll: investigate — read the delete handler; inputs {"question":"what does deleteComment do?"}; fake/fake-small; depends on t-grep
 
       ## 8. Capabilities and models
-      capabilities:
+      capabilities, each with the inputs a task to it must carry:
         - check_path [deterministic, read_only]: Establish whether a path exists and what it is (typical 0.001s)
+          inputs: { path: string, required }
         - git_history [deterministic, read_only]: Record a repository's branch, working-tree changes and recent commits, optionally for one path (typical 0.1s)
+          inputs: { cwd: string, required; limit: integer = 20; path: string, optional }
         - grep [deterministic, read_only]: Search files for a pattern and record each match, or the verified absence of any within the search's bounds (typical 0.1s)
+          inputs: { root: string, required; pattern: string, required; glob: string = "*"; ignoreCase: boolean = false; exclude: string[] = ["node_modules",".git"]; maxMatches: integer = 500 }
         - interpret [session, read_only]: Given evidence and nothing else, say what it implies as asserted claims, or what more it would take (typical 15s, 4000 tokens)
+          inputs: { question: string, required; evidence: object[], required }
         - investigate [session, read_only]: Read the files a question points at and return what they show, as asserted claims with evidence (typical 30s, 8000 tokens)
+          inputs: { question: string, required; paths: string[] = [] }
         - read [deterministic, read_only]: Read a file and record its contents as a fact (typical 0.01s)
+          inputs: { path: string, required; maxBytes: integer = 200000 }
       providers and models:
         - fake: fake-large, fake-small
 

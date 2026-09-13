@@ -1,3 +1,4 @@
+import type { z } from "zod";
 import { listCapabilities } from "./capabilities/index.js";
 import {
   ActionPlan,
@@ -55,6 +56,29 @@ function clip(value: unknown): string {
 
 function bullets(items: readonly string[], empty = "(none)"): string[] {
   return items.length === 0 ? [`  ${empty}`] : items.map((i) => `  - ${i}`);
+}
+
+/** A capability's input fields on one line: name, type, whether required, and the default, from its schema. */
+function describeInputs(schema: z.ZodType): string {
+  const json = jsonSchemaFor(schema);
+  const properties = (json.properties ?? {}) as Record<
+    string,
+    Record<string, unknown>
+  >;
+  const required = new Set((json.required as string[] | undefined) ?? []);
+  const fields = Object.entries(properties).map(([name, p]) => {
+    const type =
+      p.type === "array"
+        ? `${String((p.items as Record<string, unknown> | undefined)?.type ?? "any")}[]`
+        : String(p.type ?? "any");
+    const tail = required.has(name)
+      ? ", required"
+      : p.default === undefined
+        ? ", optional"
+        : ` = ${JSON.stringify(p.default)}`;
+    return `${name}: ${type}${tail}`;
+  });
+  return fields.length === 0 ? "(none)" : `{ ${fields.join("; ")} }`;
 }
 
 function claimLine(c: Claim): string {
@@ -230,13 +254,11 @@ export function renderPlannerInput(
     ...bullets(open.map(taskLine)),
     "",
     "## 8. Capabilities and models",
-    "capabilities:",
-    ...bullets(
-      listCapabilities().map(
-        (c) =>
-          `${c.name} [${c.kind}, ${c.effect}]: ${c.description}${c.cost.typicalSeconds === undefined ? "" : ` (typical ${c.cost.typicalSeconds}s${c.cost.typicalTokens === undefined ? "" : `, ${c.cost.typicalTokens} tokens`})`}`,
-      ),
-    ),
+    "capabilities, each with the inputs a task to it must carry:",
+    ...listCapabilities().flatMap((c) => [
+      `  - ${c.name} [${c.kind}, ${c.effect}]: ${c.description}${c.cost.typicalSeconds === undefined ? "" : ` (typical ${c.cost.typicalSeconds}s${c.cost.typicalTokens === undefined ? "" : `, ${c.cost.typicalTokens} tokens`})`}`,
+      `    inputs: ${describeInputs(c.input)}`,
+    ]),
     "providers and models:",
     ...bullets(providers.map((p) => `${p.name}: ${p.models.join(", ")}`)),
     "",
