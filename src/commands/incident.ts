@@ -368,7 +368,13 @@ export const answer: Handler = async (args, ctx) => {
   const store = openStore(ctx);
   try {
     const incident = requireIncident(store, args, ctx, "answer");
-    if (incident === undefined) return EXIT.notFound;
+    if (typeof incident === "number") return incident;
+    if (incident.status === "satisfied" || incident.status === "failed") {
+      ctx.io.err(
+        `noscope incident answer: incident ${incident.id} is ${incident.status} and takes no answer`,
+      );
+      return EXIT.cannotProceed;
+    }
     const text = args.slice(1).join(" ").trim();
     if (text === "") {
       ctx.io.err(
@@ -386,11 +392,16 @@ export const answer: Handler = async (args, ctx) => {
     const questions = incident.questions.map((q) =>
       q.id === open.id ? { ...q, answer: text } : q,
     );
-    const stillWaiting = questions.some((q) => q.answer === undefined);
-    const reopen =
-      incident.status === "blocked" &&
-      !stillWaiting &&
-      incident.capabilityRequests.length === 0;
+    const stillWaiting = questions.filter((q) => q.answer === undefined).length;
+    const grantsWaiting = pendingGrantRequests(store, incident.id);
+    const holds = [
+      ...(stillWaiting > 0 ? [`${stillWaiting} question(s)`] : []),
+      ...(incident.capabilityRequests.length > 0
+        ? [`${incident.capabilityRequests.length} capability request(s)`]
+        : []),
+      ...(grantsWaiting > 0 ? [`${grantsWaiting} grant request(s)`] : []),
+    ];
+    const reopen = incident.status === "blocked" && holds.length === 0;
     store.batch(() => {
       store.setIncidentQuestions(
         incident.id,
@@ -414,8 +425,8 @@ export const answer: Handler = async (args, ctx) => {
     ctx.io.out(
       reopen
         ? `incident ${incident.id} is open again`
-        : stillWaiting
-          ? `incident ${incident.id} still waits on ${questions.filter((q) => q.answer === undefined).length} question(s)`
+        : holds.length > 0
+          ? `incident ${incident.id} still waits on ${holds.join(", ")}`
           : `incident ${incident.id} stays ${incident.status}`,
     );
     return EXIT.ok;
@@ -423,3 +434,11 @@ export const answer: Handler = async (args, ctx) => {
     store.close();
   }
 };
+
+/** Grant requests the planner raised that no grant has answered: `grant.requested` events beyond `grant.given` ones. */
+function pendingGrantRequests(store: Store, incidentId: string): number {
+  const events = store.listEvents(incidentId);
+  const requested = events.filter((e) => e.type === "grant.requested").length;
+  const given = events.filter((e) => e.type === "grant.given").length;
+  return Math.max(0, requested - given);
+}

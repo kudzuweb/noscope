@@ -447,4 +447,10 @@ Not exactly to spec, with reasons:
 - The provider runs a session under the environment the command was given, merged over
   the process's own, so a test's stub variables reach the stub through the CLI and the
   real binary keeps its PATH.
+- From the review (2026-09-13): a grant request holds the block after every question is
+  answered, since the request lives only in the log (`grant.requested` beyond
+  `grant.given`) and not on the incident; the planner's section 1 lists waiting grant
+  requests beside grants; `answer` exits 5 on a `satisfied` or `failed` incident, which
+  takes no answer. A reopening answer writes two `question.answered` events, one for the
+  answer and one for the status, since v0 has no reopen event type.
 

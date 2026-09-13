@@ -156,6 +156,8 @@ describe("planner", () => {
       budget remaining: tokens unlimited, seconds unlimited (spent tokens 1500, seconds 4.5)
       grants:
         (none)
+      grant requests waiting:
+        (none)
       questions still unanswered:
         (none)
       questions answered:

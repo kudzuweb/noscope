@@ -66,8 +66,11 @@ function harness() {
   };
 }
 
+// Each test drives several stub sessions through the CLI; slow on a CI runner.
 describe("blocking channels", () => {
-  it("an interpret task answering insufficient leads the next step to a plan that supplies what was needed", async () => {
+  it("an interpret task answering insufficient leads the next step to a plan that supplies what was needed", {
+    timeout: 60_000,
+  }, async () => {
     const h = harness();
     const first: ActionPlan = {
       ...empty,
@@ -130,7 +133,40 @@ describe("blocking channels", () => {
     expect(h.out).toContain("  ran 001-t02 (grep): completed; 1 claim(s)");
   });
 
-  it("a plan with a question blocks the incident, show prints it, and answer stores the answer and reopens it", async () => {
+  it("a grant request holds the block after the question is answered, and a closed incident takes no answer", {
+    timeout: 60_000,
+  }, async () => {
+    const h = harness();
+    h.env.NOSCOPE_STUB_PLAN = JSON.stringify({
+      ...empty,
+      questionsForHuman: ["may it write?"],
+      grantRequests: [
+        { capability: "write_note", effect: "writes_local", reason: "to save" },
+      ],
+    });
+    await run(["incident", "create", "save a note"], h.ctx);
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    h.out.length = 0;
+    expect(await run(["incident", "answer", "001", "yes"], h.ctx)).toBe(
+      EXIT.ok,
+    );
+    expect(h.out).toEqual([
+      "answered 001-q01: may it write?",
+      "incident 001 still waits on 1 grant request(s)",
+    ]);
+    const store = h.store();
+    expect(store.getIncident("001")?.status).toBe("blocked");
+    store.setIncidentStatus("001", "failed", "cli", "incident.closed");
+    store.close();
+    expect(await run(["incident", "answer", "001", "again"], h.ctx)).toBe(
+      EXIT.cannotProceed,
+    );
+    expect(h.err.at(-1)).toMatch(/is failed and takes no answer/);
+  });
+
+  it("a plan with a question blocks the incident, show prints it, and answer stores the answer and reopens it", {
+    timeout: 60_000,
+  }, async () => {
     const h = harness();
     const asking: ActionPlan = {
       ...empty,
