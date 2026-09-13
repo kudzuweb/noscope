@@ -1,12 +1,16 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import {
   ActionPlan,
   Claim,
   EventType,
+  Grant,
   Incident,
   jsonSchemaFor,
   SessionResult,
+  sessionResult,
   Task,
+  Timestamp,
 } from "../src/models.js";
 
 const plan = {
@@ -76,20 +80,69 @@ describe("contracts", () => {
     expect(() => Task.parse(task)).toThrow();
   });
 
-  it("accepts both session outcomes and rejects an insufficient result with nothing needed", () => {
-    expect(
-      SessionResult.parse({ outcome: "answered", claims: [] }).outcome,
-    ).toBe("answered");
+  it("accepts both session outcomes and enforces what each must carry", () => {
+    const answered = SessionResult.parse({
+      outcome: "answered",
+      claims: [],
+      findings: {},
+    });
+    expect(answered.outcome).toBe("answered");
+    expect(() =>
+      SessionResult.parse({ outcome: "answered", claims: [] }),
+    ).toThrow();
     const insufficient = SessionResult.parse({
       outcome: "insufficient",
       needed: [
         { kind: "human_knowledge", what: "which branch is the release" },
       ],
     });
-    expect(insufficient.outcome).toBe("insufficient");
+    expect(insufficient.needed[0]?.kind).toBe("human_knowledge");
     expect(() =>
       SessionResult.parse({ outcome: "insufficient", needed: [] }),
     ).toThrow();
+  });
+
+  it("parameterizes a session result by the capability's findings", () => {
+    const Result = sessionResult(z.object({ codePath: z.string() }));
+    const ok = Result.parse({
+      outcome: "answered",
+      claims: [],
+      findings: { codePath: "src/x.ts" },
+    });
+    expect(ok.findings?.codePath).toBe("src/x.ts");
+    expect(() =>
+      Result.parse({ outcome: "answered", claims: [], findings: {} }),
+    ).toThrow();
+  });
+
+  it("ties a grant's incident id to its scope", () => {
+    const base = {
+      id: "g1",
+      capability: "send_email",
+      effect: "writes_external",
+      reason: "the incident needs to notify the author",
+      grantedBy: "mauria",
+      perTask: false,
+      createdAt: new Date().toISOString(),
+    };
+    expect(
+      Grant.parse({ ...base, scope: "incident", incidentId: "i1" }).scope,
+    ).toBe("incident");
+    expect(
+      Grant.parse({ ...base, scope: "standing", incidentId: null }).scope,
+    ).toBe("standing");
+    expect(() =>
+      Grant.parse({ ...base, scope: "incident", incidentId: null }),
+    ).toThrow();
+    expect(() =>
+      Grant.parse({ ...base, scope: "standing", incidentId: "i1" }),
+    ).toThrow();
+  });
+
+  it("accepts ISO 8601 timestamps with Z or an offset and rejects SQLite's bare format", () => {
+    expect(Timestamp.parse("2026-09-12T10:00:00.000Z")).toBeTruthy();
+    expect(Timestamp.parse("2026-09-12T10:00:00+02:00")).toBeTruthy();
+    expect(() => Timestamp.parse("2026-09-12 10:00:00")).toThrow();
   });
 
   it("names every event type the design lists", () => {
@@ -98,13 +151,15 @@ describe("contracts", () => {
     expect(EventType.options).toHaveLength(23);
   });
 
-  it("exports draft-2020-12 JSON Schema for what providers receive, with no unrepresentable types", () => {
+  it("exports provider-facing JSON Schema as a top-level object with no $schema key", () => {
     for (const schema of [ActionPlan, SessionResult, Incident, Claim]) {
       const json = jsonSchemaFor(schema);
-      expect(json.$schema).toBe("https://json-schema.org/draft/2020-12/schema");
-      expect(JSON.stringify(json)).not.toContain('"type":"any"');
+      expect(json.$schema).toBeUndefined();
+      expect(json.type).toBe("object");
     }
     const planSchema = jsonSchemaFor(ActionPlan) as { required?: string[] };
     expect(planSchema.required).toContain("incidentStatus");
+    expect(() => jsonSchemaFor(z.object({ when: z.date() }))).toThrow();
+    expect(() => jsonSchemaFor(z.union([z.string(), z.number()]))).toThrow();
   });
 });

@@ -2,6 +2,9 @@ import { z } from "zod";
 
 // Every contract in DESIGN.md, in one place. Table columns in src/store.ts map onto these.
 
+/** ISO 8601 as `new Date().toISOString()` writes it; an offset is accepted on read. */
+export const Timestamp = z.string().datetime({ offset: true });
+
 export const IncidentStatus = z.enum([
   "open",
   "satisfied",
@@ -97,8 +100,8 @@ export const Incident = z.object({
   questions: z.array(Question),
   capabilityRequests: z.array(CapabilityRequest),
   status: IncidentStatus,
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime(),
+  createdAt: Timestamp,
+  updatedAt: Timestamp,
 });
 
 export const Unit = z.object({
@@ -107,8 +110,8 @@ export const Unit = z.object({
   parentId: z.string().nullable(),
   purpose: z.string().min(1),
   status: UnitStatus,
-  createdAt: z.string().datetime(),
-  closedAt: z.string().datetime().nullable(),
+  createdAt: Timestamp,
+  closedAt: Timestamp.nullable(),
 });
 
 export const Task = z.object({
@@ -128,8 +131,8 @@ export const Task = z.object({
   budget: Budget,
   status: TaskStatus,
   result: z.unknown().nullable(),
-  createdAt: z.string().datetime(),
-  completedAt: z.string().datetime().nullable(),
+  createdAt: Timestamp,
+  completedAt: Timestamp.nullable(),
 });
 
 export const Provenance = z.object({
@@ -147,8 +150,9 @@ export const Claim = z.object({
   object: z.unknown(),
   status: ClaimStatus,
   confidence: z.number().min(0).max(1).nullable(),
+  evidence: z.array(z.string()),
   provenance: Provenance,
-  createdAt: z.string().datetime(),
+  createdAt: Timestamp,
 });
 
 export const Event = z.object({
@@ -158,20 +162,25 @@ export const Event = z.object({
   type: EventType,
   actor: z.string().min(1),
   payload: z.record(z.string(), z.unknown()),
-  createdAt: z.string().datetime(),
+  createdAt: Timestamp,
 });
 
-export const Grant = z.object({
-  id: z.string().min(1),
-  scope: GrantScope,
-  incidentId: z.string().nullable(),
-  capability: z.string().min(1),
-  effect: Effect,
-  reason: z.string(),
-  grantedBy: z.string().min(1),
-  perTask: z.boolean(),
-  createdAt: z.string().datetime(),
-});
+export const Grant = z
+  .object({
+    id: z.string().min(1),
+    scope: GrantScope,
+    incidentId: z.string().nullable(),
+    capability: z.string().min(1),
+    effect: Effect,
+    reason: z.string(),
+    grantedBy: z.string().min(1),
+    perTask: z.boolean(),
+    createdAt: Timestamp,
+  })
+  .refine((g) => (g.scope === "standing") === (g.incidentId === null), {
+    message:
+      "a standing grant has no incident id and an incident grant has one",
+  });
 
 // What the planner returns, one per cycle.
 
@@ -251,13 +260,40 @@ export const ClaimProposal = z.object({
   evidence: z.array(z.string()),
 });
 
-export const SessionResult = z.discriminatedUnion("outcome", [
-  z.object({ outcome: z.literal("answered"), claims: z.array(ClaimProposal) }),
-  z.object({
-    outcome: z.literal("insufficient"),
-    needed: z.array(Needed).min(1),
-  }),
-]);
+/**
+ * What a session returns, parameterized by the capability's own findings shape so each
+ * capability's output schema is exact: `sessionResult(InvestigateFindings)`. One object, not a
+ * union: a provider forwards the output schema as a tool input schema, which must be an object
+ * at the top level. The outcome decides which fields must be filled.
+ */
+export function sessionResult<T extends z.ZodType>(findings: T) {
+  return z
+    .object({
+      outcome: z.enum(["answered", "insufficient"]),
+      claims: z.array(ClaimProposal).default([]),
+      findings: findings.nullable().default(null),
+      needed: z.array(Needed).default([]),
+    })
+    .superRefine((r, ctx) => {
+      if (r.outcome === "answered" && r.findings === null) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["findings"],
+          message: "an answered result carries findings",
+        });
+      }
+      if (r.outcome === "insufficient" && r.needed.length === 0) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["needed"],
+          message: "an insufficient result names what was needed",
+        });
+      }
+    });
+}
+
+/** The result shape with no capability-specific findings. */
+export const SessionResult = sessionResult(z.record(z.string(), z.unknown()));
 
 export type IncidentStatus = z.infer<typeof IncidentStatus>;
 export type UnitStatus = z.infer<typeof UnitStatus>;
@@ -291,10 +327,20 @@ export type Needed = z.infer<typeof Needed>;
 export type ClaimProposal = z.infer<typeof ClaimProposal>;
 export type SessionResult = z.infer<typeof SessionResult>;
 
-/** The JSON Schema a provider receives for a structured output. */
+/**
+ * The JSON Schema a provider receives for a structured output. Claude Code's --json-schema
+ * rejects a `$schema` key and requires a top-level object (verified 2026-09-12 on 2.1.270),
+ * so the key is dropped and a non-object schema is refused here rather than at the provider.
+ */
 export function jsonSchemaFor(schema: z.ZodType): Record<string, unknown> {
-  return z.toJSONSchema(schema, { target: "draft-2020-12" }) as Record<
-    string,
-    unknown
-  >;
+  const { $schema: _dropped, ...json } = z.toJSONSchema(schema, {
+    target: "draft-2020-12",
+    io: "input",
+  }) as Record<string, unknown>;
+  if (json.type !== "object") {
+    throw new Error(
+      "a provider-facing schema must be an object at the top level",
+    );
+  }
+  return json;
 }
