@@ -261,4 +261,11 @@ Not exactly to spec, with reasons:
   reads; PR 10 implements each and imports the list so the two cannot drift.
 - An action plan that fails the `ActionPlan` contract is an error and writes no event, so a
   malformed plan never enters the log as proposed.
+- Store hardening from Mauria's review of 2026-09-13, in this PR because it is the next to
+  merge: every mutation applies under the event's incident, so a created row must belong to
+  it and an updated unit, task or claim is matched by id and incident, and a mistaken
+  caller can no longer log an event under one incident for a change to another; `incident
+  create` writes the incident and its command unit in one transaction. The build record's
+  header now says a heading's date is the merge date the entry was written for, since more
+  than one PR can be in flight.
 

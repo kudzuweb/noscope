@@ -254,6 +254,57 @@ describe("store", () => {
     store.close();
   });
 
+  it("refuses a change recorded under an incident the row does not belong to", () => {
+    const store = new Store(":memory:");
+    scripted(store);
+    const at = now();
+    store.createIncident(
+      {
+        id: "i2",
+        objective: "another",
+        constraints: [],
+        priorities: [],
+        budget: {},
+        questions: [],
+        capabilityRequests: [],
+        status: "open",
+        createdAt: at,
+        updatedAt: at,
+      },
+      "cli",
+    );
+    expect(() =>
+      store.setTaskStatus("i2", "t1", "cancelled", "planner", "task.cancelled"),
+    ).toThrow(/expected to change one row/);
+    expect(() =>
+      store.closeUnit("i2", "u1", "wrong incident", "runtime"),
+    ).toThrow(/expected to change one row/);
+    expect(() =>
+      store.setClaimStatus("i2", "c1", "rejected", "verifier"),
+    ).toThrow(/expected to change one row/);
+    expect(() =>
+      store.createUnit(
+        {
+          id: "u-stray",
+          incidentId: "i1",
+          parentId: null,
+          purpose: "p",
+          status: "active",
+          createdAt: at,
+          closedAt: null,
+        },
+        "runtime",
+      ),
+    ).not.toThrow();
+    expect(
+      store.listEvents("i2").filter((e) => e.type !== "incident.created"),
+    ).toEqual([]);
+    expect(store.listTasks("i1").find((t) => t.id === "t1")?.status).not.toBe(
+      "cancelled",
+    );
+    store.close();
+  });
+
   it("refuses a claim created rejected, or verified without deterministic provenance", () => {
     const store = new Store(":memory:");
     scripted(store);

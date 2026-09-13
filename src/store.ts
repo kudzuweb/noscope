@@ -444,7 +444,8 @@ export class Store {
         for (const raw of ordered) {
           const event = Event.parse(raw);
           const mutation = event.payload.mutation;
-          if (mutation !== undefined) this.apply(Mutation.parse(mutation));
+          if (mutation !== undefined)
+            this.apply(Mutation.parse(mutation), event.incidentId);
           this.insertEvent(event);
         }
       })
@@ -478,7 +479,7 @@ export class Store {
       mutation === undefined ? undefined : Mutation.parse(mutation);
     this.db
       .transaction(() => {
-        if (checked !== undefined) this.apply(checked);
+        if (checked !== undefined) this.apply(checked, incidentId);
         const { s: sequence } = this.db
           .prepare(
             "SELECT COALESCE(MAX(sequence), -1) + 1 AS s FROM events WHERE COALESCE(incident_id, '') = ?",
@@ -518,16 +519,28 @@ export class Store {
       );
   }
 
-  private apply(m: Mutation): void {
+  /**
+   * Applies one mutation under the event's incident: a row it creates must belong to that
+   * incident, and a row it updates is matched by id and incident, so a mistaken caller can
+   * never record an event under one incident for a change to another.
+   */
+  private apply(m: Mutation, incidentId: string | null): void {
     const one = (info: Database.RunResult, what: string) => {
       if (info.changes !== 1)
         throw new Error(
           `${what}: expected to change one row, changed ${info.changes}`,
         );
     };
+    const owned = (rowIncident: string | null, what: string) => {
+      if (rowIncident !== incidentId)
+        throw new Error(
+          `${what} belongs to incident ${rowIncident}, not ${incidentId}`,
+        );
+    };
     switch (m.kind) {
       case "incident.create": {
         const i = m.incident;
+        owned(i.id, `incident ${i.id}`);
         this.db
           .prepare(
             "INSERT INTO incidents (id, objective, constraints_json, priorities_json, budget_json, questions_json, capability_requests_json, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -547,6 +560,7 @@ export class Store {
         return;
       }
       case "incident.status":
+        owned(m.incidentId, `incident ${m.incidentId}`);
         one(
           this.db
             .prepare(
@@ -578,6 +592,7 @@ export class Store {
         return;
       case "unit.create": {
         const u = m.unit;
+        owned(u.incidentId, `unit ${u.id}`);
         this.db
           .prepare(
             "INSERT INTO units (id, incident_id, parent_id, purpose, status, created_at, closed_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -597,14 +612,15 @@ export class Store {
         one(
           this.db
             .prepare(
-              "UPDATE units SET status = 'closed', closed_at = ? WHERE id = ? AND status = 'active'",
+              "UPDATE units SET status = 'closed', closed_at = ? WHERE id = ? AND incident_id = ? AND status = 'active'",
             )
-            .run(m.at, m.unitId),
+            .run(m.at, m.unitId, incidentId),
           `unit ${m.unitId}`,
         );
         return;
       case "task.create": {
         const t = m.task;
+        owned(t.incidentId, `task ${t.id}`);
         this.db
           .prepare(
             "INSERT INTO tasks (id, incident_id, unit_id, capability, objective, inputs_json, expected_output, completion_criteria_json, evidence_required_json, depends_on_json, provider, model, instructions, budget_json, status, result_json, created_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -639,15 +655,16 @@ export class Store {
         one(
           this.db
             .prepare(
-              "UPDATE tasks SET status = ?, completed_at = COALESCE(?, completed_at), result_json = COALESCE(?, result_json) WHERE id = ?",
+              "UPDATE tasks SET status = ?, completed_at = COALESCE(?, completed_at), result_json = COALESCE(?, result_json) WHERE id = ? AND incident_id = ?",
             )
-            .run(m.status, completedAt, result, m.taskId),
+            .run(m.status, completedAt, result, m.taskId, incidentId),
           `task ${m.taskId}`,
         );
         return;
       }
       case "claim.create": {
         const c = m.claim;
+        owned(c.incidentId, `claim ${c.id}`);
         this.db
           .prepare(
             "INSERT INTO claims (id, incident_id, subject, predicate, object_json, status, confidence, evidence_json, provenance_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -669,13 +686,16 @@ export class Store {
       case "claim.status":
         one(
           this.db
-            .prepare("UPDATE claims SET status = ? WHERE id = ?")
-            .run(m.status, m.claimId),
+            .prepare(
+              "UPDATE claims SET status = ? WHERE id = ? AND incident_id = ?",
+            )
+            .run(m.status, m.claimId, incidentId),
           `claim ${m.claimId}`,
         );
         return;
       case "grant.create": {
         const g = m.grant;
+        owned(g.incidentId, `grant ${g.id}`);
         this.db
           .prepare(
             "INSERT INTO grants (id, scope, incident_id, capability, effect, reason, granted_by, per_task, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",

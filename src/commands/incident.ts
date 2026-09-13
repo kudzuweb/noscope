@@ -80,8 +80,10 @@ export const create: Handler = async (args, ctx) => {
       createdAt: at,
       closedAt: null,
     };
-    store.createIncident(incident, ACTOR);
-    store.createUnit(command, "runtime");
+    store.batch(() => {
+      store.createIncident(incident, ACTOR);
+      store.createUnit(command, "runtime");
+    });
     ctx.io.out(`incident ${id} created: ${objective}`);
     return EXIT.ok;
   } finally {
