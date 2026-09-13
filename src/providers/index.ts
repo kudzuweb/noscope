@@ -2,6 +2,7 @@ import type { Provider } from "./base.js";
 import { claudeCodeProvider } from "./claude-code.js";
 
 export type { Provider, SessionRequest } from "./base.js";
+export { sessionSystemPrompt } from "./base.js";
 export { claudeCodeProvider } from "./claude-code.js";
 
 const providers: Record<string, () => Provider> = {

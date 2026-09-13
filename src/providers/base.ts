@@ -7,8 +7,8 @@ import type { Usage } from "../models.js";
 export type SessionRequest = {
   /** The model id, always explicit and taken from the task; a capability declares no default. */
   model: string;
-  /** The capability's own role text; the fixed preamble goes before it. */
-  role: string;
+  /** The whole system prompt: for a task's session, the fixed preamble then the capability's role text. */
+  systemPrompt: string;
   /** The user message: the task brief plus one line on what the owning unit is trying to establish. */
   prompt: string;
   /** Provider built-in tool names, or the single entry `default` for the provider's whole set. */
@@ -31,6 +31,8 @@ export type SessionOutcome = {
 
 export type Provider = {
   name: string;
+  /** Every model the provider serves, never a curated subset (DESIGN.md Step 5, Model known). */
+  models: readonly string[];
   run: (request: SessionRequest) => Promise<SessionOutcome>;
 };
 

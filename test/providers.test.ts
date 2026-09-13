@@ -20,7 +20,9 @@ const stub = resolve("test/stub-claude");
 function request(): SessionRequest {
   return {
     model: "claude-haiku-4-5",
-    role: "You read the files a question points at and report what they show.",
+    systemPrompt: sessionSystemPrompt(
+      "You read the files a question points at and report what they show.",
+    ),
     prompt:
       "Objective: find the delete handler.\nUnit is establishing: where deletion lives.",
     tools: ["Read", "Grep", "Glob", "Bash"],
@@ -40,7 +42,7 @@ describe("claude code provider", () => {
       "--model",
       "claude-haiku-4-5",
       "--system-prompt",
-      sessionSystemPrompt(r.role),
+      r.systemPrompt,
       "--tools",
       "Read,Grep,Glob,Bash",
       "--json-schema",
@@ -73,6 +75,7 @@ describe("claude code provider", () => {
     const text = sessionSystemPrompt("ROLE");
     expect(text.startsWith(SESSION_PREAMBLE)).toBe(true);
     expect(text.endsWith("\n\nROLE")).toBe(true);
+    expect(claudeCodeProvider().models).toContain("claude-opus-5");
     for (const kind of [
       "retrievable_fact",
       "permission",

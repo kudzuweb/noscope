@@ -1,8 +1,10 @@
 # Build record
 
-One entry per PR, appended when the PR merges: what was built, why, and whether it matches
-`BUILD-PLAN.md` and `DESIGN.md` exactly. Where it does not, the deviation and its reason are
-here, and the design or plan was updated in the same PR.
+One entry per PR, written on the PR's branch before it merges: what was built, why, and
+whether it matches `BUILD-PLAN.md` and `DESIGN.md` exactly. Where it does not, the deviation
+and its reason are here, and the design or plan was updated in the same PR. The date in a
+heading is the merge date the entry was written for; the pull request is the record of
+whether and when it merged.
 
 ## PR 1: Skeleton (#1, merged 2026-09-12)
 
@@ -229,4 +231,47 @@ Not exactly to spec, with reasons:
   ENOENT, which reads as a missing binary.
 - Task status changes on a session's result belong to the dispatcher (PR 12); this PR
   records the claims and the event only.
+
+## PR 9: Planner (#9, merged 2026-09-13)
+
+Built: `src/planner.ts` with `renderPlannerInput`, the incident file as the nine labeled
+sections in the design's order (command picture; verified claims; asserted claims with
+provenance; unit tree; tasks completed since the last cycle summarized against their
+contracts with claim pointers; tasks that came back insufficient with what they needed; open
+tasks; capabilities with cost facts and every provider's models; the validator's rules with
+last cycle's rejection), `PLANNER_SYSTEM_PROMPT`, and `proposePlan`, which calls the provider
+with the `ActionPlan` JSON schema, no tools, and records `plan.proposed` with the plan, its
+rationale, the session id and usage; a snapshot test of the rendered input for a fixture
+incident one cycle in, and a stub-provider test that `plan.proposed` carries the fixed plan.
+
+Not exactly to spec, with reasons:
+
+- "Since the last cycle" is everything after the most recent `plan.applied` event, so the
+  first cycle sees everything, each later cycle sees only what its predecessor caused, and a
+  retry after a rejected plan sees the same results the rejected plan saw (the review found
+  that cutting at `plan.proposed` lost a session's `insufficient` report on retry).
+- Task lines in sections 5 and 7 carry the task's inputs, since the duplicate and
+  inputs-validate rules the planner is shown key on them.
+- `sumUsage` in the store is the one fold over `task.usage` events; the planner and
+  `incident show` both read it, so the two views of spend cannot disagree.
+- The planner's system prompt replaces the task-session preamble rather than following it:
+  the preamble tells a session it is a resource assigned to one task, which the Planning
+  Section is not. `SessionRequest` therefore carries the whole `systemPrompt`; the session
+  builder composes preamble plus role for task sessions, and the provider renders what it is
+  given. The design's session-fields row says so now.
+- A provider now lists every model it serves (`Provider.models`), which is section 8 and
+  the validator's Model known rule in PR 10; Claude Code's list is the design's nine.
+- Per-model cost facts do not exist yet, so section 8 carries each capability's cost facts
+  and each provider's model names; a per-model cost table is a later addition.
+- The validator rules are stated in `planner.ts` as `PLANNER_RULES`, the text the planner
+  reads; PR 10 implements each and imports the list so the two cannot drift.
+- An action plan that fails the `ActionPlan` contract is an error and writes no event, so a
+  malformed plan never enters the log as proposed.
+- Store hardening from Mauria's review of 2026-09-13, in this PR because it is the next to
+  merge: every mutation applies under the event's incident, so a created row must belong to
+  it and an updated unit, task or claim is matched by id and incident, and a mistaken
+  caller can no longer log an event under one incident for a change to another; `incident
+  create` writes the incident and its command unit in one transaction. The build record's
+  header now says a heading's date is the merge date the entry was written for, since more
+  than one PR can be in flight.
 
