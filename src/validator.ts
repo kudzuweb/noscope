@@ -112,9 +112,14 @@ const CHECKS: Record<RuleName, Rule> = {
   "No cycles": (plan, ctx) => {
     const reasons: string[] = [];
     const existing = new Set(ctx.units.map((u) => u.id));
-    for (const u of plan.createUnits)
+    for (const u of plan.createUnits) {
       if (existing.has(u.ref))
         reasons.push(`ref ${u.ref} is already a unit id`);
+      else if (u.ref.startsWith(`${ctx.incident.id}-`))
+        reasons.push(
+          `ref ${u.ref} starts with the incident id and could be mistaken for a unit id`,
+        );
+    }
     for (const ref of repeated(plan.createUnits.map((u) => u.ref)))
       reasons.push(`ref ${ref} is used twice`);
     const parentOf = new Map(plan.createUnits.map((u) => [u.ref, u.parent]));
@@ -335,9 +340,28 @@ const CHECKS: Record<RuleName, Rule> = {
   },
 
   "Status is earned": (plan, ctx) => {
+    const channels = [
+      ...(plan.questionsForHuman.length > 0 ? ["a question"] : []),
+      ...(plan.capabilityRequests.length > 0 ? ["a capability request"] : []),
+      ...(plan.grantRequests.length > 0 ? ["a grant request"] : []),
+    ];
+    if (plan.incidentStatus === "blocked" && channels.length === 0)
+      return [
+        "blocked with no question, capability request or grant request, so nothing could unblock it",
+      ];
+    if (plan.incidentStatus === "failed")
+      return channels.length === 0
+        ? []
+        : [
+            `failed while raising ${channels.join(", ")}, which nobody could answer`,
+          ];
     if (plan.incidentStatus !== "satisfied") return [];
     const cancelling = new Set(plan.cancelTasks);
     const reasons: string[] = [];
+    if (channels.length > 0)
+      reasons.push(
+        `satisfied while raising ${channels.join(", ")}, which nobody could answer`,
+      );
     const open = ctx.tasks.filter((t) => isOpen(t) && !cancelling.has(t.id));
     if (open.length > 0)
       reasons.push(

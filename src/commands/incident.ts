@@ -3,6 +3,7 @@ import { listCapabilities } from "../capabilities/index.js";
 import { type Context, EXIT, type Handler } from "../context.js";
 import { Budget, type Event, type Incident, type Unit } from "../models.js";
 import { now, resolveDbPath, Store, sumUsage } from "../store.js";
+import { renderTree } from "../tree.js";
 
 const ACTOR = "cli";
 
@@ -91,22 +92,25 @@ export const create: Handler = async (args, ctx) => {
   }
 };
 
+/** The incident an argument names, or the exit code to return: 2 when no id was given, 4 when none exists (DESIGN.md Step 7). */
 function requireIncident(
   store: Store,
   args: readonly string[],
   ctx: Context,
   command: string,
-): Incident | undefined {
+): Incident | number {
   const id = args[0];
   if (id === undefined) {
     ctx.io.err(`noscope incident ${command}: an incident id is required`);
-    return undefined;
+    return EXIT.usage;
   }
   const incident = store.getIncident(id);
-  if (incident === undefined)
+  if (incident === undefined) {
     ctx.io.err(
       `noscope incident ${command}: no incident ${JSON.stringify(id)}`,
     );
+    return EXIT.notFound;
+  }
   return incident;
 }
 
@@ -201,7 +205,7 @@ export const show: Handler = async (args, ctx) => {
   const store = openStore(ctx);
   try {
     const incident = requireIncident(store, args, ctx, "show");
-    if (incident === undefined) return EXIT.notFound;
+    if (typeof incident === "number") return incident;
     for (const line of renderIncidentFile(
       store,
       incident,
@@ -225,8 +229,27 @@ export const events: Handler = async (args, ctx) => {
   const store = openStore(ctx);
   try {
     const incident = requireIncident(store, args, ctx, "events");
-    if (incident === undefined) return EXIT.notFound;
+    if (typeof incident === "number") return incident;
     for (const e of store.listEvents(incident.id)) ctx.io.out(renderEvent(e));
+    return EXIT.ok;
+  } finally {
+    store.close();
+  }
+};
+
+export const tree: Handler = async (args, ctx) => {
+  const store = openStore(ctx);
+  try {
+    const incident = requireIncident(store, args, ctx, "tree");
+    if (typeof incident === "number") return incident;
+    ctx.io.out(
+      `incident ${incident.id} [${incident.status}]  ${incident.objective}`,
+    );
+    for (const line of renderTree(
+      store.listUnits(incident.id),
+      store.listTasks(incident.id),
+    ))
+      ctx.io.out(line);
     return EXIT.ok;
   } finally {
     store.close();

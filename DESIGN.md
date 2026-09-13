@@ -146,7 +146,7 @@ mutation in its payload, which is what makes the tables rebuildable from the eve
 | `events` | `id`, `scope` (`incident` or `system`), `incident_id` (required for an incident event, null for a system event, enforced by a CHECK), `sequence` (unique per incident, and per the system scope), `type`, `actor`, `payload_json`, `created_at`. A payload carries a `mutation` naming the exact state change the event records, so replay applies that and nothing else; an event with no mutation, such as `plan.proposed`, changes no state. |
 | `grants` | `id`, `scope` (`incident` or `standing`), `incident_id` (null for standing), `capability`, `effect`, `reason`, `granted_by`, `per_task` (boolean), `created_at`. Empty in v0. |
 
-Event types in v0: `incident.created`, `incident.closed`, `unit.created`, `unit.closed`,
+Event types in v0: `incident.created`, `incident.blocked`, `incident.closed`, `unit.created`, `unit.closed`,
 `task.created`, `task.started`, `task.completed`, `task.failed`,
 `task.cancelled`, `task.insufficient`, `claim.asserted`, `claim.verified`, `claim.rejected`,
 `plan.proposed`, `plan.rejected`, `plan.applied`, `task.usage`, `budget.exceeded`,
@@ -320,7 +320,7 @@ reason recorded as a `plan.rejected` event and fed back as input 9 on the next c
 |---|---|
 | Capabilities exist | Every task names a registered capability. |
 | Units exist | Every task's unit and every new unit's parent is an active unit, or a unit created in this plan; a closed unit takes no new work. A `closeUnits` entry names a unit in the incident. |
-| No cycles | The tree stays a tree: no new unit is its own ancestor, and a ref is used once and is not an existing unit id. |
+| No cycles | The tree stays a tree: no new unit is its own ancestor, and a ref is used once, is not an existing unit id, and does not start with the incident id, so it cannot be mistaken for the id a unit created in the same plan receives. |
 | No duplicates | No new task repeats an open or completed one, or another new task in the same plan, with the same capability and effective inputs (as the capability's schema parses them) under the same unit. A task the plan cancels does not count. |
 | Inputs validate | Task inputs parse against the capability's input schema. |
 | Span of control | No unit ends the action plan with more than 7 direct children, units and tasks combined. Target is 5. |
@@ -329,7 +329,7 @@ reason recorded as a `plan.rejected` event and fed back as input 9 on the next c
 | Dependencies resolve | Every `dependsOn` names a task in the incident that is completed or still open and not cancelled in this plan, so the new task can become ready. Every `cancelTasks` entry names an open task, once; every `claimsToVerify` entry names an asserted claim. |
 | Model known | Every task to a session-backed capability names a provider and model pair. The known list is every model the provider serves, never a curated subset, so Mauria can ask for whatever she wants and the planner sees every option. For Claude Code the known list is every Anthropic model currently served: `claude-fable-5-1`, `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5`, `claude-fable-5`, `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6`, `claude-sonnet-4-6`; Codex pairs are added when that provider is tested. A task to a deterministic capability has no model field at all, since nothing in it runs a model. |
 | Closing is clean | A unit closed in this plan is active, has no running task after the plan's cancels, is closed once, and is given no new unit or task in the same plan. |
-| Status is earned | `satisfied` requires every open task completed or cancelled, no new tasks in the plan, and at least one verified claim. |
+| Status is earned | `satisfied` requires every open task completed or cancelled, no new tasks in the plan, and at least one verified claim. `satisfied` or `failed` raises no question, capability request or grant request, since a closed incident answers none. `blocked` raises at least one, since nothing else could unblock it. |
 
 ### Step 6: dispatch, record, verify
 Ready means every dependency is completed. v0 runs ready tasks sequentially. Each
