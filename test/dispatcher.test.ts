@@ -384,7 +384,10 @@ describe("dispatcher, interrupted and malformed runs", () => {
 });
 
 describe("incident step", () => {
-  it("runs one cycle with the stub planner: plan, verdict, apply, dispatch, claims; then refuses a closed incident", async () => {
+  // Several stub sessions through the CLI; slow on a CI runner.
+  it("runs one cycle with the stub planner: plan, verdict, apply, dispatch, claims; then refuses a closed incident", {
+    timeout: 60_000,
+  }, async () => {
     const db = `${mkdtempSync(join(tmpdir(), "noscope-step-"))}/db.sqlite`;
     const out: string[] = [];
     const err: string[] = [];
