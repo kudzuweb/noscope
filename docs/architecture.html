@@ -146,27 +146,27 @@ code{font:.9em ui-monospace,SFMono-Regular,Menlo,monospace}
 
 <h2>6. The tree changing shape (the thing v0 exists to show)</h2>
 <div class="two">
-<pre>incident 001 — why does saving in Roughdraft drop blank lines?
+<pre>incident 001 — why does Roughdraft scroll to the bottom comment after a delete?
 
 [active] command
-├── [active] save-path investigation
-│   ├── ✓ grep      "writeFile|save" in packages/app     (verified)
-│   ├── → investigate: read the save handler, Haiku     (running)
-│   └── ○ read      the file grep pointed at             (pending)
-└── [active] formatter investigation
-    └── → investigate: find where blank lines are cut   (running)</pre>
+├── [active] delete-handler investigation
+│   ├── ✓ grep      "delete|remove" near comment handling   (verified)
+│   ├── → investigate: read the delete handler, Haiku       (running)
+│   └── ○ read      the file grep pointed at               (pending)
+└── [active] scroll investigation
+    └── → investigate: what moves the viewport after edits (running)</pre>
 <pre>incident 001 — after two more steps
 
 [active] command
-└── [active] normalize() investigation        ← opened from an asserted claim
-    ├── ✓ read      src/markdown/normalize.ts            (verified)
-    ├── ✓ grep      callers of normalize()               (verified)
-    └── → interpret: does this explain both symptoms?   (running)
+└── [active] selection-after-delete investigation   ← opened from an asserted claim
+    ├── ✓ read      the editor state update after delete   (verified)
+    ├── ✓ grep      callers that set the selection          (verified)
+    └── → interpret: does this explain the jump?            (running)
 
-closed: save-path investigation   (served its purpose)
-closed: formatter investigation   (asserted claim verified: same code path)</pre>
+closed: delete-handler investigation   (served its purpose)
+closed: scroll investigation           (asserted claim verified: same code path)</pre>
 </div>
-<p class="lead">Events tell why the topology changed: <code>unit.created</code>, <code>claim.verified</code>, <code>unit.closed</code>, each with the plan's rationale. Span of control keeps any unit at ≤ 7 direct children, so twelve tasks force the planner to invent branches.</p>
+<p class="lead">Events tell why the topology changed: <code>unit.created</code>, <code>claim.verified</code>, <code>unit.closed</code>, each with the plan's rationale. Span of control keeps any unit at ≤ 7 direct children, so twelve tasks force the planner to invent branches. The unit names above are illustrative; the planner writes its own.</p>
 
 <h2>7. Equipment and capabilities</h2>
 <div class="grid">

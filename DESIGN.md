@@ -357,14 +357,15 @@ end to end, not for daily use.
 ### Step 8: the first incident
 A real, read-only investigation on this machine, so every step can be checked by hand:
 
-> Determine why saving a document in Roughdraft drops blank lines and adds trailing
-> whitespace, and identify the code path responsible, in `~/Documents/Projects/roughdraftplus`.
+> Determine why Roughdraft scrolls to the bottom comment after a comment is deleted, instead
+> of staying where the deleted comment was, and identify the code path responsible, in
+> `~/Documents/Projects/roughdraftplus`.
 
-This is upstream issues 98 and 100, already known to be real, and the answer is
-verifiable by reading the code the incident points at. The interesting output is not the answer
-but the tree: whether the planner opens separate units for the save path and the
-formatter, closes the one that turns out irrelevant, and stops when a verified claim names
-the code path.
+This is a defect Mauria met during this design's review, so it is known to be real, and the
+answer is verifiable by reading the code the incident points at. The interesting output is
+not the answer but the tree: whether the planner opens separate units for the delete
+handler and the scroll or focus logic, closes the one that turns out irrelevant, and stops
+when a verified claim names the code path.
 ### v0 acceptance
 v0 is done when all of these hold on the first incident:
 

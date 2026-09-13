@@ -23,7 +23,7 @@ gets fixed.
 | 12 | Dispatch and step | 8, 11 | Ready tasks run in sequence under time bounds with usage recorded; `incident step` runs one full cycle. |
 | 13 | Blocking channels | 12 | Questions for a human and capability requests block the incident; `incident answer` resumes it. |
 | 14 | Run to completion | 13 | `incident run` with a cycle cap; `satisfied` and `failed` earned per the rules. |
-| 15 | First incident | 14 | The Roughdraft blank-line investigation run end to end, prompts tuned, acceptance checklist signed. |
+| 15 | First incident | 14 | The Roughdraft scroll-after-delete investigation run end to end, prompts tuned, acceptance checklist signed. |
 
 PRs 5, 6, 7 and 8 can run in parallel with 4, 9, 10 and 11 once 2 and 3 are in. Everything
 after v0 is listed at the end and is not in this plan.
@@ -183,11 +183,12 @@ verified claim; the cap stops a runaway loop.
 
 ### PR 15: First incident
 
-Scope: run `noscope incident create "Determine why saving a document in Roughdraft drops
-blank lines and adds trailing whitespace, and identify the code path responsible, in
-~/Documents/Projects/roughdraftplus"` against the live Claude Code provider, one `step` at
-a time; tune the preamble, the role prompts and the planner input until the tree changes
-shape as the design describes; record the run's events and tree in `docs/first-incident.md`.
+Scope: run `noscope incident create "Determine why Roughdraft scrolls to the bottom comment
+after a comment is deleted, instead of staying where the deleted comment was, and identify
+the code path responsible, in ~/Documents/Projects/roughdraftplus"` against the live Claude
+Code provider, one `step` at a time; tune the preamble, the role prompts and the planner
+input until the tree changes shape as the design describes; record the run's events and
+tree in `docs/first-incident.md`.
 
 Acceptance: all eight criteria observed on the live run and checked off in
 `docs/first-incident.md` with the event log excerpts that show each.
