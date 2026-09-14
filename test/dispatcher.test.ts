@@ -263,11 +263,50 @@ describe("dispatcher", () => {
         },
       },
     );
+    const seen = task({
+      id: "t-seen",
+      capability: "reproduce",
+      inputs: {
+        browser: "playwright_browser",
+        url: "http://localhost:7373/",
+        steps: ["click Delete"],
+        observe: ["where the view lands"],
+      },
+      provider: "claude-code",
+      model: "claude-haiku-4-5",
+      status: "completed",
+    });
+    store.setTaskStatus(
+      "i1",
+      seen.id,
+      "completed",
+      "dispatcher",
+      "task.completed",
+      {
+        result: {
+          outcome: "answered",
+          claims: [],
+          findings: {
+            observations: [
+              {
+                step: "click Delete",
+                observed: "scrollTop 5481",
+                screenshot: "/tmp/after.png",
+              },
+            ],
+          },
+          needed: [],
+        },
+      },
+    );
     task({
       id: "t-read",
       capability: "interpret",
       inputs: { question: "what does the match mean?" },
-      evidenceFrom: { claims: [claim.id], tasks: ["t-done", "t-said"] },
+      evidenceFrom: {
+        claims: [claim.id],
+        tasks: ["t-done", "t-said", "t-seen"],
+      },
       provider: "claude-code",
       model: "claude-haiku-4-5",
       budget: { seconds: 30 },
@@ -303,7 +342,7 @@ describe("dispatcher", () => {
       `Evidence attached by reference:\nclaims:\n  - ${claim.id}: `,
     );
     expect(prompt).toContain(
-      'results:\n  - task t-done (grep): {"matches":2}\n  - task t-said (investigate): summary: it focuses the editor',
+      'results:\n  - task t-done (grep): {"matches":2}\n  - task t-said (investigate): summary: it focuses the editor\n  - task t-seen (reproduce): click Delete: scrollTop 5481 (screenshot /tmp/after.png)',
     );
     store.close();
   });
