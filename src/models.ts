@@ -224,6 +224,13 @@ export const UnitClose = z.object({
 });
 
 export const TaskProposal = z.object({
+  ref: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "A label another task in this plan can name in dependsOn, so a chain of tasks runs in one cycle",
+    ),
   unit: z
     .string()
     .min(1)
@@ -234,7 +241,9 @@ export const TaskProposal = z.object({
   expectedOutput: z.string(),
   completionCriteria: z.array(z.string()),
   evidenceRequired: z.array(z.string()),
-  dependsOn: z.array(z.string()),
+  dependsOn: z
+    .array(z.string())
+    .describe("Task ids, or refs of tasks created in this plan"),
   instructions: z.string(),
   provider: z.string().nullable(),
   model: z.string().nullable(),

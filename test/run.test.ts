@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { EXIT, run } from "../src/cli.js";
-import type { ActionPlan } from "../src/models.js";
+import type { ActionPlan, TaskProposal } from "../src/models.js";
 import { Store } from "../src/store.js";
 
 const tree = resolve("test/fixtures/tree");
@@ -110,6 +110,61 @@ describe("incident run", () => {
       EXIT.cannotProceed,
     );
     expect(h.err.at(-1)).toMatch(/is satisfied; run needs an open incident/);
+  });
+
+  it("a chain of grep then interpret, linked by a task ref in one plan, completes in one cycle", {
+    timeout: 60_000,
+  }, async () => {
+    const chained: ActionPlan = {
+      ...findIt,
+      createTasks: [
+        { ...(findIt.createTasks[0] as TaskProposal), ref: "matches" },
+        {
+          unit: "find",
+          capability: "interpret",
+          objective: "say what the match means",
+          inputs: {
+            question: "what does the match mean?",
+            evidence: [{ source: "a.txt:2", content: "delete" }],
+          },
+          expectedOutput: "a conclusion",
+          completionCriteria: [],
+          evidenceRequired: [],
+          dependsOn: ["matches"],
+          instructions: "",
+          provider: "claude-code",
+          model: "claude-haiku-4-5",
+          budget: { seconds: 60 },
+        },
+      ],
+      rationale: "grep, then interpret the matches, in one cycle",
+    };
+    const h = harness([
+      chained,
+      { ...empty, incidentStatus: "satisfied", rationale: "done" },
+    ]);
+    h.ctx.env.NOSCOPE_STUB_OUTPUT = JSON.stringify({
+      outcome: "answered",
+      claims: [],
+      findings: { conclusion: "it is the handler", reasoning: "the match" },
+      needed: [],
+    });
+    await run(["incident", "create", "where is the delete handler"], h.ctx);
+    expect(await run(["incident", "run", "001"], h.ctx)).toBe(EXIT.ok);
+    const store = h.store();
+    const events = store.listEvents("001");
+    const secondPlan = events.filter((e) => e.type === "plan.proposed")[1];
+    const beforeSecond = events.filter(
+      (e) => e.sequence < (secondPlan?.sequence ?? 0),
+    );
+    expect(
+      beforeSecond.filter((e) => e.type === "task.completed"),
+    ).toHaveLength(2);
+    expect(store.listTasks("001").map((t) => [t.id, t.dependsOn])).toEqual([
+      ["001-t01", []],
+      ["001-t02", ["001-t01"]],
+    ]);
+    store.close();
   });
 
   it("the cap stops a runaway loop, and satisfied is refused until it is earned", {

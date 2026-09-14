@@ -41,6 +41,12 @@ const isOpen = (t: Task) => OPEN_TASK.has(t.status);
 
 const label = (t: TaskProposal) => `task "${t.objective}"`;
 
+/** The refs of tasks created in this plan, which other new tasks may name in dependsOn. */
+const taskRefs = (plan: ActionPlan): Set<string> =>
+  new Set(
+    plan.createTasks.flatMap((t) => (t.ref === undefined ? [] : [t.ref])),
+  );
+
 function stable(value: unknown): string {
   return JSON.stringify(value, (_k, v: unknown) =>
     v !== null && typeof v === "object" && !Array.isArray(v)
@@ -122,6 +128,51 @@ const CHECKS: Record<RuleName, Rule> = {
     }
     for (const ref of repeated(plan.createUnits.map((u) => u.ref)))
       reasons.push(`ref ${ref} is used twice`);
+    const existingTasks = new Set(ctx.tasks.map((t) => t.id));
+    const refs = plan.createTasks.flatMap((t) =>
+      t.ref === undefined ? [] : [t.ref],
+    );
+    for (const ref of refs) {
+      if (existingTasks.has(ref))
+        reasons.push(`task ref ${ref} is already a task id`);
+      else if (ref.startsWith(`${ctx.incident.id}-`))
+        reasons.push(
+          `task ref ${ref} starts with the incident id and could be mistaken for a task id`,
+        );
+    }
+    for (const ref of repeated(refs))
+      reasons.push(`task ref ${ref} is used twice`);
+    const refSet = new Set(refs);
+    const depsOf = new Map(
+      plan.createTasks
+        .filter((t) => t.ref !== undefined)
+        .map((t) => [
+          t.ref as string,
+          t.dependsOn.filter((d) => refSet.has(d)),
+        ]),
+    );
+    // A depth-first walk over the new tasks' refs: a ref met again while still on the
+    // current path closes a cycle, and every ref on that path from it is reported once.
+    // A ref merely reached twice by two paths (a shared dependency) is not a cycle.
+    const state = new Map<string, "on path" | "done">();
+    const cyclic = new Set<string>();
+    const visit = (ref: string, path: string[]): void => {
+      const seen = state.get(ref);
+      if (seen === "done") return;
+      if (seen === "on path") {
+        for (const r of path.slice(path.indexOf(ref))) cyclic.add(r);
+        return;
+      }
+      state.set(ref, "on path");
+      path.push(ref);
+      for (const d of depsOf.get(ref) ?? []) visit(d, path);
+      path.pop();
+      state.set(ref, "done");
+    };
+    for (const ref of refs) visit(ref, []);
+    for (const ref of refs)
+      if (cyclic.has(ref))
+        reasons.push(`task ref ${ref} is on a dependency cycle`);
     const parentOf = new Map(plan.createUnits.map((u) => [u.ref, u.parent]));
     for (const u of plan.createUnits) {
       const seen = new Set<string>([u.ref]);
@@ -253,7 +304,9 @@ const CHECKS: Record<RuleName, Rule> = {
     const claims = new Set(
       ctx.claims.filter((c) => c.status === "asserted").map((c) => c.id),
     );
+    const refs = taskRefs(plan);
     const unmet = (id: string): string | null => {
+      if (refs.has(id)) return null;
       const dep = byId.get(id);
       if (dep === undefined) return `depends on no task ${id}`;
       if (cancelling.has(id))

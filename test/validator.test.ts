@@ -535,6 +535,98 @@ describe("validator", () => {
     ]);
   });
 
+  it("Task refs: a chain in one plan passes; a cycle, an unknown ref, a repeated ref and a ref colliding with a task id are refused", () => {
+    const second = (over: Partial<TaskProposal>) =>
+      grepTask({
+        objective: "find the handler",
+        inputs: { root: "src", pattern: "handler" },
+        ...over,
+      });
+    expect(
+      reasonsOf({
+        ...empty,
+        createTasks: [grepTask({ ref: "a" }), second({ dependsOn: ["a"] })],
+      }),
+    ).toEqual([]);
+    expect(
+      reasonsOf({
+        ...empty,
+        createTasks: [
+          grepTask({ ref: "a", dependsOn: ["b"] }),
+          second({ ref: "b", dependsOn: ["a"] }),
+        ],
+      }),
+    ).toEqual([
+      "No cycles: task ref a is on a dependency cycle",
+      "No cycles: task ref b is on a dependency cycle",
+    ]);
+    // A task outside the cycle that depends into it is not reported; only the cycle is.
+    expect(
+      reasonsOf({
+        ...empty,
+        createTasks: [
+          grepTask({ ref: "a", dependsOn: ["b"] }),
+          second({ ref: "b", dependsOn: ["a"] }),
+          grepTask({
+            objective: "outside",
+            inputs: { root: "src", pattern: "outside" },
+            dependsOn: ["a"],
+          }),
+        ],
+      }),
+    ).toEqual([
+      "No cycles: task ref a is on a dependency cycle",
+      "No cycles: task ref b is on a dependency cycle",
+    ]);
+    // A shared dependency (a diamond) and a repeated dependsOn entry are not cycles.
+    expect(
+      reasonsOf({
+        ...empty,
+        createTasks: [
+          grepTask({ ref: "d" }),
+          second({ ref: "b", dependsOn: ["d"] }),
+          grepTask({
+            ref: "c",
+            objective: "third",
+            inputs: { root: "src", pattern: "third" },
+            dependsOn: ["d", "d"],
+          }),
+          grepTask({
+            objective: "fan in",
+            inputs: { root: "src", pattern: "fan" },
+            dependsOn: ["b", "c"],
+          }),
+        ],
+      }),
+    ).toEqual([]);
+    expect(
+      reasonsOf({
+        ...empty,
+        createTasks: [grepTask({ ref: "a", dependsOn: ["a"] })],
+      }),
+    ).toEqual(["No cycles: task ref a is on a dependency cycle"]);
+    expect(
+      reasonsOf({ ...empty, createTasks: [grepTask({ dependsOn: ["nope"] })] }),
+    ).toEqual([
+      'Dependencies resolve: task "find scrollTo calls" depends on no task nope',
+    ]);
+    expect(
+      reasonsOf({
+        ...empty,
+        createTasks: [grepTask({ ref: "a" }), second({ ref: "a" })],
+      }),
+    ).toEqual(["No cycles: task ref a is used twice"]);
+    expect(
+      reasonsOf({
+        ...empty,
+        createTasks: [grepTask({ ref: "t-done" }), second({ ref: "i1-t09" })],
+      }),
+    ).toEqual([
+      "No cycles: task ref t-done is already a task id",
+      "No cycles: task ref i1-t09 starts with the incident id and could be mistaken for a task id",
+    ]);
+  });
+
   it("Status is earned passes once every task is done and a verified claim exists", () => {
     const { store, ctx } = seeded();
     store.setTaskStatus(
