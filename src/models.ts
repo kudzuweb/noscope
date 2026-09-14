@@ -262,6 +262,46 @@ export const SopApplication = z.object({
   angles: z.array(z.string()),
 });
 
+/** What settles an inferred link: a task (id in the incident, or ref in this plan), a question this plan raises (1-based position in questionsForHuman), or a reproduce task. */
+export const Settlement = z.union([
+  z.object({ task: z.string().min(1) }),
+  z.object({ question: z.number().int().positive() }),
+  z.object({ reproduce: z.string().min(1) }),
+]);
+
+/**
+ * The planner's own picture, written each cycle and read back the next: what changed, the
+ * current explanation, the verified claims it rests on, the inferred links and what settles
+ * each, and the claims to keep in view. The rationale says why this plan; this says where
+ * the incident stands.
+ */
+export const Situation = z.object({
+  changed: z
+    .string()
+    .min(1)
+    .describe("What changed since the last cycle, one paragraph"),
+  hypothesis: z
+    .string()
+    .min(1)
+    .describe("The current explanation of the objective, one paragraph"),
+  proven: z
+    .array(
+      z.object({
+        claimId: z.string().min(1),
+        line: z.string().min(1).describe("The claim in one line"),
+      }),
+    )
+    .describe("The verified claims the hypothesis rests on"),
+  inferred: z
+    .array(z.object({ claimId: z.string().min(1), settledBy: Settlement }))
+    .describe(
+      "Every link the hypothesis needs that is not verified, each with what this plan does to settle it",
+    ),
+  keep: z
+    .array(z.string())
+    .describe("Claim ids to hold in view next cycle beyond the proven list"),
+});
+
 export const ActionPlan = z.object({
   createUnits: z.array(UnitProposal),
   closeUnits: z.array(UnitClose),
@@ -273,7 +313,8 @@ export const ActionPlan = z.object({
   capabilityRequests: z.array(CapabilityRequest),
   applySops: z.array(SopApplication),
   incidentStatus: z.enum(["continue", "blocked", "satisfied", "failed"]),
-  rationale: z.string(),
+  situation: Situation,
+  rationale: z.string().describe("Why this plan, one paragraph"),
 });
 
 // What a session returns.
@@ -364,6 +405,8 @@ export type TaskProposal = z.infer<typeof TaskProposal>;
 export type GrantRequest = z.infer<typeof GrantRequest>;
 export type SopApplication = z.infer<typeof SopApplication>;
 export type ActionPlan = z.infer<typeof ActionPlan>;
+export type Situation = z.infer<typeof Situation>;
+export type Settlement = z.infer<typeof Settlement>;
 export type Needed = z.infer<typeof Needed>;
 export type ClaimProposal = z.infer<typeof ClaimProposal>;
 export type SessionResult = z.infer<typeof SessionResult>;

@@ -30,6 +30,13 @@ const empty: ActionPlan = {
   capabilityRequests: [],
   applySops: [],
   incidentStatus: "continue",
+  situation: {
+    changed: "test",
+    hypothesis: "test",
+    proven: [],
+    inferred: [],
+    keep: [],
+  },
   rationale: "test",
 };
 
@@ -125,6 +132,7 @@ describe("apply and tree", () => {
     expect(applied2?.payload).toMatchObject({
       tasks: ["i1-t02", "i1-t03"],
       units: [],
+      situation: { hypothesis: "test", proven: [], keep: [] },
     });
     expect(renderTree(store.listUnits("i1"), store.listTasks("i1"))).toEqual([
       "i1-command [active] command: where deletion moves the scroll position",

@@ -6,6 +6,8 @@ import {
   type Event,
   type Incident,
   jsonSchemaFor,
+  type Settlement,
+  Situation,
   type Task,
   type Unit,
   type Usage,
@@ -27,7 +29,7 @@ An incident is any objective Mauria asks to have pursued; it does not mean somet
 
 The terms: a unit is a box in the incident's tree that owns a slice of the problem; a task is one assignment, owned by one unit, bound to one capability; a capability is the assignable thing, deterministic (its claims arrive verified) or session-backed (its claims arrive asserted); a claim is a statement with a status of asserted, verified or rejected.
 
-You propose structure only. You do not run tools, you do not write, and you never mark your own conclusions true. Read the incident file that follows, in its nine sections, and return one action plan.
+You propose structure only. You do not run tools, you do not write, and you never mark your own conclusions true. Read the incident file that follows, in its ten sections, and return one action plan. Section 10 is the situation you wrote last cycle; write this cycle's in the plan: what changed, the hypothesis, the verified claims it rests on, every inferred link with what this plan does to settle it, and the claims to keep in view.
 
 When you lack something, use the channel for it: a task to a capability for a fact it can retrieve; a grant request for permission; a capability request for means that do not exist yet; a question for a human only for what only a human knows. Name a provider and model on every task to a session-backed capability, and none on a task to a deterministic one. A chain of tasks belongs in one plan: give a task a ref and name that ref in the dependsOn of the task that uses its result, and the chain runs in one cycle. Keep every unit at five or fewer direct children. Set incidentStatus to satisfied only when the objective is established by verified claims and nothing is left open.`;
 
@@ -45,6 +47,7 @@ export const PLANNER_RULES = [
   "Model known: every task to a session-backed capability names a provider and a model that provider serves; a task to a deterministic capability names neither.",
   "Closing is clean: a unit closed in this plan is active, has no running task after this plan's cancels, is closed once, and is given no new unit or task in the same plan.",
   "Status is earned: satisfied requires every open task completed or cancelled, no new tasks, and at least one verified claim; satisfied or failed raises no question, capability request or grant request; blocked raises at least one.",
+  "Inferred links are worked: every inferred link in the situation names what settles it: a task in this plan by its ref, an open task by its id, a question this plan raises by its position, or a reproduce task by its ref or id; every claim id in proven, inferred and keep names a claim in the incident, and every proven claim is verified.",
 ] as const;
 
 function clip(value: unknown): string {
@@ -126,6 +129,33 @@ function taskLine(t: Task): string {
   return `${t.id} [${t.status}] under ${t.unitId}: ${t.capability} — ${t.objective}; inputs ${clip(t.inputs)}${model}${deps}`;
 }
 
+/** The situation the last applied plan carried, rendered as the planner wrote it; none before the first applied plan. */
+function lastSituation(events: readonly Event[]): string[] {
+  let last: unknown;
+  for (const e of events)
+    if (e.type === "plan.applied") last = e.payload.situation;
+  const parsed = Situation.safeParse(last);
+  if (!parsed.success) return ["  (none)"];
+  const s = parsed.data;
+  const settled = (by: Settlement): string =>
+    "task" in by
+      ? `task ${by.task}`
+      : "question" in by
+        ? `question ${by.question} of that plan`
+        : `reproduce ${by.reproduce}`;
+  return [
+    `changed: ${s.changed}`,
+    `hypothesis: ${s.hypothesis}`,
+    "proven:",
+    ...bullets(s.proven.map((p) => `${p.claimId}: ${p.line}`)),
+    "inferred:",
+    ...bullets(
+      s.inferred.map((i) => `${i.claimId}, settled by ${settled(i.settledBy)}`),
+    ),
+    `keep: ${s.keep.join(", ") || "(none)"}`,
+  ];
+}
+
 /**
  * The sequence of the last applied plan; everything after it is "since the last cycle". A
  * rejected proposal does not move it, so a retry sees the same results the rejected plan saw.
@@ -137,8 +167,9 @@ function lastCycleSequence(events: readonly Event[]): number {
 }
 
 /**
- * The incident file rendered as the nine labeled sections in the design's order, each in a
- * stable form, so the prompt prefix caches across cycles.
+ * The incident file rendered as the ten labeled sections in the design's order, each in a
+ * stable form, so the prompt prefix caches across cycles; the situation, which changes
+ * every cycle, comes last.
  */
 export function renderPlannerInput(
   store: Store,
@@ -282,6 +313,9 @@ export function renderPlannerInput(
     ...bullets(PLANNER_RULES),
     "rejected last cycle:",
     ...bullets(rejections, "(nothing rejected)"),
+    "",
+    "## 10. Situation from the last cycle",
+    ...lastSituation(events),
   ];
   return lines.join("\n");
 }

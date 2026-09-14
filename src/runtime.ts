@@ -170,6 +170,7 @@ export function applyPlan(
       );
     store.record(incident.id, "plan.applied", actor, {
       rationale: plan.rationale,
+      situation: plan.situation,
       units: units.map((u) => u.id),
       closedUnits: plan.closeUnits.map((c) => c.unitId),
       tasks: tasks.map((t) => t.id),

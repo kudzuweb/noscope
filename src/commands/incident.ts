@@ -7,6 +7,7 @@ import {
   type Event,
   type Incident,
   type IncidentStatus,
+  Situation,
   type Unit,
 } from "../models.js";
 import { proposePlan } from "../planner.js";
@@ -189,6 +190,29 @@ function renderIncidentFile(
   for (const d of decisions)
     lines.push(`  - ${String(d.payload.rationale)} (${d.createdAt})`);
   if (decisions.length === 0) lines.push("  (none yet)");
+  const last = Situation.safeParse(decisions.at(-1)?.payload.situation);
+  if (last.success) {
+    const s = last.data;
+    lines.push("situation, from the last plan:");
+    lines.push(`  changed: ${s.changed}`);
+    lines.push(`  hypothesis: ${s.hypothesis}`);
+    lines.push("  proven:");
+    for (const p of s.proven) lines.push(`    - ${p.claimId}: ${p.line}`);
+    if (s.proven.length === 0) lines.push("    (none)");
+    lines.push("  inferred:");
+    for (const i of s.inferred) {
+      const by = i.settledBy;
+      const settled =
+        "task" in by
+          ? `task ${by.task}`
+          : "question" in by
+            ? `question ${by.question} of that plan`
+            : `reproduce ${by.reproduce}`;
+      lines.push(`    - ${i.claimId}, settled by ${settled}`);
+    }
+    if (s.inferred.length === 0) lines.push("    (none)");
+    lines.push(`  keep: ${s.keep.join(", ") || "(none)"}`);
+  }
   lines.push("questions waiting on a human:");
   for (const q of incident.questions.filter((q) => q.answer === undefined))
     lines.push(`  - ${q.text}`);

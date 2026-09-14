@@ -648,3 +648,34 @@ Not exactly to spec, with reasons:
 - A task ref and a unit ref live in separate namespaces (a task ref is only ever named in
   `dependsOn`, a unit ref in `unit` and `parent`), so the same label on a unit and a task
   is allowed; the plan did not say either way.
+
+## PR 22: The situation carried in the plan (#22, merged 2026-09-13)
+
+R2-2 of the round 2 plan. Built: `ActionPlan` gains `situation`: what changed, the
+hypothesis, the verified claims it rests on (id and one line each), every inferred link with
+what settles it (a task by ref or id, a question in this plan by position, or a reproduce
+task), and the claim ids to keep in view. `rationale` stays as "why this plan". The planner
+input gains section 10, the last applied plan's situation as the planner wrote it, or
+"(none)" before one; it comes last because the provider caches the unchanged front of a
+prompt. Two validator rules: "Inferred links are worked" and, under "Dependencies
+resolve", every claim id the situation names exists. `plan.proposed` and `plan.applied`
+carry the situation; `incident show` prints the last one under decisions. DESIGN.md Step
+4 (sections and sketch), Step 5 (the rule) and the ICS mapping row for the Planning Section
+follow.
+
+Not exactly to spec, with reasons:
+
+- `settledBy` is a small union (`{task}`, `{question}`, `{reproduce}`) rather than a
+  string, so the validator checks it without parsing; a question is named by its
+  position in this plan's `questionsForHuman`, since questions have no id until the plan
+  is applied.
+- `proven` entries carry a one-line rendering beside the id, per Mauria's review comment
+  that the situation should carry the verified claims, so the brief (R2-5) and section 10
+  can show them without the claims section.
+- The situation's claim ids are checked against every claim, not only asserted ones;
+  a `proven` claim must in addition be verified (from the review), since it is the one
+  place a plan could mark the planner's own conclusion true.
+- A `reproduce` settlement may name an open task by id as well as a ref in this plan,
+  as a `task` settlement may; the plan's text said a ref.
+- From the review: `incident show` prints the whole last situation, not counts; missing
+  ids are reported once; the architecture page lists the situation and section 10.
