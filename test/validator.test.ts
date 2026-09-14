@@ -37,6 +37,13 @@ const empty: ActionPlan = {
   capabilityRequests: [],
   applySops: [],
   incidentStatus: "continue",
+  situation: {
+    changed: "test",
+    hypothesis: "test",
+    proven: [],
+    inferred: [],
+    keep: [],
+  },
   rationale: "test",
 };
 

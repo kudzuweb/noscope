@@ -7,6 +7,7 @@ import {
   type Event,
   type Incident,
   type IncidentStatus,
+  Situation,
   type Unit,
 } from "../models.js";
 import { proposePlan } from "../planner.js";
@@ -189,6 +190,15 @@ function renderIncidentFile(
   for (const d of decisions)
     lines.push(`  - ${String(d.payload.rationale)} (${d.createdAt})`);
   if (decisions.length === 0) lines.push("  (none yet)");
+  const last = Situation.safeParse(decisions.at(-1)?.payload.situation);
+  if (last.success) {
+    lines.push("situation, from the last plan:");
+    lines.push(`  changed: ${last.data.changed}`);
+    lines.push(`  hypothesis: ${last.data.hypothesis}`);
+    lines.push(
+      `  proven ${last.data.proven.length}, inferred ${last.data.inferred.length}, keep ${last.data.keep.length}`,
+    );
+  }
   lines.push("questions waiting on a human:");
   for (const q of incident.questions.filter((q) => q.answer === undefined))
     lines.push(`  - ${q.text}`);

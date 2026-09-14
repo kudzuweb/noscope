@@ -20,6 +20,13 @@ const empty: ActionPlan = {
   capabilityRequests: [],
   applySops: [],
   incidentStatus: "continue",
+  situation: {
+    changed: "test",
+    hypothesis: "test",
+    proven: [],
+    inferred: [],
+    keep: [],
+  },
   rationale: "scripted",
 };
 
@@ -79,6 +86,13 @@ describe("incident run", () => {
       {
         ...empty,
         incidentStatus: "satisfied",
+        situation: {
+          changed: "test",
+          hypothesis: "test",
+          proven: [],
+          inferred: [],
+          keep: [],
+        },
         rationale: "the handler is at a.txt:2",
       },
     ]);
@@ -202,6 +216,13 @@ describe("incident run", () => {
       {
         ...empty,
         incidentStatus: "failed",
+        situation: {
+          changed: "test",
+          hypothesis: "test",
+          proven: [],
+          inferred: [],
+          keep: [],
+        },
         rationale: "the tree has no such handler",
       },
     ]);

@@ -66,7 +66,7 @@ Definitions checked against the NIMS Third Edition (FEMA, October 2017) on 2026-
 | Agency Administrator: the executive above the incident who delegates authority to the Incident Commander, sets policy and priorities, and is briefed. | Mauria. Grants are her delegation of authority, `op show` is her briefing, and questions for a human go to her. |
 | Safety Officer: on the Command Staff, with independent authority to stop any unsafe act. | The validator's effect policy plus grants: nothing that writes runs without her permission, and the validator can stop an action plan on its own. |
 | Public Information Officer and Liaison Officer: what is told outside the incident, and the contact point for other agencies. | None. An incident is not charged with keeping anyone informed; providers and external MCP servers cover the liaison work without a role. |
-| Incident Commander: develops objectives, orders and releases resources. Planning Section: collects the situation picture, tracks resources, drafts the Incident Action Plan for the commander to approve. | Command, the root unit with its incident file, holds the objective and priorities as the Incident Commander does. The planner drafts the action plan as the Planning Section does. The validator, and Mauria for grants and questions, approve it, which is the commander's approval of the plan. One model call per cycle in v0; a separate commander call that revises objectives and priorities is after v0, with the cross-incident layer. |
+| Incident Commander: develops objectives, orders and releases resources. Planning Section: collects the situation picture, tracks resources, drafts the Incident Action Plan for the commander to approve. | Command, the root unit with its incident file, holds the objective and priorities as the Incident Commander does. The planner drafts the action plan as the Planning Section does. The situation the planner writes into each plan, read back to it next cycle and printed by `incident show`, is the Planning Section's situation picture. The validator, and Mauria for grants and questions, approve it, which is the commander's approval of the plan. One model call per cycle in v0; a separate commander call that revises objectives and priorities is after v0, with the cross-incident layer. |
 | Section, Branch, Division, Group, Unit: the organizational levels, distinguished by depth and by functional versus geographic responsibility. | All are the one thing called a unit here. Depth is whatever the tree needs, and a unit's purpose says what it is responsible for. |
 | Single Resource, Strike Team (same kind and type, one leader), Task Force (mixed kinds for one mission). | A capability is a single resource, and equipment is equipment; the word is ICS's. A capability that includes other capabilities is the strike team or task force. |
 | Resource typing: categorizing resources by capability so everyone means the same thing by a name. | The capability registry: name, description, schemas, side effects. |
@@ -102,7 +102,7 @@ noscope/
 │   ├── runtime.ts        # the cycle
 │   ├── store.ts          # SQLite: schema, transactions, queries
 │   ├── models.ts         # zod contracts shared by every module
-│   ├── planner.ts        # the one provider call per cycle: renders the nine sections, records plan.proposed
+│   ├── planner.ts        # the one provider call per cycle: renders the ten sections, records plan.proposed
 │   ├── validator.ts      # action plan rules
 │   ├── dispatcher.ts     # runs ready tasks through capabilities
 │   ├── verifier.ts       # turns results into claims
@@ -289,6 +289,7 @@ Input, rendered as labeled sections in a stable order so the prefix caches:
 7. Open tasks.
 8. The capability registry, each with its description and the input fields a task to it must carry (name, type, required or default), and for each provider every model it serves with its cost, so every option is on the table and no task is proposed with inputs the capability cannot take.
 9. The rules the validator will apply, so the planner does not propose what will be rejected.
+10. The situation from the last applied plan, as the planner wrote it: what changed, the hypothesis, the verified claims it rests on, the inferred links with what settles each, and the claims to keep in view; "(none)" before the first applied plan. Last, because the provider caches the unchanged front of a prompt and this section changes every cycle.
 
 Output:
 
@@ -304,7 +305,8 @@ const ActionPlan = z.object({
   grantRequests: z.array(GrantRequest),          // capability, effect, and the reason it is needed; after v0
   capabilityRequests: z.array(CapabilityRequest), // means the planner lacks: what it would need and why; blocks the incident
   applySops: z.array(SopApplication), // SOP name, parent unit, the angles chosen; after v0
-  rationale: z.string(),                         // recorded on the action plan event, never acted on
+  situation: Situation,                          // changed, hypothesis, proven (claim id and one line each), inferred (claim id and what settles it: a task, a question in this plan, or a reproduce task), keep (claim ids)
+  rationale: z.string(),                         // why this plan; recorded on the action plan event, never acted on
 });
 ```
 

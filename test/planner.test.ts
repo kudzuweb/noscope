@@ -138,7 +138,46 @@ function cycledIncident(store: Store) {
 }
 
 describe("planner", () => {
-  it("renders the incident file as the nine sections in the design's order", () => {
+  it("section 10 carries the last applied plan's situation as the planner wrote it, and (none) before one", () => {
+    const store = new Store(":memory:");
+    scriptedIncident(store, "i1", AT);
+    const incident = store.getIncident("i1");
+    if (incident === undefined) throw new Error("no incident");
+    expect(renderPlannerInput(store, incident, [fakeProvider])).toContain(
+      "## 10. Situation from the last cycle\n  (none)",
+    );
+    store.record("i1", "plan.applied", "runtime", {
+      rationale: "narrow in",
+      situation: {
+        changed: "the greps landed",
+        hypothesis: "focus() scrolls the resting selection",
+        proven: [{ claimId: "c1", line: "PageCard.tsx:1884 calls focus()" }],
+        inferred: [
+          { claimId: "c2", settledBy: { task: "t-next" } },
+          { claimId: "c3", settledBy: { question: 1 } },
+          { claimId: "c4", settledBy: { reproduce: "browser" } },
+        ],
+        keep: ["c5"],
+      },
+    });
+    const text = renderPlannerInput(store, incident, [fakeProvider]);
+    expect(text.split("## 10. Situation from the last cycle\n")[1]).toBe(
+      [
+        "changed: the greps landed",
+        "hypothesis: focus() scrolls the resting selection",
+        "proven:",
+        "  - c1: PageCard.tsx:1884 calls focus()",
+        "inferred:",
+        "  - c2, settled by task t-next",
+        "  - c3, settled by question 1 of that plan",
+        "  - c4, settled by reproduce browser",
+        "keep: c5",
+      ].join("\n"),
+    );
+    store.close();
+  });
+
+  it("renders the incident file as the ten sections in the design's order", () => {
     const store = new Store(":memory:");
     cycledIncident(store);
     const incident = store.getIncident("i1");
@@ -217,7 +256,10 @@ describe("planner", () => {
         - Closing is clean: a unit closed in this plan is active, has no running task after this plan's cancels, is closed once, and is given no new unit or task in the same plan.
         - Status is earned: satisfied requires every open task completed or cancelled, no new tasks, and at least one verified claim; satisfied or failed raises no question, capability request or grant request; blocked raises at least one.
       rejected last cycle:
-        - Span of control: u-scroll would have 8 children"
+        - Span of control: u-scroll would have 8 children
+
+      ## 10. Situation from the last cycle
+        (none)"
     `);
   });
 
@@ -256,6 +298,13 @@ describe("planner", () => {
       capabilityRequests: [],
       applySops: [],
       incidentStatus: "continue",
+      situation: {
+        changed: "test",
+        hypothesis: "test",
+        proven: [],
+        inferred: [],
+        keep: [],
+      },
       rationale: "start from the scroll call sites",
     };
     process.env.NOSCOPE_STUB_OUTPUT = JSON.stringify(plan);

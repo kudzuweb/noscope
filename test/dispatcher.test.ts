@@ -438,6 +438,13 @@ describe("incident step", () => {
       capabilityRequests: [],
       applySops: [],
       incidentStatus: "continue",
+      situation: {
+        changed: "test",
+        hypothesis: "test",
+        proven: [],
+        inferred: [],
+        keep: [],
+      },
       rationale: "grep first",
     };
     out.length = 0;
@@ -472,6 +479,13 @@ describe("incident step", () => {
       createUnits: [],
       createTasks: [],
       incidentStatus: "satisfied",
+      situation: {
+        changed: "test",
+        hypothesis: "test",
+        proven: [],
+        inferred: [],
+        keep: [],
+      },
       rationale: "found it",
     };
     expect(
