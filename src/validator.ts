@@ -41,6 +41,12 @@ const isOpen = (t: Task) => OPEN_TASK.has(t.status);
 
 const label = (t: TaskProposal) => `task "${t.objective}"`;
 
+/** The refs of tasks created in this plan, which other new tasks may name in dependsOn. */
+const taskRefs = (plan: ActionPlan): Set<string> =>
+  new Set(
+    plan.createTasks.flatMap((t) => (t.ref === undefined ? [] : [t.ref])),
+  );
+
 function stable(value: unknown): string {
   return JSON.stringify(value, (_k, v: unknown) =>
     v !== null && typeof v === "object" && !Array.isArray(v)
@@ -122,6 +128,44 @@ const CHECKS: Record<RuleName, Rule> = {
     }
     for (const ref of repeated(plan.createUnits.map((u) => u.ref)))
       reasons.push(`ref ${ref} is used twice`);
+    const existingTasks = new Set(ctx.tasks.map((t) => t.id));
+    const refs = plan.createTasks.flatMap((t) =>
+      t.ref === undefined ? [] : [t.ref],
+    );
+    for (const ref of refs) {
+      if (existingTasks.has(ref))
+        reasons.push(`task ref ${ref} is already a task id`);
+      else if (ref.startsWith(`${ctx.incident.id}-`))
+        reasons.push(
+          `task ref ${ref} starts with the incident id and could be mistaken for a task id`,
+        );
+    }
+    for (const ref of repeated(refs))
+      reasons.push(`task ref ${ref} is used twice`);
+    const refSet = new Set(refs);
+    const depsOf = new Map(
+      plan.createTasks
+        .filter((t) => t.ref !== undefined)
+        .map((t) => [
+          t.ref as string,
+          t.dependsOn.filter((d) => refSet.has(d)),
+        ]),
+    );
+    for (const t of plan.createTasks) {
+      const seen = new Set<string>(t.ref === undefined ? [] : [t.ref]);
+      const stack = t.dependsOn.filter((d) => refSet.has(d));
+      let cycle: string | null = null;
+      while (stack.length > 0 && cycle === null) {
+        const at = stack.pop() as string;
+        if (seen.has(at)) cycle = at;
+        else {
+          seen.add(at);
+          stack.push(...(depsOf.get(at) ?? []));
+        }
+      }
+      if (cycle !== null)
+        reasons.push(`${label(t)} depends on itself through task ref ${cycle}`);
+    }
     const parentOf = new Map(plan.createUnits.map((u) => [u.ref, u.parent]));
     for (const u of plan.createUnits) {
       const seen = new Set<string>([u.ref]);
@@ -253,7 +297,9 @@ const CHECKS: Record<RuleName, Rule> = {
     const claims = new Set(
       ctx.claims.filter((c) => c.status === "asserted").map((c) => c.id),
     );
+    const refs = taskRefs(plan);
     const unmet = (id: string): string | null => {
+      if (refs.has(id)) return null;
       const dep = byId.get(id);
       if (dep === undefined) return `depends on no task ${id}`;
       if (cancelling.has(id))

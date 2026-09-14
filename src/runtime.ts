@@ -83,8 +83,16 @@ export function applyPlan(
   const completed = new Set(
     existingTasks.filter((t) => t.status === "completed").map((t) => t.id),
   );
+  const taskId = (i: number) =>
+    `${incident.id}-t${pad(existingTasks.length + i + 1)}`;
+  const taskIds = new Map(
+    plan.createTasks.flatMap((t, i) =>
+      t.ref === undefined ? [] : [[t.ref, taskId(i)] as const],
+    ),
+  );
+  const resolveTask = (ref: string) => taskIds.get(ref) ?? ref;
   const tasks: Task[] = plan.createTasks.map((t, i) => ({
-    id: `${incident.id}-t${pad(existingTasks.length + i + 1)}`,
+    id: taskId(i),
     incidentId: incident.id,
     unitId: resolveUnit(t.unit),
     capability: t.capability,
@@ -93,12 +101,14 @@ export function applyPlan(
     expectedOutput: t.expectedOutput,
     completionCriteria: t.completionCriteria,
     evidenceRequired: t.evidenceRequired,
-    dependsOn: t.dependsOn,
+    dependsOn: t.dependsOn.map(resolveTask),
     provider: t.provider,
     model: t.model,
     instructions: t.instructions,
     budget: t.budget,
-    status: t.dependsOn.every((d) => completed.has(d)) ? "ready" : "pending",
+    status: t.dependsOn.every((d) => completed.has(resolveTask(d)))
+      ? "ready"
+      : "pending",
     result: null,
     createdAt: at,
     completedAt: null,

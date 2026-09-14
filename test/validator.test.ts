@@ -535,6 +535,53 @@ describe("validator", () => {
     ]);
   });
 
+  it("Task refs: a chain in one plan passes; a cycle, an unknown ref, a repeated ref and a ref colliding with a task id are refused", () => {
+    const second = (over: Partial<TaskProposal>) =>
+      grepTask({
+        objective: "find the handler",
+        inputs: { root: "src", pattern: "handler" },
+        ...over,
+      });
+    expect(
+      reasonsOf({
+        ...empty,
+        createTasks: [grepTask({ ref: "a" }), second({ dependsOn: ["a"] })],
+      }),
+    ).toEqual([]);
+    expect(
+      reasonsOf({
+        ...empty,
+        createTasks: [
+          grepTask({ ref: "a", dependsOn: ["b"] }),
+          second({ ref: "b", dependsOn: ["a"] }),
+        ],
+      }),
+    ).toEqual([
+      'No cycles: task "find scrollTo calls" depends on itself through task ref a',
+      'No cycles: task "find the handler" depends on itself through task ref b',
+    ]);
+    expect(
+      reasonsOf({ ...empty, createTasks: [grepTask({ dependsOn: ["nope"] })] }),
+    ).toEqual([
+      'Dependencies resolve: task "find scrollTo calls" depends on no task nope',
+    ]);
+    expect(
+      reasonsOf({
+        ...empty,
+        createTasks: [grepTask({ ref: "a" }), second({ ref: "a" })],
+      }),
+    ).toEqual(["No cycles: task ref a is used twice"]);
+    expect(
+      reasonsOf({
+        ...empty,
+        createTasks: [grepTask({ ref: "t-done" }), second({ ref: "i1-t09" })],
+      }),
+    ).toEqual([
+      "No cycles: task ref t-done is already a task id",
+      "No cycles: task ref i1-t09 starts with the incident id and could be mistaken for a task id",
+    ]);
+  });
+
   it("Status is earned passes once every task is done and a verified claim exists", () => {
     const { store, ctx } = seeded();
     store.setTaskStatus(

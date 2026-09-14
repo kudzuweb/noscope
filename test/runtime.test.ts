@@ -136,6 +136,21 @@ describe("apply and tree", () => {
     store.close();
   });
 
+  it("assigns task ids in plan order and rewrites a dependsOn ref to the id, leaving the dependent pending", () => {
+    const { apply } = fresh();
+    const applied = apply({
+      ...empty,
+      createTasks: [
+        grepTask("i1-command", "scrollTo", { ref: "first" }),
+        grepTask("i1-command", "deleteComment", { dependsOn: ["first"] }),
+      ],
+    });
+    expect(applied.tasks.map((t) => [t.id, t.dependsOn, t.status])).toEqual([
+      ["i1-t01", [], "ready"],
+      ["i1-t02", ["i1-t01"], "pending"],
+    ]);
+  });
+
   it("resolves a parent named by a ref defined later in the same plan", () => {
     const { apply } = fresh();
     const applied = apply({

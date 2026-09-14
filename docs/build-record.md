@@ -631,3 +631,20 @@ Not exactly to spec, with reasons:
   preamble test pins the three scale lines. `incident review` reads claims from the log's
   events, not the table, so on an incident recorded before this PR it shows no inferred
   counts even after the file is migrated; the counts start with the next incident.
+
+## PR 21: Task refs (#21, merged 2026-09-13)
+
+R2-4 of the round 2 plan. Built: a task in a plan may carry a `ref`, and another task in
+the same plan may name it in `dependsOn`, so a chain of tasks runs in one cycle. The
+validator holds a task ref to the unit ref's three tests against task ids and refuses a
+cycle among new tasks ("No cycles"), and accepts a ref as a dependency ("Dependencies
+resolve"). `applyPlan` assigns ids in plan order and rewrites refs to ids before creating
+tasks; the dependent enters pending and the dispatcher, unchanged, runs it in the same pass
+once its dependency completes. The planner prompt and rules say so. DESIGN.md Step 4
+(the plan sketch) and Step 5 (the two rules) follow.
+
+Not exactly to spec, with reasons:
+
+- A task ref and a unit ref live in separate namespaces (a task ref is only ever named in
+  `dependsOn`, a unit ref in `unit` and `parent`), so the same label on a unit and a task
+  is allowed; the plan did not say either way.

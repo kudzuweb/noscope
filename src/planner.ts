@@ -29,19 +29,19 @@ The terms: a unit is a box in the incident's tree that owns a slice of the probl
 
 You propose structure only. You do not run tools, you do not write, and you never mark your own conclusions true. Read the incident file that follows, in its nine sections, and return one action plan.
 
-When you lack something, use the channel for it: a task to a capability for a fact it can retrieve; a grant request for permission; a capability request for means that do not exist yet; a question for a human only for what only a human knows. Name a provider and model on every task to a session-backed capability, and none on a task to a deterministic one. Keep every unit at five or fewer direct children. Set incidentStatus to satisfied only when the objective is established by verified claims and nothing is left open.`;
+When you lack something, use the channel for it: a task to a capability for a fact it can retrieve; a grant request for permission; a capability request for means that do not exist yet; a question for a human only for what only a human knows. Name a provider and model on every task to a session-backed capability, and none on a task to a deterministic one. A chain of tasks belongs in one plan: give a task a ref and name that ref in the dependsOn of the task that uses its result, and the chain runs in one cycle. Keep every unit at five or fewer direct children. Set incidentStatus to satisfied only when the objective is established by verified claims and nothing is left open.`;
 
 /** The rules the validator applies, stated so the planner does not propose what will be rejected (DESIGN.md Step 5). */
 export const PLANNER_RULES = [
   "Capabilities exist: every task names a registered capability.",
   "Units exist: every task's unit and every new unit's parent is an active unit id or the ref of a unit created in this plan; a closed unit takes no new work.",
-  "No cycles: the tree stays a tree; a ref is used once, is not an existing unit id, and does not start with the incident id.",
+  "No cycles: the tree stays a tree; a unit ref is used once, is not an existing unit id, and does not start with the incident id; a task ref likewise against task ids, and new tasks' dependsOn form no cycle.",
   "No duplicates: no new task repeats an open or completed one, or another new task, with the same capability and effective inputs under the same unit; a task this plan cancels does not count.",
   "Inputs validate: task inputs parse against the capability's input schema.",
   "Span of control: no unit ends the plan with more than 7 direct children, units and tasks combined; target 5.",
   "Effect policy: only read_only capabilities in v0.",
   "Budget respected: a task's budget, where it sets one, fits inside the incident's remaining budget; a session-backed task carries a time bound and, when the incident bounds tokens, a token bound; a deterministic task needs neither.",
-  "Dependencies resolve: every dependsOn names a task in the incident that is completed or still open and not cancelled in this plan; every cancelTasks names an open task, once; every claimsToVerify names an asserted claim.",
+  "Dependencies resolve: every dependsOn names a task in the incident that is completed or still open and not cancelled in this plan, or the ref of a task created in this plan; every cancelTasks names an open task, once; every claimsToVerify names an asserted claim.",
   "Model known: every task to a session-backed capability names a provider and a model that provider serves; a task to a deterministic capability names neither.",
   "Closing is clean: a unit closed in this plan is active, has no running task after this plan's cancels, is closed once, and is given no new unit or task in the same plan.",
   "Status is earned: satisfied requires every open task completed or cancelled, no new tasks, and at least one verified claim; satisfied or failed raises no question, capability request or grant request; blocked raises at least one.",
