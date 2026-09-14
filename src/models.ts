@@ -322,7 +322,11 @@ export const ActionPlan = z.object({
   claimsToVerify: z.array(z.string()),
   questionsForHuman: z.array(z.string()),
   grantRequests: z.array(GrantRequest),
-  capabilityRequests: z.array(CapabilityRequest),
+  capabilityRequests: z
+    .array(CapabilityRequest.omit({ answer: true }))
+    .describe(
+      "What the planner needs and why; the answer is Mauria's, through incident provide",
+    ),
   applySops: z.array(SopApplication),
   incidentStatus: z.enum(["continue", "blocked", "satisfied", "failed"]),
   situation: Situation,

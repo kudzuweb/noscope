@@ -225,6 +225,16 @@ describe("contracts", () => {
     }
     const planSchema = jsonSchemaFor(ActionPlan) as { required?: string[] };
     expect(planSchema.required).toContain("incidentStatus");
+    const requestShape = (
+      jsonSchemaFor(ActionPlan) as {
+        properties: {
+          capabilityRequests: {
+            items: { properties: Record<string, unknown> };
+          };
+        };
+      }
+    ).properties.capabilityRequests.items.properties;
+    expect(Object.keys(requestShape)).toEqual(["need", "why"]);
     expect(() => jsonSchemaFor(z.object({ when: z.date() }))).toThrow();
     expect(() => jsonSchemaFor(z.union([z.string(), z.number()]))).toThrow();
   });
