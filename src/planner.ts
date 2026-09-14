@@ -97,7 +97,8 @@ function describeInputs(schema: z.ZodType): string {
 }
 
 function claimLine(c: Claim): string {
-  return `${c.id}: ${c.subject} ${c.predicate} ${clip(c.object)} (confidence ${c.confidence ?? "n/a"}; evidence ${c.evidence.join(", ") || "none"})`;
+  const basis = c.status === "asserted" ? `${c.basis}; ` : "";
+  return `${c.id}: ${c.subject} ${c.predicate} ${clip(c.object)} (${basis}confidence ${c.confidence ?? "n/a"}; evidence ${c.evidence.join(", ") || "none"})`;
 }
 
 function unitTree(units: readonly Unit[]): string[] {

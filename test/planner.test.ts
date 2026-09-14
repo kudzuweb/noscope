@@ -68,6 +68,7 @@ function cycledIncident(store: Store) {
       predicate: "matches",
       object: { pattern: "scrollTo", text: "el.scrollTo(0, bottom)" },
       status: "verified",
+      basis: "observed",
       confidence: 1,
       evidence: ["/repo/src/view.ts:88"],
       provenance: {
@@ -87,6 +88,7 @@ function cycledIncident(store: Store) {
       predicate: "runs_after_delete",
       object: true,
       status: "asserted",
+      basis: "inferred",
       confidence: 0.7,
       evidence: ["/repo/src/view.ts:80"],
       provenance: {
@@ -169,7 +171,7 @@ describe("planner", () => {
         - c-verified: /repo/src/view.ts:88 matches {"pattern":"scrollTo","text":"el.scrollTo(0, bottom)"} (confidence 1; evidence /repo/src/view.ts:88)
 
       ## 3. Asserted claims
-        - c-asserted: /repo/src/view.ts:88 runs_after_delete true (confidence 0.7; evidence /repo/src/view.ts:80) [from investigate task t-inv, session sess-1]
+        - c-asserted: /repo/src/view.ts:88 runs_after_delete true (inferred; confidence 0.7; evidence /repo/src/view.ts:80) [from investigate task t-inv, session sess-1]
 
       ## 4. Unit tree
         i1-command [active] command: where deletion moves the scroll position

@@ -47,7 +47,7 @@ Still proposed rather than ruled, and settled by building them: the storage tabl
 | Equipment | A primitive: a function the runtime calls in-process, a Claude Code built-in tool such as Read, Grep or Bash under an allowlist, or later anything else a capability needs to do its work. Registered by name. Never assigned by the planner. |
 | Capability | The assignable thing: declared equipment plus, when judgment is needed, a headless session with a system prompt; the model comes from each task. A capability with no session is deterministic and produces verified claims; one with a session produces asserted claims. A capability may include other capabilities. Later, a human. |
 | Provider | A program that can run a session: Claude Code first, Codex second, later an HTTP API or a human. A provider maps the session fields onto its own command line and turns its output back into the runtime's result shape. Everything above the session layer is provider-blind. |
-| Claim | A statement about reality with epistemic status `asserted`, `verified` or `rejected`, plus provenance. LLM output enters as `asserted`; only deterministic verification promotes it. |
+| Claim | A statement about reality with epistemic status `asserted`, `verified` or `rejected`, plus provenance and a basis: `observed` when it was seen in code or in output, `inferred` when it was reasoned to from what was seen. LLM output enters as `asserted`; only deterministic verification promotes it. Confidence means the same on every claim: observed, 0.9 to 1; inferred from code, at most 0.7; runtime behavior not reproduced, at most 0.5. |
 | Event | One append-only record of something that happened, written in the same transaction as the state change it describes. |
 | Action plan | The planner's plan for one cycle: units to create or close, tasks to create or cancel, questions for a human, grant requests, capability requests, incident status. It is proposed by the planner and approved by the validator, and only an approved plan is applied. |
 | Cycle | Observe, organize, validate, dispatch, record, stop. `incident step` runs exactly one. |
@@ -144,7 +144,7 @@ mutation in its payload, which is what makes the tables rebuildable from the eve
 | `incidents` | `id`, `objective`, `constraints_json`, `priorities_json`, `budget_json`, `questions_json`, `capability_requests_json`, `status` (`open`, `satisfied`, `failed`, `blocked`), `created_at`, `updated_at` |
 | `units` | `id`, `incident_id`, `parent_id`, `purpose`, `status` (`active`, `closed`), `created_at`, `closed_at` |
 | `tasks` | `id`, `incident_id`, `unit_id`, `capability`, `objective`, `inputs_json`, `expected_output`, `completion_criteria_json`, `evidence_required_json`, `depends_on_json`, `provider`, `model` (both required for a session-backed capability), `instructions`, `budget_json`, `status` (`pending`, `ready`, `running`, `completed`, `failed`, `cancelled`), `result_json`, `created_at`, `completed_at` |
-| `claims` | `id`, `incident_id`, `subject`, `predicate`, `object_json`, `status` (`asserted`, `verified`, `rejected`), `confidence`, `evidence_json`, `provenance_json`, `created_at` |
+| `claims` | `id`, `incident_id`, `subject`, `predicate`, `object_json`, `status` (`asserted`, `verified`, `rejected`), `basis` (`observed`, `inferred`), `confidence`, `evidence_json`, `provenance_json`, `created_at` |
 | `events` | `id`, `scope` (`incident` or `system`), `incident_id` (required for an incident event, null for a system event, enforced by a CHECK), `sequence` (unique per incident, and per the system scope), `type`, `actor`, `payload_json`, `created_at`. A payload carries a `mutation` naming the exact state change the event records, so replay applies that and nothing else; an event with no mutation, such as `plan.proposed`, changes no state. |
 | `grants` | `id`, `scope` (`incident` or `standing`), `incident_id` (null for standing), `capability`, `effect`, `reason`, `granted_by`, `per_task` (boolean), `created_at`. Empty in v0. |
 
@@ -153,6 +153,11 @@ Event types in v0: `incident.created`, `incident.blocked`, `incident.closed`, `u
 `task.cancelled`, `task.insufficient`, `claim.asserted`, `claim.verified`, `claim.rejected`,
 `plan.proposed`, `plan.rejected`, `plan.applied`, `task.usage`, `budget.exceeded`,
 `question.asked`, `question.answered`, `grant.requested`, `grant.given`, `capability.requested`.
+
+The file records its schema version in `user_version`. A version 1 file (before `basis`)
+is migrated in place when opened: verified claims become `observed`, every other claim
+`inferred`, since a session claim with no recorded basis is read the conservative way; a
+file at any other version is refused.
 
 Capabilities are not a table. The registry is code, and `incident show` prints what is
 registered.
@@ -360,6 +365,8 @@ resolved before the run, and every claim subject is an absolute path (`/abs/file
 `/abs/file:line`), so claims about one file from different tasks compare equal and a
 session's assertion can match a later deterministic result. A claim can only enter the store
 as `asserted` or `verified`, and `verified` on entry requires deterministic provenance. A
+deterministic claim enters with basis `observed`; a session names the basis of each of its
+claims, and a result without one does not fit the schema. A
 session-backed capability's result
 becomes `asserted` claims with the session id as provenance; an `insufficient` result becomes
 no claims and an `task.insufficient` event carrying what was needed. Promotion of an asserted

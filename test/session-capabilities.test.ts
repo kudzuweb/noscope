@@ -127,6 +127,7 @@ describe("session capabilities", () => {
             object: "comment deletion",
             confidence: 0.8,
             evidence: ["/repo/src/comments.ts:42"],
+            basis: "inferred",
           },
         ],
         findings: {
@@ -152,6 +153,7 @@ describe("session capabilities", () => {
     expect(claims).toHaveLength(1);
     expect(store.listClaims("i1")[0]).toMatchObject({
       status: "asserted",
+      basis: "inferred",
       subject: "/repo/src/comments.ts:42",
       confidence: 0.8,
       provenance: {

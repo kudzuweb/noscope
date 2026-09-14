@@ -253,6 +253,7 @@ describe("deterministic capabilities", () => {
     const stored = store.listClaims("i1");
     expect(stored[0]).toMatchObject({
       status: "verified",
+      basis: "observed",
       subject: `${join(tree, "a.txt")}:2`,
       provenance: {
         capability: "grep",

@@ -284,6 +284,7 @@ export function renderReview(
 
     // Claims entered this cycle, by the task that entered them; a session's id rides on its claims.
     const claimsByTask = new Map<string, Map<string, number>>();
+    const inferredByTask = new Map<string, number>();
     const sessionByTask = new Map<string, string>();
     for (const e of cycle.events) {
       if (mutationKind(e) === "claim.create") {
@@ -292,6 +293,11 @@ export function renderReview(
         const byStatus = claimsByTask.get(claim.provenance.taskId) ?? new Map();
         byStatus.set(claim.status, (byStatus.get(claim.status) ?? 0) + 1);
         claimsByTask.set(claim.provenance.taskId, byStatus);
+        if (claim.basis === "inferred")
+          inferredByTask.set(
+            claim.provenance.taskId,
+            (inferredByTask.get(claim.provenance.taskId) ?? 0) + 1,
+          );
         if (claim.provenance.sessionId !== undefined)
           sessionByTask.set(
             claim.provenance.taskId,
@@ -331,10 +337,15 @@ export function renderReview(
       ]
         .map(([status, count]) => `${count} ${status}`)
         .join(", ");
+      const inferred = inferredByTask.get(taskId);
+      const claimsText =
+        created === ""
+          ? ""
+          : `  claims ${created}${inferred === undefined ? "" : ` (${inferred} inferred)`}`;
       const sessionId =
         str(outcome?.payload.sessionId) || (sessionByTask.get(taskId) ?? "");
       lines.push(
-        `  ${taskId} ${capability}${model === null ? " (deterministic)" : ` ${model}`}: ${spend}  ${outcomeText}${created === "" ? "" : `  claims ${created}`}${session(sessionId)}`,
+        `  ${taskId} ${capability}${model === null ? " (deterministic)" : ` ${model}`}: ${spend}  ${outcomeText}${claimsText}${session(sessionId)}`,
       );
       if (outcome?.type === "task.failed")
         lines.push(`    failed: ${str(outcome.payload.reason)}`);

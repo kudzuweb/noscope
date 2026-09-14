@@ -603,3 +603,26 @@ Not exactly to spec, with reasons:
   default had hidden a lookup bug: an outcome event names its task inside its recorded
   mutation, not at the top of its payload, so no outcome was ever matched and every run
   printed "completed"; the review now reads the id from either place.
+
+## PR 20: Claim basis and the confidence scale (#20, merged 2026-09-13)
+
+R2-1 of the round 2 plan. Built: every claim carries `basis`, `observed` or `inferred`.
+Deterministic claims enter observed; a session's claim must name its basis or its result
+does not fit the schema. The session preamble defines the confidence scale beside the
+term: observed, 0.9 to 1; inferred from code, at most 0.7; runtime behavior not reproduced,
+at most 0.5. The planner sees the basis on each asserted claim; `incident review` counts
+inferred claims per task. DESIGN.md Vocabulary, Step 2 and Step 6 and the architecture
+page follow.
+
+Not exactly to spec, with reasons:
+
+- The store gained its first migration: a version 1 file (every file before this PR,
+  incident 001 included) is migrated in place when opened, verified claims becoming
+  observed and every other claim inferred, since a session claim with no recorded basis is
+  read the conservative way. The design had said a file at another version is refused;
+  refusing would have made the first incident unreadable by the build that reviews it.
+- Replaying events recorded before this PR fills the basis the same way, so the replay
+  test and the review command keep working on the old log.
+- `ClaimProposal` keeps `basis` optional because the deterministic capabilities build
+  proposals too and are observed by construction; the session result schema uses
+  `SessionClaimProposal`, where it is required.

@@ -69,6 +69,7 @@ function scripted(store: Store): void {
     predicate: "handles comment deletion",
     object: true,
     status: "asserted",
+    basis: "inferred",
     confidence: 0.8,
     evidence: ["src/a.ts:12"],
     provenance: {
@@ -314,6 +315,7 @@ describe("store", () => {
       subject: "s",
       predicate: "p",
       object: null,
+      basis: "observed" as const,
       confidence: 1,
       evidence: [],
       createdAt: now(),
@@ -323,6 +325,7 @@ describe("store", () => {
         {
           ...base,
           status: "verified",
+          basis: "observed",
           provenance: {
             capability: "investigate",
             taskId: "t1",
@@ -346,6 +349,7 @@ describe("store", () => {
       {
         ...base,
         status: "verified",
+        basis: "observed",
         provenance: { capability: "grep", taskId: "t1", inputs: {} },
       },
       "verifier",
@@ -363,6 +367,7 @@ describe("store", () => {
       subject: "s",
       predicate: "p",
       status: "asserted",
+      basis: "inferred",
       confidence: null,
       evidence: [],
       provenance: { capability: "grep", taskId: "t1" },
@@ -491,14 +496,55 @@ describe("store", () => {
     store.close();
   });
 
-  it("refuses a file written by another schema version", async () => {
+  it("migrates a version 1 file in place, giving every claim a basis, and refuses any other version", async () => {
     const { mkdtempSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
-    const path = `${mkdtempSync(`${tmpdir()}/noscope-`)}/old.sqlite`;
+    const dir = mkdtempSync(`${tmpdir()}/noscope-`);
+    const path = `${dir}/v1.sqlite`;
     const s1 = new Store(path);
-    s1.db.pragma("user_version = 99");
+    scripted(s1);
+    s1.db.exec("ALTER TABLE claims DROP COLUMN basis");
+    s1.db.exec(
+      "INSERT INTO claims (id, incident_id, subject, predicate, object_json, status, confidence, evidence_json, provenance_json, created_at) SELECT 'c-old', incident_id, subject, predicate, object_json, 'asserted', confidence, evidence_json, provenance_json, created_at FROM claims LIMIT 1",
+    );
+    s1.db.pragma("user_version = 1");
     s1.close();
-    expect(() => new Store(path)).toThrow(/schema version 99/);
+    const s2 = new Store(path);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(2);
+    expect(
+      s2
+        .listClaims("i1")
+        .map((c) => [c.status, c.basis])
+        .sort(),
+    ).toEqual([
+      ["asserted", "inferred"],
+      ["verified", "observed"],
+    ]);
+    s2.close();
+    const other = `${dir}/other.sqlite`;
+    const s3 = new Store(other);
+    s3.db.pragma("user_version = 99");
+    s3.close();
+    expect(() => new Store(other)).toThrow(/schema version 99/);
+  });
+
+  it("replays a claim recorded before claims carried a basis", () => {
+    const a = new Store(":memory:");
+    scripted(a);
+    const events = a.listEvents("i1").map((e) => {
+      const m = e.payload.mutation as
+        | { kind: string; claim?: Record<string, unknown> }
+        | undefined;
+      if (m === undefined || m.kind !== "claim.create" || m.claim === undefined)
+        return e;
+      const { basis: _b, ...claim } = m.claim;
+      return { ...e, payload: { ...e.payload, mutation: { ...m, claim } } };
+    });
+    const b = new Store(":memory:");
+    b.replay([...a.listEvents(null), ...events]);
+    expect(b.listClaims("i1")[0]?.basis).toBe("inferred");
+    a.close();
+    b.close();
   });
 
   it("sums task usage across old and new shapes, and reports cost only when every event carries one", () => {
