@@ -1,4 +1,8 @@
 import {
+  type ExternalEquipment,
+  getExternalEquipment,
+} from "../equipment/index.js";
+import {
   type Claim,
   jsonSchemaFor,
   type Situation,
@@ -124,11 +128,30 @@ export function buildSessionRequest(
 ): SessionRequest {
   if (task.model === null)
     throw new Error(`task ${task.id} names no model for ${capability.name}`);
+  const external = capability.equipment
+    .map((name) => getExternalEquipment(name))
+    .filter((e): e is ExternalEquipment => e !== undefined);
+  const externalNames = new Set(external.map((e) => e.name));
+  const select = capability.session.equipmentSelect;
+  const chosen =
+    select === undefined
+      ? external
+      : external.filter((e) => e.name === task.inputs[select]);
+  if (select !== undefined && chosen.length === 0)
+    throw new Error(
+      `task ${task.id} names no registered ${select} for ${capability.name}`,
+    );
   return {
     model: task.model,
     systemPrompt: sessionSystemPrompt(capability.session.systemPrompt),
     prompt: renderTaskBrief(task, unit, context),
-    tools: capability.equipment,
+    tools: capability.equipment.filter((name) => !externalNames.has(name)),
+    mcpServers: chosen.flatMap((e) =>
+      e.mcp === null ? [] : [{ name: e.name, ...e.mcp }],
+    ),
+    integrations: chosen.flatMap((e) =>
+      e.integration === null ? [] : [e.integration],
+    ),
     bashAllowlist: capability.session.bashAllowlist ?? [],
     cwd,
     addDirs: [],

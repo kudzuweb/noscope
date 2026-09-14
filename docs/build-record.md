@@ -762,3 +762,49 @@ Not exactly to spec, with reasons:
   to every brief; a capability request is the channel when no reproduce capability is
   listed; the investigate role's settling item carries a "settled by:" prefix so it can be
   told from a citation.
+
+## PR 26: Browser capability (#26, merged 2026-09-13)
+
+R2-7 of the round 2 plan. Built: external equipment, the design's third kind, brought
+forward from after v0: an MCP server declared by name and launch command and passed to
+the provider as `--mcp-config` (inline JSON) with `--strict-mcp-config`, or a provider
+integration named as equipment. Two browsers are registered: `playwright_browser`
+(`npx @playwright/mcp@latest --headless --isolated`, on npm at 0.0.80 on 2026-09-13) and
+`claude_in_chrome` (Claude Code's `--chrome`). A session capability may declare several
+and name an input field, `equipmentSelect`, whose value picks the one to attach. The
+`reproduce` capability: inputs `browser`, `url`, `steps` and `observe`; role text that
+performs the steps and reports what was observed, never inferred; output of one
+observation per step with an optional screenshot path. Registered `read_only` under the
+scratch-copy constraint the plan records. `SessionRequest` gains `mcpServers` and
+`integrations`; the preamble names a browser among the equipment kinds. DESIGN.md Step 3
+(equipment kinds, the capability table) follows; the Reference rows below record what the
+live probes found.
+
+Not exactly to spec, with reasons:
+
+- The plan spoke of an equipment kind `mcp_server`; the kind is `external` with two forms,
+  because Claude in Chrome is not a server the runtime launches but an integration the
+  provider turns on, and the design's session request stays provider-blind by naming the
+  integration rather than the flag.
+- `--mcp-config` takes the JSON inline (Claude Code accepts strings as well as files, per
+  `claude --help` on 2026-09-13), so no temporary file is written per session.
+- The live probes' results are in DESIGN.md's Reference table: Playwright works from a
+  headless session once its tools are allowlisted (`--allowedTools mcp__<server>`, which
+  the provider now renders for every attached server) but refuses `file:` URLs, so the
+  opt-in live test serves the fixture over HTTP; Claude in Chrome is denied from a
+  headless session even under `bypassPermissions`, so it stays registered as
+  `headless: false` with a description that says to prefer Playwright. The plan expected
+  both to be tried; one works headless.
+- `npx --yes` in the Playwright launch, so a machine without the package cached does not
+  stall on npm's prompt.
+- Only Playwright has a live test; there is none for Claude in Chrome, since a headless
+  session cannot reach it, and the three probes recorded in DESIGN.md stand in for it.
+- The screenshot path per step is optional in the output schema, and the role asks for one
+  after any step whose observation matters, since a screenshot of every step is noise.
+- From the review: Playwright writes its screenshots to a scratch directory
+  (`--output-dir` under the OS temp dir), so a `read_only` capability leaves nothing in the
+  incident's working tree; the package is pinned (`@playwright/mcp@0.0.80`) so each
+  transcript records which server drove it and a cold cache cannot stall the session's
+  connect timeout on a registry check; the capability's description tells the planner to
+  name Playwright, since `claude_in_chrome` comes back `insufficient` from a headless
+  session; the registry's guard message names session-only equipment.

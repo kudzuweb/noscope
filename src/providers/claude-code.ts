@@ -40,6 +40,11 @@ export const CLAUDE_CODE_ISOLATION_FLAGS = [
   "--exclude-dynamic-system-prompt-sections",
 ] as const;
 
+/** The MCP server name each provider integration's tools appear under, for the allowlist. */
+const INTEGRATION_SERVERS: Record<string, string> = {
+  chrome: "claude-in-chrome",
+};
+
 /** The argument list for `claude -p`; the prompt itself goes on stdin so a long brief never meets the argv limit. */
 export function renderClaudeCodeArgs(request: SessionRequest): string[] {
   const tools = request.tools.includes("default")
@@ -57,9 +62,33 @@ export function renderClaudeCodeArgs(request: SessionRequest): string[] {
     JSON.stringify(request.outputSchema),
     ...CLAUDE_CODE_ISOLATION_FLAGS,
   ];
-  if (request.bashAllowlist.length > 0)
-    args.push("--allowedTools", bashAllowlist(request.bashAllowlist).join(","));
+  // A headless session may use only allowlisted tools: the read-only Bash commands, every
+  // tool of each attached MCP server (`mcp__<server>`), and Claude in Chrome's own server.
+  const allowed = [
+    ...bashAllowlist(request.bashAllowlist),
+    ...request.mcpServers.map((s) => `mcp__${s.name}`),
+    ...request.integrations.map((i) => `mcp__${INTEGRATION_SERVERS[i] ?? i}`),
+  ];
+  if (allowed.length > 0) args.push("--allowedTools", allowed.join(","));
   for (const dir of request.addDirs) args.push("--add-dir", dir);
+  if (request.mcpServers.length > 0)
+    args.push(
+      "--mcp-config",
+      JSON.stringify({
+        mcpServers: Object.fromEntries(
+          request.mcpServers.map((s) => [
+            s.name,
+            { command: s.command, args: [...s.args] },
+          ]),
+        ),
+      }),
+      "--strict-mcp-config",
+    );
+  for (const integration of request.integrations) {
+    if (integration !== "chrome")
+      throw new Error(`claude-code has no integration named ${integration}`);
+    args.push("--chrome");
+  }
   return args;
 }
 

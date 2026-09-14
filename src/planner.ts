@@ -433,6 +433,8 @@ export async function proposePlan(
       options.providers ?? [provider],
     ),
     tools: [],
+    mcpServers: [],
+    integrations: [],
     bashAllowlist: [],
     cwd: options.cwd,
     addDirs: [],

@@ -1,4 +1,5 @@
 export * from "./builtin.js";
+export * from "./external.js";
 export * from "./filesystem.js";
 export * from "./git.js";
 export type { Equipment } from "./registry.js";
