@@ -557,9 +557,54 @@ describe("validator", () => {
         ],
       }),
     ).toEqual([
-      'No cycles: task "find scrollTo calls" depends on itself through task ref a',
-      'No cycles: task "find the handler" depends on itself through task ref b',
+      "No cycles: task ref a is on a dependency cycle",
+      "No cycles: task ref b is on a dependency cycle",
     ]);
+    // A task outside the cycle that depends into it is not reported; only the cycle is.
+    expect(
+      reasonsOf({
+        ...empty,
+        createTasks: [
+          grepTask({ ref: "a", dependsOn: ["b"] }),
+          second({ ref: "b", dependsOn: ["a"] }),
+          grepTask({
+            objective: "outside",
+            inputs: { root: "src", pattern: "outside" },
+            dependsOn: ["a"],
+          }),
+        ],
+      }),
+    ).toEqual([
+      "No cycles: task ref a is on a dependency cycle",
+      "No cycles: task ref b is on a dependency cycle",
+    ]);
+    // A shared dependency (a diamond) and a repeated dependsOn entry are not cycles.
+    expect(
+      reasonsOf({
+        ...empty,
+        createTasks: [
+          grepTask({ ref: "d" }),
+          second({ ref: "b", dependsOn: ["d"] }),
+          grepTask({
+            ref: "c",
+            objective: "third",
+            inputs: { root: "src", pattern: "third" },
+            dependsOn: ["d", "d"],
+          }),
+          grepTask({
+            objective: "fan in",
+            inputs: { root: "src", pattern: "fan" },
+            dependsOn: ["b", "c"],
+          }),
+        ],
+      }),
+    ).toEqual([]);
+    expect(
+      reasonsOf({
+        ...empty,
+        createTasks: [grepTask({ ref: "a", dependsOn: ["a"] })],
+      }),
+    ).toEqual(["No cycles: task ref a is on a dependency cycle"]);
     expect(
       reasonsOf({ ...empty, createTasks: [grepTask({ dependsOn: ["nope"] })] }),
     ).toEqual([

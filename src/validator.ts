@@ -151,21 +151,28 @@ const CHECKS: Record<RuleName, Rule> = {
           t.dependsOn.filter((d) => refSet.has(d)),
         ]),
     );
-    for (const t of plan.createTasks) {
-      const seen = new Set<string>(t.ref === undefined ? [] : [t.ref]);
-      const stack = t.dependsOn.filter((d) => refSet.has(d));
-      let cycle: string | null = null;
-      while (stack.length > 0 && cycle === null) {
-        const at = stack.pop() as string;
-        if (seen.has(at)) cycle = at;
-        else {
-          seen.add(at);
-          stack.push(...(depsOf.get(at) ?? []));
-        }
+    // A depth-first walk over the new tasks' refs: a ref met again while still on the
+    // current path closes a cycle, and every ref on that path from it is reported once.
+    // A ref merely reached twice by two paths (a shared dependency) is not a cycle.
+    const state = new Map<string, "on path" | "done">();
+    const cyclic = new Set<string>();
+    const visit = (ref: string, path: string[]): void => {
+      const seen = state.get(ref);
+      if (seen === "done") return;
+      if (seen === "on path") {
+        for (const r of path.slice(path.indexOf(ref))) cyclic.add(r);
+        return;
       }
-      if (cycle !== null)
-        reasons.push(`${label(t)} depends on itself through task ref ${cycle}`);
-    }
+      state.set(ref, "on path");
+      path.push(ref);
+      for (const d of depsOf.get(ref) ?? []) visit(d, path);
+      path.pop();
+      state.set(ref, "done");
+    };
+    for (const ref of refs) visit(ref, []);
+    for (const ref of refs)
+      if (cyclic.has(ref))
+        reasons.push(`task ref ${ref} is on a dependency cycle`);
     const parentOf = new Map(plan.createUnits.map((u) => [u.ref, u.parent]));
     for (const u of plan.createUnits) {
       const seen = new Set<string>([u.ref]);
