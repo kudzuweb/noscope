@@ -679,3 +679,23 @@ Not exactly to spec, with reasons:
   as a `task` settlement may; the plan's text said a ref.
 - From the review: `incident show` prints the whole last situation, not counts; missing
   ids are reported once; the architecture page lists the situation and section 10.
+
+## PR 23: What the planner reads (#23, merged 2026-09-13)
+
+R2-3 of the round 2 plan. Built: a capability may declare `summarize` (grep does); its
+claims reach the planner in full only in the cycle after they land, or when the last
+situation names them in `proven` or `keep`, and the rest collapse to one line per task
+with the inputs, the claim count and the files with counts. Section 5 shows a session's
+findings in full (summary, observations, conclusion, reasoning) where it clipped every
+result at 200 characters; a deterministic result stays clipped. DESIGN.md Step 3 (the
+`summarize` field) and Step 4 (sections 2 and 5) follow.
+
+Not exactly to spec, with reasons:
+
+- "The cycle after it lands" is read from the log: a claim recorded after the last applied
+  plan is fresh, whatever the clock says, so a rejected plan does not age the claims it saw.
+- The collapsed line does not list claim ids, since the point is the size; a claim the
+  planner wants in view next cycle goes in `keep` while it is still shown in full.
+- The re-rendering of incident 001 under this rule is in the pull request, not here: the
+  numbers are the analysis's (1.09M planner input tokens as run, 427k with uncited match
+  claims dropped) and the rendering now also collapses by task.
