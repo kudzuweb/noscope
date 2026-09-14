@@ -1,19 +1,17 @@
 # Handoff: noscope round 2, six of eight PRs merged; the browser PR is up and the rerun is next
 
-Refreshed 2026-09-13 22:22 CDT by session noscope-audit [3d5895] (transcript
+Refreshed 2026-09-13 22:33 CDT by session noscope-audit [3d5895] (transcript
 home-laptop:~/.claude/projects/-Users-mauriaparker-Documents-Projects-noscope/8207d276-eb0c-4c6a-86a2-86f3d0fdede1.jsonl).
 Read this whole file before doing anything.
 
 **First actions, in order:** (1) `/warp-pin title noscope-audit`, the name this session was
 launched with. (2) One `SendMessage` to `noscope-audit [3d5895]` saying "noscope-audit-2 is
-up, send the pending results here"; that session stays alive as a relay and will forward
-what is still pending: the reports of `review26-correctness` and `review26-conformance`
-(reviewing PR 26 in the worktree `wt-browser`, spawned 22:16) and the CI result for PR 26's
-head. If nothing arrives within ten minutes, read the reports yourself from
-`~/.claude/projects/-Users-mauriaparker-Documents-Projects-noscope/8207d276-eb0c-4c6a-86a2-86f3d0fdede1/subagents/agent-areview26-*.jsonl`
-(the last assistant text of each) and `gh pr checks 26`. (3) Mauria was asked, at 22:20,
-which Markdown document with comments to copy for the rerun; her answer is the input to
-step 2 of §4.
+up"; nothing is pending from background agents: both PR 26 reviews were read and applied
+by 22:32 and pushed as the branch head. (3) PR 26 merge: `gh pr checks 26` on the head
+(`gh pr view 26 --json headRefOid`), then `gh pr merge 26 --squash --delete-branch` and
+`git pull --ff-only` in `~/Documents/Projects/noscope`, unless the relay session already
+did (check `git log origin/main -1`). (4) Mauria was asked at 22:20 which Markdown document
+with comments to copy for the rerun; her answer is the input to step 2 of §4.
 
 ## 1. GOAL
 
@@ -50,7 +48,7 @@ exit 0. Round 2 so far:
 | #23 | R2-3 | A capability's `summarize` predicate (grep's `matches`) collapses to one line per task after its first cycle unless the situation keeps it; session findings reach section 5 in full. Incident 001 re-rendered: 2.17M to 0.85M characters of planner input. |
 | #24 | R2-5 | `evidenceFrom` on tasks; the runtime attaches referenced claims and results to the brief; the brief opens with the objective, hypothesis and proven list; schema 3. |
 | #25 | R2-6 | Prompt text: interpret tests the hypothesis and names alternatives, investigate adds "settled by:" items, the planner reproduces or asks or requests a capability, never reads more. `docs/first-incident.md` has the motivating cycles. |
-| #26 (open) | R2-7 | External equipment (`src/equipment/external.ts`): `playwright_browser` (MCP, headless) and `claude_in_chrome` (provider integration); the `reproduce` capability; the provider allowlists attached servers. Reviewers spawned 22:16. |
+| #26 (open, reviews applied) | R2-7 | External equipment (`src/equipment/external.ts`): `playwright_browser` (MCP, headless, pinned 0.0.80, screenshots to the OS temp dir) and `claude_in_chrome` (provider integration, interactive-only); the `reproduce` capability; the provider allowlists attached servers. Both reviews applied and pushed 22:32; merge on green. |
 
 Verified live for R2-7 (DESIGN.md Reference rows): Playwright works from a headless session
 with `--allowedTools mcp__playwright_browser` but refuses `file:` URLs (the live test
