@@ -1,7 +1,8 @@
 # noscope v0 build plan
 
 Derived from `DESIGN.md` at commit 4d5f68a and `docs/architecture.html`. Fifteen PRs, each
-mergeable on its own, the CLI working after every one. Every PR targets `main`. The design
+mergeable on its own, the CLI working after every one; round 2, from the first incident's
+audit, follows at the end. Every PR targets `main`. The design
 document is the contract; where this plan and it disagree, the design wins and this plan
 gets fixed.
 
@@ -206,7 +207,8 @@ Acceptance: all eight criteria observed on the live run and checked off in
 ## After v0, not in this plan
 
 SOPs and `incident sop`; grants and `incident grant`, `grant standing`, `--per-task`; the
-MCP equipment server and external MCP servers as equipment; the Codex provider; parallel
+MCP equipment server and external MCP servers as equipment (round 2 brings in the first
+external server, a browser, in R2-7); the Codex provider; parallel
 dispatch; the Situation Unit; cross-incident priorities; auto-whitelisting of grants.
 The schema slots for grants, SOP applications and capability requests are created in PR 2
 and PR 3 so none of these needs a migration.
@@ -216,3 +218,159 @@ and PR 3 so none of these needs a migration.
 | Question | Blocks |
 |---|---|
 | Whether PR 15's tuning of prompts should feed back into `DESIGN.md` as rulings or stay in `docs/first-incident.md` as findings. | Only how PR 15 is written up. Default: findings, with any ruling Mauria makes moved into the design. |
+
+## Round 2: from the first incident's audit
+
+Derived from `docs/first-incident.md`, the `incident review 001` report, and the analysis of
+2026-09-13 that re-rendered every cycle's planner input from the event log. Mauria's ruling
+2026-09-13 19:26: build all of it. Eight PRs in dependency order, each mergeable on its
+own; the last one reruns the first incident and measures the round. Numbered R2-1 to R2-8
+here; the build record maps each to its GitHub number.
+
+| PR | Title | Depends on | Delivers, in one line |
+|---|---|---|---|
+| R2-1 | Claim basis and the confidence scale | none | Every claim says whether it was observed or inferred, and sessions are told what a confidence number means. |
+| R2-2 | The situation carried in the plan | R2-1 | The planner writes a structured situation each cycle and reads its last one back; inferred links name what settles them; a keep list names the claims to hold in view. |
+| R2-3 | What the planner reads | R2-2 | Match claims shown once, then only if kept; session results shown in full. |
+| R2-4 | Task refs | none | A plan can chain new tasks on each other, so a chain runs in one cycle. |
+| R2-5 | Evidence by reference | R2-4 | A task names the claims and results it needs and the runtime attaches them; the planner stops copying evidence. |
+| R2-6 | Roles and rules | R2-1, R2-2, R2-5 | The prompt text: interpret looks for alternatives, investigate names what would settle an inference, the planner asks or reproduces as soon as a link leaves the repository. |
+| R2-7 | Browser capability | R2-1 | `reproduce`: a session with a headless browser that settles a claim about runtime behavior by observing it. |
+| R2-8 | Second run of the first incident | R2-3, R2-6, R2-7 | The same objective rerun live with everything above, measured with `incident review` beside run 001. |
+
+R2-4 and R2-5 can run in parallel with R2-1 to R2-3. R2-7 can start once R2-1 is in.
+
+### R2-1: Claim basis and the confidence scale
+
+Scope: `Claim` and the session output claim schema in `src/models.ts` gain
+`basis: "observed" | "inferred"`, required. The verifier writes `observed` on every
+deterministic claim and requires the field on every session claim. The session preamble in
+`src/providers/base.ts` defines the scale next to the field: observed in code or in output,
+0.9 to 1; inferred from code, at most 0.7; runtime behavior not reproduced, at most 0.5.
+Planner input section 3 shows the basis on each asserted claim. `incident review` counts
+inferred claims per task. DESIGN.md Vocabulary (claim) and Step 6 follow.
+
+Acceptance: the models test rejects a session claim without a basis; the verifier test
+shows a grep claim entering with `observed`; the planner snapshot shows the basis; the
+preamble test pins the three scale lines.
+
+### R2-2: The situation carried in the plan
+
+Scope: `ActionPlan` gains `situation`: `changed` (what changed since the last cycle, one
+paragraph), `hypothesis` (the current explanation, one paragraph), `proven` (claim ids),
+`inferred` (entries of claim id plus `settledBy`: a task ref or id in this plan, a question
+id in this plan, or the word `reproduce` with a task ref), and `keep` (claim ids to hold in
+view next cycle). `rationale` stays and becomes "why this plan", one paragraph. The planner
+input gains section 10, "Situation from the last cycle", rendering the last applied plan's
+situation verbatim, after the rules so the sections before it keep their order. Two
+validator rules: "Inferred links are worked" (every `inferred` entry's `settledBy` names a
+task in this plan, an open task, or a question this plan raises) and `keep` under
+"Dependencies resolve" (every id names an existing claim). `plan.proposed` and
+`plan.applied` carry the situation; `incident show` prints the last situation under
+decisions.
+
+Acceptance: validator tests for both rules, accept and reject; a planner test that a
+situation applied in cycle 1 renders in cycle 2's section 10; the snapshot test updated;
+the stub plans in `test/run.test.ts` carry a situation.
+
+### R2-3: What the planner reads
+
+Scope: in `renderPlannerInput`, a claim from a capability that declares `summarize: true`
+(grep, in v0) appears in full only in the cycle after it lands; afterwards it appears only
+if the last situation's `keep` names it, and the rest of its task's claims collapse to one
+line per task: the pattern, the match count, and the files with counts. Section 5 shows
+each completed task's result in full (summary and observations for a session, the
+deterministic result as now) instead of clipped at 200 characters; the clip stays on
+inputs. DESIGN.md Step 4 (the nine sections, now ten) and the planner input description
+follow.
+
+Acceptance: a test on synthetic events where a grep's claims appear in full in cycle 2,
+collapse in cycle 3, and one kept claim stays; a test that a session's summary and
+observations reach section 5 unclipped; the snapshot updated. Recorded in the PR: the
+planner input of incident 001 re-rendered under the new rendering, cycle by cycle, beside
+the numbers from the analysis (1.09M tokens actual, 427k under the cited-only rule).
+
+### R2-4: Task refs
+
+Scope: `TaskProposal` gains optional `ref`, the same shape as a unit ref. `dependsOn` may
+name a ref of a task created in the same plan. The validator resolves refs under "No cycles"
+(a ref is used once, is not an existing task id, does not start with the incident id, and
+the new tasks' dependency graph is acyclic) and "Dependencies resolve". `applyPlan` assigns
+ids in plan order and rewrites `dependsOn` refs to ids before creating tasks. The
+dispatcher is unchanged: a dependent becomes ready when its dependency completes and runs
+in the same pass. The planner prompt says a chain of tasks belongs in one plan. DESIGN.md
+Step 4 and Step 5 follow.
+
+Acceptance: validator tests for a valid chain, a cycle among new tasks, an unknown ref, a
+ref colliding with an existing id; a runtime test that ids are assigned and dependsOn
+rewritten; a run test where a plan with grep then interpret chained on it completes both in
+one cycle.
+
+### R2-5: Evidence by reference
+
+Scope: `TaskProposal` and `Task` gain `evidenceFrom`: `claims` (claim ids) and `tasks` (task
+ids or refs in this plan). At dispatch the runtime renders the named claims (subject,
+predicate, object, basis, confidence, evidence) and the named tasks' results (summary and
+observations, or the deterministic result) into the brief after the task's own inputs. The
+interpret capability's `evidence` input becomes optional; the validator requires one of
+`evidence` or `evidenceFrom` on an interpret task ("Inputs validate"). The brief gains the
+incident objective as its first line. The planner rules say: name evidence by id, do not
+copy it. DESIGN.md Step 3 (task fields, the brief) and Step 5 follow.
+
+Acceptance: a dispatcher test that a brief carries the referenced claims and a referenced
+task's summary; a validator test for interpret with neither; a brief snapshot; the run test
+from R2-4 extended so the chained interpret reads the grep's claims by reference and its
+inputs carry no copied evidence.
+
+### R2-6: Roles and rules
+
+Scope, prompt text only, in `src/planner.ts`, `src/providers/base.ts` and
+`src/capabilities/investigate.ts`: the interpret role asks for the strongest alternative
+explanation and what would falsify the leading one; the investigate role requires, for
+every inferred claim, the runtime observation or file that would settle it, in the claim's
+evidence; the planner prompt says a brief to interpret carries the question and the
+evidence and never the conclusion, that a link that cannot be established from the
+repository is settled by reproducing it (R2-7) or by a question for the human in the same
+plan, never by more reading, and that `rationale` says why this plan and nothing the
+situation already says. The rules list in section 9 gains the two rules from R2-2.
+`docs/first-incident.md` gets a short section naming each prompt change and the cycle of
+run 001 that motivated it.
+
+Acceptance: snapshot tests updated; a reviewer subagent reads every brief-shaped example in
+the prompts for leading language before merge. The measure is R2-8.
+
+### R2-7: Browser capability
+
+Scope: the first external MCP server as equipment: `@playwright/mcp` (on npm, 0.0.80 on
+2026-09-13) declared as equipment of kind `mcp_server` with its launch command, passed to
+the session with `--mcp-config` and `--strict-mcp-config` as the design's spike verified.
+A session-backed capability `reproduce`: inputs `url`, `steps` (what to do, in order) and
+`observe` (what to look for); role text: perform the steps, report what was observed as
+observed claims, never infer; output schema with the observations and a screenshot path per
+step. Registered `read_only` under the constraint in the open question below. The session
+preamble's equipment list and DESIGN.md Step 3 (equipment kinds, the after-v0 note) follow.
+
+Acceptance: the capability registered and validated like the others; the equipment's
+launch tested by an opt-in live test (`NOSCOPE_LIVE=1`) that opens a static page from
+`test/fixtures` and returns an observed claim about its title; the stub path covers the
+rest.
+
+### R2-8: Second run of the first incident
+
+Scope: `noscope incident create` with the objective of run 001 plus two constraints (the
+app runs on a scratch copy of the document at a named URL; read only otherwise), stepped
+live with everything above; `incident review 002` recorded beside 001 in
+`docs/first-incident.md` under a "Second run" section, with the cycle count, planner input,
+cost, and where the inferred link was settled.
+
+Acceptance: the run reaches `satisfied` with the same code path named; the measures are
+compared against run 001 and against the thresholds in the open questions.
+
+### Open questions, round 2
+
+| Question | Blocks |
+|---|---|
+| Effect of `reproduce`: browsing a running app can change its data (reproducing this bug deletes a comment). v0 registers only `read_only` capabilities. Default: register it `read_only` and require the incident to name a scratch copy of the app's data in a constraint; grants stay after v0. | R2-7's registration. |
+| Which browser: Playwright MCP (headless, verified to exist on npm; the MCP path verified in the design spike) or Claude in Chrome (Mauria's own browser; not verified for a headless `claude -p` session). Default: Playwright. | R2-7's equipment. |
+| Acceptance thresholds for R2-8. Default from the analysis: at most 6 cycles, planner input at most 450k tokens, the inferred link settled by `reproduce` rather than a question. | Only how R2-8 is judged. |
+| Where section 10 sits. Default: last, after the rules, so the earlier sections keep their prefix. | Nothing; R2-2 takes the default. |
