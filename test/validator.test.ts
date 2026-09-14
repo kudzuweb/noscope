@@ -117,6 +117,7 @@ function seeded(budget: { tokens?: number; seconds?: number } = {}) {
       predicate: "handles",
       object: "deletion",
       status: "asserted",
+      basis: "inferred",
       confidence: 0.7,
       evidence: [],
       provenance: {
@@ -136,6 +137,7 @@ function seeded(budget: { tokens?: number; seconds?: number } = {}) {
       predicate: "exists",
       object: true,
       status: "verified",
+      basis: "observed",
       confidence: 1,
       evidence: [],
       provenance: { capability: "check_path", taskId: "t-done", inputs: {} },

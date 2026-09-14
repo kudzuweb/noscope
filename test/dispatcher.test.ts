@@ -150,6 +150,7 @@ describe("dispatcher", () => {
             object: "deletion",
             confidence: 0.9,
             evidence: [`${join(tree, "a.txt")}:2`],
+            basis: "inferred",
           },
         ],
         findings: { summary: "a.txt line 2", observations: [] },
@@ -171,6 +172,7 @@ describe("dispatcher", () => {
     ]);
     expect(store.listClaims("i1")[0]).toMatchObject({
       status: "asserted",
+      basis: "inferred",
       provenance: { sessionId: "stub-session" },
     });
     expect(
@@ -271,6 +273,7 @@ describe("dispatcher, from the review", () => {
         predicate: "matches",
         object: { pattern: "delete", text: "the delete handler lives here" },
         status: "asserted",
+        basis: "inferred",
         confidence: 0.6,
         evidence: [],
         provenance: {
@@ -290,6 +293,7 @@ describe("dispatcher, from the review", () => {
         predicate: "matches",
         object: { pattern: "delete", text: "something else" },
         status: "asserted",
+        basis: "inferred",
         confidence: 0.6,
         evidence: [],
         provenance: {

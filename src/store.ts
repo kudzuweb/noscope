@@ -31,8 +31,11 @@ export function now(): string {
   return new Date().toISOString();
 }
 
-/** Bumped whenever a table changes shape; a file at another version is refused, not migrated, for now. */
-const SCHEMA_VERSION = 1;
+/**
+ * Bumped whenever a table changes shape. A file at version 1 is migrated in place (claims
+ * gain `basis`); a file at any other version is refused.
+ */
+const SCHEMA_VERSION = 2;
 
 const STATE_TABLES = [
   "incidents",
@@ -91,6 +94,7 @@ CREATE TABLE IF NOT EXISTS claims (
   predicate TEXT NOT NULL,
   object_json TEXT NOT NULL,
   status TEXT NOT NULL,
+  basis TEXT NOT NULL CHECK (basis IN ('observed', 'inferred')),
   confidence REAL,
   evidence_json TEXT NOT NULL,
   provenance_json TEXT NOT NULL,
@@ -127,6 +131,17 @@ const p = (v: unknown): unknown => JSON.parse(String(v));
 const nullable = (v: unknown): string | null => (v === null ? null : String(v));
 
 const TERMINAL_TASK = TaskStatus.extract(["completed", "failed", "cancelled"]);
+
+/** A claim recorded before claims carried a basis (schema version 1) is read the way the migration reads it. */
+function withBasis(value: unknown): unknown {
+  if (value === null || typeof value !== "object" || "basis" in value)
+    return value;
+  const claim = value as { status?: unknown };
+  return {
+    ...claim,
+    basis: claim.status === "verified" ? "observed" : "inferred",
+  };
+}
 
 /**
  * The state change an event records. Every write names one; replay applies exactly that
@@ -166,7 +181,10 @@ export const Mutation = z.discriminatedUnion("kind", [
     at: Timestamp,
     result: z.unknown().optional(),
   }),
-  z.object({ kind: z.literal("claim.create"), claim: Claim }),
+  z.object({
+    kind: z.literal("claim.create"),
+    claim: z.preprocess(withBasis, Claim),
+  }),
   z.object({
     kind: z.literal("claim.status"),
     claimId: z.string(),
@@ -193,10 +211,27 @@ export class Store {
         .prepare("SELECT COUNT(*) AS c FROM sqlite_master WHERE type = 'table'")
         .get() as { c: number }
     ).c;
-    if (tables > 0 && version !== SCHEMA_VERSION) {
+    if (tables > 0 && version === 1) {
+      // Version 1 claims had no basis. Verified claims came from deterministic equipment,
+      // so they were observed; a session's claim with no recorded basis is read as inferred.
+      // One transaction, and the column is added only if a crashed earlier attempt did not.
+      this.db.transaction(() => {
+        const columns = this.db.prepare("PRAGMA table_info(claims)").all() as {
+          name: string;
+        }[];
+        if (!columns.some((c) => c.name === "basis"))
+          this.db.exec(
+            "ALTER TABLE claims ADD COLUMN basis TEXT NOT NULL DEFAULT 'inferred'",
+          );
+        this.db.exec(
+          "UPDATE claims SET basis = 'observed' WHERE status = 'verified'",
+        );
+        this.db.pragma(`user_version = ${SCHEMA_VERSION}`);
+      })();
+    } else if (tables > 0 && version !== SCHEMA_VERSION) {
       this.db.close();
       throw new Error(
-        `${path} was written by noscope schema version ${version}, and this build uses ${SCHEMA_VERSION}; there is no migration yet, so move or delete the file`,
+        `${path} was written by noscope schema version ${version}, and this build uses ${SCHEMA_VERSION}; there is no migration from it, so move or delete the file`,
       );
     }
     this.db.exec(SCHEMA);
@@ -670,7 +705,7 @@ export class Store {
         owned(c.incidentId, `claim ${c.id}`);
         this.db
           .prepare(
-            "INSERT INTO claims (id, incident_id, subject, predicate, object_json, status, confidence, evidence_json, provenance_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO claims (id, incident_id, subject, predicate, object_json, status, basis, confidence, evidence_json, provenance_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           )
           .run(
             c.id,
@@ -679,6 +714,7 @@ export class Store {
             c.predicate,
             j(c.object),
             c.status,
+            c.basis,
             c.confidence,
             j(c.evidence),
             j(c.provenance),
@@ -779,6 +815,7 @@ function rowToClaim(r: Row): Claim {
     predicate: r.predicate,
     object: p(r.object_json),
     status: r.status,
+    basis: r.basis,
     confidence: r.confidence,
     evidence: p(r.evidence_json),
     provenance: p(r.provenance_json),

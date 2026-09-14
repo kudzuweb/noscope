@@ -197,6 +197,7 @@ describe("incident review", () => {
           predicate: "is",
           object: null,
           status: "asserted",
+          basis: "inferred",
           confidence: 0.5,
           evidence: [],
           provenance: { capability: "interpret", taskId, sessionId },
@@ -292,7 +293,7 @@ describe("incident review", () => {
     );
     expect(text).toContain("    insufficient: the file");
     expect(text).toContain(
-      "t3 investigate some-other-model: in 1,000,000  out 10,000  60.0 s  $1.00  completed  claims 1 asserted  session s-t3",
+      "t3 investigate some-other-model: in 1,000,000  out 10,000  60.0 s  $1.00  completed  claims 1 asserted (1 inferred)  session s-t3",
     );
     expect(text).toContain(
       "  t4 grep: failed before running: left running by a pass that did not finish",

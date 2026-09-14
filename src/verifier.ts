@@ -40,20 +40,25 @@ export function recordClaims(
     ...source,
   };
   const existing = store.listClaims(task.incidentId).length;
-  const claims = proposals.map((p, i) =>
-    Claim.parse({
+  const claims = proposals.map((p, i) => {
+    if (!deterministic && p.basis === undefined)
+      throw new Error(
+        `a session claim names its basis: ${p.subject} ${p.predicate}`,
+      );
+    return Claim.parse({
       id: `${task.incidentId}-c${String(existing + i + 1).padStart(3, "0")}`,
       incidentId: task.incidentId,
       subject: p.subject,
       predicate: p.predicate,
       object: p.object,
       status: deterministic ? "verified" : "asserted",
+      basis: deterministic ? "observed" : p.basis,
       confidence: p.confidence,
       evidence: p.evidence,
       provenance,
       createdAt: now(),
-    }),
-  );
+    });
+  });
   store.batch(() => {
     for (const claim of claims) store.createClaim(claim, actor);
     if (deterministic)

@@ -95,6 +95,7 @@ describe("incident run", () => {
     expect(claims).toHaveLength(1);
     expect(claims[0]).toMatchObject({
       status: "verified",
+      basis: "observed",
       subject: `${join(tree, "a.txt")}:2`,
       predicate: "matches",
     });

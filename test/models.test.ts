@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   ActionPlan,
   Claim,
+  ClaimProposal,
   EventType,
   Grant,
   Incident,
@@ -163,6 +164,41 @@ describe("contracts", () => {
       Usage.parse({ inputTokens: 1500, outputTokens: 42, seconds: 1.5 }),
     ).toThrow();
     expect(() => Usage.parse({ ...full, costUsd: -1 })).toThrow();
+  });
+
+  it("a session claim names its basis; a deterministic proposal need not", () => {
+    const claim = {
+      subject: "/a.ts:1",
+      predicate: "handles",
+      object: null,
+      confidence: 0.6,
+      evidence: ["/a.ts:1"],
+    };
+    expect(() =>
+      SessionResult.parse({
+        outcome: "answered",
+        findings: {},
+        claims: [claim],
+      }),
+    ).toThrow(/basis/);
+    expect(
+      SessionResult.parse({
+        outcome: "answered",
+        findings: {},
+        claims: [{ ...claim, basis: "inferred" }],
+      }).claims[0]?.basis,
+    ).toBe("inferred");
+    expect(ClaimProposal.parse(claim).basis).toBeUndefined();
+    expect(() =>
+      Claim.parse({
+        ...claim,
+        id: "c1",
+        incidentId: "i1",
+        status: "asserted",
+        provenance: { capability: "x", taskId: "t1" },
+        createdAt: "2026-09-13T00:00:00Z",
+      }),
+    ).toThrow(/basis/);
   });
 
   it("names every event type the design lists", () => {

@@ -21,6 +21,8 @@ export const TaskStatus = z.enum([
   "cancelled",
 ]);
 export const ClaimStatus = z.enum(["asserted", "verified", "rejected"]);
+/** How a claim was reached: seen in code or output, or inferred from what was seen. */
+export const ClaimBasis = z.enum(["observed", "inferred"]);
 export const Effect = z.enum(["read_only", "writes_local", "writes_external"]);
 export const Produces = z.enum(["verified_claims", "asserted_claims"]);
 export const GrantScope = z.enum(["incident", "standing"]);
@@ -160,6 +162,7 @@ export const Claim = z.object({
   predicate: z.string().min(1),
   object: z.unknown().default(null),
   status: ClaimStatus,
+  basis: ClaimBasis,
   confidence: z.number().min(0).max(1).nullable(),
   evidence: z.array(z.string()),
   provenance: Provenance,
@@ -277,6 +280,14 @@ export const ClaimProposal = z.object({
   object: z.unknown(),
   confidence: z.number().min(0).max(1),
   evidence: z.array(z.string()),
+  basis: ClaimBasis.optional(),
+});
+
+/** A session's claim must say how it was reached; a deterministic capability's claims are observed by construction. */
+export const SessionClaimProposal = ClaimProposal.extend({
+  basis: ClaimBasis.describe(
+    "observed: seen in code or output; inferred: reasoned from what was seen",
+  ),
 });
 
 /**
@@ -289,7 +300,7 @@ export function sessionResult<T extends z.ZodType>(findings: T) {
   return z
     .object({
       outcome: z.enum(["answered", "insufficient"]),
-      claims: z.array(ClaimProposal).default([]),
+      claims: z.array(SessionClaimProposal).default([]),
       findings: findings.nullable().default(null),
       needed: z.array(Needed).default([]),
     })
@@ -318,6 +329,7 @@ export type IncidentStatus = z.infer<typeof IncidentStatus>;
 export type UnitStatus = z.infer<typeof UnitStatus>;
 export type TaskStatus = z.infer<typeof TaskStatus>;
 export type ClaimStatus = z.infer<typeof ClaimStatus>;
+export type ClaimBasis = z.infer<typeof ClaimBasis>;
 export type Effect = z.infer<typeof Effect>;
 export type Produces = z.infer<typeof Produces>;
 export type GrantScope = z.infer<typeof GrantScope>;

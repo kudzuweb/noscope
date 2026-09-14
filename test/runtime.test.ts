@@ -310,6 +310,7 @@ describe("apply and tree", () => {
         predicate: "exists",
         object: true,
         status: "verified",
+        basis: "observed",
         confidence: 1,
         evidence: [],
         provenance: { capability: "check_path", taskId: "t", inputs: {} },
