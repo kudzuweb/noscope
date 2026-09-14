@@ -788,5 +788,12 @@ Not exactly to spec, with reasons:
   integration rather than the flag.
 - `--mcp-config` takes the JSON inline (Claude Code accepts strings as well as files, per
   `claude --help` on 2026-09-13), so no temporary file is written per session.
-- The two live probes, one per browser, are opt-in tests (`NOSCOPE_LIVE=1`); their results
-  are in DESIGN.md's Reference table rather than repeated here.
+- The live probes' results are in DESIGN.md's Reference table: Playwright works from a
+  headless session once its tools are allowlisted (`--allowedTools mcp__<server>`, which
+  the provider now renders for every attached server) but refuses `file:` URLs, so the
+  opt-in live test serves the fixture over HTTP; Claude in Chrome is denied from a
+  headless session even under `bypassPermissions`, so it stays registered as
+  `headless: false` with a description that says to prefer Playwright. The plan expected
+  both to be tried; one works headless.
+- `npx --yes` in the Playwright launch, so a machine without the package cached does not
+  stall on npm's prompt.

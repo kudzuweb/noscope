@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -13,7 +16,7 @@ import { scriptedIncident } from "./fixtures/models.js";
 
 const page = resolve("test/fixtures/page.html");
 
-function reproduceTask(browser: string) {
+function reproduceTask(browser: string, url = `file://${page}`) {
   const store = new Store(":memory:");
   const { unit, task } = scriptedIncident(store);
   const t = task({
@@ -21,7 +24,7 @@ function reproduceTask(browser: string) {
     objective: "see what the page shows",
     inputs: {
       browser,
-      url: `file://${page}`,
+      url,
       steps: ["open the page", "read its title"],
       observe: ["the title"],
     },
@@ -60,7 +63,7 @@ describe("reproduce", () => {
       {
         name: "playwright_browser",
         command: "npx",
-        args: ["@playwright/mcp@latest", "--headless", "--isolated"],
+        args: ["--yes", "@playwright/mcp@latest", "--headless", "--isolated"],
       },
     ]);
     expect(request.integrations).toEqual([]);
@@ -82,16 +85,31 @@ describe("reproduce", () => {
     wrong.store.close();
   });
 
+  // Playwright's MCP server refuses file: URLs, so the fixture is served over HTTP.
   it.skipIf(process.env.NOSCOPE_LIVE !== "1")(
-    "live: a Playwright session opens a page from the fixtures and reports its title as an observed claim",
+    "live: a Playwright session opens the fixture page over HTTP and reports its title as an observed claim",
     async () => {
-      const { unit, t, capability } = reproduceTask("playwright_browser");
-      const outcome = await claudeCodeProvider().run(
-        buildSessionRequest(capability, t, unit, process.cwd()),
-      );
-      const result = SessionResult.parse(outcome.output);
-      expect(result.outcome).toBe("answered");
-      expect(JSON.stringify(result.findings)).toMatch(/Fixture page/);
+      const server = createServer((_req, res) => {
+        res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        res.end(readFileSync(page));
+      });
+      await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+      const { port } = server.address() as AddressInfo;
+      try {
+        const { unit, t, capability } = reproduceTask(
+          "playwright_browser",
+          `http://127.0.0.1:${port}/`,
+        );
+        const outcome = await claudeCodeProvider().run(
+          buildSessionRequest(capability, t, unit, process.cwd()),
+        );
+        const result = SessionResult.parse(outcome.output);
+        expect(result.outcome).toBe("answered");
+        expect(JSON.stringify(result.findings)).toMatch(/Fixture page/);
+        expect(result.claims.every((c) => c.basis === "observed")).toBe(true);
+      } finally {
+        server.close();
+      }
     },
     300_000,
   );

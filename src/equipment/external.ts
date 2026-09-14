@@ -64,7 +64,7 @@ export const playwrightBrowser = defineExternalEquipment({
     "A headless Chromium driven through Playwright's MCP server: navigate, click, type, read the page, take screenshots",
   mcp: {
     command: "npx",
-    args: ["@playwright/mcp@latest", "--headless", "--isolated"],
+    args: ["--yes", "@playwright/mcp@latest", "--headless", "--isolated"],
   },
   headless: true,
   cost: { typicalSeconds: 20 },
@@ -74,7 +74,7 @@ export const playwrightBrowser = defineExternalEquipment({
 export const claudeInChrome = defineExternalEquipment({
   name: "claude_in_chrome",
   description:
-    "Mauria's own Chrome, driven through Claude Code's Claude in Chrome integration: the same page and login state she has",
+    "Mauria's own Chrome, driven through Claude Code's Claude in Chrome integration: the same page and login state she has. Reachable only from an interactive session; a headless session is refused (Claude Code 2.1.270, 2026-09-13), so prefer playwright_browser until that changes",
   integration: "chrome",
   headless: false,
   cost: { typicalSeconds: 20 },

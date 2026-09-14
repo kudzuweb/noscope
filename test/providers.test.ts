@@ -148,6 +148,10 @@ describe("claude code provider", () => {
     });
     expect(withBrowser[at + 2]).toBe("--strict-mcp-config");
     expect(withBrowser.at(-1)).toBe("--chrome");
+    const allowed = withBrowser.indexOf("--allowedTools");
+    expect(withBrowser[allowed + 1]).toBe(
+      "Bash(ls *),Bash(cat *),mcp__playwright_browser,mcp__claude-in-chrome",
+    );
     expect(() =>
       renderClaudeCodeArgs({ ...request(), integrations: ["safari"] }),
     ).toThrow(/no integration named safari/);
