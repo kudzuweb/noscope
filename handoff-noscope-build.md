@@ -4,8 +4,8 @@ Refreshed 2026-09-13 22:40 CDT by session noscope-audit [3d5895] (transcript
 home-laptop:~/.claude/projects/-Users-mauriaparker-Documents-Projects-noscope/8207d276-eb0c-4c6a-86a2-86f3d0fdede1.jsonl).
 Read this whole file before doing anything.
 
-**First actions, in order:** (1) `/warp-pin title noscope-audit`, the name this session was
-launched with. (2) One `SendMessage` to `noscope-audit [3d5895]` saying "noscope-audit-2 is
+**First actions, in order:** (1) `/warp-pin title noscope-rerun`, the name this session was
+launched with. (2) One `SendMessage` to `noscope-audit [3d5895]` saying "noscope-rerun is
 up"; nothing is pending from background agents, and every round-2 PR through R2-7 is merged.
 (3) Mauria was asked at 22:20 which Markdown document with comments to copy for the rerun,
 and whether to push main (it carries the handoff commits); her answers are the inputs to
