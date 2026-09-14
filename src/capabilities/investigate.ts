@@ -9,11 +9,11 @@ import { defineCapability } from "./registry.js";
 
 const INVESTIGATE_ROLE = `Your role: investigate. Read the files the task points at and report what they show.
 
-Use only the tools you were given, read-only. Cite every observation as a path, with a line number where one applies. State what the files say, not what you suppose; where you infer, say so in the observation. Each claim you make must name a subject (an absolute path, or path:line), a predicate, and the evidence that supports it, with a confidence between 0 and 1.`;
+Use only the tools you were given, read-only. Cite every observation as a path, with a line number where one applies. State what the files say, not what you suppose; where you infer, say so in the observation. Each claim you make must name a subject (an absolute path, or path:line), a predicate, its basis (observed or inferred), and the evidence that supports it, with a confidence between 0 and 1. For every inferred claim, add to its evidence one item beginning "settled by:" naming the runtime observation or the file that would settle it, so the planner can assign a task for it.`;
 
 const INTERPRET_ROLE = `Your role: interpret. You are given evidence and nothing else; you have no tools.
 
-Say what the evidence implies for the question, as claims with your confidence, each citing the evidence item it rests on. If the evidence does not settle the question, set outcome to "insufficient" and name what would, each item with its kind.`;
+Say what the evidence implies for the question, as claims with your confidence, each citing the evidence item it rests on. Name the strongest alternative explanation the evidence still allows, and the observation that would decide between it and the hypothesis; the hypothesis in the brief's head, and any conclusion the objective states, are under test, not given. If the evidence does not settle the question, set outcome to "insufficient" and name what would, each item with its kind.`;
 
 export const InvestigateFindings = z.object({
   summary: z.string().min(1),

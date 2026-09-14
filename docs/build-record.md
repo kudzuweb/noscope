@@ -738,3 +738,27 @@ Not exactly to spec, with reasons:
 - From the review: "No duplicates" keys on `evidenceFrom` as well as inputs, since two
   interpret tasks with one question over different claims are different tasks; a replay
   test covers a task recorded before `evidenceFrom` existed.
+
+## PR 25: Roles and rules (#25, merged 2026-09-13)
+
+R2-6 of the round 2 plan. Built, prompt text only: the interpret role names the strongest
+alternative explanation and the observation that would decide it, and treats a conclusion
+stated in the brief as the hypothesis under test; the investigate role names, for every
+inferred claim, the runtime observation or file that would settle it; the planner's system
+prompt says that a link the repository cannot establish is settled by reproducing it or by
+a question in the same plan, never by more reading, that a brief to interpret carries the
+question and the evidence by reference and never the expected conclusion, and that the
+rationale says nothing the situation already says. `docs/first-incident.md` names each
+change and the cycle of run 001 that motivated it.
+
+Not exactly to spec, with reasons:
+
+- The two rules from R2-2 were already in section 9 when R2-2 merged, so this PR adds
+  none there.
+- The measure of these changes is the second run, R2-8; a test pins each new sentence so a
+  later edit cannot drop one unnoticed.
+- From the review: the planner's example of an unprovable link no longer names run 001's
+  own (the rerun is the measure); the planner is told the runtime attaches its hypothesis
+  to every brief; a capability request is the channel when no reproduce capability is
+  listed; the investigate role's settling item carries a "settled by:" prefix so it can be
+  told from a citation.

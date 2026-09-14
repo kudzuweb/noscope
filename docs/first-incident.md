@@ -197,3 +197,18 @@ by deterministic search): PageCard.tsx:1884 ..."}
 plan.applied     runtime  {"incidentStatus":"satisfied", ...}
 ```
 
+
+## Prompt changes from this run
+
+Round 2 changed the prompts in these ways, each motivated by a cycle of this run (the
+planner's system prompt and rules in `src/planner.ts`, the session preamble in
+`src/providers/base.ts`, the role texts in `src/capabilities/investigate.ts`):
+
+| Change | The cycle that motivated it |
+|---|---|
+| Every claim carries a basis, observed or inferred, and the preamble defines what a confidence number means. | Cycle 3: `001-t11` asserted the link that Mauria's answer later falsified at 0.75, saying "is inferred" only inside the claim's text. |
+| The investigate role adds, for every inferred claim, a "settled by:" evidence item naming the runtime observation or file that would settle it. | Cycle 3: `001-t11` did so only because that one brief asked; no other brief did, and the planner acted on it at cycle 9. |
+| The interpret role names the strongest alternative and what would decide it, and treats the hypothesis in the brief's head as under test. | Cycle 6: `001-t17`'s brief told the session which chain to confirm and what to mark inferred; it returned that chain at 0.8 to 0.9. |
+| The planner settles a link the repository cannot establish by reproducing it or by a question in the same plan, never by more reading. | Cycles 6 to 9: four cycles verifying around the resting-selection link that only running the app could settle. |
+| A brief to interpret carries the question and the evidence by reference, never the expected conclusion. | Cycle 5: a plan rejected on 31 hand-copied evidence items; cycle 6: the leading brief above. |
+| The plan carries a situation, and the rationale says only why this plan. | Every cycle: plans of 2.6k to 13.3k output tokens, the longest taking 155 seconds, each rationale restating the whole chain. |
