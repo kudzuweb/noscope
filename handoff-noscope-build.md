@@ -1,17 +1,15 @@
-# Handoff: noscope round 2, six of eight PRs merged; the browser PR is up and the rerun is next
+# Handoff: noscope round 2, seven of eight PRs merged; the rerun is next
 
-Refreshed 2026-09-13 22:33 CDT by session noscope-audit [3d5895] (transcript
+Refreshed 2026-09-13 22:40 CDT by session noscope-audit [3d5895] (transcript
 home-laptop:~/.claude/projects/-Users-mauriaparker-Documents-Projects-noscope/8207d276-eb0c-4c6a-86a2-86f3d0fdede1.jsonl).
 Read this whole file before doing anything.
 
 **First actions, in order:** (1) `/warp-pin title noscope-audit`, the name this session was
 launched with. (2) One `SendMessage` to `noscope-audit [3d5895]` saying "noscope-audit-2 is
-up"; nothing is pending from background agents: both PR 26 reviews were read and applied
-by 22:32 and pushed as the branch head. (3) PR 26 merge: `gh pr checks 26` on the head
-(`gh pr view 26 --json headRefOid`), then `gh pr merge 26 --squash --delete-branch` and
-`git pull --ff-only` in `~/Documents/Projects/noscope`, unless the relay session already
-did (check `git log origin/main -1`). (4) Mauria was asked at 22:20 which Markdown document
-with comments to copy for the rerun; her answer is the input to step 2 of §4.
+up"; nothing is pending from background agents, and every round-2 PR through R2-7 is merged.
+(3) Mauria was asked at 22:20 which Markdown document with comments to copy for the rerun,
+and whether to push main (it carries the handoff commits); her answers are the inputs to
+step 1 of §4 and to the push.
 
 ## 1. GOAL
 
@@ -37,7 +35,7 @@ check`. Repo https://github.com/kudzuweb/noscope (private).
 
 ## 3. STATE
 
-Main is `7505809` (PR 25 merged), clean, pushed except this handoff commit. `pnpm check`
+Main's origin head is PR 26's squash commit; local main carries the handoff commits on top, unpushed. Clean. `pnpm check`
 exit 0. Round 2 so far:
 
 | PR | Plan item | What landed |
@@ -48,15 +46,14 @@ exit 0. Round 2 so far:
 | #23 | R2-3 | A capability's `summarize` predicate (grep's `matches`) collapses to one line per task after its first cycle unless the situation keeps it; session findings reach section 5 in full. Incident 001 re-rendered: 2.17M to 0.85M characters of planner input. |
 | #24 | R2-5 | `evidenceFrom` on tasks; the runtime attaches referenced claims and results to the brief; the brief opens with the objective, hypothesis and proven list; schema 3. |
 | #25 | R2-6 | Prompt text: interpret tests the hypothesis and names alternatives, investigate adds "settled by:" items, the planner reproduces or asks or requests a capability, never reads more. `docs/first-incident.md` has the motivating cycles. |
-| #26 (open, reviews applied) | R2-7 | External equipment (`src/equipment/external.ts`): `playwright_browser` (MCP, headless, pinned 0.0.80, screenshots to the OS temp dir) and `claude_in_chrome` (provider integration, interactive-only); the `reproduce` capability; the provider allowlists attached servers. Both reviews applied and pushed 22:32; merge on green. |
+| #26 | R2-7 | External equipment (`src/equipment/external.ts`): `playwright_browser` (MCP, headless, pinned 0.0.80, screenshots to the OS temp dir) and `claude_in_chrome` (provider integration, interactive-only); the `reproduce` capability; the provider allowlists attached servers. Merged 22:38. |
 
 Verified live for R2-7 (DESIGN.md Reference rows): Playwright works from a headless session
 with `--allowedTools mcp__playwright_browser` but refuses `file:` URLs (the live test
 serves the fixture over HTTP and passes); Claude in Chrome is denied from a headless
 session even under `bypassPermissions`, so it is interactive-only.
 
-Worktrees under the scratchpad (`wt-browser`) die with the session; on origin only
-`pr-browser` is unmerged.
+No worktrees or feature branches remain; origin has only `main`.
 
 Quipu: `~/Documents/Projects/my-quipu/ics-runtime.md` has knots for the audit follow-ups
 (21:45) and round 2's landing (22:15). Papercut logged: `gh pr checks --watch` right after
@@ -64,15 +61,11 @@ a push reports the previous run.
 
 ## 4. NEXT STEP, IN ORDER
 
-1. PR 26: read `review26-correctness` and `review26-conformance` (general-purpose agents
-   briefed with the design context, working only in the worktree, read-only), apply what
-   holds, push, CI on the head SHA, `gh pr merge 26 --squash --delete-branch`,
-   `git pull --ff-only`.
-2. R2-8, the second run. Needs Mauria: Roughdraft started on a scratch copy of a document
+1. R2-8, the second run. Needs Mauria: Roughdraft started on a scratch copy of a document
    with comments (`roughdraft start`, `roughdraft open <copy>`) and its URL. Then, from
    `~/Documents/Projects/roughdraftplus`, with `NOSCOPE_DB=~/.noscope/second-run.sqlite`:
    `noscope incident create "<the objective of run 001, verbatim from docs/first-incident.md>" --constraint "the app runs at <URL> on a scratch copy of the document, which reproduce may change" --constraint "the repository is read only"`, then `incident step 001` one cycle at a time (or `run` with a cap), watching each plan. Record `incident review 001` (on the new file) beside run 001 in `docs/first-incident.md` under "Second run": cycles, planner input, cost, and how the step code cannot prove (where the editor's selection rests before a deletion) was settled; no thresholds, per Mauria.
-3. Then the revisit list on the quipu thread's open items, then noscope on roughdraft, quipu,
+2. Then the revisit list on the quipu thread's open items, then noscope on roughdraft, quipu,
    the scan.
 
 ## 5. WORKING AGREEMENTS (standing; do not re-ask)
