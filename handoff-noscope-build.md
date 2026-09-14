@@ -1,22 +1,18 @@
-# Handoff: noscope round 2, seven of eight PRs merged; the rerun is next
+# Handoff: noscope round 2 complete; the revisit list is next
 
-Refreshed 2026-09-13 22:40 CDT by session noscope-audit [3d5895] (transcript
-home-laptop:~/.claude/projects/-Users-mauriaparker-Documents-Projects-noscope/8207d276-eb0c-4c6a-86a2-86f3d0fdede1.jsonl).
+Refreshed 2026-09-14 00:20 CDT by session noscope-rerun [da49a0] (transcript
+home-laptop:~/.claude/projects/-Users-mauriaparker-Documents-Projects-noscope/e947bb82-bb8d-47c6-9f63-6e01e0b15c6f.jsonl).
 Read this whole file before doing anything.
 
-**First actions, in order:** (1) `/warp-pin title noscope-rerun`, the name this session was
-launched with. (2) One `SendMessage` to `noscope-audit [3d5895]` saying "noscope-rerun is
-up"; nothing is pending from background agents, and every round-2 PR through R2-7 is merged.
-(3) Mauria was asked at 22:20 which Markdown document with comments to copy for the rerun,
-and whether to push main (it carries the handoff commits); her answers are the inputs to
-step 1 of §4 and to the push.
+**First actions, in order:** (1) `/warp-pin title <the name this session was launched
+with>`. (2) Read `docs/first-incident.md` from "## Second run" to the end; it is the record
+of R2-8 and lists what the run found. (3) Nothing is pending from background agents. Main
+carries this handoff commit unpushed; pushing main needs Mauria's yes.
 
 ## 1. GOAL
 
-Finish round 2 of `BUILD-PLAN.md` (the section "Round 2: from the first incident's
-audit", eight PRs R2-1 to R2-8) and rerun the first incident to measure it. Mauria ruled
-"all of it" at 19:26 and approved the plan in three Roughdraft passes; merge permission
-covers the round.
+Round 2 of `BUILD-PLAN.md` is complete: R2-1 to R2-8 merged as PRs 20 to 27. The next
+step is the revisit list (§4), which needs Mauria's rulings before anything is built.
 
 ## 2. WHAT NOSCOPE IS (the settled design; DESIGN.md is the contract)
 
@@ -25,75 +21,69 @@ own except claim, fought over and not to be reopened: incident, unit (root `<id>
 task, capability (deterministic ones produce verified claims, session-backed ones asserted),
 equipment (the primitive, never assigned; kinds: function, provider built-in tool,
 external), claim (subject, predicate, object, status, basis observed or inferred,
-confidence, evidence, provenance), action plan (now with a situation), planner (Planning
+confidence, evidence, provenance), action plan (with a situation), planner (Planning
 Section; one Opus 5 call per cycle), validator (13 rules, Step 5), provider (Claude Code),
-SOP, grant, budget, incident file. Mauria is the Agency Administrator. The cycle
-(`incident step`): observe, plan, validate, apply, dispatch, verify, record, stop.
+SOP, grant, budget, incident file. The planner's four channels: a task, a grant request, a
+capability request (answered with `incident provide`), a question (answered with `incident
+answer`). Mauria is the Agency Administrator. The cycle (`incident step`): observe, plan,
+validate, apply, dispatch, verify, record, stop.
 
 Stack: TypeScript, Node 24, pnpm, zod 4, better-sqlite3, biome, vitest, knip, CI runs `pnpm
 check`. Repo https://github.com/kudzuweb/noscope (private).
 
 ## 3. STATE
 
-Main's origin head is PR 26's squash commit; local main carries the handoff commits on top, unpushed. Clean. `pnpm check`
-exit 0. Round 2 so far:
+Origin main is PR 27's squash commit 66ea828; local main has this handoff commit on top,
+unpushed. Clean. `pnpm check` exit 0. `dist/` rebuilt from that commit (a stale `dist/`
+cost the first attempt of run 002; check `find src -name '*.ts' -newer dist/cli.js` before
+any live run). No worktrees or feature branches; origin has only `main`.
 
-| PR | Plan item | What landed |
-|---|---|---|
-| #20 | R2-1 | Claims carry `basis`; the preamble defines the confidence scale; the store's first migration (schema 1 to 2). |
-| #21 | R2-4 | Task refs: a plan chains new tasks on each other; the dispatcher runs the chain in one cycle. |
-| #22 | R2-2 | The plan carries a `situation` (changed, hypothesis, proven, inferred with what settles each, keep); section 10 reads it back; rule 13 "Inferred links are worked"; `proven` must be verified. |
-| #23 | R2-3 | A capability's `summarize` predicate (grep's `matches`) collapses to one line per task after its first cycle unless the situation keeps it; session findings reach section 5 in full. Incident 001 re-rendered: 2.17M to 0.85M characters of planner input. |
-| #24 | R2-5 | `evidenceFrom` on tasks; the runtime attaches referenced claims and results to the brief; the brief opens with the objective, hypothesis and proven list; schema 3. |
-| #25 | R2-6 | Prompt text: interpret tests the hypothesis and names alternatives, investigate adds "settled by:" items, the planner reproduces or asks or requests a capability, never reads more. `docs/first-incident.md` has the motivating cycles. |
-| #26 | R2-7 | External equipment (`src/equipment/external.ts`): `playwright_browser` (MCP, headless, pinned 0.0.80, screenshots to the OS temp dir) and `claude_in_chrome` (provider integration, interactive-only); the `reproduce` capability; the provider allowlists attached servers. Merged 22:38. |
+PR 27 (R2-8): run 002 reached `satisfied` on cycle 8 with the same code path as run 001;
+the step that code cannot prove was settled by five Playwright `reproduce` sessions, no
+question about the bug; 8 cycles against 12, planner input 265k tokens against 1.09M,
+$16.20 at list rates. Three fixes rode on it: the brief renderer for reproduce results,
+`incident provide`, and Playwright's MCP server starting inside its output directory.
 
-Verified live for R2-7 (DESIGN.md Reference rows): Playwright works from a headless session
-with `--allowedTools mcp__playwright_browser` but refuses `file:` URLs (the live test
-serves the fixture over HTTP and passes); Claude in Chrome is denied from a headless
-session even under `bypassPermissions`, so it is interactive-only.
+Run 002's database: `~/.noscope/second-run.sqlite` (read it with the current build; older
+builds cannot parse `capability.answered`). Its scratch document and screenshots:
+`~/.noscope/second-run/`. Run 001: `~/.noscope/first-incident.sqlite`.
 
-No worktrees or feature branches remain; origin has only `main`.
-
-Quipu: `~/Documents/Projects/my-quipu/ics-runtime.md` has knots for the audit follow-ups
-(21:45) and round 2's landing (22:15). Papercut logged: `gh pr checks --watch` right after
-a push reports the previous run.
+Quipu: `~/Documents/Projects/my-quipu/ics-runtime.md`; a keeper was asked at 00:15 to tie
+the knot for run 002 and refresh the Head. Papercut pc-7e69f7 logged (stale dist).
 
 ## 4. NEXT STEP, IN ORDER
 
-1. R2-8, the second run. Needs Mauria: Roughdraft started on a scratch copy of a document
-   with comments (`roughdraft start`, `roughdraft open <copy>`) and its URL. Then, from
-   `~/Documents/Projects/roughdraftplus`, with `NOSCOPE_DB=~/.noscope/second-run.sqlite`:
-   `noscope incident create "<the objective of run 001, verbatim from docs/first-incident.md>" --constraint "the app runs at <URL> on a scratch copy of the document, which reproduce may change" --constraint "the repository is read only"`, then `incident step 001` one cycle at a time (or `run` with a cap), watching each plan. Record `incident review 001` (on the new file) beside run 001 in `docs/first-incident.md` under "Second run": cycles, planner input, cost, and how the step code cannot prove (where the editor's selection rests before a deletion) was settled; no thresholds, per Mauria.
-   What to watch for, cycle by cycle, since each is a round-2 change under test: the plan
-   carries a situation (changed, hypothesis, proven, inferred with settledBy, keep) and
-   section 10 shows it back next cycle; a chain of tasks lands in one plan by ref and runs
-   in one cycle; tasks name evidence in `evidenceFrom` rather than copying it; grep claims
-   collapse after their first cycle unless kept; the planner names a `reproduce` task with
-   `browser: playwright_browser` for the resting-selection step instead of asking Mauria;
-   interpret briefs carry no conclusion. Note every cycle where one of these did not happen
-   and why, in the "Second run" section; that is the finding.
-2. Then the revisit list on the quipu thread's open items, then noscope on roughdraft, quipu,
-   the scan.
+1. The revisit list, for Mauria to rule on before anything is built. Candidates, each with
+   where the evidence is:
+   - Dependencies resolve rejects a transitive `dependsOn` chain (run 002 cycle 3; one
+     cycle lost). Accept the transitive closure, or keep the direct-ref rule.
+   - `reproduce` consumes its fixture: deletions persist to the scratch document, and the
+     second reproduce found nothing to delete (cycles 2 to 4, a six-minute block). A
+     restore step in the task, or a fixture the runtime copies fresh per task.
+   - Promotion never fires (both runs): a session's claim never equals a grep triple.
+   - Reproduce sessions are the cost centre ($6.48 of $16.20; 3.3M input tokens).
+   - The planner spent cycles 6 and 7 ($4.63) on secondary links after the primary path
+     was closed on cycle 6; no threshold, per Mauria, but worth her eye.
+   - The earlier open items on the quipu thread (from the audit, 21:45 on 2026-09-13).
+2. Then noscope on roughdraft, quipu, the scan.
 
 ## 5. WORKING AGREEMENTS (standing; do not re-ask)
 
-- One PR at a time on `pr-<slug>` targeting main, no stacking on GitHub; a local chain is
-  fine, rebased with `git rebase --onto origin/main <base>` as each merges. Use a separate
+- One PR at a time on `pr-<slug>` targeting main, no stacking on GitHub. Use a separate
   `git worktree` per branch under the scratchpad; reviewers work in the worktree and never
   switch branches. "Merge as you go": merge after CI green and review findings applied.
 - Every PR: commit; review by direct subagents (`general-purpose`, named
   `review<N>-<angle>`, briefed with the design context; findings are secondhand until
-  reconciled; their reports rarely arrive as notifications, so read the last assistant text
-  of `.../subagents/agent-a<name>-*.jsonl`); push; `gh pr create` with body = plan step text
+  reconciled; their reports arrive as teammate messages, or read the last assistant text of
+  `.../subagents/agent-a<name>-*.jsonl`); push; `gh pr create` with body = plan step text
   verbatim, "## Deviations, with reasons", then "## From the review"; build-record entry on
   the branch; CI on the head SHA (confirm `gh pr view --json headRefOid` matches before
-  trusting a watch); squash-merge with branch deletion; pull.
+  trusting a watch); squash-merge with branch deletion; pull; `pnpm build` in the checkout.
 - Docs travel with the change (DESIGN.md, docs/architecture.html, README, build record).
   Never `git add -A`. Never commit in the same command as an edit. Sentence-case commit
   messages, no emoji, no attribution. Check `pnpm check`'s exit code, never its grepped output.
 - Chat: provenance labels, answer first, tables for parallel items, no em-dashes.
-- Quipu: write Head edits directly with exact anchors; `git pull --ff-only` first.
+- Quipu: message the `quipu` keeper with thread and change; spawn one if none runs.
 - Pushes of main need her yes each time; PR branches push freely.
 
 ## 6. ANCHORS
@@ -101,32 +91,38 @@ a push reports the previous run.
 - Repo `~/Documents/Projects/noscope`; `pnpm check`; `./bin/noscope.mjs --help`;
   `NOSCOPE_DB=<file>`, `NOSCOPE_CLAUDE_BIN=<binary>`; tests use `test/stub-claude`;
   `NOSCOPE_LIVE=1` runs the live tests (Haiku provider; Playwright reproduce).
-- First incident: `cd ~/Documents/Projects/roughdraftplus && NOSCOPE_DB=~/.noscope/first-incident.sqlite ~/Documents/Projects/noscope/bin/noscope.mjs incident review 001` (the file migrates to schema 3 on first open by the new build).
-- Code map: `src/models.ts` (Claim with basis, Situation, EvidenceFrom, TaskProposal with
-  ref), `src/store.ts` (migration chain), `src/planner.ts` (system prompt, 13 rules, ten
-  sections, `lastSituationOf`), `src/validator.ts`, `src/runtime.ts` (refs to ids),
+- A live run: from `~/Documents/Projects/roughdraftplus` with `NOSCOPE_DB` set; `incident
+  step <id>` one cycle at a time. A cycle with a reproduce can exceed ten minutes, so run
+  it detached (`nohup sh -c '... >> log; echo "exit $?" >> log' & disown`) and watch the
+  log; the Bash tool's timeout kills a backgrounded step.
+- Code map: `src/models.ts` (Claim with basis, Situation, EvidenceFrom, CapabilityRequest
+  with answer), `src/store.ts` (migration chain), `src/planner.ts` (system prompt, 13
+  rules, ten sections, `lastSituationOf`), `src/validator.ts`, `src/runtime.ts`,
   `src/dispatcher.ts` (`briefContext`), `src/capabilities/{registry,session,investigate,
-  reproduce,deterministic}.ts`, `src/equipment/external.ts`, `src/providers/claude-code.ts`
-  (mcp-config, allowlist, `--chrome`), `src/review.ts`.
-- Docs: `DESIGN.md`, `BUILD-PLAN.md` (round 2 at the end), `docs/build-record.md` (entries
-  through PR 26), `docs/first-incident.md` (with "Prompt changes from this run"),
-  `docs/architecture.html`, README.
+  reproduce,deterministic}.ts` (`session.ts` renders briefs), `src/equipment/external.ts`,
+  `src/providers/claude-code.ts`, `src/commands/incident.ts` (`answer`, `provide`,
+  `holdsOn`), `src/review.ts`.
+- Docs: `DESIGN.md`, `BUILD-PLAN.md`, `docs/build-record.md` (entries through PR 27),
+  `docs/first-incident.md` (runs 001 and 002), `docs/architecture.html`, README.
 
 ## 7. GOTCHAS
 
 - biome reflows code after `lint:fix`; exact-string edits miss; write scripts with
   whitespace-tolerant anchors or rewrite small files whole. `exactOptionalPropertyTypes` is
   on. knip fails on unused exports. The Write tool is blocked by a security hook whenever
-  the file's text contains the word exec followed by an opening parenthesis (SQLite's
-  `db.exec` call, or a sentence about it); a heredoc through Bash is not.
-- A python edit anchored on a line just after `export` swallowed the keyword once (knip
-  caught it); anchor on the full declaration.
+  the file's text contains the word exec followed by an opening parenthesis; a heredoc
+  through Bash is not.
+- A python script that edits several files must read, edit and write each file once; two
+  edits that each start from the on-disk original lose the first (it happened here).
 - Roughdraft's save pads table cells and drops blank lines; rebuild the committed file from
   HEAD plus the intended edits rather than committing its output.
-- `timeout` is not on this machine; the Bash tool's own timeout bounds a command.
-- Playwright's MCP server refuses `file:` URLs; the reproduce session's cwd is the
-  incident's cwd and Playwright writes `.playwright-mcp/` there (ignored in this repo).
+- `timeout` is not on this machine; the Bash tool's own timeout bounds a command, and a
+  foreground `sleep` is refused: wait with `until <check>; do sleep N; done`.
+- Playwright's MCP server refuses `file:` URLs. It now runs inside its output directory
+  under the OS temp dir, so nothing it writes lands in the incident's cwd.
 - Outcome events name their task inside `payload.mutation.taskId`; `task.usage` and
   `task.insufficient` name it at the top.
-- The planner snapshot (`test/planner.test.ts`) pins sections 8 and 9; update with
+- The planner snapshot (`test/planner.test.ts`) pins the rendered sections; update with
   `pnpm vitest run test/planner.test.ts -u` and read the diff.
+- The permission classifier refuses `ps` listings that look at other processes; a
+  `pgrep -f "noscope.mjs incident step"` is allowed.
