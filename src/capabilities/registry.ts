@@ -55,8 +55,8 @@ type CapabilityBase<I extends z.ZodType, O extends z.ZodType> = {
   output: O;
   effect: Effect;
   cost: Cost;
-  /** Claims from this capability reach the planner in full only in the cycle after they land, then collapse to one line per task unless the situation names them. */
-  summarize: boolean;
+  /** The predicate whose claims from this capability reach the planner in full only in the cycle after they land, then collapse to one line per task unless the situation names them; null collapses nothing. */
+  summarize: string | null;
 };
 
 /**
@@ -91,7 +91,7 @@ export type Capability<
 type Spec<I extends z.ZodType, O extends z.ZodType> = Omit<
   CapabilityBase<I, O>,
   "cost" | "paths" | "summarize"
-> & { cost?: Cost; paths?: readonly string[]; summarize?: boolean };
+> & { cost?: Cost; paths?: readonly string[]; summarize?: string };
 
 const registry = new Map<string, Capability>();
 
@@ -132,7 +132,7 @@ export function defineCapability<I extends z.ZodType, O extends z.ZodType>(
     description: spec.description,
     equipment: spec.equipment,
     paths: spec.paths ?? [],
-    summarize: spec.summarize ?? false,
+    summarize: spec.summarize ?? null,
     input: spec.input,
     output: spec.output,
     effect: spec.effect,

@@ -696,6 +696,13 @@ Not exactly to spec, with reasons:
   plan is fresh, whatever the clock says, so a rejected plan does not age the claims it saw.
 - The collapsed line does not list claim ids, since the point is the size; a claim the
   planner wants in view next cycle goes in `keep` while it is still shown in full.
+- The collapsed line names the task's inputs (clipped) rather than the pattern alone, so
+  it holds for any capability that declares `summarize`.
+- `summarize` names a predicate, not a capability (from the review): grep's
+  `has_no_match_for` claim, whose subject is the search root, would otherwise collapse into
+  a line that reads like one match. Only the named predicate collapses.
 - The re-rendering of incident 001 under this rule is in the pull request, not here: the
-  numbers are the analysis's (1.09M planner input tokens as run, 427k with uncited match
-  claims dropped) and the rendering now also collapses by task.
+  run's planner input falls from 2.17M to 0.85M characters (61 percent), the same figure
+  the analysis put on dropping uncited match claims; cycle 3 is unchanged because its
+  matches are fresh. The inline snapshot did not change, since its fixture has no applied
+  plan; the dedicated test guards the collapse.

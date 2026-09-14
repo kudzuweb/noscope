@@ -262,8 +262,9 @@ export function renderPlannerInput(
         `budget stopped the last pass before ${String(e.payload.taskId)}: ${String(e.payload.reason)}`,
     );
 
-  // A claim from a summarizing capability is shown in full only in the cycle after it lands,
-  // or when the last situation names it; the rest collapse to one line per task.
+  // A claim with a capability's summarized predicate is shown in full only in the cycle
+  // after it lands, or when the last situation names it; the rest collapse to one line per
+  // task. Its other predicates (a verified absence, say) stay in full.
   const situation = lastSituationOf(events);
   const named = new Set([
     ...(situation?.proven.map((p) => p.claimId) ?? []),
@@ -281,16 +282,16 @@ export function renderPlannerInput(
       .map((m) => m?.claim?.id)
       .filter((id): id is string => typeof id === "string"),
   );
-  const summarizing = new Set(
+  const summarizing = new Map(
     listCapabilities()
-      .filter((c) => c.summarize)
-      .map((c) => c.name),
+      .filter((c) => c.summarize !== null)
+      .map((c) => [c.name, c.summarize]),
   );
   const collapsed = new Map<string, Claim[]>();
   const verifiedLines: string[] = [];
   for (const c of claims.filter((c) => c.status === "verified")) {
     if (
-      summarizing.has(c.provenance.capability) &&
+      summarizing.get(c.provenance.capability) === c.predicate &&
       !fresh.has(c.id) &&
       !named.has(c.id)
     ) {

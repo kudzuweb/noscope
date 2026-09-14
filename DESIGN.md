@@ -220,7 +220,7 @@ Fields on every capability:
 | `effect` | `read_only`, `writes_local` or `writes_external`. v0 registers only `read_only`. |
 | `produces` | `verified_claims` for a deterministic capability, whose output is a fact about the machine; `asserted_claims` for a session-backed one. |
 | `cost` | Facts that live with the thing so they are at hand whenever it is equipped: rate limit, typical tokens, typical seconds, money per call if any. Equipment declares the same field. The budget logic reads these and nothing else. |
-| `summarize` | Set on a capability whose claims are many and alike (grep's matches): the planner sees them in full only in the cycle after they land, then one line per task unless the situation keeps them. |
+| `summarize` | The predicate of a capability's claims that are many and alike (grep's `matches`): the planner sees them in full only in the cycle after they land, then one line per task unless the situation keeps them; the capability's other predicates, such as a verified absence, stay in full. |
 
 A capability with a session adds the fields that define its setup. The session names a
 provider, and the provider renders the fields onto its own command from them:
@@ -282,7 +282,7 @@ planner-shaped prompt: 3.6k tokens of context and a valid action plan back.
 Input, rendered as labeled sections in a stable order so the prefix caches:
 
 1. The incident file's command picture: objective, constraints, priorities, budget remaining, grants given, questions still unanswered.
-2. Verified claims. A claim from a capability that declares `summarize` (grep, in v0) appears in full only in the cycle after it lands, or when the last situation names it in `proven` or `keep`; the rest of its task's claims collapse to one line per task: the inputs, the claim count, and the files with counts.
+2. Verified claims. A claim with the predicate its capability declares as `summarize` (grep's `matches`, in v0) appears in full only in the cycle after it lands, or when the last situation names it in `proven` or `keep`; the rest of its task's claims collapse to one line per task: the inputs, the claim count, and the files with counts.
 3. Asserted claims, each with its provenance.
 4. The current unit tree with each unit's purpose and status.
 5. Tasks completed since the last cycle, each against its contract, with a session's findings (summary, observations, conclusion, reasoning) in full and a deterministic result clipped.
