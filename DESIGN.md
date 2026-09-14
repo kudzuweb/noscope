@@ -326,7 +326,7 @@ channel:
 |---|---|---|
 | A fact a registered capability can retrieve, from the machine or anything its equipment reaches. | A task. | The runtime, next cycle. |
 | Permission for a capability that writes. | A grant request. | Mauria, with `incident grant`. After v0. |
-| The means: equipment or a capability that does not exist yet, stated as what it would need and why. | A capability request. | Mauria, by registering it and answering the request with `incident provide`, which returns the incident to `open`; after v0 the planner itself when the missing equipment is an external MCP server it can declare. A capability request is also the runtime telling her what to build next. |
+| The means: equipment or a capability that does not exist yet, stated as what it would need and why. | A capability request. | Mauria, by registering it and answering the request with `incident provide`, which returns the incident to `open` once nothing else waits; after v0 the planner itself when the missing equipment is an external MCP server it can declare. A capability request is also the runtime telling her what to build next. |
 | Something only a human knows or may decide. | A question for a human. | Mauria, with `incident answer`. |
 
 The incident goes to `blocked` on any of the last three, `incident show` prints them, and

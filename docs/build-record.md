@@ -815,7 +815,7 @@ R2-8 of the round 2 plan. The first incident rerun live with round 2 merged, fro
 roughdraftplus commit, against Roughdraft serving a scratch document with five comments;
 `incident review` recorded beside run 001 in `docs/first-incident.md` under "Second run":
 8 cycles to `satisfied` with the same code path, planner input 265k tokens over the run
-against 1.09M, $16.20 at list rates, and the step code cannot prove settled by five
+against 1.09M, $16.20 at list rates, and the step that code cannot prove settled by five
 `reproduce` sessions instead of a question. The section also walks the round-2 changes
 cycle by cycle and lists what the run found in the runtime.
 
