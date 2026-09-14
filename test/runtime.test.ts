@@ -54,6 +54,7 @@ function grepTask(
     completionCriteria: [],
     evidenceRequired: [],
     dependsOn: [],
+    evidenceFrom: { claims: [], tasks: [] },
     instructions: "",
     provider: null,
     model: null,

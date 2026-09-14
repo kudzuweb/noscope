@@ -48,6 +48,7 @@ function scripted(store: Store): void {
     completionCriteria: [],
     evidenceRequired: [],
     dependsOn: [],
+    evidenceFrom: { claims: [], tasks: [] },
     provider: null,
     model: null,
     instructions: "",
@@ -510,14 +511,14 @@ describe("store", () => {
     s1.db.pragma("user_version = 1");
     s1.close();
     const first = new Store(path);
-    expect(first.db.pragma("user_version", { simple: true })).toBe(2);
+    expect(first.db.pragma("user_version", { simple: true })).toBe(3);
     first.close();
     // A crash after the column was added but before the version was written: reopening finishes the job.
     const half = new Store(path);
     half.db.pragma("user_version = 1");
     half.close();
     const s2 = new Store(path);
-    expect(s2.db.pragma("user_version", { simple: true })).toBe(2);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(3);
     expect(
       s2
         .listClaims("i1")
@@ -533,6 +534,23 @@ describe("store", () => {
     s3.db.pragma("user_version = 99");
     s3.close();
     expect(() => new Store(other)).toThrow(/schema version 99/);
+  });
+
+  it("migrates a version 2 file, giving every task an empty evidenceFrom", async () => {
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const path = `${mkdtempSync(`${tmpdir()}/noscope-`)}/v2.sqlite`;
+    const s1 = new Store(path);
+    scripted(s1);
+    s1.db.exec("ALTER TABLE tasks DROP COLUMN evidence_from_json");
+    s1.db.pragma("user_version = 2");
+    s1.close();
+    const s2 = new Store(path);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(3);
+    expect(s2.listTasks("i1").map((t) => t.evidenceFrom)).toEqual([
+      { claims: [], tasks: [] },
+    ]);
+    s2.close();
   });
 
   it("replays a claim recorded before claims carried a basis", () => {

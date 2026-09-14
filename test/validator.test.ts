@@ -57,6 +57,7 @@ function grepTask(over: Partial<TaskProposal> = {}): TaskProposal {
     completionCriteria: [],
     evidenceRequired: [],
     dependsOn: [],
+    evidenceFrom: { claims: [], tasks: [] },
     instructions: "",
     provider: null,
     model: null,
@@ -578,6 +579,7 @@ describe("validator", () => {
             objective: "outside",
             inputs: { root: "src", pattern: "outside" },
             dependsOn: ["a"],
+            evidenceFrom: { claims: [], tasks: [] },
           }),
         ],
       }),
@@ -597,11 +599,13 @@ describe("validator", () => {
             objective: "third",
             inputs: { root: "src", pattern: "third" },
             dependsOn: ["d", "d"],
+            evidenceFrom: { claims: [], tasks: [] },
           }),
           grepTask({
             objective: "fan in",
             inputs: { root: "src", pattern: "fan" },
             dependsOn: ["b", "c"],
+            evidenceFrom: { claims: [], tasks: [] },
           }),
         ],
       }),
@@ -631,6 +635,52 @@ describe("validator", () => {
     ).toEqual([
       "No cycles: task ref t-done is already a task id",
       "No cycles: task ref i1-t09 starts with the incident id and could be mistaken for a task id",
+    ]);
+  });
+
+  it("Evidence by reference: a claim that exists and a task that is completed or in dependsOn pass; anything else is refused, and a task that takes evidence must carry some", () => {
+    const interpretTask = (over: Partial<TaskProposal>) =>
+      grepTask({
+        capability: "interpret",
+        objective: "say what it means",
+        inputs: { question: "what does it mean?" },
+        provider: "fake",
+        model: "fake-large",
+        budget: { seconds: 30 },
+        ...over,
+      });
+    expect(
+      reasonsOf({
+        ...empty,
+        createTasks: [
+          grepTask({ ref: "probe" }),
+          interpretTask({
+            dependsOn: ["probe"],
+            evidenceFrom: {
+              claims: ["c-verified"],
+              tasks: ["probe", "t-done"],
+            },
+          }),
+        ],
+      }),
+    ).toEqual([]);
+    expect(
+      reasonsOf({
+        ...empty,
+        createTasks: [
+          grepTask({ ref: "probe" }),
+          interpretTask({
+            evidenceFrom: { claims: ["c-none"], tasks: ["probe", "t-running"] },
+          }),
+        ],
+      }),
+    ).toEqual([
+      'Dependencies resolve: task "say what it means" reads claim c-none, which does not exist',
+      'Dependencies resolve: task "say what it means" reads the result of task probe, which is neither completed nor in its dependsOn',
+      'Dependencies resolve: task "say what it means" reads the result of task t-running, which is neither completed nor in its dependsOn',
+    ]);
+    expect(reasonsOf({ ...empty, createTasks: [interpretTask({})] })).toEqual([
+      'Inputs validate: task "say what it means" carries no evidence: name claims or tasks in evidenceFrom, or give evidence inline',
     ]);
   });
 

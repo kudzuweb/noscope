@@ -5,10 +5,13 @@ import {
   runDeterministic,
   runSession,
 } from "./capabilities/index.js";
+import type { BriefContext } from "./capabilities/session.js";
 import {
   type Claim,
+  type Event,
   type Incident,
   SessionResult,
+  Situation,
   type Task,
   type Usage,
 } from "./models.js";
@@ -123,6 +126,31 @@ type Outcome = {
   record: () => Claim[];
 };
 
+/** The last applied plan's situation, if a plan has been applied and carried one. */
+function lastSituation(events: readonly Event[]): Situation | null {
+  let last: unknown;
+  for (const e of events)
+    if (e.type === "plan.applied") last = e.payload.situation;
+  const parsed = Situation.safeParse(last);
+  return parsed.success ? parsed.data : null;
+}
+
+/** What a session reads beyond its task: the objective, the situation, and the claims and results the task names in evidenceFrom. */
+function briefContext(
+  store: Store,
+  incident: Incident,
+  task: Task,
+): BriefContext {
+  const claims = new Set(task.evidenceFrom.claims);
+  const tasks = new Set(task.evidenceFrom.tasks);
+  return {
+    objective: incident.objective,
+    situation: lastSituation(store.listEvents(incident.id)),
+    claims: store.listClaims(incident.id).filter((c) => claims.has(c.id)),
+    results: store.listTasks(incident.id).filter((t) => tasks.has(t.id)),
+  };
+}
+
 async function runTask(
   store: Store,
   incident: Incident,
@@ -165,6 +193,7 @@ async function runTask(
     unit,
     provider,
     options.cwd,
+    briefContext(store, incident, task),
   );
   const result = SessionResult.parse(session.result);
   return {

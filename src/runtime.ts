@@ -102,6 +102,10 @@ export function applyPlan(
     completionCriteria: t.completionCriteria,
     evidenceRequired: t.evidenceRequired,
     dependsOn: t.dependsOn.map(resolveTask),
+    evidenceFrom: {
+      claims: t.evidenceFrom.claims,
+      tasks: t.evidenceFrom.tasks.map(resolveTask),
+    },
     provider: t.provider,
     model: t.model,
     instructions: t.instructions,

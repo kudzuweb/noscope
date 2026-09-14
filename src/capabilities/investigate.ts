@@ -55,9 +55,12 @@ export const interpret = defineCapability({
   equipment: [],
   input: z.object({
     question: z.string().min(1),
-    evidence: z.array(
-      z.object({ source: z.string().min(1), content: z.string() }),
-    ),
+    evidence: z
+      .array(z.object({ source: z.string().min(1), content: z.string() }))
+      .default([])
+      .describe(
+        "Evidence given inline; prefer naming claims and tasks in the task's evidenceFrom",
+      ),
   }),
   output: sessionResult(InterpretFindings),
   effect: "read_only",
