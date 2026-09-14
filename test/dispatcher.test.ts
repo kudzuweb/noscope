@@ -240,11 +240,34 @@ describe("dispatcher", () => {
         keep: [],
       },
     });
+    const said = task({
+      id: "t-said",
+      capability: "investigate",
+      inputs: { question: "what does it do?" },
+      provider: "claude-code",
+      model: "claude-haiku-4-5",
+      status: "completed",
+    });
+    store.setTaskStatus(
+      "i1",
+      said.id,
+      "completed",
+      "dispatcher",
+      "task.completed",
+      {
+        result: {
+          outcome: "answered",
+          claims: [],
+          findings: { summary: "it focuses the editor", observations: [] },
+          needed: [],
+        },
+      },
+    );
     task({
       id: "t-read",
       capability: "interpret",
       inputs: { question: "what does the match mean?" },
-      evidenceFrom: { claims: [claim.id], tasks: ["t-done"] },
+      evidenceFrom: { claims: [claim.id], tasks: ["t-done", "t-said"] },
       provider: "claude-code",
       model: "claude-haiku-4-5",
       budget: { seconds: 30 },
@@ -279,7 +302,9 @@ describe("dispatcher", () => {
     expect(prompt).toContain(
       `Evidence attached by reference:\nclaims:\n  - ${claim.id}: `,
     );
-    expect(prompt).toContain('results:\n  - task t-done (grep): {"matches":2}');
+    expect(prompt).toContain(
+      'results:\n  - task t-done (grep): {"matches":2}\n  - task t-said (investigate): summary: it focuses the editor',
+    );
     store.close();
   });
 

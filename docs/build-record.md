@@ -730,4 +730,11 @@ Not exactly to spec, with reasons:
 - The brief renders a referenced session's findings in full (summary, observations,
   conclusion, reasoning) and any other result as JSON, since a session reads it once.
 - The migration machinery became a chain of numbered steps, each idempotent, so a version 1
-  file reaches version 3 in one open.
+  file reaches version 3 in one open; a version with no step is refused with the handle
+  closed, as before.
+- The run test's chained interpret reads the grep's result by task ref, not its claims by
+  id: a claim cannot be named before the task that produces it has run, so within one
+  plan a task refers to another task's result, and to claims only from earlier cycles.
+- From the review: "No duplicates" keys on `evidenceFrom` as well as inputs, since two
+  interpret tasks with one question over different claims are different tasks; a replay
+  test covers a task recorded before `evidenceFrom` existed.

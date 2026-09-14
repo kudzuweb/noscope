@@ -679,6 +679,19 @@ describe("validator", () => {
       'Dependencies resolve: task "say what it means" reads the result of task probe, which is neither completed nor in its dependsOn',
       'Dependencies resolve: task "say what it means" reads the result of task t-running, which is neither completed nor in its dependsOn',
     ]);
+    expect(
+      reasonsOf({
+        ...empty,
+        createTasks: [
+          interpretTask({
+            evidenceFrom: { claims: ["c-verified"], tasks: [] },
+          }),
+          interpretTask({
+            evidenceFrom: { claims: ["c-asserted"], tasks: [] },
+          }),
+        ],
+      }),
+    ).toEqual([]);
     expect(reasonsOf({ ...empty, createTasks: [interpretTask({})] })).toEqual([
       'Inputs validate: task "say what it means" carries no evidence: name claims or tasks in evidenceFrom, or give evidence inline',
     ]);

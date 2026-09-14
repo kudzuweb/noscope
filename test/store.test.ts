@@ -553,6 +553,28 @@ describe("store", () => {
     s2.close();
   });
 
+  it("replays a task recorded before tasks read by reference", () => {
+    const a = new Store(":memory:");
+    scripted(a);
+    const events = a.listEvents("i1").map((e) => {
+      const m = e.payload.mutation as
+        | { kind: string; task?: Record<string, unknown> }
+        | undefined;
+      if (m === undefined || m.kind !== "task.create" || m.task === undefined)
+        return e;
+      const { evidenceFrom: _e, ...task } = m.task;
+      return { ...e, payload: { ...e.payload, mutation: { ...m, task } } };
+    });
+    const b = new Store(":memory:");
+    b.replay([...a.listEvents(null), ...events]);
+    expect(b.listTasks("i1")[0]?.evidenceFrom).toEqual({
+      claims: [],
+      tasks: [],
+    });
+    a.close();
+    b.close();
+  });
+
   it("replays a claim recorded before claims carried a basis", () => {
     const a = new Store(":memory:");
     scripted(a);

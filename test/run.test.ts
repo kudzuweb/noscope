@@ -144,15 +144,12 @@ describe("incident run", () => {
           unit: "find",
           capability: "interpret",
           objective: "say what the match means",
-          inputs: {
-            question: "what does the match mean?",
-            evidence: [{ source: "a.txt:2", content: "delete" }],
-          },
+          inputs: { question: "what does the match mean?" },
           expectedOutput: "a conclusion",
           completionCriteria: [],
           evidenceRequired: [],
           dependsOn: ["matches"],
-          evidenceFrom: { claims: [], tasks: [] },
+          evidenceFrom: { claims: [], tasks: ["matches"] },
           instructions: "",
           provider: "claude-code",
           model: "claude-haiku-4-5",
@@ -182,9 +179,11 @@ describe("incident run", () => {
     expect(
       beforeSecond.filter((e) => e.type === "task.completed"),
     ).toHaveLength(2);
-    expect(store.listTasks("001").map((t) => [t.id, t.dependsOn])).toEqual([
-      ["001-t01", []],
-      ["001-t02", ["001-t01"]],
+    expect(
+      store.listTasks("001").map((t) => [t.id, t.dependsOn, t.evidenceFrom]),
+    ).toEqual([
+      ["001-t01", [], { claims: [], tasks: [] }],
+      ["001-t02", ["001-t01"], { claims: [], tasks: ["001-t01"] }],
     ]);
     store.close();
   });

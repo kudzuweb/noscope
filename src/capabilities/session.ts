@@ -16,7 +16,6 @@ import type { SessionCapability } from "./registry.js";
 
 const DEFAULT_SESSION_SECONDS = 600;
 
-/** The user message: the task's contract, then one line on what the owning unit is trying to establish. */
 /** What the runtime attaches to a brief beyond the task: the incident's objective and current situation, and what the task reads by reference. */
 export type BriefContext = {
   objective: string;
@@ -57,6 +56,7 @@ function renderResult(t: Task): string {
   return JSON.stringify(t.result);
 }
 
+/** The user message: the incident's objective and situation, the task's contract, what it reads by reference, then one line on what the owning unit is trying to establish. */
 export function renderTaskBrief(
   task: Task,
   unit: Unit,

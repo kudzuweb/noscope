@@ -193,13 +193,22 @@ const CHECKS: Record<RuleName, Rule> = {
 
   "No duplicates": (plan, ctx) => {
     const cancelling = new Set(plan.cancelTasks);
-    const key = (unit: string, capability: string, inputs: unknown) =>
-      `${unit} ${capability} ${stable(inputs)}`;
+    const key = (
+      unit: string,
+      capability: string,
+      inputs: unknown,
+      evidenceFrom: unknown,
+    ) => `${unit} ${capability} ${stable(inputs)} ${stable(evidenceFrom)}`;
     const seen = new Map<string, string>();
     for (const t of ctx.tasks)
       if ((isOpen(t) || t.status === "completed") && !cancelling.has(t.id))
         seen.set(
-          key(t.unitId, t.capability, effectiveInputs(t.capability, t.inputs)),
+          key(
+            t.unitId,
+            t.capability,
+            effectiveInputs(t.capability, t.inputs),
+            t.evidenceFrom,
+          ),
           t.id,
         );
     const reasons: string[] = [];
@@ -208,6 +217,7 @@ const CHECKS: Record<RuleName, Rule> = {
         t.unit,
         t.capability,
         effectiveInputs(t.capability, t.inputs),
+        t.evidenceFrom,
       );
       const prior = seen.get(k);
       if (prior !== undefined)

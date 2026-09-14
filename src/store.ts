@@ -243,13 +243,17 @@ export class Store {
             );
         },
       };
+      const missing = [...Array(SCHEMA_VERSION - version).keys()]
+        .map((i) => version + i)
+        .filter((v) => steps[v] === undefined);
+      if (missing.length > 0) {
+        this.db.close();
+        throw new Error(
+          `${path} was written by noscope schema version ${version}, and this build uses ${SCHEMA_VERSION}; there is no migration from it, so move or delete the file`,
+        );
+      }
       this.db.transaction(() => {
-        for (let v = version; v < SCHEMA_VERSION; v++) {
-          const step = steps[v];
-          if (step === undefined)
-            throw new Error(`no migration from schema version ${v}`);
-          step();
-        }
+        for (let v = version; v < SCHEMA_VERSION; v++) steps[v]?.();
         this.db.pragma(`user_version = ${SCHEMA_VERSION}`);
       })();
     } else if (tables > 0 && version !== SCHEMA_VERSION) {

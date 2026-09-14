@@ -253,8 +253,11 @@ be read back call by call while the runtime is being refined (Mauria, 2026-09-13
 from the capability's declaration; with the isolation flags, Mauria's own permission settings
 do not load on either provider.
 
-The task is the user message: objective, inputs, expected output, completion
-criteria, evidence required, and one line saying what the unit that owns this task is trying to establish as one line of context.
+The user message is the brief: the incident's objective, the last situation's hypothesis
+and proven list, then the task (objective, inputs, expected output, completion criteria,
+evidence required, instructions), then the claims and results the task names in
+`evidenceFrom`, attached by the runtime, and one line saying what the unit that owns this
+task is trying to establish.
 
 v0 capabilities:
 
@@ -299,7 +302,7 @@ Output:
 const ActionPlan = z.object({
   createUnits: z.array(UnitProposal),            // purpose, parent unit
   closeUnits: z.array(UnitClose),                // unit id, with a reason each
-  createTasks: z.array(TaskProposal),// ref, unit, capability, objective, inputs, criteria, dependsOn (task ids or refs in this plan), instructions, provider, model
+  createTasks: z.array(TaskProposal),// ref, unit, capability, objective, inputs, criteria, dependsOn (task ids or refs in this plan), evidenceFrom (claims by id, tasks by id or ref), instructions, provider, model
   cancelTasks: z.array(z.string()),
   claimsToVerify: z.array(z.string()),           // asserted claim ids worth promoting
   incidentStatus: z.enum(["continue", "blocked", "satisfied", "failed"]),
