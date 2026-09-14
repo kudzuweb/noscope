@@ -755,4 +755,10 @@ Not exactly to spec, with reasons:
 
 - The two rules from R2-2 were already in section 9 when R2-2 merged, so this PR adds
   none there.
-- The measure of these changes is the second run, R2-8; the tests here pin the text.
+- The measure of these changes is the second run, R2-8; a test pins each new sentence so a
+  later edit cannot drop one unnoticed.
+- From the review: the planner's example of an unprovable link no longer names run 001's
+  own (the rerun is the measure); the planner is told the runtime attaches its hypothesis
+  to every brief; a capability request is the channel when no reproduce capability is
+  listed; the investigate role's settling item carries a "settled by:" prefix so it can be
+  told from a citation.

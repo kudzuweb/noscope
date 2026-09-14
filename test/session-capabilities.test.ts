@@ -171,6 +171,9 @@ describe("session capabilities", () => {
       cwd: "/work",
       timeoutSeconds: 90,
     });
+    expect(request.systemPrompt).toContain(
+      'add to its evidence one item beginning "settled by:"',
+    );
     expect(request.systemPrompt).toMatch(/\n\nYour role: investigate/);
     expect(request.bashAllowlist).toHaveLength(7);
     const unmodeled = task({ capability: "interpret", id: "t-nomodel" });
