@@ -136,7 +136,7 @@ const TERMINAL_TASK = TaskStatus.extract(["completed", "failed", "cancelled"]);
  * The state change an event records. Every write names one; replay applies exactly that
  * and nothing else, so the tables are always rebuildable from the events (acceptance 7).
  */
-export /** A claim recorded before claims carried a basis (schema version 1) is read the way the migration reads it. */
+/** A claim recorded before claims carried a basis (schema version 1) is read the way the migration reads it. */
 function withBasis(value: unknown): unknown {
   if (value === null || typeof value !== "object" || "basis" in value)
     return value;
@@ -147,7 +147,7 @@ function withBasis(value: unknown): unknown {
   };
 }
 
-const Mutation = z.discriminatedUnion("kind", [
+export const Mutation = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("incident.create"), incident: Incident }),
   z.object({
     kind: z.literal("incident.status"),
