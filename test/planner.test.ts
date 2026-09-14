@@ -255,6 +255,7 @@ describe("planner", () => {
         - Model known: every task to a session-backed capability names a provider and a model that provider serves; a task to a deterministic capability names neither.
         - Closing is clean: a unit closed in this plan is active, has no running task after this plan's cancels, is closed once, and is given no new unit or task in the same plan.
         - Status is earned: satisfied requires every open task completed or cancelled, no new tasks, and at least one verified claim; satisfied or failed raises no question, capability request or grant request; blocked raises at least one.
+        - Inferred links are worked: every inferred link in the situation names what settles it: a task in this plan by its ref, an open task by its id, a question this plan raises by its position, or a reproduce task; and every claim id in proven, inferred and keep names a claim in the incident.
       rejected last cycle:
         - Span of control: u-scroll would have 8 children
 
@@ -377,6 +378,6 @@ describe("planner", () => {
       delete process.env.NOSCOPE_STUB_OUTPUT;
     }
     store.close();
-    expect(PLANNER_RULES).toHaveLength(12);
+    expect(PLANNER_RULES).toHaveLength(13);
   });
 });

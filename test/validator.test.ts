@@ -186,7 +186,7 @@ function reasonsOf(
 }
 
 describe("validator", () => {
-  it("names the twelve rules the planner reads, in the same order", () => {
+  it("names the thirteen rules the planner reads, in the same order", () => {
     expect(RULES.map((r) => r.name)).toEqual(
       PLANNER_RULES.map((line) => line.split(":")[0]),
     );
@@ -631,6 +631,51 @@ describe("validator", () => {
     ).toEqual([
       "No cycles: task ref t-done is already a task id",
       "No cycles: task ref i1-t09 starts with the incident id and could be mistaken for a task id",
+    ]);
+  });
+
+  it("Inferred links are worked: a ref, an open task, a question in this plan or a reproduce task settles a link; anything else, or a claim the incident lacks, is refused", () => {
+    const situation = (over: Partial<ActionPlan["situation"]>) => ({
+      ...empty.situation,
+      ...over,
+    });
+    expect(
+      reasonsOf({
+        ...empty,
+        createTasks: [grepTask({ ref: "probe" })],
+        questionsForHuman: ["does it happen every time?"],
+        situation: situation({
+          proven: [{ claimId: "c-verified", line: "the handler is at a.ts:1" }],
+          inferred: [
+            { claimId: "c-asserted", settledBy: { task: "probe" } },
+            { claimId: "c-asserted", settledBy: { task: "t-running" } },
+            { claimId: "c-asserted", settledBy: { question: 1 } },
+            { claimId: "c-asserted", settledBy: { reproduce: "probe" } },
+          ],
+          keep: ["c-verified"],
+        }),
+      }),
+    ).toEqual([]);
+    expect(
+      reasonsOf({
+        ...empty,
+        cancelTasks: ["t-running"],
+        situation: situation({
+          inferred: [
+            { claimId: "c-asserted", settledBy: { task: "t-none" } },
+            { claimId: "c-asserted", settledBy: { task: "t-running" } },
+            { claimId: "c-asserted", settledBy: { task: "t-done" } },
+            { claimId: "c-asserted", settledBy: { question: 1 } },
+          ],
+          keep: ["c-none"],
+        }),
+      }),
+    ).toEqual([
+      "Dependencies resolve: the situation names no claim c-none",
+      "Inferred links are worked: inferred claim c-asserted is settled by task t-none, which is neither a ref in this plan nor an open task",
+      "Inferred links are worked: inferred claim c-asserted is settled by task t-running, which is neither a ref in this plan nor an open task",
+      "Inferred links are worked: inferred claim c-asserted is settled by task t-done, which is neither a ref in this plan nor an open task",
+      "Inferred links are worked: inferred claim c-asserted is settled by question 1, but this plan raises 0",
     ]);
   });
 

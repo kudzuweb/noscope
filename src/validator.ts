@@ -298,8 +298,38 @@ const CHECKS: Record<RuleName, Rule> = {
     });
   },
 
+  "Inferred links are worked": (plan, ctx) => {
+    const refs = taskRefs(plan);
+    const openTasks = new Set(ctx.tasks.filter(isOpen).map((t) => t.id));
+    const cancelling = new Set(plan.cancelTasks);
+    const reasons: string[] = [];
+    for (const link of plan.situation.inferred) {
+      const by = link.settledBy;
+      if ("question" in by) {
+        if (by.question > plan.questionsForHuman.length)
+          reasons.push(
+            `inferred claim ${link.claimId} is settled by question ${by.question}, but this plan raises ${plan.questionsForHuman.length}`,
+          );
+        continue;
+      }
+      const task = "task" in by ? by.task : by.reproduce;
+      if (refs.has(task) || (openTasks.has(task) && !cancelling.has(task)))
+        continue;
+      reasons.push(
+        `inferred claim ${link.claimId} is settled by task ${task}, which is neither a ref in this plan nor an open task`,
+      );
+    }
+    return reasons;
+  },
+
   "Dependencies resolve": (plan, ctx) => {
     const byId = new Map(ctx.tasks.map((t) => [t.id, t]));
+    const allClaims = new Set(ctx.claims.map((c) => c.id));
+    const named = [
+      ...plan.situation.proven.map((p) => p.claimId),
+      ...plan.situation.inferred.map((i) => i.claimId),
+      ...plan.situation.keep,
+    ];
     const cancelling = new Set(plan.cancelTasks);
     const claims = new Set(
       ctx.claims.filter((c) => c.status === "asserted").map((c) => c.id),
@@ -335,6 +365,9 @@ const CHECKS: Record<RuleName, Rule> = {
       ...plan.claimsToVerify
         .filter((id) => !claims.has(id))
         .map((id) => `no asserted claim ${id} to verify`),
+      ...named
+        .filter((id) => !allClaims.has(id))
+        .map((id) => `the situation names no claim ${id}`),
     ];
   },
 
