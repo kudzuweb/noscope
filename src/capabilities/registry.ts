@@ -128,8 +128,9 @@ export function defineCapability<I extends z.ZodType, O extends z.ZodType>(
       );
     }
     if (spec.run !== undefined && sessionOnly) {
+      // Built-in tools and external equipment exist only inside a session.
       throw new Error(
-        `capability ${spec.name} is deterministic and cannot use the built-in tool ${name}`,
+        `capability ${spec.name} is deterministic and cannot use ${name}, which exists only inside a session`,
       );
     }
   }

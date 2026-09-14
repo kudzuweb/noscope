@@ -797,3 +797,14 @@ Not exactly to spec, with reasons:
   both to be tried; one works headless.
 - `npx --yes` in the Playwright launch, so a machine without the package cached does not
   stall on npm's prompt.
+- Only Playwright has a live test; there is none for Claude in Chrome, since a headless
+  session cannot reach it, and the three probes recorded in DESIGN.md stand in for it.
+- The screenshot path per step is optional in the output schema, and the role asks for one
+  after any step whose observation matters, since a screenshot of every step is noise.
+- From the review: Playwright writes its screenshots to a scratch directory
+  (`--output-dir` under the OS temp dir), so a `read_only` capability leaves nothing in the
+  incident's working tree; the package is pinned (`@playwright/mcp@0.0.80`) so each
+  transcript records which server drove it and a cold cache cannot stall the session's
+  connect timeout on a registry check; the capability's description tells the planner to
+  name Playwright, since `claude_in_chrome` comes back `insufficient` from a headless
+  session; the registry's guard message names session-only equipment.

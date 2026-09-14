@@ -11,7 +11,12 @@ export const ReproduceFindings = z.object({
     z.object({
       step: z.string().min(1),
       observed: z.string().min(1),
-      screenshot: z.string().optional(),
+      screenshot: z
+        .string()
+        .optional()
+        .describe(
+          "The path of the screenshot taken after this step, if one was",
+        ),
     }),
   ),
 });
@@ -24,7 +29,7 @@ export const ReproduceFindings = z.object({
 export const reproduce = defineCapability({
   name: "reproduce",
   description:
-    "Open a page in a browser, perform steps in order, and report what was observed after each; settles a claim about runtime behavior that reading code cannot",
+    "Open a page in a browser, perform steps in order, and report what was observed after each; settles a claim about runtime behavior that reading code cannot. Name playwright_browser: claude_in_chrome is refused from a headless session and the task will come back insufficient",
   equipment: ["playwright_browser", "claude_in_chrome"],
   input: z.object({
     browser: z

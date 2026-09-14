@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   buildSessionRequest,
@@ -63,7 +64,14 @@ describe("reproduce", () => {
       {
         name: "playwright_browser",
         command: "npx",
-        args: ["--yes", "@playwright/mcp@latest", "--headless", "--isolated"],
+        args: [
+          "--yes",
+          "@playwright/mcp@0.0.80",
+          "--headless",
+          "--isolated",
+          "--output-dir",
+          join(tmpdir(), "noscope-playwright"),
+        ],
       },
     ]);
     expect(request.integrations).toEqual([]);

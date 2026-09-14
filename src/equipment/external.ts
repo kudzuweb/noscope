@@ -1,3 +1,5 @@
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Cost } from "../models.js";
 
 /**
@@ -57,14 +59,21 @@ export function listExternalEquipment(): ExternalEquipment[] {
   return [...registry.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** A headless browser: Playwright's MCP server, launched per session with an in-memory profile. */
+/** A headless browser: Playwright's MCP server, pinned, launched per session with an in-memory profile; its screenshots go to a scratch directory, never the incident's working tree. */
 export const playwrightBrowser = defineExternalEquipment({
   name: "playwright_browser",
   description:
     "A headless Chromium driven through Playwright's MCP server: navigate, click, type, read the page, take screenshots",
   mcp: {
     command: "npx",
-    args: ["--yes", "@playwright/mcp@latest", "--headless", "--isolated"],
+    args: [
+      "--yes",
+      "@playwright/mcp@0.0.80",
+      "--headless",
+      "--isolated",
+      "--output-dir",
+      join(tmpdir(), "noscope-playwright"),
+    ],
   },
   headless: true,
   cost: { typicalSeconds: 20 },

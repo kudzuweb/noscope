@@ -174,7 +174,7 @@ describe("deterministic capabilities", () => {
         effect: "read_only",
         run: async () => ({ output: {}, claims: [] }),
       }),
-    ).toThrow(/built-in/);
+    ).toThrow(/exists only inside a session/);
     expect(() =>
       // @ts-expect-error a capability with neither a run nor a session is not a capability
       defineCapability({
