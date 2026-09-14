@@ -193,13 +193,22 @@ const CHECKS: Record<RuleName, Rule> = {
 
   "No duplicates": (plan, ctx) => {
     const cancelling = new Set(plan.cancelTasks);
-    const key = (unit: string, capability: string, inputs: unknown) =>
-      `${unit} ${capability} ${stable(inputs)}`;
+    const key = (
+      unit: string,
+      capability: string,
+      inputs: unknown,
+      evidenceFrom: unknown,
+    ) => `${unit} ${capability} ${stable(inputs)} ${stable(evidenceFrom)}`;
     const seen = new Map<string, string>();
     for (const t of ctx.tasks)
       if ((isOpen(t) || t.status === "completed") && !cancelling.has(t.id))
         seen.set(
-          key(t.unitId, t.capability, effectiveInputs(t.capability, t.inputs)),
+          key(
+            t.unitId,
+            t.capability,
+            effectiveInputs(t.capability, t.inputs),
+            t.evidenceFrom,
+          ),
           t.id,
         );
     const reasons: string[] = [];
@@ -208,6 +217,7 @@ const CHECKS: Record<RuleName, Rule> = {
         t.unit,
         t.capability,
         effectiveInputs(t.capability, t.inputs),
+        t.evidenceFrom,
       );
       const prior = seen.get(k);
       if (prior !== undefined)
@@ -222,11 +232,21 @@ const CHECKS: Record<RuleName, Rule> = {
   "Inputs validate": (plan) =>
     perRegisteredTask(plan, (t, capability) => {
       const parsed = capability.input.safeParse(t.inputs);
-      return parsed.success
-        ? []
-        : [
-            `${label(t)} inputs do not fit ${t.capability}: ${parsed.error.issues.map((i) => `${i.path.join(".") || "input"} ${i.message}`).join("; ")}`,
-          ];
+      if (!parsed.success)
+        return [
+          `${label(t)} inputs do not fit ${t.capability}: ${parsed.error.issues.map((i) => `${i.path.join(".") || "input"} ${i.message}`).join("; ")}`,
+        ];
+      const inputs = parsed.data as { evidence?: unknown };
+      const inline = Array.isArray(inputs.evidence)
+        ? inputs.evidence.length
+        : null;
+      const referenced =
+        t.evidenceFrom.claims.length + t.evidenceFrom.tasks.length;
+      return inline === 0 && referenced === 0
+        ? [
+            `${label(t)} carries no evidence: name claims or tasks in evidenceFrom, or give evidence inline`,
+          ]
+        : [];
     }),
 
   "Span of control": (plan, ctx) => {
@@ -324,6 +344,7 @@ const CHECKS: Record<RuleName, Rule> = {
 
   "Dependencies resolve": (plan, ctx) => {
     const byId = new Map(ctx.tasks.map((t) => [t.id, t]));
+    const refs = taskRefs(plan);
     const allClaims = new Set(ctx.claims.map((c) => c.id));
     const verified = new Set(
       ctx.claims.filter((c) => c.status === "verified").map((c) => c.id),
@@ -342,11 +363,28 @@ const CHECKS: Record<RuleName, Rule> = {
         (id) =>
           `the situation lists claim ${id} as proven, but it is not verified`,
       );
+    const referenced = plan.createTasks.flatMap((t) => [
+      ...t.evidenceFrom.claims
+        .filter((id) => !allClaims.has(id))
+        .map((id) => `${label(t)} reads claim ${id}, which does not exist`),
+      ...t.evidenceFrom.tasks
+        .filter(
+          (id) =>
+            !(
+              (refs.has(id) && t.dependsOn.includes(id)) ||
+              byId.get(id)?.status === "completed" ||
+              (byId.has(id) && t.dependsOn.includes(id))
+            ),
+        )
+        .map(
+          (id) =>
+            `${label(t)} reads the result of task ${id}, which is neither completed nor in its dependsOn`,
+        ),
+    ]);
     const cancelling = new Set(plan.cancelTasks);
     const claims = new Set(
       ctx.claims.filter((c) => c.status === "asserted").map((c) => c.id),
     );
-    const refs = taskRefs(plan);
     const unmet = (id: string): string | null => {
       if (refs.has(id)) return null;
       const dep = byId.get(id);
@@ -381,6 +419,7 @@ const CHECKS: Record<RuleName, Rule> = {
         .filter((id) => !allClaims.has(id))
         .map((id) => `the situation names no claim ${id}`),
       ...notProven,
+      ...referenced,
     ];
   },
 

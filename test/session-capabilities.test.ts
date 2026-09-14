@@ -6,6 +6,7 @@ import {
   renderTaskBrief,
   runSession,
 } from "../src/capabilities/index.js";
+import type { Task } from "../src/models.js";
 import { jsonSchemaFor, SessionResult } from "../src/models.js";
 import {
   claudeCodeProvider,
@@ -85,6 +86,77 @@ describe("session capabilities", () => {
         "",
         "The unit that owns this task is trying to establish: command: where deletion moves the scroll position",
       ].join("\n"),
+    );
+    store.createClaim(
+      {
+        id: "c-ref",
+        incidentId: "i1",
+        subject: "/repo/a.ts:1",
+        predicate: "matches",
+        object: { pattern: "delete" },
+        status: "verified",
+        basis: "observed",
+        confidence: 1,
+        evidence: ["/repo/a.ts:1"],
+        provenance: {
+          capability: "grep",
+          taskId: "t-seed",
+          inputs: { root: "/repo", pattern: "delete" },
+        },
+        createdAt: "2026-09-13T06:00:00.000Z",
+      },
+      "verifier",
+    );
+    const claim = store.listClaims("i1").find((c) => c.id === "c-ref");
+    if (claim === undefined) throw new Error("no claim");
+    const done = task({
+      id: "t-done",
+      capability: "investigate",
+      objective: "read the handler",
+      inputs: { question: "what does it do?" },
+      provider: "claude-code",
+      model: "claude-haiku-4-5",
+      status: "completed",
+    });
+    store.setTaskStatus(
+      "i1",
+      done.id,
+      "completed",
+      "dispatcher",
+      "task.completed",
+      {
+        result: {
+          outcome: "answered",
+          claims: [],
+          findings: {
+            summary: "it focuses the editor",
+            observations: [{ where: "/a.ts:1", what: "calls focus()" }],
+          },
+          needed: [],
+        },
+      },
+    );
+    const withContext = renderTaskBrief(t, unit, {
+      objective: "why does Roughdraft scroll after a delete",
+      situation: {
+        changed: "greps landed",
+        hypothesis: "focus() scrolls the resting selection",
+        proven: [{ claimId: claim.id, line: "the handler is at a.ts:1" }],
+        inferred: [],
+        keep: [],
+      },
+      claims: [claim],
+      results: [store.listTasks("i1").find((x) => x.id === done.id) as Task],
+    });
+    expect(withContext.split("\n").slice(0, 5)).toEqual([
+      "Incident objective: why does Roughdraft scroll after a delete",
+      "Current hypothesis: focus() scrolls the resting selection",
+      "Established so far:",
+      `  - ${claim.id}: the handler is at a.ts:1`,
+      "",
+    ]);
+    expect(withContext).toContain(
+      `Evidence attached by reference:\nclaims:\n  - ${claim.id}: ${claim.subject} ${claim.predicate} ${JSON.stringify(claim.object)} (${claim.status}, ${claim.basis}; confidence ${claim.confidence}; evidence ${claim.evidence.join(", ") || "none"})\nresults:\n  - task t-done (investigate): summary: it focuses the editor\n      /a.ts:1: calls focus()\n\nThe unit that owns this task`,
     );
     const request = buildSessionRequest(
       sessionCapability("investigate"),

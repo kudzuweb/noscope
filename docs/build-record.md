@@ -706,3 +706,35 @@ Not exactly to spec, with reasons:
   the analysis put on dropping uncited match claims; cycle 3 is unchanged because its
   matches are fresh. The inline snapshot did not change, since its fixture has no applied
   plan; the dedicated test guards the collapse.
+
+## PR 24: Evidence by reference (#24, merged 2026-09-13)
+
+R2-5 of the round 2 plan. Built: a task names what it reads in `evidenceFrom`, claims by
+id and tasks by id or by ref in the same plan, and at dispatch the runtime renders those
+claims and the tasks' results into the brief after the task's own inputs. Every session
+brief now opens with the incident objective, then the last situation's hypothesis and its
+proven list. The interpret capability's `evidence` input is optional; the validator
+requires some evidence one way or the other, and checks that referenced claims exist and
+referenced tasks are completed or in the task's `dependsOn`. The planner rules say to name
+evidence rather than copy it. The store's second migration adds the column. DESIGN.md
+(the Task vocabulary row, the incident file row, Step 2's columns and migrations, Step 5's
+two rows) follows.
+
+Not exactly to spec, with reasons:
+
+- The "some evidence" check is generic: any session capability whose parsed inputs carry an
+  empty `evidence` array and whose `evidenceFrom` names nothing is refused, rather than a
+  rule written for `interpret` alone.
+- A referenced task must be completed or in the task's `dependsOn`, so its result exists
+  when the brief is built; the plan said only that a task may name refs.
+- The brief renders a referenced session's findings in full (summary, observations,
+  conclusion, reasoning) and any other result as JSON, since a session reads it once.
+- The migration machinery became a chain of numbered steps, each idempotent, so a version 1
+  file reaches version 3 in one open; a version with no step is refused with the handle
+  closed, as before.
+- The run test's chained interpret reads the grep's result by task ref, not its claims by
+  id: a claim cannot be named before the task that produces it has run, so within one
+  plan a task refers to another task's result, and to claims only from earlier cycles.
+- From the review: "No duplicates" keys on `evidenceFrom` as well as inputs, since two
+  interpret tasks with one question over different claims are different tasks; a replay
+  test covers a task recorded before `evidenceFrom` existed.

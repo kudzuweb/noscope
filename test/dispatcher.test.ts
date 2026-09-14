@@ -50,6 +50,7 @@ describe("dispatcher", () => {
       capability: "check_path",
       inputs: { path: "a.txt" },
       dependsOn: ["t1"],
+      evidenceFrom: { claims: [], tasks: [] },
       status: "pending",
     });
     task({
@@ -57,6 +58,7 @@ describe("dispatcher", () => {
       capability: "read",
       inputs: { path: "nope.txt" },
       dependsOn: ["t-never"],
+      evidenceFrom: { claims: [], tasks: [] },
       status: "pending",
     });
     const { ran, stopped } = await dispatch(store, incident, { cwd: tree });
@@ -182,6 +184,127 @@ describe("dispatcher", () => {
     expect(usage?.payload).toMatchObject({
       usage: { inputTokens: 1500, outputTokens: 42, costUsd: 0.0123 },
     });
+    store.close();
+  });
+
+  it("a session's brief carries the incident objective, the situation, and the claims and results the task names in evidenceFrom", async () => {
+    const { mkdtempSync, readFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const store = new Store(":memory:");
+    const { incident, task } = scriptedIncident(store);
+    store.createClaim(
+      {
+        id: "c-ref",
+        incidentId: "i1",
+        subject: "/repo/a.ts:1",
+        predicate: "matches",
+        object: { pattern: "delete" },
+        status: "verified",
+        basis: "observed",
+        confidence: 1,
+        evidence: ["/repo/a.ts:1"],
+        provenance: {
+          capability: "grep",
+          taskId: "t-seed",
+          inputs: { root: "/repo", pattern: "delete" },
+        },
+        createdAt: "2026-09-13T06:00:00.000Z",
+      },
+      "verifier",
+    );
+    const claim = store.listClaims("i1").find((c) => c.id === "c-ref");
+    if (claim === undefined) throw new Error("no claim");
+    const done = task({
+      id: "t-done",
+      capability: "grep",
+      inputs: { root: "src", pattern: "delete" },
+      status: "completed",
+    });
+    store.setTaskStatus(
+      "i1",
+      done.id,
+      "completed",
+      "dispatcher",
+      "task.completed",
+      {
+        result: { matches: 2 },
+      },
+    );
+    store.record("i1", "plan.applied", "runtime", {
+      rationale: "next",
+      situation: {
+        changed: "the grep landed",
+        hypothesis: "the handler is the one",
+        proven: [{ claimId: claim.id, line: "the handler is at a.ts:1" }],
+        inferred: [],
+        keep: [],
+      },
+    });
+    const said = task({
+      id: "t-said",
+      capability: "investigate",
+      inputs: { question: "what does it do?" },
+      provider: "claude-code",
+      model: "claude-haiku-4-5",
+      status: "completed",
+    });
+    store.setTaskStatus(
+      "i1",
+      said.id,
+      "completed",
+      "dispatcher",
+      "task.completed",
+      {
+        result: {
+          outcome: "answered",
+          claims: [],
+          findings: { summary: "it focuses the editor", observations: [] },
+          needed: [],
+        },
+      },
+    );
+    task({
+      id: "t-read",
+      capability: "interpret",
+      inputs: { question: "what does the match mean?" },
+      evidenceFrom: { claims: [claim.id], tasks: ["t-done", "t-said"] },
+      provider: "claude-code",
+      model: "claude-haiku-4-5",
+      budget: { seconds: 30 },
+      status: "ready",
+    });
+    const log = join(mkdtempSync(join(tmpdir(), "noscope-brief-")), "log.json");
+    process.env.NOSCOPE_STUB_LOG = log;
+    try {
+      await withStubOutput(
+        {
+          outcome: "answered",
+          claims: [],
+          findings: { conclusion: "the handler", reasoning: "the match" },
+          needed: [],
+        },
+        () =>
+          dispatch(store, incident, {
+            cwd: tree,
+            env: { NOSCOPE_CLAUDE_BIN: stub },
+          }),
+      );
+    } finally {
+      delete process.env.NOSCOPE_STUB_LOG;
+    }
+    const prompt = (JSON.parse(readFileSync(log, "utf8")) as { prompt: string })
+      .prompt;
+    expect(
+      prompt.startsWith(
+        `Incident objective: ${incident.objective}\nCurrent hypothesis: the handler is the one\nEstablished so far:\n  - ${claim.id}: the handler is at a.ts:1\n\nObjective:`,
+      ),
+    ).toBe(true);
+    expect(prompt).toContain(
+      `Evidence attached by reference:\nclaims:\n  - ${claim.id}: `,
+    );
+    expect(prompt).toContain(
+      'results:\n  - task t-done (grep): {"matches":2}\n  - task t-said (investigate): summary: it focuses the editor',
+    );
     store.close();
   });
 
@@ -425,6 +548,7 @@ describe("incident step", () => {
           completionCriteria: [],
           evidenceRequired: [],
           dependsOn: [],
+          evidenceFrom: { claims: [], tasks: [] },
           instructions: "",
           provider: null,
           model: null,

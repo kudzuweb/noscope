@@ -229,6 +229,7 @@ describe("deterministic capabilities", () => {
       completionCriteria: [],
       evidenceRequired: [],
       dependsOn: [],
+      evidenceFrom: { claims: [], tasks: [] },
       provider: null,
       model: null,
       instructions: "",

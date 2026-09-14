@@ -61,6 +61,7 @@ export function scriptedIncident(store: Store, id = "i1", at = now()) {
       completionCriteria: [],
       evidenceRequired: [],
       dependsOn: [],
+      evidenceFrom: { claims: [], tasks: [] },
       provider: null,
       model: null,
       instructions: "",

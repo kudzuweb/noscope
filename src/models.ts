@@ -127,6 +127,12 @@ export const Unit = z.object({
   closedAt: Timestamp.nullable(),
 });
 
+/** What a task reads by reference: claims by id, and tasks (by id, or by ref in the same plan) whose results it needs; the runtime attaches them to the brief. */
+export const EvidenceFrom = z.object({
+  claims: z.array(z.string()).default([]),
+  tasks: z.array(z.string()).default([]),
+});
+
 export const Task = z.object({
   id: z.string().min(1),
   incidentId: z.string().min(1),
@@ -138,6 +144,7 @@ export const Task = z.object({
   completionCriteria: z.array(z.string()),
   evidenceRequired: z.array(z.string()),
   dependsOn: z.array(z.string()),
+  evidenceFrom: EvidenceFrom.default({ claims: [], tasks: [] }),
   provider: z.string().nullable(),
   model: z.string().nullable(),
   instructions: z.string(),
@@ -244,6 +251,9 @@ export const TaskProposal = z.object({
   dependsOn: z
     .array(z.string())
     .describe("Task ids, or refs of tasks created in this plan"),
+  evidenceFrom: EvidenceFrom.default({ claims: [], tasks: [] }).describe(
+    "Claims by id and tasks by id or ref whose content this task needs; the runtime attaches them, so do not copy evidence into inputs",
+  ),
   instructions: z.string(),
   provider: z.string().nullable(),
   model: z.string().nullable(),
@@ -395,6 +405,7 @@ export type CapabilityRequest = z.infer<typeof CapabilityRequest>;
 export type Incident = z.infer<typeof Incident>;
 export type Unit = z.infer<typeof Unit>;
 export type Task = z.infer<typeof Task>;
+export type EvidenceFrom = z.infer<typeof EvidenceFrom>;
 export type Provenance = z.infer<typeof Provenance>;
 export type Claim = z.infer<typeof Claim>;
 export type Event = z.infer<typeof Event>;

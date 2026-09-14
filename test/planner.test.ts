@@ -124,6 +124,7 @@ function cycledIncident(store: Store) {
     provider: "fake",
     model: "fake-small",
     dependsOn: ["t-grep"],
+    evidenceFrom: { claims: [], tasks: [] },
     status: "ready",
   });
   store.record("i1", "task.usage", "dispatcher", {
@@ -314,7 +315,7 @@ describe("planner", () => {
         - grep [deterministic, read_only]: Search files for a pattern and record each match, or the verified absence of any within the search's bounds (typical 0.1s)
           inputs: { root: string, required; pattern: string, required; glob: string = "*"; ignoreCase: boolean = false; exclude: string[] = ["node_modules",".git"]; maxMatches: integer = 500 }
         - interpret [session, read_only]: Given evidence and nothing else, say what it implies as asserted claims, or what more it would take (typical 15s, 4000 tokens)
-          inputs: { question: string, required; evidence: { source: string, required; content: string, required }[], required }
+          inputs: { question: string, required; evidence: { source: string, required; content: string, required }[] = [] }
         - investigate [session, read_only]: Read the files a question points at and return what they show, as asserted claims with evidence (typical 30s, 8000 tokens)
           inputs: { question: string, required; paths: string[] = [] }
         - read [deterministic, read_only]: Read a file and record its contents as a fact (typical 0.01s)
@@ -327,11 +328,11 @@ describe("planner", () => {
         - Units exist: every task's unit and every new unit's parent is an active unit id or the ref of a unit created in this plan; a closed unit takes no new work.
         - No cycles: the tree stays a tree; a unit ref is used once, is not an existing unit id, and does not start with the incident id; a task ref likewise against task ids, and new tasks' dependsOn form no cycle.
         - No duplicates: no new task repeats an open or completed one, or another new task, with the same capability and effective inputs under the same unit; a task this plan cancels does not count.
-        - Inputs validate: task inputs parse against the capability's input schema.
+        - Inputs validate: task inputs parse against the capability's input schema; a task that takes evidence names it by id in evidenceFrom (claims, and tasks whose results it needs) rather than copying it into inputs, or carries it inline.
         - Span of control: no unit ends the plan with more than 7 direct children, units and tasks combined; target 5.
         - Effect policy: only read_only capabilities in v0.
         - Budget respected: a task's budget, where it sets one, fits inside the incident's remaining budget; a session-backed task carries a time bound and, when the incident bounds tokens, a token bound; a deterministic task needs neither.
-        - Dependencies resolve: every dependsOn names a task in the incident that is completed or still open and not cancelled in this plan, or the ref of a task created in this plan; every cancelTasks names an open task, once; every claimsToVerify names an asserted claim.
+        - Dependencies resolve: every dependsOn names a task in the incident that is completed or still open and not cancelled in this plan, or the ref of a task created in this plan; every cancelTasks names an open task, once; every claimsToVerify names an asserted claim; every evidenceFrom claim exists, and every evidenceFrom task is completed or in the task's dependsOn.
         - Model known: every task to a session-backed capability names a provider and a model that provider serves; a task to a deterministic capability names neither.
         - Closing is clean: a unit closed in this plan is active, has no running task after this plan's cancels, is closed once, and is given no new unit or task in the same plan.
         - Status is earned: satisfied requires every open task completed or cancelled, no new tasks, and at least one verified claim; satisfied or failed raises no question, capability request or grant request; blocked raises at least one.
@@ -366,6 +367,7 @@ describe("planner", () => {
           completionCriteria: ["each match cited"],
           evidenceRequired: ["path:line"],
           dependsOn: [],
+          evidenceFrom: { claims: [], tasks: [] },
           instructions: "",
           provider: null,
           model: null,

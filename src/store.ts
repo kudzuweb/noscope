@@ -32,10 +32,11 @@ export function now(): string {
 }
 
 /**
- * Bumped whenever a table changes shape. A file at version 1 is migrated in place (claims
- * gain `basis`); a file at any other version is refused.
+ * Bumped whenever a table changes shape. A file at an earlier version is migrated in place,
+ * one step at a time (1: claims gain `basis`; 2: tasks gain `evidence_from_json`); a file
+ * at a later version is refused.
  */
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 const STATE_TABLES = [
   "incidents",
@@ -78,6 +79,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   completion_criteria_json TEXT NOT NULL,
   evidence_required_json TEXT NOT NULL,
   depends_on_json TEXT NOT NULL,
+  evidence_from_json TEXT NOT NULL DEFAULT '{"claims":[],"tasks":[]}',
   provider TEXT,
   model TEXT,
   instructions TEXT NOT NULL,
@@ -211,21 +213,47 @@ export class Store {
         .prepare("SELECT COUNT(*) AS c FROM sqlite_master WHERE type = 'table'")
         .get() as { c: number }
     ).c;
-    if (tables > 0 && version === 1) {
-      // Version 1 claims had no basis. Verified claims came from deterministic equipment,
-      // so they were observed; a session's claim with no recorded basis is read as inferred.
-      // One transaction, and the column is added only if a crashed earlier attempt did not.
-      this.db.transaction(() => {
-        const columns = this.db.prepare("PRAGMA table_info(claims)").all() as {
-          name: string;
-        }[];
-        if (!columns.some((c) => c.name === "basis"))
+    if (tables > 0 && version < SCHEMA_VERSION) {
+      // Each step runs in one transaction and adds its column only if a crashed earlier
+      // attempt did not, so a half-migrated file finishes on the next open.
+      const hasColumn = (table: string, column: string) =>
+        (
+          this.db.prepare(`PRAGMA table_info(${table})`).all() as {
+            name: string;
+          }[]
+        ).some((c) => c.name === column);
+      const steps: Record<number, () => void> = {
+        // Version 1 claims had no basis. Verified claims came from deterministic
+        // equipment, so they were observed; a session's claim with no recorded basis is
+        // read as inferred.
+        1: () => {
+          if (!hasColumn("claims", "basis"))
+            this.db.exec(
+              "ALTER TABLE claims ADD COLUMN basis TEXT NOT NULL DEFAULT 'inferred'",
+            );
           this.db.exec(
-            "ALTER TABLE claims ADD COLUMN basis TEXT NOT NULL DEFAULT 'inferred'",
+            "UPDATE claims SET basis = 'observed' WHERE status = 'verified'",
           );
-        this.db.exec(
-          "UPDATE claims SET basis = 'observed' WHERE status = 'verified'",
+        },
+        // Version 2 tasks read nothing by reference.
+        2: () => {
+          if (!hasColumn("tasks", "evidence_from_json"))
+            this.db.exec(
+              `ALTER TABLE tasks ADD COLUMN evidence_from_json TEXT NOT NULL DEFAULT '{"claims":[],"tasks":[]}'`,
+            );
+        },
+      };
+      const missing = [...Array(SCHEMA_VERSION - version).keys()]
+        .map((i) => version + i)
+        .filter((v) => steps[v] === undefined);
+      if (missing.length > 0) {
+        this.db.close();
+        throw new Error(
+          `${path} was written by noscope schema version ${version}, and this build uses ${SCHEMA_VERSION}; there is no migration from it, so move or delete the file`,
         );
+      }
+      this.db.transaction(() => {
+        for (let v = version; v < SCHEMA_VERSION; v++) steps[v]?.();
         this.db.pragma(`user_version = ${SCHEMA_VERSION}`);
       })();
     } else if (tables > 0 && version !== SCHEMA_VERSION) {
@@ -661,7 +689,7 @@ export class Store {
         owned(t.incidentId, `task ${t.id}`);
         this.db
           .prepare(
-            "INSERT INTO tasks (id, incident_id, unit_id, capability, objective, inputs_json, expected_output, completion_criteria_json, evidence_required_json, depends_on_json, provider, model, instructions, budget_json, status, result_json, created_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO tasks (id, incident_id, unit_id, capability, objective, inputs_json, expected_output, completion_criteria_json, evidence_required_json, depends_on_json, evidence_from_json, provider, model, instructions, budget_json, status, result_json, created_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           )
           .run(
             t.id,
@@ -674,6 +702,7 @@ export class Store {
             j(t.completionCriteria),
             j(t.evidenceRequired),
             j(t.dependsOn),
+            j(t.evidenceFrom),
             t.provider,
             t.model,
             t.instructions,
@@ -797,6 +826,7 @@ function rowToTask(r: Row): Task {
     completionCriteria: p(r.completion_criteria_json),
     evidenceRequired: p(r.evidence_required_json),
     dependsOn: p(r.depends_on_json),
+    evidenceFrom: p(r.evidence_from_json),
     provider: nullable(r.provider),
     model: nullable(r.model),
     instructions: r.instructions,
