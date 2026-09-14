@@ -138,6 +138,86 @@ function cycledIncident(store: Store) {
 }
 
 describe("planner", () => {
+  it("collapses a summarizing capability's claims to one line per task after their first cycle unless the situation keeps them, and shows a session's findings in full", () => {
+    const store = new Store(":memory:");
+    const s = cycledIncident(store);
+    const incident = store.getIncident("i1");
+    if (incident === undefined) throw new Error("no incident");
+    const fresh = renderPlannerInput(store, incident, [fakeProvider]);
+    expect(fresh).toContain("  - c-verified: /repo/src/view.ts:88 matches");
+    store.createClaim(
+      {
+        id: "c-second",
+        incidentId: "i1",
+        subject: "/repo/src/view.ts:90",
+        predicate: "matches",
+        object: { pattern: "scrollTo", text: "el.scrollTo(0, 0)" },
+        status: "verified",
+        basis: "observed",
+        confidence: 1,
+        evidence: ["/repo/src/view.ts:90"],
+        provenance: {
+          capability: "grep",
+          taskId: "t-grep",
+          inputs: { root: "/repo/src", pattern: "scrollTo" },
+        },
+        createdAt: AT,
+      },
+      "verifier",
+    );
+    store.record("i1", "plan.proposed", "planner", { rationale: "next" });
+    store.record("i1", "plan.applied", "runtime", {
+      rationale: "next",
+      situation: {
+        changed: "the greps landed",
+        hypothesis: "scrollTo at 88 is the one",
+        proven: [],
+        inferred: [],
+        keep: ["c-second"],
+      },
+    });
+    const later = renderPlannerInput(store, incident, [fakeProvider]);
+    expect(later).toContain("  - c-second: /repo/src/view.ts:90 matches");
+    expect(later).not.toContain("  - c-verified: /repo/src/view.ts:88 matches");
+    expect(later).toContain(
+      '  - task t-grep (grep {"root":"src","pattern":"scrollTo"}): 1 claims across 1 file(s): /repo/src/view.ts (1)',
+    );
+    const inv = s.task({
+      id: "t-inv2",
+      capability: "investigate",
+      objective: "read the handler",
+      inputs: { question: "what does it do?" },
+      provider: "fake",
+      model: "fake-large",
+      status: "running",
+    });
+    store.setTaskStatus(
+      "i1",
+      inv.id,
+      "completed",
+      "dispatcher",
+      "task.completed",
+      {
+        result: {
+          outcome: "answered",
+          claims: [],
+          findings: {
+            summary: "the handler focuses the editor",
+            observations: [
+              { where: "/repo/src/view.ts:88", what: "calls focus()" },
+            ],
+          },
+          needed: [],
+        },
+      },
+    );
+    const text = renderPlannerInput(store, incident, [fakeProvider]);
+    expect(text).toContain(
+      "result summary: the handler focuses the editor; observations: /repo/src/view.ts:88: calls focus(); claims none",
+    );
+    store.close();
+  });
+
   it("section 10 carries the last applied plan's situation as the planner wrote it, and (none) before one", () => {
     const store = new Store(":memory:");
     scriptedIncident(store, "i1", AT);

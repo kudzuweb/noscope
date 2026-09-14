@@ -130,13 +130,43 @@ function taskLine(t: Task): string {
 }
 
 /** The situation the last applied plan carried, rendered as the planner wrote it; none before the first applied plan. */
-function lastSituation(events: readonly Event[]): string[] {
+function lastSituationOf(events: readonly Event[]): Situation | null {
   let last: unknown;
   for (const e of events)
     if (e.type === "plan.applied") last = e.payload.situation;
   const parsed = Situation.safeParse(last);
-  if (!parsed.success) return ["  (none)"];
-  const s = parsed.data;
+  return parsed.success ? parsed.data : null;
+}
+
+/** A session's findings in full for the planner; a deterministic result clipped as before. */
+function resultForPlanner(t: Task): string {
+  const findings = (t.result as { findings?: unknown } | null)?.findings;
+  if (findings !== null && typeof findings === "object") {
+    const f = findings as {
+      summary?: unknown;
+      observations?: unknown;
+      conclusion?: unknown;
+      reasoning?: unknown;
+    };
+    const parts: string[] = [];
+    for (const key of ["summary", "conclusion", "reasoning"] as const)
+      if (typeof f[key] === "string") parts.push(`${key}: ${f[key]}`);
+    if (Array.isArray(f.observations))
+      parts.push(
+        `observations: ${f.observations
+          .map((o) => {
+            const x = o as { where?: unknown; what?: unknown };
+            return `${String(x.where)}: ${String(x.what)}`;
+          })
+          .join(" | ")}`,
+      );
+    if (parts.length > 0) return parts.join("; ");
+  }
+  return clip(t.result);
+}
+
+function renderSituation(s: Situation | null): string[] {
+  if (s === null) return ["  (none)"];
   const settled = (by: Settlement): string =>
     "task" in by
       ? `task ${by.task}`
@@ -204,7 +234,7 @@ export function renderPlannerInput(
       const evidence = claims
         .filter((c) => c.provenance.taskId === t.id)
         .map((c) => c.id);
-      return `${t.id} (${t.capability}, under ${t.unitId}): objective "${t.objective}"; inputs ${clip(t.inputs)}; expected "${t.expectedOutput || "(per schema)"}"; criteria ${JSON.stringify(t.completionCriteria)}; result ${clip(t.result)}; claims ${evidence.join(", ") || "none"}`;
+      return `${t.id} (${t.capability}, under ${t.unitId}): objective "${t.objective}"; inputs ${clip(t.inputs)}; expected "${t.expectedOutput || "(per schema)"}"; criteria ${JSON.stringify(t.completionCriteria)}; result ${resultForPlanner(t)}; claims ${evidence.join(", ") || "none"}`;
     });
 
   const insufficient = recent
@@ -231,6 +261,61 @@ export function renderPlannerInput(
       (e) =>
         `budget stopped the last pass before ${String(e.payload.taskId)}: ${String(e.payload.reason)}`,
     );
+
+  // A claim with a capability's summarized predicate is shown in full only in the cycle
+  // after it lands, or when the last situation names it; the rest collapse to one line per
+  // task. Its other predicates (a verified absence, say) stay in full.
+  const situation = lastSituationOf(events);
+  const named = new Set([
+    ...(situation?.proven.map((p) => p.claimId) ?? []),
+    ...(situation?.keep ?? []),
+  ]);
+  const fresh = new Set(
+    recent
+      .map(
+        (e) =>
+          e.payload.mutation as
+            | { kind?: string; claim?: { id?: string } }
+            | undefined,
+      )
+      .filter((m) => m?.kind === "claim.create")
+      .map((m) => m?.claim?.id)
+      .filter((id): id is string => typeof id === "string"),
+  );
+  const summarizing = new Map(
+    listCapabilities()
+      .filter((c) => c.summarize !== null)
+      .map((c) => [c.name, c.summarize]),
+  );
+  const collapsed = new Map<string, Claim[]>();
+  const verifiedLines: string[] = [];
+  for (const c of claims.filter((c) => c.status === "verified")) {
+    if (
+      summarizing.get(c.provenance.capability) === c.predicate &&
+      !fresh.has(c.id) &&
+      !named.has(c.id)
+    ) {
+      const group = collapsed.get(c.provenance.taskId) ?? [];
+      group.push(c);
+      collapsed.set(c.provenance.taskId, group);
+    } else verifiedLines.push(claimLine(c));
+  }
+  for (const [taskId, group] of collapsed) {
+    const t = taskById.get(taskId);
+    const files = new Map<string, number>();
+    for (const c of group) {
+      const file = c.subject.replace(/:\d+(-\d+)?$/, "");
+      files.set(file, (files.get(file) ?? 0) + 1);
+    }
+    const byCount = [...files].sort((a, b) => b[1] - a[1]);
+    const shown = byCount
+      .slice(0, 10)
+      .map(([file, n]) => `${file} (${n})`)
+      .join(", ");
+    verifiedLines.push(
+      `task ${taskId} (${t?.capability ?? "?"} ${clip(t?.inputs)}): ${group.length} claims across ${files.size} file(s): ${shown}${byCount.length > 10 ? `, and ${byCount.length - 10} more` : ""}`,
+    );
+  }
 
   const lines: string[] = [
     "# Incident file",
@@ -276,7 +361,7 @@ export function renderPlannerInput(
     ...bullets(incident.capabilityRequests.map((r) => `${r.need}: ${r.why}`)),
     "",
     "## 2. Verified claims",
-    ...bullets(claims.filter((c) => c.status === "verified").map(claimLine)),
+    ...bullets(verifiedLines),
     "",
     "## 3. Asserted claims",
     ...bullets(
@@ -315,7 +400,7 @@ export function renderPlannerInput(
     ...bullets(rejections, "(nothing rejected)"),
     "",
     "## 10. Situation from the last cycle",
-    ...lastSituation(events),
+    ...renderSituation(situation),
   ];
   return lines.join("\n");
 }

@@ -87,6 +87,7 @@ export const grep = defineCapability({
     "Search files for a pattern and record each match, or the verified absence of any within the search's bounds",
   equipment: ["grep_files"],
   paths: ["root"],
+  summarize: "matches",
   input: grepFilesEquipment.input,
   output: grepFilesEquipment.output,
   effect: "read_only",
