@@ -509,6 +509,13 @@ describe("store", () => {
     );
     s1.db.pragma("user_version = 1");
     s1.close();
+    const first = new Store(path);
+    expect(first.db.pragma("user_version", { simple: true })).toBe(2);
+    first.close();
+    // A crash after the column was added but before the version was written: reopening finishes the job.
+    const half = new Store(path);
+    half.db.pragma("user_version = 1");
+    half.close();
     const s2 = new Store(path);
     expect(s2.db.pragma("user_version", { simple: true })).toBe(2);
     expect(

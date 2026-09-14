@@ -132,10 +132,6 @@ const nullable = (v: unknown): string | null => (v === null ? null : String(v));
 
 const TERMINAL_TASK = TaskStatus.extract(["completed", "failed", "cancelled"]);
 
-/**
- * The state change an event records. Every write names one; replay applies exactly that
- * and nothing else, so the tables are always rebuildable from the events (acceptance 7).
- */
 /** A claim recorded before claims carried a basis (schema version 1) is read the way the migration reads it. */
 function withBasis(value: unknown): unknown {
   if (value === null || typeof value !== "object" || "basis" in value)
@@ -147,6 +143,10 @@ function withBasis(value: unknown): unknown {
   };
 }
 
+/**
+ * The state change an event records. Every write names one; replay applies exactly that
+ * and nothing else, so the tables are always rebuildable from the events (acceptance 7).
+ */
 export const Mutation = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("incident.create"), incident: Incident }),
   z.object({
@@ -214,9 +214,20 @@ export class Store {
     if (tables > 0 && version === 1) {
       // Version 1 claims had no basis. Verified claims came from deterministic equipment,
       // so they were observed; a session's claim with no recorded basis is read as inferred.
-      this.db.exec(
-        "ALTER TABLE claims ADD COLUMN basis TEXT NOT NULL DEFAULT 'inferred'; UPDATE claims SET basis = 'observed' WHERE status = 'verified';",
-      );
+      // One transaction, and the column is added only if a crashed earlier attempt did not.
+      this.db.transaction(() => {
+        const columns = this.db.prepare("PRAGMA table_info(claims)").all() as {
+          name: string;
+        }[];
+        if (!columns.some((c) => c.name === "basis"))
+          this.db.exec(
+            "ALTER TABLE claims ADD COLUMN basis TEXT NOT NULL DEFAULT 'inferred'",
+          );
+        this.db.exec(
+          "UPDATE claims SET basis = 'observed' WHERE status = 'verified'",
+        );
+        this.db.pragma(`user_version = ${SCHEMA_VERSION}`);
+      })();
     } else if (tables > 0 && version !== SCHEMA_VERSION) {
       this.db.close();
       throw new Error(

@@ -626,3 +626,8 @@ Not exactly to spec, with reasons:
 - `ClaimProposal` keeps `basis` optional because the deterministic capabilities build
   proposals too and are observed by construction; the session result schema uses
   `SessionClaimProposal`, where it is required.
+- From the review: the migration runs as one transaction and adds the column only if it
+  is missing, so a file left half-migrated by a crash finishes on the next open. The
+  preamble test pins the three scale lines. `incident review` reads claims from the log's
+  events, not the table, so on an incident recorded before this PR it shows no inferred
+  counts even after the file is migrated; the counts start with the next incident.

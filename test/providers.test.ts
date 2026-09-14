@@ -83,6 +83,12 @@ describe("claude code provider", () => {
     ])
       expect(SESSION_PREAMBLE).toContain(kind);
     expect(SESSION_PREAMBLE).toContain("does not mean something went wrong");
+    for (const line of [
+      "observed in code or in output, 0.9 to 1",
+      "inferred from code, at most 0.7",
+      "runtime behavior not reproduced, at most 0.5",
+    ])
+      expect(SESSION_PREAMBLE).toContain(line);
     expect(SESSION_PREAMBLE).not.toMatch(/\boperation\b/i);
   });
 
