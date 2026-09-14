@@ -808,3 +808,36 @@ Not exactly to spec, with reasons:
   connect timeout on a registry check; the capability's description tells the planner to
   name Playwright, since `claude_in_chrome` comes back `insufficient` from a headless
   session; the registry's guard message names session-only equipment.
+
+## PR 27: Second run (#27, merged 2026-09-14)
+
+R2-8 of the round 2 plan. The first incident rerun live with round 2 merged, from the same
+roughdraftplus commit, against Roughdraft serving a scratch document with five comments;
+`incident review` recorded beside run 001 in `docs/first-incident.md` under "Second run":
+8 cycles to `satisfied` with the same code path, planner input 265k tokens over the run
+against 1.09M, $16.20 at list rates, and the step that code cannot prove settled by five
+`reproduce` sessions instead of a question. The section also walks the round-2 changes
+cycle by cycle and lists what the run found in the runtime.
+
+Not exactly to spec, with reasons:
+
+- The run forced two code changes, both on this PR. A brief rendered a reproduce result as
+  `undefined: undefined` per observation because the renderer assumed investigate's
+  `where` and `what`; observations now render by their own fields, with a test. A
+  capability request blocked the incident with no way back to `open`; `incident provide`
+  answers the oldest unanswered request, records `capability.answered`, shows the answer
+  to the planner in section 1 and in `incident show` and `incident review`, and reopens the
+  incident once no question, request or grant waits. DESIGN.md's channel table and CLI
+  table and `docs/architecture.html` follow.
+- A third fix: Playwright MCP resolves a screenshot the session names against the server's
+  working directory, not `--output-dir`, so the run's twelve screenshots landed in the
+  roughdraftplus tree; the server now starts inside its output directory through a shell
+  wrapper, and the reproduce test pins the launch. PR 26's Reference row is corrected.
+- The run was stepped from this branch's build once the fixes were in, from cycle 5 on;
+  cycles 1 to 4 ran main's build. The first attempt ran a stale `dist/` and was discarded;
+  the papercut is logged.
+- The scratch document was restored from a pristine copy by the operator when the
+  planner asked, rather than by a capability; the write-up records it.
+- The two questions the run raised were answered by the session running it, not by
+  Mauria, who was asleep: the fixture restore as a fact, and the browser as an inference
+  from the machine's default browser, labelled so in the answer.

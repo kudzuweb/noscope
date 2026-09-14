@@ -212,8 +212,9 @@ describe("contracts", () => {
 
   it("names every event type the design lists", () => {
     expect(EventType.options).toContain("capability.requested");
+    expect(EventType.options).toContain("capability.answered");
     expect(EventType.options).toContain("plan.rejected");
-    expect(EventType.options).toHaveLength(25);
+    expect(EventType.options).toHaveLength(26);
   });
 
   it("exports provider-facing JSON Schema as a top-level object with no $schema key", () => {
@@ -224,6 +225,16 @@ describe("contracts", () => {
     }
     const planSchema = jsonSchemaFor(ActionPlan) as { required?: string[] };
     expect(planSchema.required).toContain("incidentStatus");
+    const requestShape = (
+      jsonSchemaFor(ActionPlan) as {
+        properties: {
+          capabilityRequests: {
+            items: { properties: Record<string, unknown> };
+          };
+        };
+      }
+    ).properties.capabilityRequests.items.properties;
+    expect(Object.keys(requestShape)).toEqual(["need", "why"]);
     expect(() => jsonSchemaFor(z.object({ when: z.date() }))).toThrow();
     expect(() => jsonSchemaFor(z.union([z.string(), z.number()]))).toThrow();
   });

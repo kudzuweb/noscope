@@ -449,9 +449,24 @@ describe("store", () => {
       "i1",
       [{ need: "read GitHub issues", why: "the answer is in an issue" }],
       "planner",
+      "capability.requested",
+    );
+    a.setIncidentCapabilityRequests(
+      "i1",
+      [
+        {
+          need: "read GitHub issues",
+          why: "the answer is in an issue",
+          answer: "registered as github_issue",
+        },
+      ],
+      "cli",
+      "capability.answered",
     );
     expect(a.getIncident("i1")?.questions[0]?.answer).toBe("main");
-    expect(a.getIncident("i1")?.capabilityRequests).toHaveLength(1);
+    expect(a.getIncident("i1")?.capabilityRequests[0]?.answer).toBe(
+      "registered as github_issue",
+    );
     const b = new Store(":memory:");
     b.replay([...a.listEvents("i1"), ...a.listEvents(null)].reverse());
     expect(b.snapshot()).toEqual(a.snapshot());

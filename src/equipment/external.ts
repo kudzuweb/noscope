@@ -59,20 +59,25 @@ export function listExternalEquipment(): ExternalEquipment[] {
   return [...registry.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** A headless browser: Playwright's MCP server, pinned, launched per session with an in-memory profile; its screenshots go to a scratch directory, never the incident's working tree. */
+const PLAYWRIGHT_OUTPUT_DIR = join(tmpdir(), "noscope-playwright");
+
+/**
+ * A headless browser: Playwright's MCP server, pinned, launched per session with an
+ * in-memory profile. Everything it writes goes to a scratch directory, never the incident's
+ * working tree: `--output-dir` covers unnamed outputs only, and a screenshot the session
+ * names is resolved against the server's working directory (playwright-core 1.63
+ * `workspaceFile`), so the server starts in that same directory.
+ */
 export const playwrightBrowser = defineExternalEquipment({
   name: "playwright_browser",
   description:
     "A headless Chromium driven through Playwright's MCP server: navigate, click, type, read the page, take screenshots",
   mcp: {
-    command: "npx",
+    command: "sh",
     args: [
-      "--yes",
-      "@playwright/mcp@0.0.80",
-      "--headless",
-      "--isolated",
-      "--output-dir",
-      join(tmpdir(), "noscope-playwright"),
+      "-c",
+      'mkdir -p "$0" && cd "$0" && exec npx --yes @playwright/mcp@0.0.80 --headless --isolated --output-dir "$0"',
+      PLAYWRIGHT_OUTPUT_DIR,
     ],
   },
   headless: true,

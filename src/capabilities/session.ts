@@ -35,6 +35,22 @@ const NO_CONTEXT: BriefContext = {
   results: [],
 };
 
+/** One observation as its capability shaped it: investigate's where and what, reproduce's step and what was observed, anything else as JSON. */
+function renderObservation(o: unknown): string {
+  const obs = o as {
+    where?: unknown;
+    what?: unknown;
+    step?: unknown;
+    observed?: unknown;
+    screenshot?: unknown;
+  };
+  if (typeof obs.where === "string" && typeof obs.what === "string")
+    return `${obs.where}: ${obs.what}`;
+  if (typeof obs.step === "string" && typeof obs.observed === "string")
+    return `${obs.step}: ${obs.observed}${typeof obs.screenshot === "string" ? ` (screenshot ${obs.screenshot})` : ""}`;
+  return JSON.stringify(o);
+}
+
 /** A session's findings in full; any other result as JSON. */
 function renderResult(t: Task): string {
   const findings = (t.result as { findings?: unknown } | null)?.findings;
@@ -49,12 +65,7 @@ function renderResult(t: Task): string {
     for (const key of ["summary", "conclusion", "reasoning"] as const)
       if (typeof f[key] === "string") parts.push(`${key}: ${f[key]}`);
     if (Array.isArray(f.observations))
-      parts.push(
-        ...f.observations.map((o) => {
-          const obs = o as { where?: unknown; what?: unknown };
-          return `${String(obs.where)}: ${String(obs.what)}`;
-        }),
-      );
+      parts.push(...f.observations.map(renderObservation));
     if (parts.length > 0) return parts.join("\n      ");
   }
   return JSON.stringify(t.result);

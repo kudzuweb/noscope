@@ -52,7 +52,7 @@ describe("reproduce", () => {
       ]),
     ).toEqual([
       ["claude_in_chrome", false, null, "chrome"],
-      ["playwright_browser", true, "npx", null],
+      ["playwright_browser", true, "sh", null],
     ]);
   });
 
@@ -63,13 +63,10 @@ describe("reproduce", () => {
     expect(request.mcpServers).toEqual([
       {
         name: "playwright_browser",
-        command: "npx",
+        command: "sh",
         args: [
-          "--yes",
-          "@playwright/mcp@0.0.80",
-          "--headless",
-          "--isolated",
-          "--output-dir",
+          "-c",
+          'mkdir -p "$0" && cd "$0" && exec npx --yes @playwright/mcp@0.0.80 --headless --isolated --output-dir "$0"',
           join(tmpdir(), "noscope-playwright"),
         ],
       },

@@ -59,6 +59,7 @@ export const EventType = z.enum([
   "grant.requested",
   "grant.given",
   "capability.requested",
+  "capability.answered",
 ]);
 
 export const Budget = z.object({
@@ -102,6 +103,7 @@ export const Question = z.object({
 export const CapabilityRequest = z.object({
   need: z.string().min(1),
   why: z.string().min(1),
+  answer: z.string().optional(),
 });
 
 export const Incident = z.object({
@@ -320,7 +322,11 @@ export const ActionPlan = z.object({
   claimsToVerify: z.array(z.string()),
   questionsForHuman: z.array(z.string()),
   grantRequests: z.array(GrantRequest),
-  capabilityRequests: z.array(CapabilityRequest),
+  capabilityRequests: z
+    .array(CapabilityRequest.omit({ answer: true }))
+    .describe(
+      "What the planner needs and why; the answer is Mauria's, through incident provide",
+    ),
   applySops: z.array(SopApplication),
   incidentStatus: z.enum(["continue", "blocked", "satisfied", "failed"]),
   situation: Situation,

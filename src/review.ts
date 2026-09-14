@@ -374,6 +374,13 @@ export function renderReview(
         questions.push(`answered at ${e.createdAt}: ${str(e.payload.answer)}`);
         lines.push(`  answered: ${str(e.payload.answer)}`);
       }
+      if (e.type === "capability.requested")
+        for (const r of list(e.payload.capabilityRequests))
+          lines.push(
+            `  capability requested: ${str((r as { need?: unknown }).need)}`,
+          );
+      if (e.type === "capability.answered" && str(e.payload.answer) !== "")
+        lines.push(`  provided: ${str(e.payload.answer)}`);
     }
     lines.push("");
   }

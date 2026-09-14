@@ -175,6 +175,62 @@ describe("blocking channels", () => {
     expect(h.err.at(-1)).toMatch(/is failed and takes no answer/);
   });
 
+  it("a capability request holds the block until provide answers it, and the planner reads the answer", {
+    timeout: 60_000,
+  }, async () => {
+    const h = harness();
+    h.env.NOSCOPE_STUB_PLAN = JSON.stringify({
+      ...empty,
+      questionsForHuman: ["which browser?"],
+      capabilityRequests: [
+        {
+          need: "a way to reset the scratch document",
+          why: "reproduce consumes it",
+        },
+      ],
+    });
+    await run(["incident", "create", "why does it scroll"], h.ctx);
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    h.out.length = 0;
+    expect(await run(["incident", "answer", "001", "Chrome"], h.ctx)).toBe(
+      EXIT.ok,
+    );
+    expect(h.out).toEqual([
+      "answered 001-q01: which browser?",
+      "incident 001 still waits on 1 capability request(s)",
+    ]);
+    expect(await run(["incident", "provide", "001"], h.ctx)).toBe(EXIT.usage);
+    h.out.length = 0;
+    expect(
+      await run(
+        ["incident", "provide", "001", "the operator restores it on request"],
+        h.ctx,
+      ),
+    ).toBe(EXIT.ok);
+    expect(h.out).toEqual([
+      "provided for: a way to reset the scratch document",
+      "incident 001 is open again",
+    ]);
+    expect(await run(["incident", "provide", "001", "again"], h.ctx)).toBe(
+      EXIT.cannotProceed,
+    );
+    h.out.length = 0;
+    await run(["incident", "show", "001"], h.ctx);
+    expect(h.out).toContain(
+      "  - a way to reset the scratch document: reproduce consumes it → the operator restores it on request",
+    );
+    h.env.NOSCOPE_STUB_PLAN = JSON.stringify(empty);
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    expect(h.lastPrompt()).toContain(
+      "capability requests answered:\n  - a way to reset the scratch document → the operator restores it on request",
+    );
+    const store = h.store();
+    expect(store.listEvents("001").map((e) => e.type)).toContain(
+      "capability.answered",
+    );
+    store.close();
+  });
+
   it("a plan with a question blocks the incident, show prints it, and answer stores the answer and reopens it", {
     timeout: 60_000,
   }, async () => {
