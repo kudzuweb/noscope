@@ -1,14 +1,19 @@
 # Handoff: noscope round 2, six of eight PRs merged; the browser PR is up and the rerun is next
 
-Refreshed 2026-09-13 22:15 CDT by session noscope-audit [3d5895] (transcript
+Refreshed 2026-09-13 22:22 CDT by session noscope-audit [3d5895] (transcript
 home-laptop:~/.claude/projects/-Users-mauriaparker-Documents-Projects-noscope/8207d276-eb0c-4c6a-86a2-86f3d0fdede1.jsonl).
 Read this whole file before doing anything.
 
-**First actions, in order:** (1) `/warp-pin title noscope-audit`, or whatever name the
-session was launched with. (2) Check PR 26 (`gh pr view 26`): if its two reviewers'
-reports are in `~/.claude/projects/-Users-mauriaparker-Documents-Projects-noscope/<this
-session>/subagents/agent-areview26-*.jsonl` (last assistant text), apply what holds, push,
-merge on green. Nothing else is pending from background agents.
+**First actions, in order:** (1) `/warp-pin title noscope-audit`, the name this session was
+launched with. (2) One `SendMessage` to `noscope-audit [3d5895]` saying "noscope-audit-2 is
+up, send the pending results here"; that session stays alive as a relay and will forward
+what is still pending: the reports of `review26-correctness` and `review26-conformance`
+(reviewing PR 26 in the worktree `wt-browser`, spawned 22:16) and the CI result for PR 26's
+head. If nothing arrives within ten minutes, read the reports yourself from
+`~/.claude/projects/-Users-mauriaparker-Documents-Projects-noscope/8207d276-eb0c-4c6a-86a2-86f3d0fdede1/subagents/agent-areview26-*.jsonl`
+(the last assistant text of each) and `gh pr checks 26`. (3) Mauria was asked, at 22:20,
+which Markdown document with comments to copy for the rerun; her answer is the input to
+step 2 of §4.
 
 ## 1. GOAL
 
