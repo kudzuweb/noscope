@@ -60,6 +60,24 @@ export function renderClaudeCodeArgs(request: SessionRequest): string[] {
   if (request.bashAllowlist.length > 0)
     args.push("--allowedTools", bashAllowlist(request.bashAllowlist).join(","));
   for (const dir of request.addDirs) args.push("--add-dir", dir);
+  if (request.mcpServers.length > 0)
+    args.push(
+      "--mcp-config",
+      JSON.stringify({
+        mcpServers: Object.fromEntries(
+          request.mcpServers.map((s) => [
+            s.name,
+            { command: s.command, args: [...s.args] },
+          ]),
+        ),
+      }),
+      "--strict-mcp-config",
+    );
+  for (const integration of request.integrations) {
+    if (integration !== "chrome")
+      throw new Error(`claude-code has no integration named ${integration}`);
+    args.push("--chrome");
+  }
   return args;
 }
 

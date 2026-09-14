@@ -14,6 +14,7 @@ export {
   listCapabilities,
   runDeterministic,
 } from "./registry.js";
+export * from "./reproduce.js";
 export {
   buildSessionRequest,
   renderTaskBrief,

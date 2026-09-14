@@ -762,3 +762,31 @@ Not exactly to spec, with reasons:
   to every brief; a capability request is the channel when no reproduce capability is
   listed; the investigate role's settling item carries a "settled by:" prefix so it can be
   told from a citation.
+
+## PR 26: Browser capability (#26, merged 2026-09-13)
+
+R2-7 of the round 2 plan. Built: external equipment, the design's third kind, brought
+forward from after v0: an MCP server declared by name and launch command and passed to
+the provider as `--mcp-config` (inline JSON) with `--strict-mcp-config`, or a provider
+integration named as equipment. Two browsers are registered: `playwright_browser`
+(`npx @playwright/mcp@latest --headless --isolated`, on npm at 0.0.80 on 2026-09-13) and
+`claude_in_chrome` (Claude Code's `--chrome`). A session capability may declare several
+and name an input field, `equipmentSelect`, whose value picks the one to attach. The
+`reproduce` capability: inputs `browser`, `url`, `steps` and `observe`; role text that
+performs the steps and reports what was observed, never inferred; output of one
+observation per step with an optional screenshot path. Registered `read_only` under the
+scratch-copy constraint the plan records. `SessionRequest` gains `mcpServers` and
+`integrations`; the preamble names a browser among the equipment kinds. DESIGN.md Step 3
+(equipment kinds, the capability table) follows; the Reference rows below record what the
+live probes found.
+
+Not exactly to spec, with reasons:
+
+- The plan spoke of an equipment kind `mcp_server`; the kind is `external` with two forms,
+  because Claude in Chrome is not a server the runtime launches but an integration the
+  provider turns on, and the design's session request stays provider-blind by naming the
+  integration rather than the flag.
+- `--mcp-config` takes the JSON inline (Claude Code accepts strings as well as files, per
+  `claude --help` on 2026-09-13), so no temporary file is written per session.
+- The two live probes, one per browser, are opt-in tests (`NOSCOPE_LIVE=1`); their results
+  are in DESIGN.md's Reference table rather than repeated here.

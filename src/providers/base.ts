@@ -13,6 +13,14 @@ export type SessionRequest = {
   prompt: string;
   /** Provider built-in tool names, or the single entry `default` for the provider's whole set. */
   tools: readonly string[];
+  /** MCP servers to launch for this session, each by name and command. */
+  mcpServers: readonly {
+    name: string;
+    command: string;
+    args: readonly string[];
+  }[];
+  /** Provider integrations to turn on for this session, by name; the provider renders each its own way. */
+  integrations: readonly string[];
   /** Commands a read-only Bash may run without approval. */
   bashAllowlist: readonly string[];
   cwd: string;
@@ -50,7 +58,7 @@ The terms, each ICS's own except claim:
 - unit: a box in the incident's temporary tree that owns a slice of the problem; nothing runs as a unit.
 - task: one assignment, owned by one unit, bound to one capability, with an objective, inputs, expected output, completion criteria and required evidence.
 - capability: the assignable thing: declared equipment plus, when judgment is needed, a session like this one.
-- equipment: the primitive a capability uses: a function, a tool, a server. Never assigned on its own.
+- equipment: the primitive a capability uses: a function, a tool, a server, a browser. Never assigned on its own.
 - claim: a statement about the world with a status: asserted (stated by a session), verified (established by deterministic equipment), or rejected. Every claim also carries a basis: observed, when you saw it in code or in output, or inferred, when you reasoned to it from what you saw.
 - action plan: what the planner proposes each cycle and the validator approves.
 - planner: the ICS Planning Section; it drafts, it does not command.

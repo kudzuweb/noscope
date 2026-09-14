@@ -1,12 +1,18 @@
 import { resolve } from "node:path";
 import type { z } from "zod";
-import { getEquipment, isBuiltinTool } from "../equipment/index.js";
+import {
+  getEquipment,
+  getExternalEquipment,
+  isBuiltinTool,
+} from "../equipment/index.js";
 import { type ClaimProposal, Cost, type Effect } from "../models.js";
 
 /** The role text a session-backed capability gives its session; the model comes from each task. */
 export type SessionSpec = {
   systemPrompt: string;
   bashAllowlist?: readonly string[];
+  /** An input field whose value names the one piece of external equipment to attach, when the capability declares several. */
+  equipmentSelect?: string;
 };
 
 /** What a deterministic run knows about where it runs: relative path inputs resolve against `cwd`. */
@@ -112,16 +118,16 @@ export function defineCapability<I extends z.ZodType, O extends z.ZodType>(
     );
   }
   for (const name of spec.equipment) {
-    if (
-      getEquipment(name) === undefined &&
-      !isBuiltinTool(name) &&
-      name !== "default"
-    ) {
+    const sessionOnly =
+      isBuiltinTool(name) ||
+      name === "default" ||
+      getExternalEquipment(name) !== undefined;
+    if (getEquipment(name) === undefined && !sessionOnly) {
       throw new Error(
         `capability ${spec.name} declares unknown equipment ${name}`,
       );
     }
-    if (spec.run !== undefined && (isBuiltinTool(name) || name === "default")) {
+    if (spec.run !== undefined && sessionOnly) {
       throw new Error(
         `capability ${spec.name} is deterministic and cannot use the built-in tool ${name}`,
       );

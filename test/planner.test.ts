@@ -320,6 +320,8 @@ describe("planner", () => {
           inputs: { question: string, required; paths: string[] = [] }
         - read [deterministic, read_only]: Read a file and record its contents as a fact (typical 0.01s)
           inputs: { path: string, required; maxBytes: integer = 200000 }
+        - reproduce [session, read_only]: Open a page in a browser, perform steps in order, and report what was observed after each; settles a claim about runtime behavior that reading code cannot (typical 90s, 8000 tokens)
+          inputs: { browser: "playwright_browser" | "claude_in_chrome", required; url: string, required; steps: string[], required; observe: string[], required }
       providers and models:
         - fake: fake-large, fake-small
 

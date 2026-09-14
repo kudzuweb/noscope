@@ -26,6 +26,8 @@ function request(): SessionRequest {
     prompt:
       "Objective: find the delete handler.\nUnit is establishing: where deletion lives.",
     tools: ["Read", "Grep", "Glob", "Bash"],
+    mcpServers: [],
+    integrations: [],
     bashAllowlist: ["ls", "cat"],
     cwd: process.cwd(),
     addDirs: ["/tmp/extra"],
@@ -120,6 +122,35 @@ describe("claude code provider", () => {
     } finally {
       delete process.env.NOSCOPE_STUB_LOG;
     }
+  });
+
+  it("renders an MCP server as a strict inline config and the chrome integration as its flag", () => {
+    const withBrowser = renderClaudeCodeArgs({
+      ...request(),
+      mcpServers: [
+        {
+          name: "playwright_browser",
+          command: "npx",
+          args: ["@playwright/mcp@latest", "--headless"],
+        },
+      ],
+      integrations: ["chrome"],
+    });
+    const at = withBrowser.indexOf("--mcp-config");
+    expect(at).toBeGreaterThan(0);
+    expect(JSON.parse(withBrowser[at + 1] as string)).toEqual({
+      mcpServers: {
+        playwright_browser: {
+          command: "npx",
+          args: ["@playwright/mcp@latest", "--headless"],
+        },
+      },
+    });
+    expect(withBrowser[at + 2]).toBe("--strict-mcp-config");
+    expect(withBrowser.at(-1)).toBe("--chrome");
+    expect(() =>
+      renderClaudeCodeArgs({ ...request(), integrations: ["safari"] }),
+    ).toThrow(/no integration named safari/);
   });
 
   it("reports a failed session and a malformed envelope as errors, never as an outcome", async () => {

@@ -173,7 +173,7 @@ Equipment kinds in v0:
 |---|---|
 | Function | In-process, called by a deterministic capability: `read_file`, `stat_path`, `grep_files`, `list_directory`, `git_status`, `git_log`, `git_diff`, `run_readonly`. A session reaches function equipment only through the runtime's own MCP equipment server, after v0: one process per session, advertising exactly the capability's declared function equipment, every call logged as an event. |
 | Claude Code built-in tool | Only inside a capability's session, named in that capability's equipment: `Read`, `Grep`, `Glob`, and `Bash` under an allowlist of read-only commands. A capability may instead declare `default` to give its session Claude Code's whole built-in set. |
-| External MCP server, after v0 | Only inside a session. Declared as equipment by name and launch command, passed to the provider alongside the runtime's own equipment server. This is how Craft, GitHub, a browser or anything else with an MCP server becomes equipment without an adapter. |
+| External | Only inside a session. An MCP server declared as equipment by name and launch command, passed to the provider with `--mcp-config` and `--strict-mcp-config`; or a provider integration named as equipment, which the provider turns on its own way. This is how Craft, GitHub, a browser or anything else with an MCP server becomes equipment without an adapter. Two browsers are registered (round 2, R2-7): `playwright_browser`, Playwright's MCP server launched headless with an in-memory profile; and `claude_in_chrome`, Mauria's own Chrome through Claude Code's Claude in Chrome integration (`--chrome`). A capability that declares several may name an input field (`equipmentSelect`) whose value picks the one to attach; `reproduce` picks by its `browser` input. The runtime's own equipment server, which would give a session function equipment, stays after v0. |
 
 An equipment module is ordinary exported functions, one module per family, no scripts and no
 CLI:
@@ -269,6 +269,7 @@ v0 capabilities:
 | `git_history` | `git_status`, `git_log` | none; produces verified claims |
 | `investigate` | `Read`, `Grep`, `Glob`, `Bash` under the read-only allowlist | yes, model named per task; produces asserted claims with evidence |
 | `interpret` | none | yes, model named per task; given evidence and nothing else, produces what it implies as asserted claims, or `insufficient` with what it would need |
+| `reproduce` | `playwright_browser` or `claude_in_chrome`, whichever the task's `browser` input names | yes, model named per task; opens a page, performs steps in order and reports what it observed after each, as observed claims; settles a claim about runtime behavior that reading code cannot. Registered `read_only`: browsing a running app can change its data, so an incident that uses it names a scratch copy of the app's data in a constraint |
 
 The four deterministic capabilities exist so the verifier has something to promote claims
 with, and so the planner can ask a precise question without spending a session on it.
