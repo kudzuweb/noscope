@@ -326,7 +326,7 @@ channel:
 |---|---|---|
 | A fact a registered capability can retrieve, from the machine or anything its equipment reaches. | A task. | The runtime, next cycle. |
 | Permission for a capability that writes. | A grant request. | Mauria, with `incident grant`. After v0. |
-| The means: equipment or a capability that does not exist yet, stated as what it would need and why. | A capability request. | Mauria, by registering it; after v0 the planner itself when the missing equipment is an external MCP server it can declare. A capability request is also the runtime telling her what to build next. |
+| The means: equipment or a capability that does not exist yet, stated as what it would need and why. | A capability request. | Mauria, by registering it and answering the request with `incident provide`, which returns the incident to `open`; after v0 the planner itself when the missing equipment is an external MCP server it can declare. A capability request is also the runtime telling her what to build next. |
 | Something only a human knows or may decide. | A question for a human. | Mauria, with `incident answer`. |
 
 The incident goes to `blocked` on any of the last three, `incident show` prints them, and
@@ -396,6 +396,7 @@ wants established, and proposes the deterministic task that would establish them
 | `noscope incident review <id>` | The After Action Review computed from the event log: each cycle with its verdict, rejections, tasks run (capability, model, tokens with the cache split, seconds, cost, claims), questions and answers; totals by role and model; plan, task and claim counts; the cost, recorded where the provider priced it and bounded at list rates where it did not. Deterministic; the judged review is the session-backed `review` capability, after v0. |
 | `noscope incident sop <id> <name>` | Adds an SOP's unit and its tasks to the incident in one action plan. After v0. |
 | `noscope incident answer <id> "<text>"` | Answers the planner's open question and returns the incident to `open`. |
+| `noscope incident provide <id> "<text>"` | Answers the planner's oldest unanswered capability request with what was provided, or why not, and returns the incident to `open` once nothing else waits. |
 | `noscope incident grant <id> <capability> [--per-task]` | Gives a grant for one capability on this incident, recording the planner's reason; `--per-task` makes each task under it ask again. After v0. |
 | `noscope grant standing <capability>` | Whitelists a capability everywhere. After v0. |
 

@@ -358,7 +358,17 @@ export function renderPlannerInput(
         .map((q) => `${q.id}: ${q.text} → ${q.answer}`),
     ),
     "capability requests outstanding:",
-    ...bullets(incident.capabilityRequests.map((r) => `${r.need}: ${r.why}`)),
+    ...bullets(
+      incident.capabilityRequests
+        .filter((r) => r.answer === undefined)
+        .map((r) => `${r.need}: ${r.why}`),
+    ),
+    "capability requests answered:",
+    ...bullets(
+      incident.capabilityRequests
+        .filter((r) => r.answer !== undefined)
+        .map((r) => `${r.need} → ${r.answer}`),
+    ),
     "",
     "## 2. Verified claims",
     ...bullets(verifiedLines),

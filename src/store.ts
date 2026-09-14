@@ -368,9 +368,10 @@ export class Store {
     incidentId: string,
     capabilityRequests: CapabilityRequest[],
     actor: string,
+    type: EventType,
     extra: Extra = {},
   ): void {
-    this.write(incidentId, "capability.requested", actor, extra, {
+    this.write(incidentId, type, actor, extra, {
       kind: "incident.capabilityRequests",
       incidentId,
       capabilityRequests,

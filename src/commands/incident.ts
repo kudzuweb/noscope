@@ -4,9 +4,11 @@ import { type Context, EXIT, type Handler } from "../context.js";
 import { dispatch } from "../dispatcher.js";
 import {
   Budget,
+  type CapabilityRequest,
   type Event,
   type Incident,
   type IncidentStatus,
+  type Question,
   Situation,
   type Unit,
 } from "../models.js";
@@ -220,7 +222,9 @@ function renderIncidentFile(
     lines.push("  (none)");
   lines.push("capability requests:");
   for (const r of incident.capabilityRequests)
-    lines.push(`  - ${r.need}: ${r.why}`);
+    lines.push(
+      `  - ${r.need}: ${r.why}${r.answer === undefined ? "" : ` → ${r.answer}`}`,
+    );
   if (incident.capabilityRequests.length === 0) lines.push("  (none)");
   lines.push("grants:");
   for (const g of grants)
@@ -511,15 +515,12 @@ export const answer: Handler = async (args, ctx) => {
     const questions = incident.questions.map((q) =>
       q.id === open.id ? { ...q, answer: text } : q,
     );
-    const stillWaiting = questions.filter((q) => q.answer === undefined).length;
-    const grantsWaiting = pendingGrantRequests(store, incident.id);
-    const holds = [
-      ...(stillWaiting > 0 ? [`${stillWaiting} question(s)`] : []),
-      ...(incident.capabilityRequests.length > 0
-        ? [`${incident.capabilityRequests.length} capability request(s)`]
-        : []),
-      ...(grantsWaiting > 0 ? [`${grantsWaiting} grant request(s)`] : []),
-    ];
+    const holds = holdsOn(
+      store,
+      incident.id,
+      questions,
+      incident.capabilityRequests,
+    );
     const reopen = incident.status === "blocked" && holds.length === 0;
     store.batch(() => {
       store.setIncidentQuestions(
@@ -553,6 +554,93 @@ export const answer: Handler = async (args, ctx) => {
     store.close();
   }
 };
+
+/**
+ * Answer the planner's oldest capability request that nothing has answered yet: what was
+ * provided, or why not. The answer is stored on the request, where the planner's next input
+ * reads it, `capability.answered` is written, and the incident returns to `open` once
+ * nothing else waits.
+ */
+export const provide: Handler = async (args, ctx) => {
+  const store = openStore(ctx);
+  try {
+    const incident = requireIncident(store, args, ctx, "provide");
+    if (typeof incident === "number") return incident;
+    if (incident.status === "satisfied" || incident.status === "failed") {
+      ctx.io.err(
+        `noscope incident provide: incident ${incident.id} is ${incident.status} and takes no answer`,
+      );
+      return EXIT.cannotProceed;
+    }
+    const text = args.slice(1).join(" ").trim();
+    if (text === "") {
+      ctx.io.err(
+        'noscope incident provide: what was provided is required, e.g. noscope incident provide 001 "the scratch document is restored"',
+      );
+      return EXIT.usage;
+    }
+    const index = incident.capabilityRequests.findIndex(
+      (r) => r.answer === undefined,
+    );
+    const open = incident.capabilityRequests[index];
+    if (open === undefined) {
+      ctx.io.err(
+        `noscope incident provide: incident ${incident.id} has no capability request waiting`,
+      );
+      return EXIT.cannotProceed;
+    }
+    const requests = incident.capabilityRequests.map((r, i) =>
+      i === index ? { ...r, answer: text } : r,
+    );
+    const holds = holdsOn(store, incident.id, incident.questions, requests);
+    const reopen = incident.status === "blocked" && holds.length === 0;
+    store.batch(() => {
+      store.setIncidentCapabilityRequests(
+        incident.id,
+        requests,
+        ACTOR,
+        "capability.answered",
+        { need: open.need, answer: text },
+      );
+      if (reopen)
+        store.setIncidentStatus(
+          incident.id,
+          "open",
+          ACTOR,
+          "capability.answered",
+          { need: open.need },
+        );
+    });
+    ctx.io.out(`provided for: ${open.need}`);
+    ctx.io.out(
+      reopen
+        ? `incident ${incident.id} is open again`
+        : holds.length > 0
+          ? `incident ${incident.id} still waits on ${holds.join(", ")}`
+          : `incident ${incident.id} stays ${incident.status}`,
+    );
+    return EXIT.ok;
+  } finally {
+    store.close();
+  }
+};
+
+/** What still holds an incident blocked: unanswered questions, unanswered capability requests, grant requests no grant has answered. */
+function holdsOn(
+  store: Store,
+  incidentId: string,
+  questions: readonly Question[],
+  requests: readonly CapabilityRequest[],
+): string[] {
+  const stillWaiting = questions.filter((q) => q.answer === undefined).length;
+  const unprovided = requests.filter((r) => r.answer === undefined).length;
+  const grantsWaiting = pendingGrantRequests(store, incidentId);
+  return [
+    ...(stillWaiting > 0 ? [`${stillWaiting} question(s)`] : []),
+    ...(unprovided > 0 ? [`${unprovided} capability request(s)`] : []),
+    ...(grantsWaiting > 0 ? [`${grantsWaiting} grant request(s)`] : []),
+  ];
+}
 
 /** Grant requests the planner raised that no grant has answered: `grant.requested` events beyond `grant.given` ones. */
 function pendingGrantRequests(store: Store, incidentId: string): number {

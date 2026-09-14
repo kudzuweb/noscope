@@ -59,6 +59,7 @@ export const EventType = z.enum([
   "grant.requested",
   "grant.given",
   "capability.requested",
+  "capability.answered",
 ]);
 
 export const Budget = z.object({
@@ -102,6 +103,7 @@ export const Question = z.object({
 export const CapabilityRequest = z.object({
   need: z.string().min(1),
   why: z.string().min(1),
+  answer: z.string().optional(),
 });
 
 export const Incident = z.object({

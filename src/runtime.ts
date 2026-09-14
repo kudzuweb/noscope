@@ -160,6 +160,7 @@ export function applyPlan(
         incident.id,
         [...incident.capabilityRequests, ...plan.capabilityRequests],
         actor,
+        "capability.requested",
         { capabilityRequests: plan.capabilityRequests },
       );
     for (const g of plan.grantRequests)

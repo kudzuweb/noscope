@@ -286,6 +286,8 @@ describe("planner", () => {
         (none)
       capability requests outstanding:
         (none)
+      capability requests answered:
+        (none)
 
       ## 2. Verified claims
         - c-verified: /repo/src/view.ts:88 matches {"pattern":"scrollTo","text":"el.scrollTo(0, bottom)"} (confidence 1; evidence /repo/src/view.ts:88)

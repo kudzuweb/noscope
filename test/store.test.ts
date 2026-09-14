@@ -449,6 +449,7 @@ describe("store", () => {
       "i1",
       [{ need: "read GitHub issues", why: "the answer is in an issue" }],
       "planner",
+      "capability.requested",
     );
     expect(a.getIncident("i1")?.questions[0]?.answer).toBe("main");
     expect(a.getIncident("i1")?.capabilityRequests).toHaveLength(1);

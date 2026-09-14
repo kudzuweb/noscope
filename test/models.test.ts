@@ -212,8 +212,9 @@ describe("contracts", () => {
 
   it("names every event type the design lists", () => {
     expect(EventType.options).toContain("capability.requested");
+    expect(EventType.options).toContain("capability.answered");
     expect(EventType.options).toContain("plan.rejected");
-    expect(EventType.options).toHaveLength(25);
+    expect(EventType.options).toHaveLength(26);
   });
 
   it("exports provider-facing JSON Schema as a top-level object with no $schema key", () => {

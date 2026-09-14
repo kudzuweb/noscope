@@ -68,6 +68,15 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     group: "incident",
+    name: "provide",
+    usage: 'incident provide <id> "<text>"',
+    summary:
+      "Answer the planner's open capability request with what was provided, or why not, and reopen the incident",
+    arrives: "PR 27",
+    handler: incident.provide,
+  },
+  {
+    group: "incident",
     name: "run",
     usage: "incident run <id> [--max-cycles N]",
     summary: "Repeat step until the incident leaves open or the cap is hit",
