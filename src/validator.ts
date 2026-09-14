@@ -316,7 +316,7 @@ const CHECKS: Record<RuleName, Rule> = {
       if (refs.has(task) || (openTasks.has(task) && !cancelling.has(task)))
         continue;
       reasons.push(
-        `inferred claim ${link.claimId} is settled by task ${task}, which is neither a ref in this plan nor an open task`,
+        `inferred claim ${link.claimId} is settled by ${"task" in by ? "task" : "reproduce task"} ${task}, which is neither a ref in this plan nor an open task`,
       );
     }
     return reasons;
@@ -325,11 +325,23 @@ const CHECKS: Record<RuleName, Rule> = {
   "Dependencies resolve": (plan, ctx) => {
     const byId = new Map(ctx.tasks.map((t) => [t.id, t]));
     const allClaims = new Set(ctx.claims.map((c) => c.id));
+    const verified = new Set(
+      ctx.claims.filter((c) => c.status === "verified").map((c) => c.id),
+    );
     const named = [
-      ...plan.situation.proven.map((p) => p.claimId),
-      ...plan.situation.inferred.map((i) => i.claimId),
-      ...plan.situation.keep,
+      ...new Set([
+        ...plan.situation.proven.map((p) => p.claimId),
+        ...plan.situation.inferred.map((i) => i.claimId),
+        ...plan.situation.keep,
+      ]),
     ];
+    const notProven = plan.situation.proven
+      .map((p) => p.claimId)
+      .filter((id) => allClaims.has(id) && !verified.has(id))
+      .map(
+        (id) =>
+          `the situation lists claim ${id} as proven, but it is not verified`,
+      );
     const cancelling = new Set(plan.cancelTasks);
     const claims = new Set(
       ctx.claims.filter((c) => c.status === "asserted").map((c) => c.id),
@@ -368,6 +380,7 @@ const CHECKS: Record<RuleName, Rule> = {
       ...named
         .filter((id) => !allClaims.has(id))
         .map((id) => `the situation names no claim ${id}`),
+      ...notProven,
     ];
   },
 

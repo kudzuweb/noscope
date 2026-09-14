@@ -667,11 +667,16 @@ describe("validator", () => {
             { claimId: "c-asserted", settledBy: { task: "t-done" } },
             { claimId: "c-asserted", settledBy: { question: 1 } },
           ],
+          proven: [
+            { claimId: "c-none", line: "missing" },
+            { claimId: "c-asserted", line: "not verified" },
+          ],
           keep: ["c-none"],
         }),
       }),
     ).toEqual([
       "Dependencies resolve: the situation names no claim c-none",
+      "Dependencies resolve: the situation lists claim c-asserted as proven, but it is not verified",
       "Inferred links are worked: inferred claim c-asserted is settled by task t-none, which is neither a ref in this plan nor an open task",
       "Inferred links are worked: inferred claim c-asserted is settled by task t-running, which is neither a ref in this plan nor an open task",
       "Inferred links are worked: inferred claim c-asserted is settled by task t-done, which is neither a ref in this plan nor an open task",

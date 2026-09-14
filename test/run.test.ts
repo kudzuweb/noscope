@@ -105,6 +105,12 @@ describe("incident run", () => {
     );
     const store = h.store();
     expect(store.getIncident("001")?.status).toBe("satisfied");
+    const shown = harness([]);
+    shown.ctx.env.NOSCOPE_DB = h.ctx.env.NOSCOPE_DB as string;
+    expect(await run(["incident", "show", "001"], shown.ctx)).toBe(EXIT.ok);
+    expect(shown.out.join("\n")).toContain(
+      "situation, from the last plan:\n  changed: test\n  hypothesis: test\n  proven:\n    (none)\n  inferred:\n    (none)\n  keep: (none)",
+    );
     const claims = store.listClaims("001");
     expect(claims).toHaveLength(1);
     expect(claims[0]).toMatchObject({

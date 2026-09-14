@@ -192,12 +192,26 @@ function renderIncidentFile(
   if (decisions.length === 0) lines.push("  (none yet)");
   const last = Situation.safeParse(decisions.at(-1)?.payload.situation);
   if (last.success) {
+    const s = last.data;
     lines.push("situation, from the last plan:");
-    lines.push(`  changed: ${last.data.changed}`);
-    lines.push(`  hypothesis: ${last.data.hypothesis}`);
-    lines.push(
-      `  proven ${last.data.proven.length}, inferred ${last.data.inferred.length}, keep ${last.data.keep.length}`,
-    );
+    lines.push(`  changed: ${s.changed}`);
+    lines.push(`  hypothesis: ${s.hypothesis}`);
+    lines.push("  proven:");
+    for (const p of s.proven) lines.push(`    - ${p.claimId}: ${p.line}`);
+    if (s.proven.length === 0) lines.push("    (none)");
+    lines.push("  inferred:");
+    for (const i of s.inferred) {
+      const by = i.settledBy;
+      const settled =
+        "task" in by
+          ? `task ${by.task}`
+          : "question" in by
+            ? `question ${by.question} of that plan`
+            : `reproduce ${by.reproduce}`;
+      lines.push(`    - ${i.claimId}, settled by ${settled}`);
+    }
+    if (s.inferred.length === 0) lines.push("    (none)");
+    lines.push(`  keep: ${s.keep.join(", ") || "(none)"}`);
   }
   lines.push("questions waiting on a human:");
   for (const q of incident.questions.filter((q) => q.answer === undefined))

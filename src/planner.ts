@@ -47,7 +47,7 @@ export const PLANNER_RULES = [
   "Model known: every task to a session-backed capability names a provider and a model that provider serves; a task to a deterministic capability names neither.",
   "Closing is clean: a unit closed in this plan is active, has no running task after this plan's cancels, is closed once, and is given no new unit or task in the same plan.",
   "Status is earned: satisfied requires every open task completed or cancelled, no new tasks, and at least one verified claim; satisfied or failed raises no question, capability request or grant request; blocked raises at least one.",
-  "Inferred links are worked: every inferred link in the situation names what settles it: a task in this plan by its ref, an open task by its id, a question this plan raises by its position, or a reproduce task; and every claim id in proven, inferred and keep names a claim in the incident.",
+  "Inferred links are worked: every inferred link in the situation names what settles it: a task in this plan by its ref, an open task by its id, a question this plan raises by its position, or a reproduce task by its ref or id; every claim id in proven, inferred and keep names a claim in the incident, and every proven claim is verified.",
 ] as const;
 
 function clip(value: unknown): string {
@@ -129,10 +129,6 @@ function taskLine(t: Task): string {
   return `${t.id} [${t.status}] under ${t.unitId}: ${t.capability} — ${t.objective}; inputs ${clip(t.inputs)}${model}${deps}`;
 }
 
-/**
- * The sequence of the last applied plan; everything after it is "since the last cycle". A
- * rejected proposal does not move it, so a retry sees the same results the rejected plan saw.
- */
 /** The situation the last applied plan carried, rendered as the planner wrote it; none before the first applied plan. */
 function lastSituation(events: readonly Event[]): string[] {
   let last: unknown;
@@ -160,6 +156,10 @@ function lastSituation(events: readonly Event[]): string[] {
   ];
 }
 
+/**
+ * The sequence of the last applied plan; everything after it is "since the last cycle". A
+ * rejected proposal does not move it, so a retry sees the same results the rejected plan saw.
+ */
 function lastCycleSequence(events: readonly Event[]): number {
   let last = -1;
   for (const e of events) if (e.type === "plan.applied") last = e.sequence;

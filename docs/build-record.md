@@ -672,5 +672,10 @@ Not exactly to spec, with reasons:
 - `proven` entries carry a one-line rendering beside the id, per Mauria's review comment
   that the situation should carry the verified claims, so the brief (R2-5) and section 10
   can show them without the claims section.
-- The situation's claim ids are checked against every claim, not only asserted ones,
-  since `proven` names verified claims.
+- The situation's claim ids are checked against every claim, not only asserted ones;
+  a `proven` claim must in addition be verified (from the review), since it is the one
+  place a plan could mark the planner's own conclusion true.
+- A `reproduce` settlement may name an open task by id as well as a ref in this plan,
+  as a `task` settlement may; the plan's text said a ref.
+- From the review: `incident show` prints the whole last situation, not counts; missing
+  ids are reported once; the architecture page lists the situation and section 10.
