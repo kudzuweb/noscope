@@ -382,14 +382,3 @@ editor's selection rests before a deletion: run 001 settled it by a question to 
 cycle 9, and run 002 has `reproduce` for it.
 
 Every question raised in review is answered inside the PR it belongs to; no open questions remain.
-
----
-counters:
-  comments: 12
-comments:
-  c12:
-    body: everything with "approved" means you can delete the threads. i'm done and
-      don't need a reopen. do a fresh eyes pass over this for residue and
-      coherence though
-    by: user
-    at: 2026-09-14T02:08:10.314Z
