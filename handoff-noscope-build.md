@@ -65,6 +65,14 @@ a push reports the previous run.
    with comments (`roughdraft start`, `roughdraft open <copy>`) and its URL. Then, from
    `~/Documents/Projects/roughdraftplus`, with `NOSCOPE_DB=~/.noscope/second-run.sqlite`:
    `noscope incident create "<the objective of run 001, verbatim from docs/first-incident.md>" --constraint "the app runs at <URL> on a scratch copy of the document, which reproduce may change" --constraint "the repository is read only"`, then `incident step 001` one cycle at a time (or `run` with a cap), watching each plan. Record `incident review 001` (on the new file) beside run 001 in `docs/first-incident.md` under "Second run": cycles, planner input, cost, and how the step code cannot prove (where the editor's selection rests before a deletion) was settled; no thresholds, per Mauria.
+   What to watch for, cycle by cycle, since each is a round-2 change under test: the plan
+   carries a situation (changed, hypothesis, proven, inferred with settledBy, keep) and
+   section 10 shows it back next cycle; a chain of tasks lands in one plan by ref and runs
+   in one cycle; tasks name evidence in `evidenceFrom` rather than copying it; grep claims
+   collapse after their first cycle unless kept; the planner names a `reproduce` task with
+   `browser: playwright_browser` for the resting-selection step instead of asking Mauria;
+   interpret briefs carry no conclusion. Note every cycle where one of these did not happen
+   and why, in the "Second run" section; that is the finding.
 2. Then the revisit list on the quipu thread's open items, then noscope on roughdraft, quipu,
    the scan.
 
