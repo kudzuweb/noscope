@@ -3,7 +3,12 @@ import { z } from "zod";
 import { defineCapability } from "../src/capabilities/registry.js";
 import { READ_ONLY_SESSION_COMMANDS } from "../src/equipment/index.js";
 import { LEADER_RULES } from "../src/leader.js";
-import type { ActionPlan, TaskProposal, Unit } from "../src/models.js";
+import type {
+  ActionPlan,
+  CommandTurn,
+  TaskProposal,
+  Unit,
+} from "../src/models.js";
 import { PLANNER_RULES } from "../src/planner.js";
 import { Store } from "../src/store.js";
 import {
@@ -13,6 +18,7 @@ import {
   SPAN_OF_CONTROL,
   strikeTeamRejections,
   validateAndRecord,
+  validateCommand,
   validateLeaderTasks,
   validateLeaderTasksAndRecord,
   validatePlan,
@@ -666,6 +672,73 @@ describe("validator", () => {
       "task.failed",
     );
     expect(validatePlan(closing, ctx()).ok).toBe(false);
+    store.close();
+  });
+
+  it("Closing is clean: a plan cannot close a unit whose revise verdict is not yet delivered, while the IC's own closeUnits can, and the close is free once unit.revised follows (R4-3)", () => {
+    const { store, ctx } = seeded();
+    store.setTaskStatus(
+      "i1",
+      "t-running",
+      "failed",
+      "dispatcher",
+      "task.failed",
+    );
+    store.record("i1", "unit.reported", "dispatcher", {
+      unitId: "u-scroll",
+      sessionId: "s-lead",
+      report: { outcome: "progress", changed: [], pictureChanged: false },
+    });
+    const reported = store
+      .listEvents("i1")
+      .find((e) => e.type === "unit.reported");
+    store.record("i1", "report.reviewed", "ic", {
+      reportId: reported?.id,
+      unitId: "u-scroll",
+      verdict: "revise",
+      instructions: "read the file the grep found",
+      why: "a match is not a handler",
+      cycle: 1,
+    });
+    // The verdict's own command turn is accepted, so the window is empty for the next.
+    store.record("i1", "command.turned", "runtime", { cycle: 1 });
+    const closing: ActionPlan = {
+      ...empty,
+      closeUnits: [{ unitId: "u-scroll", reason: "done" }],
+    };
+    const planned = validatePlan(closing, ctx());
+    expect(planned.ok).toBe(false);
+    if (!planned.ok)
+      expect(planned.rejections).toEqual([
+        {
+          rule: "Closing is clean",
+          reason:
+            "unit u-scroll has a revision not yet delivered; its leader answers it first",
+        },
+      ]);
+    const turn: CommandTurn = {
+      periodObjectives: ["finish"],
+      priorities: [],
+      reportVerdicts: [],
+      closeUnits: [{ unitId: "u-scroll", reason: "the IC changed its mind" }],
+      answers: [],
+      assignTasks: [],
+      questionsForHuman: [],
+      capabilityRequests: [],
+      grantRequests: [],
+      incidentStatus: "continue",
+      rationale: "close it",
+    };
+    expect(validateCommand(turn, ctx())).toEqual([]);
+    store.record("i1", "unit.revised", "dispatcher", {
+      unitId: "u-scroll",
+      sessionId: "s-lead",
+      reviewedId: "x",
+      reportId: reported?.id,
+      instructions: "read the file the grep found",
+      revision: 1,
+    });
+    expect(validatePlan(closing, ctx()).ok).toBe(true);
     store.close();
   });
 

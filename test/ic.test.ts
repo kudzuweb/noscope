@@ -1714,6 +1714,194 @@ describe("the IC above the planner", () => {
     );
   });
 
+  it("a run on the stub: the IC revises, the next pass opens the unit with the revision brief on its resumed session, the leader assigns one grep and reports again with revision 1, the IC accepts, and review lists the revision (R4-3)", {
+    timeout: 60_000,
+  }, async () => {
+    const h = harness(
+      [
+        findIt,
+        { ...empty, rationale: "nothing new; the unit revises" },
+        {
+          ...empty,
+          incidentStatus: "satisfied",
+          rationale: "both handlers are placed",
+        },
+      ],
+      [
+        command(),
+        command({
+          reportVerdicts: [
+            {
+              reportId: "",
+              unitId: "001-u02",
+              verdict: "revise",
+              instructions: "also place the remove handler",
+              why: "one match is not the whole picture",
+            },
+          ],
+          rationale: "revise",
+        }),
+        command({
+          reportVerdicts: [
+            {
+              reportId: "",
+              unitId: "001-u02",
+              verdict: "accepted",
+              instructions: "",
+              why: "both handlers placed on observed claims",
+            },
+          ],
+          rationale: "accepted",
+        }),
+      ],
+      [],
+    );
+    // Cycle 1: the leader reports progress after its grep. Cycle 2: on the brief it
+    // assigns a grep and continues, then reports met on that grep's ending.
+    h.ctx.env.NOSCOPE_STUB_TURN_COUNTER = join(
+      (h.ctx.env.NOSCOPE_DB ?? "").replace(/db\.sqlite$/, ""),
+      "turns",
+    );
+    h.ctx.env.NOSCOPE_STUB_TURNS = JSON.stringify([
+      {
+        kind: "report",
+        report: {
+          outcome: "progress",
+          changed: [{ what: "the delete handler is at a.txt:2", claims: [] }],
+          pictureChanged: false,
+        },
+      },
+      {
+        kind: "continue",
+        report: null,
+        assignTasks: [
+          {
+            ...grepTask,
+            unit: "001-u02",
+            objective: "find remove",
+            inputs: { root: ".", pattern: "remove" },
+          },
+        ],
+      },
+      {
+        kind: "report",
+        report: {
+          outcome: "met",
+          changed: [
+            { what: "the delete handler is at a.txt:2", claims: [] },
+            { what: "no file mentions remove", claims: [] },
+          ],
+          pictureChanged: false,
+        },
+      },
+    ]);
+    await run(
+      ["incident", "create", "--no-size-up", "where is the delete handler"],
+      h.ctx,
+    );
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    expect(h.out).toContain(
+      "  unit 001-u02 reported progress: the delete handler is at a.txt:2",
+    );
+    const first = h.store();
+    const report = first
+      .listEvents("001")
+      .find((e) => e.type === "unit.reported");
+    first.close();
+    if (report === undefined) throw new Error("the unit reported");
+    h.out.length = 0;
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    expect(h.err).toEqual([]);
+    expect(h.out).toContain(
+      `  verdict on 001-u02's report ${report.id}: revise: one match is not the whole picture; instructions: also place the remove handler`,
+    );
+    expect(h.out).toContain("  leader of 001-u02 assigned 001-t02");
+    expect(h.out).toContain("  ran 001-t02 (grep): completed; 1 claim(s)");
+    expect(h.out).toContain(
+      "  unit 001-u02 reported met (revision 1): the delete handler is at a.txt:2; no file mentions remove",
+    );
+    // The brief opened the unit's pass on its resumed session, before any task, with the
+    // instructions, the report reviewed and the period objectives; the grep's ending
+    // came on the next turn.
+    const turns = h.calls().filter((c) => c.kind === "leader");
+    expect(turns.map((c) => c.resume)).toEqual([
+      null,
+      "stub-session",
+      "stub-session",
+    ]);
+    const brief = turns[1]?.prompt ?? "";
+    expect(brief.startsWith("The IC reviewed your report")).toBe(true);
+    expect(brief).toContain(
+      [
+        `The IC reviewed your report ${report.id} and sent it back for revision 1. Its instructions:`,
+        "  also place the remove handler",
+        "Why: one match is not the whole picture",
+        "The report it reviewed: progress; changed: the delete handler is at a.txt:2 (claims none)",
+        "Operational period 2 objectives:",
+        "  - find the handler",
+        "Priorities this period:",
+        "  - observation over reading",
+        "Your unit's objective stands. Assign tasks under your unit for what the instructions say is missing (assignTasks) and continue, or report now if they need no new work; your next report is revision 1.",
+        "",
+        "No ready tasks remain in your unit. Assign tasks for what the instructions say is missing and continue, or file your report against the unit's objective.",
+      ].join("\n"),
+    );
+    expect(turns[2]?.prompt).toContain("Task 001-t02 (grep) completed.");
+    const store = h.store();
+    const events = store.listEvents("001");
+    const reviewed = events.find((e) => e.type === "report.reviewed");
+    const revised = events.find((e) => e.type === "unit.revised");
+    expect(revised?.payload).toEqual({
+      unitId: "001-u02",
+      sessionId: "stub-session",
+      provider: "claude-code",
+      model: "claude-haiku-4-5",
+      reviewedId: reviewed?.id,
+      reportId: report.id,
+      instructions: "also place the remove handler",
+      revision: 1,
+    });
+    // Delivery is recorded with the brief's turn, before what the turn did.
+    const types = events.map((e) => e.type);
+    expect(types.indexOf("unit.revised")).toBeGreaterThan(
+      types.indexOf("report.reviewed"),
+    );
+    expect(types.indexOf("unit.revised")).toBeLessThan(
+      types.indexOf("unit.continued"),
+    );
+    const reports = events.filter((e) => e.type === "unit.reported");
+    expect(reports.map((e) => e.payload.revision)).toEqual([undefined, 1]);
+    expect(store.listUnits("001").find((u) => u.id === "001-u02")?.status).toBe(
+      "active",
+    );
+    store.close();
+    // Cycle 3: the IC accepts the revised report and the unit closes.
+    h.out.length = 0;
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    const third =
+      h.calls().filter((c) => c.kind === "command")[2]?.prompt ?? "";
+    expect(third).toContain(
+      `  - 001-u02, report ${reports[1]?.id}: met (revision 1); changed: the delete handler is at a.txt:2 (claims none); no file mentions remove (claims none)`,
+    );
+    expect(h.out).toContain("  unit 001-u02 closed");
+    expect(h.out.at(-1)).toBe("incident 001 is now satisfied");
+    h.out.length = 0;
+    expect(await run(["incident", "review", "001"], h.ctx)).toBe(EXIT.ok);
+    const review = h.out.join("\n");
+    expect(review).toContain(
+      `  revision 1 briefed to the leader of 001-u02 on report ${report.id}: also place the remove handler  session stub-session`,
+    );
+    expect(review).toMatch(
+      /^ {2}leader of 001-u02 claude-haiku-4-5: .* reported met \(revision 1\), 2 change\(s\) {2}session stub-session$/m,
+    );
+    expect(review).toContain(
+      "report verdicts: 2: 1 accepted, 1 revise, 0 reassign\n  001-u02: 1 accepted, 1 revise, 0 reassign",
+    );
+    expect(review).toMatch(
+      /^revisions: 1\n {2}001-u02 revision 1: 2 turn\(s\), 1 task\(s\), in 3,000 {2}out 84 {2}3\.0 s {2}\$0\.02; progress → met; changed since the reviewed report: no file mentions remove$/m,
+    );
+  });
+
   it("Reports answered: every report since the IC's last accepted turn takes exactly one verdict naming its id and unit, none outside the window, and a verdict closes its unit rather than closeUnits (R4-2)", () => {
     const store = new Store(":memory:");
     const s = scriptedIncident(store);

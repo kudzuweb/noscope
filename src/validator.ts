@@ -13,6 +13,7 @@ import {
   openRequests,
   reportsAwaitingVerdict,
   requestTargetOf,
+  revisedUnits,
   unitShare,
   unitsOwingReport,
 } from "./leader.js";
@@ -53,6 +54,8 @@ export type ValidationContext = {
   usage: Usage;
   /** Units whose leader has a session and has not reported since one of the unit's tasks ended; such a unit cannot close yet. */
   owing: ReadonlySet<string>;
+  /** Units with a revise verdict not yet delivered to their leader (R4-3); a plan cannot close one, while the IC's own close is its decision (`validateCommand` blanks this). */
+  revised: ReadonlySet<string>;
   /** The incident's log, from which a unit's share of the budget is computed. */
   events: readonly Event[];
 };
@@ -626,6 +629,10 @@ const CHECKS: Record<RuleName, Rule> = {
         reasons.push(
           `unit ${c.unitId}'s leader (session ${unit.sessionId}) has not reported since its last task ended`,
         );
+      if (ctx.revised.has(c.unitId))
+        reasons.push(
+          `unit ${c.unitId} has a revision not yet delivered; its leader answers it first`,
+        );
       const tasks = plan.createTasks.filter((t) => t.unit === c.unitId).length;
       const units = plan.createUnits.filter(
         (u) => u.parent === c.unitId,
@@ -898,6 +905,7 @@ export function validationContext(
     providers,
     usage: sumUsage(events),
     owing: unitsOwingReport(units, tasks, events),
+    revised: new Set(revisedUnits(units, events).keys()),
     events,
   };
 }
@@ -1099,10 +1107,17 @@ export function validateCommand(
     },
     rationale: turn.rationale,
   };
+  // The IC's own close of a revised unit is free: the close is its decision, and its
+  // verdict on the runtime's report for a unit whose brief was refused twice must be
+  // able to close the unit; the plan drafted in the verdict's cycle is not.
+  const commandCtx: ValidationContext = { ...ctx, revised: new Set() };
   return [
     ...RULES.filter(({ name }) => COMMAND_RULES.includes(name)).flatMap(
       ({ name, check }) =>
-        check(commandAsPlan, ctx).map((reason) => ({ rule: name, reason })),
+        check(commandAsPlan, commandCtx).map((reason) => ({
+          rule: name,
+          reason,
+        })),
     ),
     ...answers,
     ...reportsAnswered(turn, window, latest).map(

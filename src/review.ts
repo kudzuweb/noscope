@@ -629,6 +629,85 @@ function reportVerdictLines(events: readonly Event[]): string[] {
   ];
 }
 
+/** A report's `changed` lines, by what changed, from a `unit.reported` payload. */
+function changesOf(report: Event | undefined): string[] {
+  const r = report?.payload.report as { changed?: unknown } | undefined;
+  return list(r?.changed).map((c) => str((c as { what?: unknown }).what));
+}
+
+/**
+ * Each revision the IC sent back (R4-3), from its verdict (the `report.reviewed` its
+ * `unit.revised` names) to the unit's next report: what it cost, the unit's leader turns,
+ * refused turns and tasks between the two, priced as the cycles price them, and what changed between
+ * the report the IC reviewed and the one that answered it: the outcome, and the changes
+ * the answer carries that the reviewed report did not. A revision still open (no report
+ * after the brief) says so.
+ */
+function revisionLines(
+  events: readonly Event[],
+  taskById: ReadonlyMap<string, Task>,
+): string[] {
+  const delivered = events.filter((e) => e.type === "unit.revised");
+  if (delivered.length === 0) return ["revisions: none"];
+  const reportById = new Map(
+    events.filter((e) => e.type === "unit.reported").map((e) => [e.id, e]),
+  );
+  const lines = [`revisions: ${delivered.length}`];
+  for (const d of delivered) {
+    const unitId = str(d.payload.unitId);
+    const reviewed = reportById.get(str(d.payload.reportId));
+    // The window opens at the verdict, not the delivery: a brief turn refused on the
+    // unit's model files `leader.failed` before `unit.revised` is written, and that call
+    // is the revision's too.
+    const start =
+      events.find((e) => e.id === str(d.payload.reviewedId))?.sequence ??
+      d.sequence;
+    const answer = events.find(
+      (e) =>
+        e.type === "unit.reported" &&
+        e.payload.unitId === unitId &&
+        e.sequence > start,
+    );
+    const end = answer?.sequence ?? Number.POSITIVE_INFINITY;
+    const totals = emptyTotals();
+    let turns = 0;
+    let tasksRan = 0;
+    for (const e of events) {
+      if (e.sequence <= start || e.sequence > end) continue;
+      if (
+        (e.type === "unit.continued" ||
+          e.type === "unit.reported" ||
+          e.type === "leader.failed") &&
+        e.payload.unitId === unitId &&
+        e.payload.writtenBy !== "runtime"
+      ) {
+        const usage = (e.payload.usage ?? {}) as Partial<Usage>;
+        add(totals, usage, costOf(usage, str(e.payload.model) || null));
+        turns += 1;
+      }
+      if (e.type === "task.usage") {
+        const task = taskById.get(taskIdOf(e));
+        if (task?.unitId !== unitId) continue;
+        const usage = (e.payload.usage ?? {}) as Partial<Usage>;
+        add(totals, usage, costOf(usage, str(e.payload.model) || task.model));
+        if (e.payload.refused === undefined) tasksRan += 1;
+      }
+    }
+    const before = new Set(changesOf(reviewed));
+    const added = changesOf(answer).filter((w) => !before.has(w));
+    const outcome = (e: Event | undefined) =>
+      str((e?.payload.report as { outcome?: unknown } | undefined)?.outcome) ||
+      "?";
+    const spend = `${turns} turn(s), ${tasksRan} task(s), in ${n(totals.inputTokens)}  out ${n(totals.outputTokens)}  ${totals.seconds.toFixed(1)} s  ${money(totals.cost)}`;
+    lines.push(
+      answer === undefined
+        ? `  ${unitId} revision ${String(d.payload.revision)}: brief delivered, not yet reported; ${spend}`
+        : `  ${unitId} revision ${String(d.payload.revision)}: ${spend}; ${outcome(reviewed)} → ${outcome(answer)}${answer.payload.writtenBy === "runtime" ? " (written by the runtime)" : ""}; changed since the reviewed report: ${added.map(clip).join("; ") || "nothing new"}`,
+    );
+  }
+  return lines;
+}
+
 /** How much of the briefing the IC kept: the verdicts on its first accepted command turn that evaluated one, counted by kind. */
 function briefingKept(events: readonly Event[]): string {
   const briefed = events.find((e) => e.type === "incident.briefed");
@@ -949,7 +1028,7 @@ export function renderReview(
       if (e.payload.writtenBy === "runtime") {
         const unitId = str(e.payload.unitId);
         const refusals = (e.payload.refusals ?? []) as RefusedCall[];
-        const move = `reported not_met on the leader's behalf, picture changed, after refusal on ${refusals.map(describeRefusedCall).join(" and on ")}`;
+        const move = `reported not_met${typeof e.payload.revision === "number" ? ` (revision ${e.payload.revision})` : ""} on the leader's behalf, picture changed, after refusal on ${refusals.map(describeRefusedCall).join(" and on ")}`;
         const lines2 = reportsByUnit.get(unitId) ?? [];
         lines2.push(`cycle ${cycle.number}: ${move} (written by the runtime)`);
         reportsByUnit.set(unitId, lines2);
@@ -968,7 +1047,7 @@ export function renderReview(
         | undefined;
       const move =
         e.type === "unit.reported"
-          ? `reported ${str(report?.outcome)}${report?.pictureChanged === true ? ", picture changed" : ""}, ${list(report?.changed).length} change(s)`
+          ? `reported ${str(report?.outcome)}${typeof e.payload.revision === "number" ? ` (revision ${e.payload.revision})` : ""}${report?.pictureChanged === true ? ", picture changed" : ""}, ${list(report?.changed).length} change(s)`
           : "continued";
       if (e.type === "unit.reported") {
         const lines = reportsByUnit.get(unitId) ?? [];
@@ -993,6 +1072,10 @@ export function renderReview(
       if (e.type === "plan.applied" && e.actor === IC_ACTOR)
         lines.push(
           `  IC assigned ${list(e.payload.tasks).length} task(s) under command: ${list(e.payload.tasks).map(String).join(", ")}`,
+        );
+      if (e.type === "unit.revised")
+        lines.push(
+          `  revision ${String(e.payload.revision)} briefed to the leader of ${str(e.payload.unitId)} on report ${str(e.payload.reportId)}: ${clip(str(e.payload.instructions))}${session(str(e.payload.sessionId))}`,
         );
       if (e.actor !== LEADER_ACTOR) continue;
       if (e.type === "plan.applied") {
@@ -1086,6 +1169,7 @@ export function renderReview(
       : `ic verdicts: ${reviews} review(s): ${["approve", "correct", "amend"].map((v) => `${verdicts.get(v) ?? 0} ${v}`).join(", ")}`,
   );
   lines.push(...reportVerdictLines(events));
+  lines.push(...revisionLines(events, taskById));
   lines.push(briefingKept(events));
   lines.push(refusalsLine(events));
   const transfers = events.filter((e) => e.type === "command.transferred");

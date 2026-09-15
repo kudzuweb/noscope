@@ -82,6 +82,7 @@ export const EventType = z.enum([
   "command.transferred",
   "leader.failed",
   "report.reviewed",
+  "unit.revised",
 ]);
 
 export const Budget = z.object({

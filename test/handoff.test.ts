@@ -193,13 +193,15 @@ describe("the IC handoff at the context threshold", () => {
       "  objective: find the handler",
     ]);
     // Step 2's calls: the handoff resumed on the outgoing session, the command turn on a
-    // fresh one, the draft, the review resumed on the new session.
+    // fresh one, the draft, the review resumed on the new session, then the unit's leader
+    // resumed for the revision brief (the stub's IC revised cycle 1's progress report).
     const calls = h.calls();
     expect(calls.map((c) => [c.kind, c.resume]).slice(4)).toEqual([
       ["handoff", "stub-session-1"],
       ["command", null],
       ["planner", null],
       ["review", "stub-session-4"],
+      ["leader", "stub-session-3"],
     ]);
     const ask = calls[4]?.prompt ?? "";
     expect(ask.startsWith("# Handoff of command\n")).toBe(true);
@@ -618,6 +620,7 @@ describe("the IC handoff at the context threshold", () => {
       ["command", null],
       ["planner", null],
       ["review", "stub-session-4"],
+      ["leader", "stub-session-3"],
     ]);
     store = h.store();
     events = store.listEvents("001");
