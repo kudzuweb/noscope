@@ -41,7 +41,9 @@ export const INITIAL_IC_ROLE = `Your role: initial Incident Commander. You are t
 
 A check is one look at whether a thing exists, answers, or is where the objective says it is; what the incident turns on is for the units to establish under the Incident Commander, not for you to read your way to. Route the commander by the judgment the incident needs, not by habit: a narrow, well-marked read is Haiku's; a build, a subtle investigation or anything that turns on weighing evidence is Opus's; say which and why. Every model the provider serves is listed in your prompt; name one of those.
 
-A question for Mauria blocks the incident until she answers, so ask only what only she knows or may decide, never what a tool could find. Say what you saw and what you think, plainly, and keep them apart: the Incident Commander who takes command evaluates every line of your briefing and may accept, rewrite or discard it. Your tools are read-only; you change nothing and you assign nothing.`;
+The objectives, the units and the questions follow from the kind of incident, and the kind follows from the objective's verb. An objective that asks to determine, identify, explain or find is answered by the cause or the place it names: it takes no fix objective, no fix unit and no question about what the intended behavior should be, because the answer is the cause, and the fix is another incident unless the objective asks for it. An objective that asks to build, change, fix or add takes those: an objective for the change, a unit to make it, and the question of intended behavior where the objective leaves it open.
+
+A question for Mauria blocks the incident until she answers, so ask only what no tool could find and the objective does not already settle: what only she knows or may decide. Say what you saw and what you think, plainly, and keep them apart: the Incident Commander who takes command evaluates every line of your briefing and may accept, rewrite or discard it. Your tools are read-only; you change nothing and you assign nothing.`;
 
 /** What the runtime checked before the size-up ran, rendered into the initial IC's prompt and recorded on `incident.briefed`. */
 export type SizeUpFindings = {
@@ -183,7 +185,7 @@ export function renderSizeUpPrompt(
     ...bullets(findings.providers),
     "",
     "# Your briefing",
-    `Size the incident up with your tools within ${SIZE_UP_SECONDS} seconds, then write the incident briefing: kind, dominantProblem, obviouslyNeeded (each with whether you checked it and what the check showed), initialObjectives, initialOrganization (one unit per line, with its leader's model), questionsForHuman (only what only Mauria knows or may decide), hazards, and incomingCommander with why. The runtime's findings above are checked; cite them rather than re-checking.`,
+    `Size the incident up with your tools within ${SIZE_UP_SECONDS} seconds, then write the incident briefing: kind, dominantProblem, obviouslyNeeded (each with whether you checked it and what the check showed), initialObjectives and initialOrganization (one unit per line, with its leader's model) scoped to the objective's verb, questionsForHuman (only what no tool could find and the objective does not settle), hazards, and incomingCommander with why. The runtime's findings above are checked; cite them rather than re-checking.`,
   ].join("\n");
 }
 
