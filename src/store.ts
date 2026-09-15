@@ -13,6 +13,7 @@ import {
   Incident,
   IncidentStatus,
   Question,
+  StrikeTeam,
   Task,
   TaskStatus,
   Timestamp,
@@ -34,9 +35,10 @@ export function now(): string {
 /**
  * Bumped whenever a table changes shape. A file at an earlier version is migrated in place,
  * one step at a time (1: claims gain `basis`; 2: tasks gain `evidence_from_json`; 3: units
- * gain a leader and `purpose` becomes `objective`); a file at a later version is refused.
+ * gain a leader and `purpose` becomes `objective`; 4: tasks gain `strike_team_json`); a file
+ * at a later version is refused.
  */
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 /**
  * The leader a unit recorded before units had one is read as: the planner's provider and
@@ -95,6 +97,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   model TEXT,
   instructions TEXT NOT NULL,
   budget_json TEXT NOT NULL,
+  strike_team_json TEXT NOT NULL DEFAULT '[]',
   status TEXT NOT NULL,
   result_json TEXT,
   created_at TEXT NOT NULL,
@@ -218,6 +221,11 @@ export const Mutation = z.discriminatedUnion("kind", [
     result: z.unknown().optional(),
   }),
   z.object({
+    kind: z.literal("task.strikeTeam"),
+    taskId: z.string(),
+    strikeTeam: z.array(StrikeTeam),
+  }),
+  z.object({
     kind: z.literal("claim.create"),
     claim: z.preprocess(withBasis, Claim),
   }),
@@ -297,6 +305,13 @@ export class Store {
             );
           if (!hasColumn("units", "session_id"))
             this.db.exec("ALTER TABLE units ADD COLUMN session_id TEXT");
+        },
+        // Version 4 tasks declared no strike team.
+        4: () => {
+          if (!hasColumn("tasks", "strike_team_json"))
+            this.db.exec(
+              "ALTER TABLE tasks ADD COLUMN strike_team_json TEXT NOT NULL DEFAULT '[]'",
+            );
         },
       };
       const missing = [...Array(SCHEMA_VERSION - version).keys()]
@@ -503,6 +518,21 @@ export class Store {
       ...("result" in options ? { result: options.result } : {}),
     };
     this.write(incidentId, type, actor, options.extra ?? {}, mutation);
+  }
+
+  /** A leader's strike-team request, accepted, becomes the declaration on the task in flight (`strike_team.defined`); the payload says who asked. */
+  setTaskStrikeTeam(
+    incidentId: string,
+    taskId: string,
+    strikeTeam: StrikeTeam[],
+    actor: string,
+    extra: Extra = {},
+  ): void {
+    this.write(incidentId, "strike_team.defined", actor, extra, {
+      kind: "task.strikeTeam",
+      taskId,
+      strikeTeam,
+    });
   }
 
   /** A claim enters asserted or verified, never rejected; verified on entry means deterministic provenance (DESIGN.md Step 6). */
@@ -777,7 +807,7 @@ export class Store {
         owned(t.incidentId, `task ${t.id}`);
         this.db
           .prepare(
-            "INSERT INTO tasks (id, incident_id, unit_id, capability, objective, inputs_json, expected_output, completion_criteria_json, evidence_required_json, depends_on_json, evidence_from_json, provider, model, instructions, budget_json, status, result_json, created_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO tasks (id, incident_id, unit_id, capability, objective, inputs_json, expected_output, completion_criteria_json, evidence_required_json, depends_on_json, evidence_from_json, provider, model, instructions, budget_json, strike_team_json, status, result_json, created_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           )
           .run(
             t.id,
@@ -795,6 +825,7 @@ export class Store {
             t.model,
             t.instructions,
             j(t.budget),
+            j(t.strikeTeam),
             t.status,
             t.result === null ? null : j(t.result),
             t.createdAt,
@@ -817,6 +848,16 @@ export class Store {
         );
         return;
       }
+      case "task.strikeTeam":
+        one(
+          this.db
+            .prepare(
+              "UPDATE tasks SET strike_team_json = ? WHERE id = ? AND incident_id = ?",
+            )
+            .run(j(m.strikeTeam), m.taskId, incidentId),
+          `task ${m.taskId}`,
+        );
+        return;
       case "claim.create": {
         const c = m.claim;
         owned(c.incidentId, `claim ${c.id}`);
@@ -923,6 +964,7 @@ function rowToTask(r: Row): Task {
     model: nullable(r.model),
     instructions: r.instructions,
     budget: p(r.budget_json),
+    strikeTeam: p(r.strike_team_json),
     status: r.status,
     result: r.result_json === null ? null : p(r.result_json),
     createdAt: r.created_at,

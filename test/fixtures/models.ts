@@ -107,6 +107,7 @@ export function scriptedIncident(store: Store, id = "i1", at = now()) {
       model: null,
       instructions: "",
       budget: {},
+      strikeTeam: [],
       status: "running",
       result: null,
       createdAt: at,

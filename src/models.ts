@@ -67,6 +67,8 @@ export const EventType = z.enum([
   "unit.continued",
   "unit.reported",
   "picture.discrepancy",
+  "strike_team.defined",
+  "strike_team.rejected",
 ]);
 
 export const Budget = z.object({
@@ -152,6 +154,34 @@ export const EvidenceFrom = z.object({
   tasks: z.array(z.string()).default([]),
 });
 
+/**
+ * A strike team: several subagents of one kind and model a leader may send on one task
+ * (DESIGN.md Vocabulary). Whoever defines the task defines the team with it, the plan or the
+ * leader in a turn; no kind exists by default. A task that declares more than one kind
+ * declares a task force.
+ */
+export const StrikeTeam = z.object({
+  kind: z
+    .string()
+    .regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/)
+    .describe(
+      "The kind's name, as the session names it when it sends a member: letters, digits, - and _",
+    ),
+  model: z.string().min(1).describe("A model the task's provider serves"),
+  tools: z
+    .array(z.string())
+    .describe(
+      "Built-in tool names a member may use: Read, Grep, Glob, Bash (under the session's read-only allowlist); nothing that writes",
+    ),
+  prompt: z.string().min(1).describe("The member's system prompt"),
+  count: z
+    .number()
+    .int()
+    .positive()
+    .describe("How many members the leader intends to send"),
+  why: z.string().min(1).describe("Why this team, this shape and this count"),
+});
+
 export const Task = z.object({
   id: z.string().min(1),
   incidentId: z.string().min(1),
@@ -168,6 +198,8 @@ export const Task = z.object({
   model: z.string().nullable(),
   instructions: z.string(),
   budget: Budget,
+  /** The subagent kinds the leader may send on this task, declared by the plan or by the leader; empty when none. */
+  strikeTeam: z.array(StrikeTeam).default([]),
   status: TaskStatus,
   result: z.unknown().nullable(),
   createdAt: Timestamp,
@@ -288,6 +320,12 @@ export const TaskProposal = z.object({
   provider: z.string().nullable(),
   model: z.string().nullable(),
   budget: Budget,
+  strikeTeam: z
+    .array(StrikeTeam)
+    .optional()
+    .describe(
+      "The subagent kinds the unit's leader may send on this task, each with its model, tools, prompt, count and why; more than one kind is a task force. No kind exists unless declared here or requested by the leader",
+    ),
 });
 
 export const GrantRequest = z.object({
@@ -378,7 +416,7 @@ export const ReportChange = z.object({
   claims: z.array(z.string()).describe("Claim ids the change rests on"),
 });
 
-export const LeaderReport = z.object({
+const LeaderReportFields = z.object({
   outcome: z.enum(["met", "not_met", "progress"]),
   changed: z
     .array(ReportChange)
@@ -402,44 +440,66 @@ export const LeaderReport = z.object({
     .describe("When the objective is not met: what to do about it"),
 });
 
+/** A report whose objective is not met says why and what to do about it. */
+export const LeaderReport = LeaderReportFields.superRefine((r, ctx) => {
+  if (r.outcome !== "not_met") return;
+  if (r.why === undefined)
+    ctx.addIssue({
+      code: "custom",
+      path: ["why"],
+      message: "a not_met report says why",
+    });
+  if (r.suggestion === undefined)
+    ctx.addIssue({
+      code: "custom",
+      path: ["suggestion"],
+      message: "a not_met report carries a suggestion",
+    });
+});
+
+/** The fields both kinds of turn carry: a strike-team request for the next task, and a discrepancy. */
+const TurnFields = {
+  requestStrikeTeam: z
+    .array(StrikeTeam)
+    .optional()
+    .describe(
+      "A strike team to send on your next task, each kind with its model, tools, prompt, count and why; the runtime declares it on that task and provides the kinds on your next call for it",
+    ),
+  discrepancy: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Only when the update received describes a different problem from the one being worked, not a different detail: what differs",
+    ),
+};
+
 /**
  * A leader's next move: `continue` to the next ready task in its unit, or `report` against
- * the unit's objective, which ends the unit's pass. One object, not a union, since a provider
- * takes only an object schema; the kind decides which fields must be filled.
+ * the unit's objective, which ends the unit's pass. One closed object, not a union: the
+ * API refuses `oneOf`, `anyOf` and `allOf` at the top level of a tool's input schema
+ * (verified 2026-09-15 on Claude Code 2.1.272: "input_schema does not support oneOf,
+ * allOf, or anyOf at the top level"). `report` is required and null on a continue turn,
+ * and the object is strict (`additionalProperties: false`), so a leader that flattens the
+ * report's fields onto the turn (a Haiku leader did, 2026-09-15, while `report` was
+ * optional on an open object) is refused by the provider's own validation and retried,
+ * rather than parsed here after the call has ended.
  */
 export const LeaderTurn = z
-  .object({
+  .strictObject({
     kind: z.enum(["report", "continue"]),
-    report: LeaderReport.optional(),
-    discrepancy: z
-      .string()
-      .min(1)
-      .optional()
-      .describe(
-        "Only when the update received describes a different problem from the one being worked, not a different detail: what differs",
-      ),
+    report: LeaderReport.nullable().describe(
+      "The report on a report turn; null on a continue turn",
+    ),
+    ...TurnFields,
   })
   .superRefine((t, ctx) => {
-    if (t.kind === "report" && t.report === undefined)
+    if (t.kind === "report" && t.report === null)
       ctx.addIssue({
         code: "custom",
         path: ["report"],
         message: "a report turn carries its report",
       });
-    if (t.report?.outcome === "not_met") {
-      if (t.report.why === undefined)
-        ctx.addIssue({
-          code: "custom",
-          path: ["report", "why"],
-          message: "a not_met report says why",
-        });
-      if (t.report.suggestion === undefined)
-        ctx.addIssue({
-          code: "custom",
-          path: ["report", "suggestion"],
-          message: "a not_met report carries a suggestion",
-        });
-    }
   });
 
 // What a session returns.
@@ -520,6 +580,7 @@ export type Incident = z.infer<typeof Incident>;
 export type Unit = z.infer<typeof Unit>;
 export type Leader = z.infer<typeof Leader>;
 export type Task = z.infer<typeof Task>;
+export type StrikeTeam = z.infer<typeof StrikeTeam>;
 export type EvidenceFrom = z.infer<typeof EvidenceFrom>;
 export type Provenance = z.infer<typeof Provenance>;
 export type Claim = z.infer<typeof Claim>;
@@ -542,7 +603,9 @@ export type SessionResult = z.infer<typeof SessionResult>;
 /**
  * The JSON Schema a provider receives for a structured output. Claude Code's --json-schema
  * rejects a `$schema` key and requires a top-level object (verified 2026-09-12 on 2.1.270),
- * so the key is dropped and a non-object schema is refused here rather than at the provider.
+ * and the API refuses `oneOf`, `anyOf` and `allOf` at the top level of a tool's input
+ * schema (verified 2026-09-15 on 2.1.272), so the key is dropped and a non-object schema,
+ * a union of objects included, is refused here rather than at the provider.
  */
 export function jsonSchemaFor(schema: z.ZodType): Record<string, unknown> {
   const { $schema: _dropped, ...json } = z.toJSONSchema(schema, {
@@ -551,7 +614,7 @@ export function jsonSchemaFor(schema: z.ZodType): Record<string, unknown> {
   }) as Record<string, unknown>;
   if (json.type !== "object") {
     throw new Error(
-      "a provider-facing schema must be an object at the top level",
+      "a provider-facing schema must be an object at the top level; a union of objects is refused by the API there",
     );
   }
   return json;

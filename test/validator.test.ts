@@ -8,6 +8,7 @@ import {
   RULES,
   type RuleName,
   SPAN_OF_CONTROL,
+  strikeTeamRejections,
   validateAndRecord,
   validatePlan,
   validationContext,
@@ -534,6 +535,86 @@ describe("validator", () => {
       "Effect policy: new unit a gives its leader Write, which is no built-in tool, default, or registered external equipment",
       "Effect policy: new unit a gives its leader grep_files, which is no built-in tool, default, or registered external equipment",
       "Effect policy: new unit a allows its leader's Bash to run rm, which is not read-only",
+    ]);
+  });
+
+  it("Strike team: a writing tool, an unknown model, a count over the task's token bound and a team on a deterministic task are refused under the three rules, and nothing else is checked", () => {
+    const team = {
+      kind: "pinger",
+      model: "fake-small",
+      tools: ["Read", "Grep"],
+      prompt: "Reply with PONG.",
+      count: 2,
+      why: "two readers",
+    };
+    // A well-formed team on a session task passes; the kind name, prompt and why are not judged.
+    expect(
+      verdictOf({
+        ...empty,
+        createTasks: [
+          investigateTask({
+            budget: { seconds: 60, tokens: 5_000 },
+            strikeTeam: [team, { ...team, kind: "reader", tools: [] }],
+          }),
+        ],
+      }).ok,
+    ).toBe(true);
+    expect(
+      reasonsOf({
+        ...empty,
+        createTasks: [
+          investigateTask({
+            budget: { seconds: 60, tokens: 1_000 },
+            strikeTeam: [
+              { ...team, tools: ["Read", "Edit", "Write", "WebFetch"] },
+              { ...team, kind: "big", model: "fake-huge", count: 1 },
+            ],
+          }),
+        ],
+      }),
+    ).toEqual([
+      'Effect policy: task "read the scroll handler" gives strike team pinger the tool Edit, which is not one of the read-only built-ins (Read, Grep, Glob, Bash)',
+      'Effect policy: task "read the scroll handler" gives strike team pinger the tool Write, which is not one of the read-only built-ins (Read, Grep, Glob, Bash)',
+      'Effect policy: task "read the scroll handler" gives strike team pinger the tool WebFetch, which is not one of the read-only built-ins (Read, Grep, Glob, Bash)',
+      'Budget respected: task "read the scroll handler" sends 2 member(s) of strike team pinger, at least 1200 tokens, over its token bound of 1000',
+      'Model known: task "read the scroll handler" names fake-huge, which fake does not serve for strike team big',
+    ]);
+    // A task with no token bound has nothing for the count to exceed.
+    expect(
+      rulesHit({
+        ...empty,
+        createTasks: [
+          investigateTask({ strikeTeam: [{ ...team, count: 50 }] }),
+        ],
+      }),
+    ).toEqual([]);
+    expect(
+      reasonsOf({
+        ...empty,
+        createTasks: [grepTask({ strikeTeam: [team] })],
+      }),
+    ).toEqual([
+      'Model known: task "find scrollTo calls" declares strike team pinger but runs no session to send it from',
+    ]);
+    // The same checks serve a leader's request outside a plan.
+    expect(
+      strikeTeamRejections(
+        [{ ...team, tools: ["Bash", "Edit"], count: 3 }],
+        { provider: "fake", budget: { tokens: 1_000 } },
+        [fakeProvider],
+        "task t-next",
+      ),
+    ).toEqual([
+      {
+        rule: "Effect policy",
+        reason:
+          "task t-next gives strike team pinger the tool Edit, which is not one of the read-only built-ins (Read, Grep, Glob, Bash)",
+      },
+      {
+        rule: "Budget respected",
+        reason:
+          "task t-next sends 3 member(s) of strike team pinger, at least 1800 tokens, over its token bound of 1000",
+      },
     ]);
   });
 

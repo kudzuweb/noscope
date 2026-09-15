@@ -238,6 +238,7 @@ describe("deterministic capabilities", () => {
       model: null,
       instructions: "",
       budget: {},
+      strikeTeam: [],
       status: "running",
       result: null,
       createdAt: at,

@@ -17,6 +17,7 @@ import {
   type SessionRequest,
   sessionSystemPrompt,
 } from "../providers/index.js";
+import { renderStrikeTeamBrief } from "../strike-team.js";
 import { renderHierarchy } from "../tree.js";
 import type { SessionCapability } from "./registry.js";
 
@@ -76,7 +77,7 @@ export function renderTaskResult(t: Task): string {
   return JSON.stringify(t.result);
 }
 
-/** The user message: the incident's objective and situation, the hierarchy around the task's unit, the task's contract, what it reads by reference, then one line on what the owning unit is trying to establish. */
+/** The user message: the incident's objective and situation, the hierarchy around the task's unit, the task's contract, the strike team it declares, what it reads by reference, then one line on what the owning unit is trying to establish. */
 export function renderTaskBrief(
   task: Task,
   unit: Unit,
@@ -131,6 +132,7 @@ export function renderTaskBrief(
     "Evidence required:",
     list(task.evidenceRequired),
     ...(task.instructions === "" ? [] : [`Instructions: ${task.instructions}`]),
+    ...renderStrikeTeamBrief(task.strikeTeam),
     ...attached,
     "",
     `The unit that owns this task is trying to establish: ${unit.objective}`,
@@ -199,6 +201,7 @@ export function buildSessionRequest(
     addDirs: [],
     outputSchema: jsonSchemaFor(capability.output),
     timeoutSeconds: task.budget.seconds ?? DEFAULT_SESSION_SECONDS,
+    ...(task.strikeTeam.length === 0 ? {} : { strikeTeam: task.strikeTeam }),
   };
 }
 

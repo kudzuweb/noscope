@@ -161,6 +161,48 @@ describe("apply and tree", () => {
     ]);
   });
 
+  it("a task's declared strike team lands on the task row and is recorded as the plan's declaration", () => {
+    const { store, apply } = fresh();
+    const team = {
+      kind: "pinger",
+      model: "fake-small",
+      tools: ["Read"],
+      prompt: "Reply with PONG.",
+      count: 2,
+      why: "two readers",
+    };
+    const applied = apply({
+      ...empty,
+      createTasks: [
+        grepTask("i1-command", "scrollTo"),
+        grepTask("i1-command", "deleteComment", {
+          capability: "investigate",
+          inputs: { question: "who deletes?" },
+          provider: "fake",
+          model: "fake-small",
+          budget: { seconds: 60 },
+          strikeTeam: [team],
+        }),
+      ],
+    });
+    expect(applied.tasks.map((t) => t.strikeTeam)).toEqual([[], [team]]);
+    expect(store.listTasks("i1").map((t) => t.strikeTeam)).toEqual([
+      [],
+      [team],
+    ]);
+    const defined = store
+      .listEvents("i1")
+      .filter((e) => e.type === "strike_team.defined");
+    expect(defined).toHaveLength(1);
+    expect(defined[0]?.payload).toEqual({
+      taskId: "i1-t02",
+      unitId: "i1-command",
+      declaredBy: "plan",
+      strikeTeam: [team],
+    });
+    store.close();
+  });
+
   it("resolves a parent named by a ref defined later in the same plan", () => {
     const { apply } = fresh();
     const applied = apply({

@@ -10,8 +10,10 @@ import {
   jsonSchemaFor,
   LeaderTurn,
   SessionResult,
+  StrikeTeam,
   sessionResult,
   Task,
+  TaskProposal,
   Timestamp,
   Usage,
 } from "../src/models.js";
@@ -226,22 +228,41 @@ describe("contracts", () => {
       "unit.continued",
       "unit.reported",
       "picture.discrepancy",
+      "strike_team.defined",
+      "strike_team.rejected",
     ])
       expect(EventType.options).toContain(type);
-    expect(EventType.options).toHaveLength(32);
+    expect(EventType.options).toHaveLength(34);
   });
 
   it("a leader's turn is a report or a continue; a not_met report says why and what to do, and a discrepancy rides on either", () => {
-    expect(LeaderTurn.parse({ kind: "continue" })).toEqual({
+    expect(LeaderTurn.parse({ kind: "continue", report: null })).toEqual({
       kind: "continue",
+      report: null,
     });
     expect(
-      LeaderTurn.parse({ kind: "continue", discrepancy: "a hurricane" })
-        .discrepancy,
+      LeaderTurn.parse({
+        kind: "continue",
+        report: null,
+        discrepancy: "a hurricane",
+      }).discrepancy,
     ).toBe("a hurricane");
-    expect(() => LeaderTurn.parse({ kind: "report" })).toThrow(
+    // The report is required, null on a continue turn and present on a report turn.
+    expect(() => LeaderTurn.parse({ kind: "continue" })).toThrow(/report/);
+    expect(() => LeaderTurn.parse({ kind: "report", report: null })).toThrow(
       /a report turn carries its report/,
     );
+    // A report flattened onto the turn, as a Haiku leader answered in R3-5's live runs, is
+    // refused: the object is strict, so the provider's own validation refuses it too.
+    expect(() =>
+      LeaderTurn.parse({
+        kind: "report",
+        report: null,
+        outcome: "progress",
+        changed: [],
+        pictureChanged: false,
+      }),
+    ).toThrow(/Unrecognized key/);
     const met = {
       kind: "report",
       report: {
@@ -267,14 +288,29 @@ describe("contracts", () => {
           why: "nothing matched",
           suggestion: "widen the search",
         },
-      }).report?.pictureChanged,
-    ).toBe(true);
+      }).kind,
+    ).toBe("report");
+    // Exported as one closed object with the report required (nullable), never a union:
+    // the API refuses oneOf, anyOf and allOf at the top level of a tool's input schema.
     const schema = jsonSchemaFor(LeaderTurn) as {
       type: string;
-      properties: { kind: { enum: string[] } };
+      properties: { kind: { enum: string[] }; report: { anyOf?: unknown[] } };
+      required: string[];
+      additionalProperties: boolean;
     };
     expect(schema.type).toBe("object");
     expect(schema.properties.kind.enum).toEqual(["report", "continue"]);
+    expect(schema.required).toEqual(["kind", "report"]);
+    expect(schema.additionalProperties).toBe(false);
+    expect(schema.properties.report.anyOf).toHaveLength(2);
+    expect(() =>
+      jsonSchemaFor(
+        z.discriminatedUnion("kind", [
+          z.strictObject({ kind: z.literal("a") }),
+          z.strictObject({ kind: z.literal("b") }),
+        ]),
+      ),
+    ).toThrow(/union of objects is refused/);
     expect(
       ActionPlan.parse({ ...plan, discrepancy: "a different problem" })
         .discrepancy,
@@ -285,6 +321,53 @@ describe("contracts", () => {
         createUnits: [{ ...plan.createUnits[0], leader: undefined }],
       }),
     ).toThrow(/leader/);
+  });
+
+  it("a strike team is a kind with a model, tools, prompt, count and why; a task may declare several, a leader may request one, and a task without one parses with none", () => {
+    const team = {
+      kind: "pinger",
+      model: "claude-haiku-4-5",
+      tools: ["Read", "Grep"],
+      prompt: "Reply with PONG.",
+      count: 2,
+      why: "two readers cover the tree faster",
+    };
+    expect(StrikeTeam.parse(team)).toEqual(team);
+    for (const bad of [
+      { ...team, count: 0 },
+      { ...team, count: 1.5 },
+      { ...team, kind: "-lead" },
+      { ...team, kind: "a kind" },
+      { ...team, why: "" },
+      { ...team, prompt: "" },
+    ])
+      expect(() => StrikeTeam.parse(bad)).toThrow();
+    const proposal = plan.createTasks[0];
+    expect(TaskProposal.parse(proposal).strikeTeam).toBeUndefined();
+    expect(
+      TaskProposal.parse({
+        ...proposal,
+        strikeTeam: [team, { ...team, kind: "reader" }],
+      }).strikeTeam,
+    ).toHaveLength(2);
+    expect(
+      LeaderTurn.parse({
+        kind: "continue",
+        report: null,
+        requestStrikeTeam: [team],
+      }).requestStrikeTeam,
+    ).toEqual([team]);
+    const schema = jsonSchemaFor(LeaderTurn) as {
+      properties: { requestStrikeTeam: { items: { required: string[] } } };
+    };
+    expect(schema.properties.requestStrikeTeam.items.required).toEqual([
+      "kind",
+      "model",
+      "tools",
+      "prompt",
+      "count",
+      "why",
+    ]);
   });
 
   it("exports provider-facing JSON Schema as a top-level object with no $schema key", () => {

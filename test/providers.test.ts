@@ -107,6 +107,53 @@ describe("claude code provider", () => {
     );
   });
 
+  it("defines a declared strike team with --agents for that call, with the Agent tool beside the session's own and allowed", () => {
+    const team = {
+      kind: "pinger",
+      model: "claude-haiku-4-5",
+      tools: ["Read", "Grep"],
+      prompt: "Reply with PONG.",
+      count: 2,
+      why: "two readers",
+    };
+    const args = renderClaudeCodeArgs({ ...request(), strikeTeam: [team] });
+    expect(args[args.indexOf("--tools") + 1]).toBe("Read,Grep,Glob,Bash,Agent");
+    expect(args[args.indexOf("--allowedTools") + 1]).toBe(
+      "Agent,Bash(ls *),Bash(cat *)",
+    );
+    expect(JSON.parse(args[args.indexOf("--agents") + 1] ?? "")).toEqual({
+      pinger: {
+        description: "two readers",
+        prompt: "Reply with PONG.",
+        model: "claude-haiku-4-5",
+        tools: ["Read", "Grep"],
+      },
+    });
+    // The count and the why reach the session in its brief, not the definition.
+    expect(args.join(" ")).not.toContain('"count"');
+    // Resumed, the definition still goes on the call (honored on --resume, R3-0).
+    const resumed = renderClaudeCodeArgs({
+      ...request(),
+      strikeTeam: [team, { ...team, kind: "reader", tools: [] }],
+      resume: "abc-123",
+    });
+    expect(resumed).toContain("--resume");
+    expect(
+      Object.keys(JSON.parse(resumed[resumed.indexOf("--agents") + 1] ?? "")),
+    ).toEqual(["pinger", "reader"]);
+    // Default tools already include Agent; an empty team defines nothing.
+    expect(
+      renderClaudeCodeArgs({
+        ...request(),
+        tools: ["default"],
+        strikeTeam: [team],
+      })[6],
+    ).toBe("default");
+    const none = renderClaudeCodeArgs({ ...request(), strikeTeam: [] });
+    expect(none).not.toContain("--agents");
+    expect(none).toEqual(renderClaudeCodeArgs(request()));
+  });
+
   it("puts the preamble, then the seat's place, before the role, and names the four kinds of lack", () => {
     const text = sessionSystemPrompt("ROLE");
     expect(text.startsWith(SESSION_PREAMBLE)).toBe(true);
@@ -155,7 +202,13 @@ describe("claude code provider", () => {
       "discrepancy is for one thing only",
     ])
       expect(LEADER_ROLE).toContain(line);
-    expect(LEADER_ROLE).not.toContain("strike team");
+    // R3-5: the leader may send a team the task declares or ask for one, choosing its shape.
+    expect(LEADER_ROLE).toContain("You may send a strike team");
+    expect(LEADER_ROLE).toContain("requestStrikeTeam");
+    expect(LEADER_ROLE).toContain("No kind exists by default");
+    expect(SESSION_PREAMBLE).toContain(
+      "whoever asks chooses the kind, model, tools and count and says why",
+    );
     expect(leaderRole("leader")).toBe(LEADER_ROLE);
     const ic = leaderRole("ic");
     expect(ic).toMatch(/^Your role: Incident Commander, leader of command\./);

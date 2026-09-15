@@ -105,6 +105,7 @@ function task(id: string, capability: string, model: string | null): Task {
     model,
     instructions: "",
     budget: {},
+    strikeTeam: [],
     status: "completed",
     result: null,
     createdAt: at,
@@ -388,6 +389,120 @@ describe("incident review", () => {
     expect(lines.at(-1)).toMatch(
       /^cost: est \$8\.35-\$21\.65 \(estimated at list rates cached 2026-06-24; .*; planner model assumed claude-opus-5 where plan\.proposed did not record it\)$/,
     );
+  });
+
+  it("reports each declared strike-team config: members run against the count, their spend, and the claims citing a member by agent id or event id", () => {
+    const at = "2026-09-13T13:00:00.000Z";
+    const pinger = {
+      kind: "pinger",
+      model: "claude-haiku-4-5",
+      tools: ["Read"],
+      prompt: "Reply with PONG.",
+      count: 2,
+      why: "two readers",
+    };
+    const member = (sequence: number, agentId: string, agentType: string) =>
+      event(sequence, "subagent.ran", {
+        taskId: "t3",
+        agentId,
+        agentType,
+        model: "claude-haiku-4-5",
+        toolUseId: `toolu_${agentId}`,
+        usage: {
+          inputTokens: 1_000,
+          uncachedInputTokens: 1_000,
+          cacheWriteTokens: 0,
+          cacheReadTokens: 0,
+          outputTokens: 100,
+          seconds: 2,
+        },
+        toolCalls: 0,
+      });
+    const events: Event[] = [
+      event(1, "plan.proposed", { usage: {}, sessionId: "s-plan-1" }),
+      event(2, "strike_team.defined", {
+        taskId: "t3",
+        unitId: "u1",
+        declaredBy: "plan",
+        strikeTeam: [pinger],
+      }),
+      event(3, "unit.continued", { unitId: "u1", remaining: 1, usage: {} }),
+      // The leader adds a kind of its own on the same task, and one request is refused.
+      event(4, "strike_team.defined", {
+        taskId: "t3",
+        unitId: "u1",
+        declaredBy: "leader",
+        strikeTeam: [{ ...pinger, kind: "reader", count: 1 }],
+        mutation: {
+          kind: "task.strikeTeam",
+          taskId: "t3",
+          strikeTeam: [pinger, { ...pinger, kind: "reader", count: 1 }],
+        },
+      }),
+      event(5, "strike_team.rejected", {
+        taskId: "t3",
+        unitId: "u1",
+        declaredBy: "leader",
+        strikeTeam: [{ ...pinger, kind: "editor", tools: ["Edit"] }],
+        reasons: [
+          "Effect policy: task t3 gives strike team editor the tool Edit",
+        ],
+      }),
+      member(6, "ag1", "pinger"),
+      member(7, "ag2", "pinger"),
+      // A member of a kind nobody declared is counted under no config.
+      member(8, "ag9", "general-purpose"),
+      event(9, "task.completed", {
+        mutation: {
+          kind: "task.status",
+          taskId: "t3",
+          status: "completed",
+          at,
+        },
+      }),
+    ];
+    const claim = (id: string, evidence: string[]) => ({
+      id,
+      incidentId: "001",
+      subject: "/a",
+      predicate: "is",
+      object: null,
+      status: "asserted" as const,
+      basis: "observed" as const,
+      confidence: 0.9,
+      evidence,
+      provenance: { capability: "investigate", taskId: "t3", sessionId: "s" },
+      createdAt: at,
+    });
+    const claims = [
+      claim("c1", ["/a:1", "member agentId: ag1 saw it"]),
+      claim("c2", ["subagent.ran e7"]),
+      claim("c3", ["/a:2"]),
+    ];
+    const text = renderReview(
+      incident,
+      events,
+      [task("t3", "investigate", "claude-haiku-4-5")],
+      claims,
+    ).join("\n");
+    expect(text).toContain(
+      "  strike team on t3 by plan: pinger on claude-haiku-4-5, tools Read, 2 member(s): two readers",
+    );
+    expect(text).toContain(
+      "  strike team on t3 by leader: reader on claude-haiku-4-5, tools Read, 1 member(s): two readers",
+    );
+    expect(text).toContain(
+      "  strike team refused on t3 (asked by leader: editor on claude-haiku-4-5, tools Edit, 2 member(s): two readers): Effect policy: task t3 gives strike team editor the tool Edit",
+    );
+    expect(text).toContain("strike teams: 2 declared config(s), 1 refused");
+    // Haiku at $1/M in, $5/M out: 2,000 in and 200 out come to $0.003, printed at cents.
+    expect(text).toContain(
+      "  t3 pinger claude-haiku-4-5 (by plan): declared 2, ran 2, in 2,000  out 200  4.0 s  est $0.00, 2 claim(s) citing a member",
+    );
+    expect(text).toContain(
+      "  t3 reader claude-haiku-4-5 (by leader): declared 1, ran 0, in 0  out 0  0.0 s  $0.00, 0 claim(s) citing a member",
+    );
+    expect(text).toContain("subagents: 3");
   });
 
   it("prints a cent spread that rounds apart, and nothing when no cycle has run", () => {

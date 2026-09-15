@@ -33,11 +33,13 @@ import {
 } from "./models.js";
 import {
   getProvider,
+  listProviders,
   type SessionActivity,
   SessionError,
 } from "./providers/index.js";
 import { type Store, sumUsage } from "./store.js";
 import { unitsInTreeOrder } from "./tree.js";
+import { strikeTeamRejections } from "./validator.js";
 import { recordClaims, recordSessionResult } from "./verifier.js";
 
 /** A session with no time bound of its own still gets one, since a hung process must end; the validator normally requires the task to carry one. */
@@ -279,6 +281,7 @@ async function runTask(
         jsonSchemaFor(capability.output),
         options.cwd,
         task.budget.seconds ?? SESSION_SECONDS,
+        task.strikeTeam,
       )
     : buildSessionRequest(capability, task, unit, options.cwd, context);
   const session = await runSession(
@@ -315,14 +318,70 @@ function couldNotResume(error: unknown, unit: Unit): error is SessionError {
 }
 
 /**
- * Ask the unit's leader for its next move: the last task's ending and how many ready tasks
- * remain, under the `LeaderTurn` schema. The first call creates the session and opens with
- * the orientation; `leader.started` records its id on the unit, with the cwd it was
- * launched from. A session that cannot be resumed (the call died before its init line) is
- * replaced: a fresh session is oriented and asked the same turn, and its `leader.started`
- * names the dead session and the reason. Every turn is recorded, `unit.reported` with the
- * report or `unit.continued`, each with the call's usage, and a `discrepancy` becomes
- * `picture.discrepancy`. A leader that cannot answer otherwise ends the pass.
+ * A leader's `requestStrikeTeam`, held to the team's three rules against the task that runs
+ * next: accepted, it becomes that task's declaration (`strike_team.defined`, the mutation
+ * `task.strikeTeam`, a kind the task already declares replaced by name); refused, or asked
+ * with no task left to send it on, `strike_team.rejected` keeps what the leader asked for
+ * and why it was not provided.
+ */
+function declareRequestedTeam(
+  store: Store,
+  incident: Incident,
+  turn: LeaderTurn,
+  next: Task | null,
+  seat: Record<string, unknown>,
+  options: DispatchOptions,
+  actor: string,
+): void {
+  const requested = turn.requestStrikeTeam;
+  if (requested === undefined || requested.length === 0) return;
+  const asked = { ...seat, declaredBy: "leader", strikeTeam: requested };
+  if (next === null) {
+    store.record(incident.id, "strike_team.rejected", actor, {
+      ...asked,
+      taskId: null,
+      reasons: [
+        turn.kind === "report"
+          ? "the unit reported, so no task runs next in this pass to send it on"
+          : "no ready task remains in the unit to send it on",
+      ],
+    });
+    return;
+  }
+  const rejections = strikeTeamRejections(
+    requested,
+    next,
+    listProviders().map((name) => getProvider(name, options.env)),
+    `task ${next.id}`,
+  );
+  if (rejections.length > 0) {
+    store.record(incident.id, "strike_team.rejected", actor, {
+      ...asked,
+      taskId: next.id,
+      reasons: rejections.map((r) => `${r.rule}: ${r.reason}`),
+    });
+    return;
+  }
+  const kinds = new Set(requested.map((t) => t.kind));
+  store.setTaskStrikeTeam(
+    incident.id,
+    next.id,
+    [...next.strikeTeam.filter((t) => !kinds.has(t.kind)), ...requested],
+    actor,
+    { ...asked, taskId: next.id },
+  );
+}
+
+/**
+ * Ask the unit's leader for its next move: the last task's ending, how many ready tasks
+ * remain and which runs next, under the `LeaderTurn` schema. The first call creates the
+ * session and opens with the orientation; `leader.started` records its id on the unit,
+ * with the cwd it was launched from. A session that cannot be resumed (the call died
+ * before its init line) is replaced: a fresh session is oriented and asked the same turn,
+ * and its `leader.started` names the dead session and the reason. Every turn is recorded,
+ * `unit.reported` with the report or `unit.continued`, each with the call's usage, a
+ * `discrepancy` becomes `picture.discrepancy`, and a `requestStrikeTeam` is declared on
+ * the next task or refused. A leader that cannot answer otherwise ends the pass.
  */
 async function leaderTurn(
   store: Store,
@@ -331,6 +390,7 @@ async function leaderTurn(
   units: readonly Unit[],
   ending: TaskEnding | null,
   remaining: number,
+  next: Task | null,
   options: DispatchOptions,
   actor: string,
 ): Promise<Turned> {
@@ -341,7 +401,7 @@ async function leaderTurn(
         unit,
         [
           ...orientation(store, incident, unit, units),
-          renderTurnPrompt(ending, remaining),
+          renderTurnPrompt(ending, remaining, next),
         ].join("\n"),
         LEADER_TURN_SCHEMA,
         options.cwd,
@@ -403,6 +463,15 @@ async function leaderTurn(
         remaining,
         usage: outcome.usage,
       });
+    declareRequestedTeam(
+      store,
+      incident,
+      turn,
+      turn.kind === "report" ? null : next,
+      seat,
+      options,
+      actor,
+    );
   });
   return { turn, sessionId, unit: { ...unit, sessionId } };
 }
@@ -463,10 +532,11 @@ export async function dispatch(
       units,
       ending,
       remaining,
+      nextIn(unit.id) ?? null,
       options,
       actor,
     );
-    if (turned.turn.kind === "report" && turned.turn.report !== undefined) {
+    if (turned.turn.kind === "report" && turned.turn.report !== null) {
       reports.push({
         unitId: unit.id,
         sessionId: turned.sessionId,
