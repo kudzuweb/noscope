@@ -22,7 +22,7 @@ configure lint, unused-code detection, the build and the typecheck that includes
 
 `docs/instructions-only-run.md` reads the session that built round 3 the way `incident review` reads a run, so the runtime and plain instructions can be compared on the same terms.
 
-`docs/first-incident.md` is the record of the first live run: the answer the runtime produced, the run cycle by cycle, the acceptance criteria checked against it, and the second run that measured round 2 beside it.
+`docs/first-incident.md` is the record of the first live run: the answer the runtime produced, the run cycle by cycle, the acceptance criteria checked against it, and the second, third and fourth runs that measured rounds 2, 3 and 4 beside it.
 
 `docs/architecture.html` is the flow diagram: the pieces, one cycle in order, what a session receives and returns, a claim's life, where the loop waits on Mauria, the tree changing shape. Opens straight from disk.
 

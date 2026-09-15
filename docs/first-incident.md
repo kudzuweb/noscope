@@ -420,3 +420,206 @@ threshold), and a `not_met` report.
 - **Reproduce is still the cost centre per task** ($0.59, 910k input mostly cached, 268 s)
   but one was enough where run 002 needed five, because the IC's period objectives told the
   planner exactly what to observe.
+
+## Fourth run
+
+The same objective run a fourth time on 2026-09-15 (23:00 to 23:36 UTC), with round 4 merged
+(PRs 40 to 51; every event carries the runtime tag `3b2cd7a`, main after R4-11 merged), from
+the same roughdraftplus working directory at commit 6a996e8, on
+`NOSCOPE_DB=~/.noscope/fourth-run.sqlite`, with the scratch document restored from its
+pristine copy before `create`, run 003's objective, two constraints and priority word for
+word, and `--ic-model claude-opus-5` chosen on purpose so that the fallback from R4-7 would
+be exercised. The session running the build stepped it by hand, one detached `step` per
+cycle, and answered the size-up's two questions as the operator, saying so in each answer.
+
+The run is one incident of four steps. The size-up on Haiku wrote a diagnostic briefing
+(three objectives, two units, no fix anywhere), recommended Opus 5 as commander, and asked two
+questions about intended behavior, which the operator answered as out of scope. The IC on
+Opus 5 took two command turns: the validator rejected the first on "Situation grounded", and
+the second, resumed on the same session, passed. Its review turn, a resumed call carrying the
+planner's draft, was refused (`reasoning_extraction`) in 1.1 seconds; the runtime retried the
+review on Opus 4.8, recorded the transfer as `fallback`, and every later IC call ran there,
+five calls with no refusal. Period 1 ran the reproduce and the reproduce unit reported;
+period 2 accepted that report, re-cut the code unit, ran its four session tasks and took its
+report; period 3 accepted that report and set `satisfied`.
+
+### The answer, and how it was reached
+
+The same code path as runs 001 to 003: the rail's Delete button (`CommentEditorList.tsx`
+lines 727 to 737), `deleteComment` at `PageCard.tsx:1863`, the bare `.focus()` at line 1884
+chained before `removeCommentIds`, TipTap's `focus` command defaulting `scrollIntoView` to
+true, its animation-frame `scrollIntoView`, ProseMirror's `EditorView.scrollToSelection`
+assigning `scrollTop` on the page's one scrollable container, and the selection sitting at
+the document end (14696 of 14697) before and after every deletion, so the container scrolls
+to the bottom, where the last comment's anchor is. The three sibling `focus()` calls at lines
+2054, 2065 and 2078 pass `{ scrollIntoView: false }` and `deleteComment`'s does not; the IC's
+closing rationale names that omitted option as the operative difference and designs no fix.
+
+Run 003 had left the causal link inferred at 0.65 with an alternative named. Run 004
+observed it: the reproduce (the task `001-t04`, Opus 5, 37 tool calls, 278 seconds, $1.85)
+instrumented the page's `scrollTop` setters and `scrollIntoView` before deleting, and the
+single recorded `scrollTop` assignment carried a stack from `scrollToSelection` through
+TipTap's `focus` command's animation frame to the app's delete callback, identical for two
+different middle comments (c2 from `scrollTop` 1189 and c3 from 2070, both to 5481). The one
+link that reproduction left inferred, at 0.7, was that the minified callback at bundle
+offset `770:2220` is `PageCard.tsx`'s `deleteComment`; the code unit's trace task
+(`001-t09`) compared the captured minified bodies token for token against
+`PageCard.tsx:1882-1891` and `CommentEditorList.tsx:727-737` and raised it to observed at
+0.95. Its other two readings established that `removeCommentIds` adds only mark and range
+steps and never sets a selection (`001-t10`), and that of every scroll-capable call in the
+two component files exactly one runs on the delete path (`001-t11`); the interpret
+(`001-t12`) reconciled code with measurement and found no disagreement.
+
+Two residuals are stated, not chosen, and the IC's verdict says neither bears on the named
+path or the mechanism. The first is the selection's origin, open since run 003: why the
+caret sat at the document end on page load is unattributed (the claim `001-c209`, at
+confidence 0.5), with the `focus("end")` effect at `PageCard.tsx:1428-1436` named as an
+unobserved candidate. Run 002 had observed the origin, the mount-time `setContent` at line
+1422 mapping the caret to the end, and run 004 did not reach it: the enumeration task
+`001-t11` read lines 1355 to 1479 of `PageCard.tsx`, which include line 1422, and its claim
+named lines 1428 to 1436 instead; nothing carries an earlier incident's findings into a new
+one, so each run starts from its own briefing. The second residual is a 13 pixel scroll on
+selecting a card, off the delete path (`001-c215`). So the acceptance's last question is
+answered no: the selection's origin was not settled.
+
+### Measures beside runs 001 to 003
+
+| Measure | Run 001 | Run 002 | Run 003 (incident 002) | Run 004 |
+|---|---|---|---|---|
+| Cycles | 12 plans, 10 applied, 2 rejected | 8 plans, 7 applied, 1 rejected | 3 command turns, 2 plans drafted, 1 applied, 1 rejected on 5 rule lines | 4 command turns, 1 rejected on 4 rule lines; 3 plans drafted (one a redraft), 2 applied, 0 rejected |
+| Wall time | 54 min | 63 min | 29 min, plus the 40 min incident 001 spent refused and the two fixes | 32 min from the first command turn to `satisfied`, 35 min from `create`; the size-up's questions held it for 19 seconds |
+| Events | 632 | 367 | 138 | 422 |
+| Planner | 12 calls, 1.09M input, 74k output, $2.40 to $12.72 | 8 calls, 265k input, 84k output, $4.76 | 2 calls, 17k input, 15k output, $0.50 | 3 calls, 115k input, 27k output, $1.79 |
+| IC | none | none | 5 calls on Sonnet 5, 277k input (all cache writes), 32k output, $1.28; the last turn's context was 134k, above the 120k handoff threshold, so one more turn would have handed off | 8 calls: 3 on Opus 5 (82k input, 9k output, $0.89, the third refused) and 5 on Opus 4.8 (482k input, 42k output, $4.94); the last turn's context was 170k, above the 120k handoff threshold, so one more turn would have handed off |
+| Initial IC | none | none | 1 Haiku call, 608k input (mostly cache reads), 68 s, $0.15, 21 tool calls | 1 Haiku call, 825k input (mostly cache reads), 95 s, $0.20, 28 tool calls |
+| Sessions | 7, $3.96 to $27.44 | 11, $11.44 | 3 (one reproduce, one investigate, one interpret), $1.99; plus 5 leader turns on the root, $0.94 | 5 (one reproduce, three investigate, one interpret), all Opus 5, $5.75; plus 6 leader turns on the two units, $2.37 |
+| Deterministic tasks | 22 | 7 | 2 | 5, one failed |
+| Claims | 404 verified, 67 asserted | 162 verified, 86 asserted | 11 verified, 13 asserted | 162 verified, 54 asserted (10 of them inferred) |
+| Human channel | 1 question about the bug | 2 questions and 1 capability request about the fixture | 2 questions from the size-up about intended behavior, answered as out of scope by the operator; none from the IC | 2 questions from the size-up about intended behavior, answered as out of scope by the operator; none from the IC or the planner |
+| Total cost at list rates | $6.37 to $40.15 | $16.20 | $4.86, or $5.97 with incident 001 | $15.96 |
+
+Where the $11.10 over run 003 went, from the two reviews' per-role tables:
+
+| Seat | Run 003 | Run 004 | Difference |
+|---|---|---|---|
+| The IC | Five calls on Sonnet 5 cost $1.28. | Eight calls cost $5.83: three on Opus 5 ($0.89, including $0.37 for the refused review) and five on Opus 4.8 ($4.94). | Run 004 spent $4.55 more, from Opus prices and three more calls: the rejected first turn, the refused review and the correction round's second review. |
+| Task sessions | One reproduce on Sonnet 5 ($0.59), one investigate on Sonnet 5 ($0.61) and one interpret on Opus 5 ($0.79) cost $1.99. | The planner put every session on Opus 5: the reproduce cost $1.85 for the same shape of work as run 003's (37 tool calls against 34, 278 seconds against 268), three investigates $2.53 and the interpret $1.37, $5.75 together. | Run 004 spent $3.76 more, and the reproduce's model accounts for $1.26 of it. |
+| Leader turns | Five turns of the root's Sonnet 5 session cost $0.94. | Six turns on Opus 5 cost $2.37: the reproduce unit's report ($0.23) and the code unit's four continues and its report ($2.16), the continues alone $1.81 because each rewrote a context of 34k to 100k at cache-write rates for 74 output tokens. | Run 004 spent $1.43 more. |
+| The planner | Two calls cost $0.50. | Three calls cost $1.79, the third a redraft ($0.72) for one `dependsOn` entry. | Run 004 spent $1.29 more. |
+| The size-up | One Haiku call cost $0.15. | One Haiku call cost $0.20. | Run 004 spent $0.05 more. |
+
+### The IC's verdicts, and what each cost
+
+| Verdict | Where | What it cost |
+|---|---|---|
+| Accepted, on the reproduce unit's report | The period 2 command turn (Opus 4.8, 76k input, 16.9k output, 215 seconds, $1.18), which also set the period and rewrote the situation with the report's claims by id. | The verdict is part of the command turn, so it cost nothing beyond the turn; the unit closed on it. |
+| Accepted, on the code unit's report | The period 3 command turn (Opus 4.8, 170k input, 11.4k output, 151 seconds, $1.27), which also set `satisfied`. | The same: nothing beyond the turn. |
+| Revise | None was given. | Nothing; the revise path (R4-3) had no occasion. |
+| Reassign | None was given. | Nothing; the reassign path (R4-4) had no occasion. |
+| Approve, on the period 1 draft | The review turn, refused on Opus 5 ($0.37 for the refusal, 1.1 seconds) and retried on Opus 4.8 (23k input, 5.5k output, 74 seconds, $0.38). | It cost $0.75 with the refusal counted. |
+| Correct, on the period 2 draft | The review turn on Opus 4.8 (99k input, 7.6k output, 100 seconds, $0.96) found the one defect the validator would have rejected: the reconcile task named the new grep in `evidenceFrom` but not in `dependsOn`. | The correction round cost $2.84 and 168 seconds: this turn, the planner's redraft ($0.72, 57 seconds) and the approval below. |
+| Approve, on the redraft | The review turn on Opus 4.8 (114k input, 850 output, 11.7 seconds, $1.16). | It cost $1.16 for 850 output tokens, because the resumed call wrote its whole 114k context to cache. |
+
+Both reports were accepted, so no unit was revised and none was reassigned. The IC chose
+`correct` over `amend` for the one-line defect because an `amend` carries the whole plan and
+the planner held the five tasks' definitions; the runtime asked the planner to re-emit the
+plan for one entry.
+
+### Wall time per cycle beside the tasks' seconds
+
+| Step | Cycle wall time | Dispatch span | Tasks' seconds summed | Parallel factor |
+|---|---|---|---|---|
+| 1, the command turn rejected | The IC's turn took 66 seconds and no task ran. | There was no dispatch. | No task ran. | There was none. |
+| 2, period 1 | The cycle took 502 seconds from the resubmitted command turn to the reproduce unit's report. | The dispatch took 303 seconds. | Five tasks summed to 278 seconds: the four deterministic ones finished within 72 milliseconds of starting together, and the reproduce ran 278 seconds alone. | The factor was 0.92x. |
+| 3, period 2 | The cycle took 959 seconds from the command turn to the code unit's report. | The dispatch took 667 seconds. | Five tasks summed to 612 seconds: one grep, three investigates of 125, 112 and 257 seconds, and an interpret of 118 seconds. | The factor was 0.92x. |
+| 4, period 3 | The IC's turn took 151 seconds and no task ran. | There was no dispatch. | No task ran. | There was none. |
+
+Parallel dispatch saved nothing. The factor is the tasks' summed seconds over the dispatch
+span, and the span includes the leader turns after the tasks, which is why it sits below
+1.0 with no overlap. In period 1 the runtime did start five tasks in the same 7
+milliseconds, but the code unit's investigate depended on the TipTap grep that failed at
+once, so the reproduce was the only session task running and the code unit did nothing all
+period. In period 2 the planner wrote that "the three readings run in parallel", and two of
+the three investigates had no dependency and were ready at the start, but all three ran
+inside the code unit's leader session, which R4-9 keeps sequential: the second started when
+the first ended and the third when the second ended, with a leader turn between each.
+
+### The round-4 changes, cycle by cycle
+
+| Step | What happened | Round 4 under test |
+|---|---|---|
+| Size-up | Haiku classified the incident ("diagnosis: a scroll behavior bug hunt"), found `.focus()` at line 1884 in 28 tool calls, sketched a reproduce unit on Haiku and a code unit on Opus 5, recommended Opus 5 with a reason, listed four hazards, and asked two questions about intended behavior. | R4-8 held on objectives and units: no fix objective and no fix unit, where both of run 003's briefings had proposed one. It did not hold on questions: both questions asked what the behavior should be, which the role text says a diagnosis does not need. R4-12 stamped the runtime tag on every event from the first. |
+| 1, the IC's first turn | Opus 5 evaluated the briefing item by item (two accepted, three rewritten, the questions discarded as answered), set four period objectives and three priorities, wrote the situation, assigned two greps and a `git_history` under command, and was rejected: its situation listed four inferred links under claim ids it had invented (`ic-inf-1-focus-triggers-scroll` and three more), and no claim existed yet. | R4-5's situation is the IC's, and the validator's "Situation grounded" rule checked it against the claim table; the turn cost $0.31 and 66 seconds, and the period number did not advance. R4-6's `assignTasks` carried the deterministic work under command. |
+| 2, the resubmitted turn, the draft, the refusal, the pass | The same turn resubmitted with the four links written into the hypothesis and the period objectives, each naming the task ref that settles it. The planner drafted two units, both with Opus 5 leaders: the reproduce unit with one reproduce task, the code unit with an investigate carrying a strike team of two Sonnet 5 readers and an interpret, plus a grep of `node_modules/@tiptap/core` under command that the investigate depended on. The review turn on Opus 5 was refused; Opus 4.8 approved the draft as drafted. Five tasks started at once; the TipTap grep failed in 3 milliseconds (`ENOENT`, no such directory), the other three deterministic tasks landed 157 verified claims, and the reproduce observed the bug twice with the instrumented stack. The reproduce unit's leader reported met, picture changed, and the pass stopped. | R4-7 captured the category from the record (`reasoning_extraction` on `command.failed`, where run 003 recorded `unstated`), retried the review on Opus 4.8 once, recorded the transfer of kind `fallback`, and moved the root unit's leader so every later call stayed there. R4-6 ran the root's deterministic tasks with no leader turn; the planner's rule put the session tasks under led units. R4-9 started the five tasks together. R4-10 created both units as type `base` under the root of type `ic`. R4-1's block under the report, which `incident show` prints with the change report's renderer, shows the reproduce task, its seven claims by id and its 37 tool calls by tool, and the IC's verdict cites those claim ids. The strike team was declared but its task never ran. |
+| 3, the verdict, the re-cut, the code unit's pass | The IC accepted the reproduce unit's report, citing its claims by id, rewrote the situation with eleven proven claims and one inferred link (the minified-to-source mapping, `001-c163`, at 0.7), and set four period objectives that dropped the TipTap re-read because the running bundle had been observed. The planner cancelled the two stranded tasks and re-cut the code unit as a grep, three investigates and an interpret; the IC corrected one `dependsOn` line, the planner redrafted, the IC approved. The four session tasks ran in the leader's session one after another with a continue turn between each; the leader reported met with the two residuals stated. | R4-2's `accepted` closed the reproduce unit and recorded `report.reviewed`. R4-5's "Inferred links are worked" rule had one link to check, and the plan settled it by the trace task. The review round pre-empted the validator: the "Dependencies resolve" rule that cost run 002 a cycle was caught by the IC before the validator saw the plan. R4-3, R4-4 and R4-11 had no occasion: the verdict was accepted, and two units are one short of the third repeat that prints the offer to save a config. |
+| 4, the closing turn | The IC accepted the code unit's report on its observed claims, wrote a situation with twelve proven claims, no inferred link and fourteen kept, recorded the answer and the two residuals in the period objectives, and set `satisfied`. | R4-2's second `accepted` closed the last unit; the incident closed on the IC's judgment with no planner call. |
+
+Not exercised this run: a `revise` or `reassign` verdict (both reports were accepted), a
+saved config, a strike team that ran (the one declared was on the cancelled task), lacks at
+the leader, the handoff (the last turn was 170k, one turn short), a `not_met` report, and a
+refusal on the fallback.
+
+### What the run found in the runtime
+
+Each is a candidate for round 5, with its evidence.
+
+- **The situation rule has no first turn.** The IC's first command turn wanted to list the
+  four links it had not observed as inferred, and the schema's inferred entry takes a claim
+  id, so it invented four. "Situation grounded" rejected the turn ($0.31, 66 seconds), and
+  the resubmitted turn put the links in the hypothesis as prose with the task refs that
+  settle them, which the rule cannot check. A first turn has no claims by construction, so
+  either the role text says where unobserved links go before claims exist, or an inferred
+  entry may name a task ref instead of a claim id until one exists.
+- **R4-8 stopped the fix and not the questions.** The briefing had no fix objective and no
+  fix unit, and still asked two intended-behavior questions (`001-q01`, `001-q02`), which
+  blocked the incident until the operator answered as out of scope and the IC discarded them.
+  R4-8's live test (`test/size-up.test.ts`) asserts that no question matches "intended" or
+  "should it" and both of these would have failed it, so the role text's clause on questions
+  did not hold on Haiku in this run.
+- **A grep on a missing root fails silently and strands its dependants.** The planner set the
+  TipTap grep's root to `node_modules/@tiptap/core` at the repository root, and roughdraftplus
+  is a pnpm workspace: the package is at `packages/app/node_modules/@tiptap/core`, a symlink
+  into `node_modules/.pnpm/` (verified by `readlink`, 2026-09-15). The grep failed with
+  `ENOENT` in 3 milliseconds, the investigate and interpret that depended on it stayed
+  pending for the whole period with no event saying why, and the code unit did no work until
+  the IC read the failure in the change report and the planner cancelled and re-cut. The
+  IC's review had praised the grep for reading the installed version and did not check the
+  path either. Candidates: the validator or the dispatcher checks a deterministic task's root
+  exists before the pass (what `check_path` does today, by hand); a failed dependency marks
+  its dependants blocked with the reason.
+- **The planner routed every session to Opus 5 and the IC did not object.** The IC's own
+  evaluation said "Haiku is fine for recording" of the reproduce unit, the planner put the
+  reproduce and both leaders on Opus 5, and the review turn approved the draft without a
+  word on models. The reproduce cost $1.85 against run 003's $0.59 on Sonnet 5 for the same
+  work; leaders on Opus 5 made six leader turns $2.37. The period objectives carry no model,
+  and nothing in the IC's role text or its review prompt (`src/units/ic.ts:93`,
+  `src/ic.ts:862`) asks it to compare the draft's models with its own routing.
+- **A `correct` verdict costs a plan round for one line.** The IC chose `correct` because
+  `amend` requires the whole plan re-emitted, so a `dependsOn` entry cost a second planner
+  call ($0.72) and a second review ($1.16 for 850 output tokens on a 114k context), $2.84
+  and 168 seconds in all. An amend that patches by ref would have cost one short turn.
+- **Continue turns are the leader's cost centre.** The code unit's four continue turns
+  produced 74 output tokens each and cost $0.35, $0.03, $0.51 and $0.92 as the session's
+  context grew from 34k to 100k with every investigate it ran inside itself; the last one
+  wrote 91k to cache and read 8.6k, the intermittent cache read from R3-3 again. A leader
+  whose remaining tasks are already sequenced by the plan is being asked, at full context
+  price, whether to continue.
+- **Independent investigates inside a leader do not run at once.** The planner's rule says
+  independent tasks run together and the planner wrote that its three readings would; two
+  of the three had no dependency and were ready together; all three ran one after another
+  because they run inside the leader's session. The 0.92x factor above is the measure. Either
+  the rule text says which tasks the sequencing applies to, or an investigate with no
+  dependency runs in its own session when another is already in the leader's.
+- **Opus 5 refuses the review turn, seen twice.** Two command turns on one Opus 5 session
+  passed, the second a resumed call, and the review turn over the planner's draft was refused
+  in 1.1 seconds, as in run 003. The fallback worked as ruled: five calls on Opus 4.8,
+  review turns among them, none refused, so the IC on Opus 4.8 is a working configuration,
+  at $4.94 for five calls against Sonnet 5's $1.28 for five in run 003.
+- **The IC's turns are long.** The period 2 command turn wrote 16.9k output tokens in 215
+  seconds, restating the reproduce's findings in the objectives, the situation, the
+  hypothesis and the verdict; the closing turn wrote 11.4k more. Its context reached 170k
+  on the last turn, one turn from the handoff, in an incident of three periods.
+- **A run does not know the runs before it.** The selection's origin was in a file a task
+  read (`PageCard.tsx:1422`, in `001-t11`'s read of lines 1355 to 1479) and in run 002's
+  record, and no seat connected them; each incident starts from its own briefing. Whether an
+  incident should be able to cite another's claims is a design call for the revisit.
