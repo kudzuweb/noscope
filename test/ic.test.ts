@@ -798,7 +798,10 @@ describe("the IC above the planner", () => {
     const briefing =
       h.calls().filter((c) => c.kind === "command")[1]?.prompt ?? "";
     expect(briefing).toContain(
-      "tasks under command, ended with no leader to report them:\n  - 001-t01 (grep) completed: {",
+      "tasks under command, ended with no leader to report them:\n  - task 001-t01 (grep): find delete\n      claims: 001-c001: ",
+    );
+    expect(briefing).toMatch(
+      /\n {6}completed; result: \{"root":"[^"]*","matches":\[\{"file":"a\.txt","line":2,"text":"the delete handler lives here"\}\],"truncated":false\}\n/,
     );
     expect(briefing).toContain(
       "## 4. Tasks completed since the last cycle\n  - 001-t01 (grep, under 001-command)",
@@ -1068,6 +1071,114 @@ describe("the IC above the planner", () => {
     expect(
       renderCommandBriefing(store, s.incident, [fakeProvider]),
     ).not.toContain("chars clipped");
+    store.close();
+  });
+
+  it("a task under command that failed or came back insufficient reaches the change report as a leader would read it, and a wide root result is clipped with the task id as the pointer (R4-6)", () => {
+    const store = new Store(":memory:");
+    const s = scriptedIncident(store);
+    const failed = s.task({
+      id: "c-read",
+      capability: "read",
+      objective: "read the handler",
+    });
+    store.setTaskStatus(
+      "i1",
+      failed.id,
+      "failed",
+      "dispatcher",
+      "task.failed",
+      { extra: { reason: "no such file", timedOut: false } },
+    );
+    const interpret = s.task({
+      id: "c-interpret",
+      capability: "interpret",
+      objective: "weigh it",
+      provider: "claude-code",
+      model: "claude-haiku-4-5",
+    });
+    store.setTaskStatus(
+      "i1",
+      interpret.id,
+      "completed",
+      "dispatcher",
+      "task.completed",
+      {
+        result: {
+          outcome: "insufficient",
+          claims: [],
+          findings: null,
+          needed: [{ kind: "observation", what: "the view after a delete" }],
+        },
+      },
+    );
+    const wide = s.task({
+      id: "c-grep",
+      capability: "grep",
+      objective: "find every handler",
+    });
+    store.setTaskStatus(
+      "i1",
+      wide.id,
+      "completed",
+      "dispatcher",
+      "task.completed",
+      {
+        result: {
+          root: "/r",
+          matches: Array.from({ length: 20 }, (_, i) => ({
+            file: "a.ts",
+            line: i,
+            text: "delete()",
+          })),
+          truncated: false,
+        },
+      },
+    );
+    const under = (lines: string[]) =>
+      lines.slice(
+        lines.indexOf(
+          "tasks under command, ended with no leader to report them:",
+        ),
+        lines.indexOf("resource requests:"),
+      );
+    const lines = under(
+      renderChangeReport(
+        store.listEvents("i1"),
+        s.incident,
+        store.listUnits("i1"),
+      ),
+    );
+    expect(lines.slice(0, 7)).toEqual([
+      "tasks under command, ended with no leader to report them:",
+      "  - task c-read (read): read the handler",
+      "      claims: none",
+      "      failed: no such file",
+      "  - task c-interpret (interpret, claude-haiku-4-5): weigh it",
+      "      claims: none",
+      "      completed, insufficient; needed: observation: the view after a delete",
+    ]);
+    // A deterministic result is rendered whole under the cap, since no leader reads the
+    // root's results: the wide grep's fits at the default cap and is cut at a small one.
+    expect(lines[7]).toBe("  - task c-grep (grep): find every handler");
+    expect(lines[9]).toMatch(
+      /^ {6}completed; result: \{"root":"\/r","matches":\[/,
+    );
+    expect(lines.join("\n")).not.toContain("chars clipped");
+    const clipped = under(
+      renderChangeReport(
+        store.listEvents("i1"),
+        s.incident,
+        store.listUnits("i1"),
+        200,
+      ),
+    );
+    expect(clipped.slice(0, 7)).toEqual(lines.slice(0, 7));
+    const block = clipped.slice(7);
+    expect(block.at(-1)).toMatch(
+      /^ {6}\[\+\d+ chars clipped; the full record is task c-grep\]$/,
+    );
+    expect(block.slice(0, -1).join("\n")).toHaveLength(200);
     store.close();
   });
 
