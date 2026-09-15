@@ -15,12 +15,13 @@
 // the CommandTurn schema (a `periodObjectives` property), gets NOSCOPE_STUB_COMMAND, or the
 // next entry of NOSCOPE_STUB_COMMANDS (counter file NOSCOPE_STUB_COMMAND_COUNTER), or by
 // default one objective and `continue`. A command turn answers every report its briefing
-// lists (R4-2; the change report heads each `  - <unit>, report <event id>: <outcome>`):
-// a turn with no `reportVerdicts`, or
-// an empty list (the typed test helpers' default), gets one per listed report, `accepted`
-// for a `met` report and `revise` with stub instructions otherwise, and a turn whose
-// verdicts omit `reportId` or leave it empty gets each filled with the id of the last
-// report listed for that unit, since a test cannot know the store's UUID. Its review,
+// lists (R4-2; the change report heads each `  - <unit>, report <event id>: <outcome>`,
+// and a unit that reported twice is answered on its last): a turn with no
+// `reportVerdicts`, or an empty list (the typed test helpers' default), gets one per
+// reporting unit, `accepted` for a `met` report and `revise` with stub instructions
+// otherwise, and a turn whose verdicts omit `reportId` or leave it empty gets each filled
+// with the id of the last report listed for that unit, since a test cannot know the
+// store's UUID. Its review,
 // recognised by the ReviewTurn schema (a
 // `verdict` property), gets NOSCOPE_STUB_REVIEW, or the next entry of NOSCOPE_STUB_REVIEWS
 // (counter file NOSCOPE_STUB_REVIEW_COUNTER), or by default `approve`. A command turn whose
@@ -202,7 +203,8 @@ function nextOf(one, many, counterName, fallback) {
 }
 
 const listedReports = [...prompt.matchAll(/^  - (\S+), report (\S+): (met|not_met|progress)\b/gm)]
-  .map((m) => ({ unitId: m[1], reportId: m[2], outcome: m[3] }));
+  .map((m) => ({ unitId: m[1], reportId: m[2], outcome: m[3] }))
+  .filter((r, i, all) => all.findLastIndex((o) => o.unitId === r.unitId) === i);
 
 const defaultVerdict = (r) =>
   r.outcome === "met"

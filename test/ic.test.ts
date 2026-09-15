@@ -1809,11 +1809,13 @@ describe("the IC above the planner", () => {
     store.close();
   });
 
-  it("a rejected turn leaves its reports in the window for the retry, and the report the runtime files for a refused unit takes a verdict like a leader's (R4-2, R4-7)", () => {
+  it("a rejected turn leaves its reports in the window for the retry; the runtime's report for a refused unit takes a verdict like a leader's, and a unit that reported twice in one pass is answered on its last (R4-2, R4-7, R4-9)", () => {
     const store = new Store(":memory:");
     const s = scriptedIncident(store);
     const a = reportedUnit(s, "u-a", "the handler resets the scroll");
-    s.addUnit({ id: "u-r", objective: "find the reason" });
+    // u-r's leader reported, then a later task of its was refused twice in the same
+    // pass, so the runtime filed a second report: the IC decides on that one.
+    const earlier = reportedUnit(s, "u-r", "the reason is in the caller");
     store.record("i1", "unit.reported", "runtime", {
       unitId: "u-r",
       sessionId: null,
@@ -1839,6 +1841,7 @@ describe("the IC above the planner", () => {
       ).filter((l) => /^ {2}- \S+, report /.test(l));
     expect(heads()).toEqual([
       `  - u-a, report ${a.id}: met; changed: the handler is found (claims u-a-c-grep, u-a-c-inv)`,
+      `  - u-r, report ${earlier.id}: met; changed: the handler is found (claims u-r-c-grep, u-r-c-inv) [an earlier report this window; the verdict answers report ${refused.id}]`,
       `  - u-r, report ${refused.id}: not_met, picture changed; changed: nothing; why: leader was refused by the API on both models; suggestion: the IC decides`,
     ]);
     const ctx = () => validationContext(store, s.incident, [fakeProvider]);
@@ -1850,12 +1853,27 @@ describe("the IC above the planner", () => {
       why: "found",
       ...over,
     });
-    // The runtime's report is owed a verdict like any other.
+    // The runtime's report is owed a verdict like any other, and the unit's earlier
+    // report in the window takes none of its own.
     expect(
       validateCommand(command({ reportVerdicts: [verdict()] }), ctx()).map(
         (r) => r.reason,
       ),
     ).toEqual([`report ${refused.id} of unit u-r has no verdict`]);
+    expect(
+      validateCommand(
+        command({
+          reportVerdicts: [
+            verdict(),
+            verdict({ reportId: earlier.id, unitId: "u-r" }),
+          ],
+        }),
+        ctx(),
+      ).map((r) => r.reason),
+    ).toEqual([
+      `report ${earlier.id} is unit u-r's earlier report this window; its verdict answers report ${refused.id}`,
+      `report ${refused.id} of unit u-r has no verdict`,
+    ]);
     // A rejected turn answered nothing: both reports are still listed and still owed.
     store.record("i1", "command.turned", "runtime", {
       turn: command(),
@@ -1866,7 +1884,7 @@ describe("the IC above the planner", () => {
       rule: "Reports answered",
       reason: `report ${a.id} of unit u-a has no verdict`,
     });
-    expect(heads()).toHaveLength(2);
+    expect(heads()).toHaveLength(3);
     expect(validateCommand(command(), ctx()).map((r) => r.reason)).toEqual([
       `report ${a.id} of unit u-a has no verdict`,
       `report ${refused.id} of unit u-r has no verdict`,

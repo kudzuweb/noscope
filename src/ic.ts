@@ -3,6 +3,7 @@ import { recordActivity } from "./activity.js";
 import {
   describeRefusedCall,
   fallbackModel,
+  latestReports,
   leaderRequest,
   openRequests,
   type RefusedCall,
@@ -501,7 +502,8 @@ export function renderReport(
  * since then. Each report carries the work behind it, and each task's block, under a
  * report or under command, is clipped at `workChars` (R4-1). The reports listed are those
  * since the IC's last accepted command turn, the ones its verdicts must answer (R4-2), so a
- * report a rejected turn left unanswered is listed again for the retry.
+ * report a rejected turn left unanswered is listed again for the retry; a unit's earlier
+ * report in that window is marked as answered through its last.
  */
 export function renderChangeReport(
   events: readonly Event[],
@@ -530,9 +532,17 @@ export function renderChangeReport(
       (e) =>
         `${str(e.payload.seat)}${str(e.payload.unitId) === "" ? "" : ` of ${str(e.payload.unitId)}`}: ${str(e.payload.discrepancy)}`,
     );
-  const reports = reportsAwaitingVerdict(events).flatMap((e) =>
-    renderReport(events, e, workChars),
-  );
+  const latest = latestReports(events);
+  const reports = reportsAwaitingVerdict(events).flatMap((e) => {
+    const [head = "", ...work] = renderReport(events, e, workChars);
+    const last = latest.get(str(e.payload.unitId));
+    return [
+      last === undefined || last.id === e.id
+        ? head
+        : `${head} [an earlier report this window; the verdict answers report ${last.id}]`,
+      ...work,
+    ];
+  });
   const answered = recent
     .filter((e) => e.type === "question.answered" && str(e.payload.answer))
     .map((e) => `${str(e.payload.questionId)} → ${str(e.payload.answer)}`);

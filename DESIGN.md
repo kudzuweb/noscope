@@ -385,8 +385,9 @@ question answered and capability provided, the rules the IC's last turn failed i
 rejected, and the spend since then (every usage any seat recorded after the IC's last
 turn, summed). The reports listed are every `unit.reported` since the IC's last accepted
 command turn, the reports its verdicts must answer (R4-2), so a report a rejected turn
-left unanswered is listed again for the retry. Each report is headed by its unit's id and
-the report's event id, the id a verdict answers it by, and carries the work behind it (R4-1), so the IC judges the
+left unanswered is listed again for the retry; a unit's earlier report in that window is
+marked `[an earlier report this window; the verdict answers report <id>]`. Each report is
+headed by its unit's id and the report's event id, the id a verdict answers it by, and carries the work behind it (R4-1), so the IC judges the
 leader's account against what the unit did: the unit's tasks that ended since its previous
 report (id, capability and model, objective; then the claims the task produced, id,
 subject, predicate, basis and confidence, never the object, which the file's claims
@@ -474,8 +475,12 @@ const HandoffDocument = z.strictObject({           // the outgoing IC's last cal
 ```
 
 The IC reviews a unit's work when its report comes in (ruled by Mauria, 2026-09-15; R4-2):
-every report the change report lists is answered with one verdict in `reportVerdicts`,
-naming the report's event id and its unit. `accepted` means the work shows the unit's
+every unit whose report the change report lists is answered with one verdict in
+`reportVerdicts`, naming the unit and the event id of its last report in the window. A
+unit can file two reports in one pass under parallel dispatch (R4-9): its leader's, then
+the runtime's `not_met` when a later task of its is refused twice; the IC decides on the
+last, `report.reviewed` carries that report's id, and the earlier report is listed for
+the record and takes no verdict of its own. `accepted` means the work shows the unit's
 objective met, resting on observed claims, and the unit closes through the same path as
 `closeUnits`, the verdict as the reason; `revise` means the same unit is placed to finish
 it, the instructions say what is missing, and the unit stays active (R4-3 delivers the
@@ -654,7 +659,7 @@ against the root; and by three rules of its own:
 | Rule | Check |
 |---|---|
 | Answers match | Every answer names a waiting unit and an open request that unit raised, as the change report showed it, and no request is answered twice; a permission request is not answered here, since only a grant answers it. |
-| Reports answered | Every report since the IC's last accepted command turn has exactly one verdict naming its event id and its unit; no verdict names a report outside that window or another unit's report; and no reported unit is in `closeUnits` as well: an accepted or reassigned unit is closed by its verdict, and a revised unit stays (R4-2). Command files no report (R4-6), so every report in the window is a unit's, the runtime-authored report of a refused unit (R4-7) included. |
+| Reports answered | Every unit that reported since the IC's last accepted command turn has exactly one verdict, naming the unit and the event id of its last report in that window; no verdict names a report outside that window, a unit's earlier report in it, or another unit's report; and no reported unit is in `closeUnits` as well: an accepted or reassigned unit is closed by its verdict, and a revised unit stays (R4-2). Command files no report (R4-6), so every report in the window is a unit's, the runtime-authored report of a refused unit (R4-7) included. |
 | Deterministic only | A task to a session-backed capability is refused with "the IC assigns deterministic work only, and session work goes under a unit", since the root's tasks run with no leader turn (Step 6) and session work is a unit's (R4-6). |
 
 A failing rule is recorded as `command.rejected` and the cycle ends there (Step 4).

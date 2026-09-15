@@ -9,6 +9,7 @@ import {
   holdsCapability,
   LEADER_ACTOR,
   LEADER_RULES,
+  latestReports,
   openRequests,
   reportsAwaitingVerdict,
   requestTargetOf,
@@ -932,22 +933,34 @@ export function verdictCloses(turn: CommandTurn): UnitClose[] {
 }
 
 /**
- * Every report the change report listed since the IC's last accepted turn has exactly one
- * verdict naming its event id and its unit, and no verdict names a report outside that
- * window or another unit; a reported unit is not in `closeUnits` as well: an accepted
- * or reassigned unit is closed by its verdict, and a revised one stays.
+ * Every unit that reported since the IC's last accepted turn has exactly one verdict,
+ * naming the unit and the event id of its last report in that window (an earlier report
+ * of the same unit is listed and takes none), and no verdict names a report outside the
+ * window or another unit; a reported unit is not in `closeUnits` as well: an accepted or
+ * reassigned unit is closed by its verdict, and a revised one stays.
  */
 function reportsAnswered(
   turn: CommandTurn,
-  awaiting: ReadonlyMap<string, Event>,
+  window: readonly Event[],
+  latest: ReadonlyMap<string, Event>,
 ): string[] {
   const reasons: string[] = [];
   const answered = new Set<string>();
   const closing = new Set(turn.closeUnits.map((c) => c.unitId));
+  const awaiting = new Map([...latest.values()].map((e) => [e.id, e]));
   for (const v of turn.reportVerdicts) {
     const report = awaiting.get(v.reportId);
     if (report === undefined) {
-      reasons.push(`no report ${v.reportId} awaits a verdict`);
+      const earlier = window.find((e) => e.id === v.reportId);
+      const last =
+        earlier === undefined
+          ? undefined
+          : latest.get(String(earlier.payload.unitId));
+      reasons.push(
+        earlier === undefined || last === undefined
+          ? `no report ${v.reportId} awaits a verdict`
+          : `report ${v.reportId} is unit ${String(earlier.payload.unitId)}'s earlier report this window; its verdict answers report ${last.id}`,
+      );
       continue;
     }
     if (report.payload.unitId !== v.unitId)
@@ -1055,15 +1068,14 @@ export function validateCommand(
       reason: `unit ${unitId}'s request "${request}" is answered twice`,
     });
   }
-  const awaiting = new Map(
-    reportsAwaitingVerdict(ctx.events).map((e) => [e.id, e]),
-  );
-  // Only a verdict that names a listed report and its unit closes anything; the rest are
+  const window = reportsAwaitingVerdict(ctx.events);
+  const latest = latestReports(ctx.events);
+  // Only a verdict that names a unit's last listed report closes anything; the rest are
   // "Reports answered" rejections, not closes for "Units exist" to fail again.
   const answering: CommandTurn = {
     ...turn,
     reportVerdicts: turn.reportVerdicts.filter(
-      (v) => awaiting.get(v.reportId)?.payload.unitId === v.unitId,
+      (v) => latest.get(v.unitId)?.id === v.reportId,
     ),
   };
   // The assignments are the plan's tasks, so "Units exist" sees their unit and "Status
@@ -1093,7 +1105,7 @@ export function validateCommand(
         check(commandAsPlan, ctx).map((reason) => ({ rule: name, reason })),
     ),
     ...answers,
-    ...reportsAnswered(turn, awaiting).map(
+    ...reportsAnswered(turn, window, latest).map(
       (reason): Rejection<CommandRuleName> => ({
         rule: "Reports answered",
         reason,

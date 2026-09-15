@@ -666,7 +666,7 @@ export const CommandTurn = z.strictObject({
   reportVerdicts: z
     .array(ReportVerdict)
     .describe(
-      "One verdict per unit report the change report lists, each naming the report's event id and its unit: accepted, revise or reassign, with instructions for the last two and a why for each",
+      "One verdict per unit that reported, naming the unit and the event id of its last report the change report lists (an earlier report of the same unit is marked as answered through the last and takes none): accepted, revise or reassign, with instructions for the last two and a why for each",
     ),
   closeUnits: z
     .array(UnitClose)

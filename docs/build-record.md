@@ -2609,7 +2609,7 @@ Not exactly to spec, with reasons:
 
 ## R4-2: Report verdicts (#45, merged 2026-09-15)
 
-R4-2 of the round 4 plan, on R4-1's ground, rebased onto R4-6 and R4-7. Built: the IC answers every report with a
+R4-2 of the round 4 plan, on R4-1's ground, rebased onto R4-6, R4-7 and R4-9. Built: the IC answers every report with a
 verdict, Mauria's ruling of 2026-09-15 that the IC reviews a unit's work when it comes in
 and decides whether the unit is done, goes back for revision, or hands its slice to a
 different unit. `CommandTurn` gains `reportVerdicts`, an array of `ReportVerdict` (a strict
@@ -2619,12 +2619,15 @@ in the schema so the provider's own validation asks for it, with a refinement af
 that refuses instructions on an accepted verdict and requires non-blank instructions on a
 revise or reassign. `closeUnits` stays for units closed without a report. The reports a
 turn must answer are `reportsAwaitingVerdict` in `src/leader.ts`: every `unit.reported`
-after the last accepted `command.turned`. The change report's "unit reports:" now lists
-that window (before, the reports since the IC's last turn of any kind, which dropped a
-rejected turn's reports from the retry's briefing). The validator's `validateCommand` gains the rule "Reports answered" (a
-`CommandRuleName` beside "Answers match"): each verdict names a report in the window and
-that report's unit, no report has two verdicts, no report is left without one, and no
-reported unit is in `closeUnits` as well (an accepted or reassigned unit is closed by its
+after the last accepted `command.turned`; `latestReports` picks each unit's last of them,
+the one its verdict answers. The change report's "unit reports:" now lists that window
+(before, the reports since the IC's last turn of any kind, which dropped a rejected turn's
+reports from the retry's briefing), a unit's earlier report in it marked `[an earlier
+report this window; the verdict answers report <id>]`. The validator's `validateCommand`
+gains the rule "Reports answered" (a `CommandRuleName` beside "Answers match"): each
+verdict names a unit's last report in the window and that unit, a unit's earlier report
+is refused by name with the id its verdict answers, no report has two verdicts, no
+reporting unit is left without one, and no reported unit is in `closeUnits` as well (an accepted or reassigned unit is closed by its
 verdict; a revised unit stays). The verdicts' closes are folded into the plan the command turn is
 checked as (`verdictCloses`: accepted and reassigned units, reason `<verdict>: <why>`,
 only for verdicts that name a listed report and its unit, and only for units not already
@@ -2667,7 +2670,9 @@ reason, the revised one active, `report.reviewed` per verdict with actor `ic`, t
 order, and the window cleared for the next turn; a test that a rejected turn leaves the
 report listed and owed; a test that the report the runtime files for a unit refused
 twice (R4-7) is listed, owed a verdict, and closed by an accepted one with
-`report.reviewed` recording it; a stub run where the leader reports `met`, a turn with a verdict
+`report.reviewed` recording it, and that with the unit's leader report earlier in the same
+window the earlier report is listed with its marker, a verdict on it is refused with the
+id that takes one, and the last is the one owed; a stub run where the leader reports `met`, a turn with a verdict
 on no listed report is rejected on both reasons and the next briefing lists the report
 again, the accepted verdict closes the unit through `unit.closed`, `review` counts and
 lists it and `tree` marks it; the review and dispatcher snapshots follow the stub's
@@ -2677,7 +2682,12 @@ Not exactly to spec, with reasons:
 
 - A verdict names a report by its event id and its unit, not a unit alone as the plan
   block says, on the orchestrator's design points, since `report.reviewed` is keyed on the
-  report; one unit files one report per window, so the rule's count per unit is the same.
+  report. The rule counts units, as the plan block does: under parallel dispatch (R4-9) a
+  unit can file two reports in one pass, its leader's and then the runtime's `not_met`
+  when a later task of its is refused twice, and the verdict answers the last, the one
+  the IC is deciding on; the earlier is listed and marked, and a verdict naming it is
+  refused with the id that takes one. The stub answers each reporting unit on its last
+  listed report. Decided with the orchestrator on PR 44's second review.
 - The window is the reports since the IC's last accepted command turn, not since it last
   acted, and the change report's report list now uses the same window: a rejected turn
   answered nothing, and under the old window the reports vanished from the retry's
