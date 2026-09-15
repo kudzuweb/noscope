@@ -37,6 +37,7 @@ function cycledIncident(store: Store) {
       equipment: [],
       bashAllowlist: [],
       role: null,
+      config: null,
       sessionId: null,
       status: "active",
       createdAt: AT,
@@ -186,6 +187,7 @@ function cycledIncident(store: Store) {
       equipment: [],
       bashAllowlist: [],
       role: null,
+      config: null,
       sessionId: "s-wait",
       status: "active",
       createdAt: AT,
@@ -497,11 +499,14 @@ describe("planner", () => {
           inputs: { browser: "playwright_browser" | "claude_in_chrome", required; url: string, required; steps: string[], required; observe: string[], required }
       providers and models:
         - fake: fake-large, fake-small
+      saved unit configs, each deployed by name in a new unit's config, its fields filling the form:
+        (none)
 
       ## 9. Rules the validator applies
         - Capabilities exist: every task names a registered capability.
         - Units exist: every task's unit and every new unit's parent is an active unit id or the ref of a unit created in this plan; a closed unit takes no new work.
         - Type exists: every new unit names a registered unit type a plan may create; base, the led unit, is the only one, so name base or leave type to its default.
+        - Config exists: a new unit that names a config names a saved one section 8 lists, of the unit's type; its leader, equipment, bashAllowlist and role are then filled from it, a field given beside config overrides the config's, and a unit naming no config fills the three itself.
         - No cycles: the tree stays a tree; a unit ref is used once, is not an existing unit id, and does not start with the incident id; a task ref likewise against task ids, and new tasks' dependsOn form no cycle.
         - No duplicates: no new task repeats an open or completed one, or another new task, with the same capability and effective inputs under the same unit; a task this plan cancels does not count.
         - Inputs validate: task inputs parse against the capability's input schema; a task that takes evidence names it by id in evidenceFrom (claims, and tasks whose results it needs) rather than copying it into inputs, or carries it inline.
@@ -642,6 +647,6 @@ describe("planner", () => {
       delete process.env.NOSCOPE_STUB_OUTPUT;
     }
     store.close();
-    expect(PLANNER_RULES).toHaveLength(15);
+    expect(PLANNER_RULES).toHaveLength(16);
   });
 });

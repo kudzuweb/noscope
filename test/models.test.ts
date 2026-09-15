@@ -241,9 +241,10 @@ describe("contracts", () => {
       "unit.reassigned",
       "reassignment.taken",
       "reassignment.dropped",
+      "config.saved",
     ])
       expect(EventType.options).toContain(type);
-    expect(EventType.options).toHaveLength(50);
+    expect(EventType.options).toHaveLength(51);
   });
 
   it("an incident briefing is one strict object on ICS 201's lines; a checked need says what the check showed", () => {

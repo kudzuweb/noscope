@@ -69,7 +69,7 @@ describe("unit types (R4-10)", () => {
     ).toThrow("must carry the role text as a form field named role");
   });
 
-  it("the planner's unit proposal is the base form plus ref, parent, type and takes, with the descriptions rendered into its schema", () => {
+  it("the planner's unit proposal is the base form plus config, ref, parent, type and takes, with the descriptions rendered into its schema", () => {
     const schema = jsonSchemaFor(UnitProposal) as {
       properties: Record<string, { description?: string; default?: unknown }>;
       required: string[];
@@ -80,6 +80,7 @@ describe("unit types (R4-10)", () => {
       "equipment",
       "bashAllowlist",
       "role",
+      "config",
       "ref",
       "parent",
       "type",
@@ -104,6 +105,18 @@ describe("unit types (R4-10)", () => {
     });
     expect(parsed.type).toBe("base");
     expect(parsed.role).toBeUndefined();
+    // Naming a config (R4-11) is what lets the three form fields be left out.
+    const byName = UnitProposal.parse({
+      ref: "u",
+      objective: "o",
+      parent: "p",
+      config: "reader",
+    });
+    expect(byName.leader).toBeUndefined();
+    expect(schema.required).not.toContain("leader");
+    expect(() =>
+      UnitProposal.parse({ ref: "u", objective: "o", parent: "p" }),
+    ).toThrow("a unit naming no config fills leader itself");
   });
 
   it("a unit's role text is its own when the config carries one, else its type's, and the request carries it under the type's seat", () => {
@@ -208,6 +221,7 @@ describe("unit types (R4-10)", () => {
       equipment: ["Read", "Grep", "Glob", "Bash"],
       bashAllowlist: [...READ_ONLY_SESSION_COMMANDS],
       role: null,
+      config: null,
       sessionId: null,
       status: "active",
       createdAt: "2026-09-15T00:00:00.000Z",

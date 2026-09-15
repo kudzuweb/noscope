@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { defineCapability } from "../src/capabilities/registry.js";
+import { configOf } from "../src/configs.js";
 import { READ_ONLY_SESSION_COMMANDS } from "../src/equipment/index.js";
 import type {
   ActionPlan,
@@ -8,6 +9,7 @@ import type {
   Situation,
   TaskProposal,
   Unit,
+  UnitProposal,
 } from "../src/models.js";
 import { PLANNER_RULES } from "../src/planner.js";
 import { Store } from "../src/store.js";
@@ -291,6 +293,21 @@ describe("validator", () => {
       },
     ],
     [
+      "Config exists",
+      {
+        ...empty,
+        createUnits: [
+          {
+            ref: "a",
+            objective: "a",
+            parent: "i1-command",
+            type: "base",
+            config: "nobody",
+          },
+        ],
+      },
+    ],
+    [
       "No cycles",
       {
         ...empty,
@@ -375,6 +392,110 @@ describe("validator", () => {
       "Type exists: new unit a names type ic, which a plan may not create; a plan may create base",
     ]);
     expect(plan().createUnits[0]?.type).toBe("base");
+  });
+
+  it("Config exists: a new unit naming a config names a saved one of its type, and the passing plan comes back outfitted with the config's fields, a field given beside the config overriding it (R4-11)", () => {
+    const { store, ctx } = seeded();
+    const own = store.listUnits("i1").find((u) => u.id === "u-scroll");
+    if (own === undefined) throw new Error("no u-scroll");
+    store.saveUnitConfig(
+      configOf(
+        {
+          ...own,
+          leader: FAKE_LEADER,
+          equipment: ["Read"],
+          role: "Your role: a reader.",
+        },
+        "reader",
+        AT,
+      ),
+      "cli",
+    );
+    const command = store.listUnits("i1").find((u) => u.id === "i1-command");
+    if (command === undefined) throw new Error("no command");
+    store.saveUnitConfig(configOf(command, "command", AT), "cli");
+    const naming = (
+      config: string,
+      over: Partial<UnitProposal> = {},
+    ): ActionPlan => ({
+      ...empty,
+      createUnits: [
+        {
+          ref: "a",
+          objective: "deployed by name",
+          parent: "i1-command",
+          type: "base",
+          config,
+          ...over,
+        },
+      ],
+    });
+    const c = ctx();
+    expect(validatePlan(naming("nobody"), c)).toEqual({
+      ok: false,
+      rejections: [
+        {
+          rule: "Config exists",
+          reason:
+            "new unit a names no saved config nobody; saved: command, reader",
+        },
+      ],
+    });
+    expect(validatePlan(naming("command"), c)).toEqual({
+      ok: false,
+      rejections: [
+        {
+          rule: "Config exists",
+          reason:
+            "new unit a names config command, which is of type ic, not base",
+        },
+      ],
+    });
+    const passing = validatePlan(naming("reader"), c);
+    expect(passing.ok).toBe(true);
+    if (!passing.ok) throw new Error("rejected");
+    expect(passing.plan.createUnits[0]).toEqual({
+      ref: "a",
+      objective: "deployed by name",
+      parent: "i1-command",
+      type: "base",
+      config: "reader",
+      leader: FAKE_LEADER,
+      equipment: ["Read"],
+      bashAllowlist: [],
+      role: "Your role: a reader.",
+    });
+    const overriding = validatePlan(
+      naming("reader", { equipment: ["Read", "Grep"] }),
+      c,
+    );
+    if (!overriding.ok) throw new Error("rejected");
+    expect(overriding.plan.createUnits[0]).toMatchObject({
+      config: "reader",
+      equipment: ["Read", "Grep"],
+      leader: FAKE_LEADER,
+    });
+    // The config's fields are what the other rules read: a config on a model the provider
+    // does not serve fails Model known through the outfitted unit.
+    store.saveUnitConfig(
+      configOf(
+        { ...own, leader: { provider: "fake", model: "fake-huge" } },
+        "huge",
+        AT,
+      ),
+      "cli",
+    );
+    expect(validatePlan(naming("huge"), ctx())).toMatchObject({
+      ok: false,
+      rejections: [
+        {
+          rule: "Model known",
+          reason:
+            "new unit a names fake-huge, which fake does not serve for its leader",
+        },
+      ],
+    });
+    store.close();
   });
 
   it("Units exist: a closed unit takes no new task or unit, and a ref that is its own parent is one No cycles fault", () => {

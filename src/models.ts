@@ -86,6 +86,7 @@ export const EventType = z.enum([
   "unit.reassigned",
   "reassignment.taken",
   "reassignment.dropped",
+  "config.saved",
 ]);
 
 export const Budget = z.object({
@@ -175,7 +176,8 @@ export const Leader = z.object({
  * A unit is a type plus a config (R4-10): `type` names a registered unit type
  * (`src/units/`), whose form the unit's other fields fill and whose protocol runs it;
  * `base` is the led unit and `ic` is command, the root. `role` is the config's own role
- * text, null for the type's.
+ * text, null for the type's; `config` names the saved config the unit was deployed from
+ * (R4-11), null when the plan filled the form itself.
  */
 export const Unit = z.object({
   id: z.string().min(1),
@@ -188,6 +190,8 @@ export const Unit = z.object({
   equipment: z.array(z.string()),
   bashAllowlist: z.array(z.string()),
   role: z.string().min(1).nullable(),
+  /** The saved config the unit was deployed from (R4-11), null when its form was filled by hand. */
+  config: z.string().min(1).nullable(),
   /** The leader's session, once it has run; null until the unit first has a ready task. */
   sessionId: z.string().nullable(),
   status: UnitStatus,
@@ -311,6 +315,23 @@ export const Grant = z
       "a standing grant has no incident id and an incident grant has one",
   });
 
+/**
+ * A saved unit config (R4-11): a type's form filled, less the objective and the parent,
+ * kept under a name so a plan deploys it by name. `form` is the filled form as JSON keyed
+ * by the type (the base form's leader, equipment, Bash allowlist and role today), so a
+ * later type's config is saved the same way; `savedFrom` is the unit it was taken from.
+ */
+export const UnitConfig = z.object({
+  name: z.string().min(1),
+  type: z.string().min(1),
+  form: z.record(z.string(), z.unknown()),
+  savedFrom: z.object({
+    incidentId: z.string().min(1),
+    unitId: z.string().min(1),
+  }),
+  savedAt: Timestamp,
+});
+
 // What the planner returns, one per cycle.
 
 /**
@@ -346,30 +367,61 @@ export const BaseUnitForm = z.object({
     ),
 });
 
-export const UnitProposal = BaseUnitForm.extend({
-  ref: z
-    .string()
-    .min(1)
-    .describe("A label the plan uses to refer to this new unit elsewhere"),
-  parent: z
-    .string()
-    .min(1)
-    .describe("An existing unit id, or the ref of a unit created in this plan"),
-  type: z
-    .string()
-    .min(1)
-    .default("base")
-    .describe(
-      "The unit's type, whose form these fields fill and whose protocol runs it: base, the led unit, is the only type a plan may create",
-    ),
-  takes: z
-    .string()
-    .min(1)
-    .optional()
-    .describe(
-      "The id of an open reassignment this unit takes (R4-4): the slice of a unit the IC closed with a reassign verdict, whose instructions and claims the new unit's leader is oriented with; every open reassignment is taken by exactly one new unit",
-    ),
-});
+/**
+ * A new unit as the planner proposes it: the base form plus its place in the plan. With
+ * `config` (R4-11) the proposal names a saved config and fills only the objective and the
+ * parent; the config's leader, equipment, Bash allowlist and role fill the rest, and a
+ * field given beside `config` overrides the config's. Without it the three are required,
+ * enforced after parse, since the planner's schema is one strict object.
+ */
+export const UnitProposal = BaseUnitForm.partial({
+  leader: true,
+  equipment: true,
+  bashAllowlist: true,
+})
+  .extend({
+    config: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "The name of a saved unit config (section 8 lists them) whose leader, equipment, bashAllowlist and role fill this unit's form; give only objective and parent beside it, or a field to override the config's",
+      ),
+    ref: z
+      .string()
+      .min(1)
+      .describe("A label the plan uses to refer to this new unit elsewhere"),
+    parent: z
+      .string()
+      .min(1)
+      .describe(
+        "An existing unit id, or the ref of a unit created in this plan",
+      ),
+    type: z
+      .string()
+      .min(1)
+      .default("base")
+      .describe(
+        "The unit's type, whose form these fields fill and whose protocol runs it: base, the led unit, is the only type a plan may create",
+      ),
+    takes: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "The id of an open reassignment this unit takes (R4-4): the slice of a unit the IC closed with a reassign verdict, whose instructions and claims the new unit's leader is oriented with; every open reassignment is taken by exactly one new unit",
+      ),
+  })
+  .superRefine((u, ctx) => {
+    if (u.config !== undefined) return;
+    for (const field of ["leader", "equipment", "bashAllowlist"] as const)
+      if (u[field] === undefined)
+        ctx.addIssue({
+          code: "custom",
+          path: [field],
+          message: `a unit naming no config fills ${field} itself`,
+        });
+  });
 
 export const UnitClose = z.strictObject({
   unitId: z.string().min(1),
@@ -1130,6 +1182,7 @@ export type Provenance = z.infer<typeof Provenance>;
 export type Claim = z.infer<typeof Claim>;
 export type Event = z.infer<typeof Event>;
 export type Grant = z.infer<typeof Grant>;
+export type UnitConfig = z.infer<typeof UnitConfig>;
 export type BaseUnitForm = z.infer<typeof BaseUnitForm>;
 export type UnitProposal = z.infer<typeof UnitProposal>;
 export type UnitClose = z.infer<typeof UnitClose>;
@@ -1153,6 +1206,19 @@ export type Settlement = z.infer<typeof Settlement>;
 export type Needed = z.infer<typeof Needed>;
 export type ClaimProposal = z.infer<typeof ClaimProposal>;
 export type SessionResult = z.infer<typeof SessionResult>;
+
+/** A key-sorted JSON serialization, so two values compare equal whatever their key order. */
+export function stable(value: unknown): string {
+  return JSON.stringify(value, (_k, v: unknown) =>
+    v !== null && typeof v === "object" && !Array.isArray(v)
+      ? Object.fromEntries(
+          Object.entries(v as Record<string, unknown>).sort(([a], [b]) =>
+            a.localeCompare(b),
+          ),
+        )
+      : v,
+  );
+}
 
 /**
  * The JSON Schema a provider receives for a structured output. Claude Code's --json-schema

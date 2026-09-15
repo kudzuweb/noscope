@@ -58,6 +58,7 @@ export function newCommandUnit(
     equipment: form.equipment,
     bashAllowlist: form.bashAllowlist,
     role: form.role ?? null,
+    config: null,
     sessionId: null,
     status: "active",
     createdAt: at,

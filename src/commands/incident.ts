@@ -646,13 +646,23 @@ export const tree: Handler = async (args, ctx) => {
 /** What one cycle came to: the incident's status afterwards, and a budget stop if the pass ended on one. */
 type CycleOutcome = { status: IncidentStatus; stopped: string | null };
 
+/** A new unit's seat as `step` prints it: the saved config it names (R4-11), the leader it gives, or both when a leader is given beside the config. */
+function proposalSeat(u: ActionPlan["createUnits"][number]): string {
+  return [
+    ...(u.config === undefined ? [] : [`config ${u.config}`]),
+    ...(u.leader === undefined
+      ? []
+      : [`leader ${u.leader.provider}/${u.leader.model}`]),
+  ].join(", ");
+}
+
 /** A plan as `step` prints it: what it creates, closes, cancels, asks and requests, and its status. */
 function printPlan(ctx: Context, plan: ActionPlan): void {
   if (plan.discrepancy !== undefined)
     ctx.io.out(`  discrepancy: ${plan.discrepancy}`);
   for (const u of plan.createUnits)
     ctx.io.out(
-      `  create unit ${u.ref} under ${u.parent} (leader ${u.leader.provider}/${u.leader.model}): ${u.objective}${u.takes === undefined ? "" : ` (takes reassignment ${u.takes})`}`,
+      `  create unit ${u.ref} under ${u.parent} (${proposalSeat(u)}): ${u.objective}${u.takes === undefined ? "" : ` (takes reassignment ${u.takes})`}`,
     );
   for (const c of plan.closeUnits)
     ctx.io.out(`  close unit ${c.unitId}: ${c.reason}`);

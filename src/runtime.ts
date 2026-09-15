@@ -1,3 +1,4 @@
+import { type OutfittedPlan, outfit } from "./configs.js";
 import {
   dropsSlice,
   IC_ACTOR,
@@ -9,24 +10,25 @@ import {
   reassignments,
   requestTargetOf,
 } from "./leader.js";
-import type {
-  ActionPlan,
-  CapabilityRequest,
-  CommandTurn,
-  Event,
-  Incident,
-  IncidentStatus,
-  Period,
-  Question,
-  ResourceRequest,
-  Task,
-  TaskProposal,
-  Unit,
-  UnitStatus,
+import {
+  type ActionPlan,
+  type CapabilityRequest,
+  type CommandTurn,
+  type Event,
+  type Incident,
+  type IncidentStatus,
+  type Period,
+  type Question,
+  type ResourceRequest,
+  stable,
+  type Task,
+  type TaskProposal,
+  type Unit,
+  type UnitStatus,
 } from "./models.js";
 import { now, type Store } from "./store.js";
 import { commandUnitOf } from "./units/index.js";
-import { stable, verdictCloses } from "./validator.js";
+import { verdictCloses } from "./validator.js";
 
 /** What applying a plan changed, by id, so the caller can print it and the dispatcher can pick up the ready tasks; `taken` pairs each new unit that took a reassignment with the reassignment's id (R4-4). */
 export type Applied = {
@@ -163,9 +165,9 @@ export function planDiff(draft: ActionPlan, applied: ActionPlan): PlanDiff {
 
 /** New units ordered so every parent created in the same plan is written before its children; the validator has ruled out cycles. */
 function parentsFirst(
-  proposals: ActionPlan["createUnits"],
-): ActionPlan["createUnits"] {
-  const ordered: ActionPlan["createUnits"] = [];
+  proposals: OutfittedPlan["createUnits"],
+): OutfittedPlan["createUnits"] {
+  const ordered: OutfittedPlan["createUnits"] = [];
   const placed = new Set<string>();
   let pending = proposals;
   while (pending.length > 0) {
@@ -550,16 +552,20 @@ export function answerRequest(
  * reassignment recorded as `reassignment.taken` after its `unit.created`, R4-4) and closed,
  * tasks created and cancelled, questions and requests recorded, the incident's status set,
  * then `plan.applied` (DESIGN.md Step 4). The validator has already passed the plan; this
- * trusts it and only writes. The incident is read from the store, not the argument, so a
+ * trusts it and only writes, each new unit's form filled from the config it names
+ * (R4-11) and the config's name recorded on the unit. The incident is read from the store, not the argument, so a
  * stale caller cannot overwrite questions; only an open incident takes a plan.
  */
 export function applyPlan(
   store: Store,
   incidentRef: Pick<Incident, "id">,
-  plan: ActionPlan,
+  proposed: ActionPlan,
   actor = "runtime",
   review?: PlanReview,
 ): Applied {
+  // The validator outfitted the plan already; outfitting again fills nothing a whole
+  // proposal has, and a caller that skipped the validator (a test) gets its units whole.
+  const plan = outfit(proposed, store.listUnitConfigs());
   const incident = store.getIncident(incidentRef.id);
   if (incident === undefined)
     throw new Error(`no incident ${incidentRef.id} to apply a plan to`);
@@ -587,6 +593,7 @@ export function applyPlan(
     equipment: u.equipment,
     bashAllowlist: u.bashAllowlist,
     role: u.role ?? null,
+    config: u.config ?? null,
     sessionId: null,
     status: "active",
     createdAt: at,

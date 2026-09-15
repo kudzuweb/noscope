@@ -135,18 +135,19 @@ describe("incident run", () => {
       h.ctx,
     );
     expect(await run(["incident", "run", "001"], h.ctx)).toBe(EXIT.ok);
-    // Make the file a round 4 one: no type or role column on units, no type or role in any
-    // unit.create mutation, and schema version 6.
+    // Make the file a round 4 one: no type, role or config column on units (config is
+    // R4-11's), none of the three in any unit.create mutation, and schema version 6.
     const s1 = h.store();
     s1.db.exec("ALTER TABLE units DROP COLUMN type");
     s1.db.exec("ALTER TABLE units DROP COLUMN role");
+    s1.db.exec("ALTER TABLE units DROP COLUMN config");
     s1.db.exec(
-      "UPDATE events SET payload_json = json_remove(payload_json, '$.mutation.unit.type', '$.mutation.unit.role') WHERE type = 'unit.created'",
+      "UPDATE events SET payload_json = json_remove(payload_json, '$.mutation.unit.type', '$.mutation.unit.role', '$.mutation.unit.config') WHERE type = 'unit.created'",
     );
     s1.db.pragma("user_version = 6");
     s1.close();
     const migrated = h.store();
-    expect(migrated.db.pragma("user_version", { simple: true })).toBe(8);
+    expect(migrated.db.pragma("user_version", { simple: true })).toBe(9);
     expect(
       migrated.listUnits("001").map((u) => [u.id, u.type, u.role]),
     ).toEqual([
