@@ -318,15 +318,16 @@ export function renderPlannerInput(
   const rejections = recent
     .filter((e) => e.type === "plan.rejected" && e.actor !== LEADER_ACTOR)
     .map((e) => `${String(e.payload.rule)}: ${String(e.payload.reason)}`);
-  // A plan's warnings are recorded before it is applied, so the last plan's sit before
-  // `since`: the window opens at the plan applied before it.
+  // A plan's warnings are recorded before it is applied, so the last applied plan's sit
+  // before `since`: the window opens at the plan applied before it. When the last cycle
+  // rejected its plan instead, nothing was warned on last cycle, and the window opens at
+  // `since` so the plan before is not repeated.
+  const warnedAfter =
+    rejections.length > 0
+      ? since
+      : lastCycleSequence(events.filter((p) => p.sequence < since));
   const warnings = events
-    .filter(
-      (e) =>
-        e.type === "plan.warned" &&
-        e.sequence >
-          lastCycleSequence(events.filter((p) => p.sequence < since)),
-    )
+    .filter((e) => e.type === "plan.warned" && e.sequence > warnedAfter)
     .map((e) => `${String(e.payload.rule)}: ${String(e.payload.reason)}`);
   const budgetStops = recent
     .filter((e) => e.type === "budget.exceeded")

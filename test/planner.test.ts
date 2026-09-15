@@ -53,7 +53,8 @@ function cycledIncident(store: Store) {
     { rationale: "first period" },
   );
   store.record("i1", "plan.proposed", "planner", { rationale: "first look" });
-  // A warning is recorded before its plan is applied (R4-6); the last plan's are shown.
+  // A warning is recorded before its plan is applied (R4-6); this one is not shown, since
+  // the cycle after it rejected its plan, so nothing was warned on last cycle.
   store.record("i1", "plan.warned", "validator", {
     rule: "Session work under a unit",
     reason:
@@ -351,6 +352,33 @@ describe("planner", () => {
     store.close();
   });
 
+  it("section 9 shows the last applied plan's warnings as warned last cycle, and none once a later cycle rejected its plan", () => {
+    const store = new Store(":memory:");
+    const s = scriptedIncident(store, "i1", AT);
+    store.record("i1", "plan.warned", "validator", {
+      rule: "Session work under a unit",
+      reason:
+        'task "read at command" is session work (investigate) under i1-command, the root',
+    });
+    store.record("i1", "plan.applied", "runtime", { rationale: "first look" });
+    const warned = () => {
+      const text = renderPlannerInput(store, s.incident, [fakeProvider]);
+      return text.slice(
+        text.indexOf("warned last cycle:"),
+        text.indexOf("## 10."),
+      );
+    };
+    expect(warned()).toBe(
+      'warned last cycle:\n  - Session work under a unit: task "read at command" is session work (investigate) under i1-command, the root\n\n',
+    );
+    store.record("i1", "plan.rejected", "validator", {
+      rule: "Span of control",
+      reason: "u-scroll would have 8 children",
+    });
+    expect(warned()).toBe("warned last cycle:\n  (nothing warned)\n\n");
+    store.close();
+  });
+
   it("renders the incident file as the ten sections in the design's order", () => {
     const store = new Store(":memory:");
     cycledIncident(store);
@@ -447,7 +475,7 @@ describe("planner", () => {
       rejected last cycle:
         - Span of control: u-scroll would have 8 children
       warned last cycle:
-        - Session work under a unit: task "read at command" is session work (investigate) under i1-command, the root
+        (nothing warned)
 
       ## 10. Situation from the last cycle
         (none)"
