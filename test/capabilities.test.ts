@@ -217,6 +217,7 @@ describe("deterministic capabilities", () => {
         equipment: [],
         bashAllowlist: [],
         role: null,
+        config: null,
         sessionId: null,
         status: "active",
         createdAt: at,

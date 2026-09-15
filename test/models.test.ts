@@ -241,9 +241,10 @@ describe("contracts", () => {
       "unit.reassigned",
       "reassignment.taken",
       "reassignment.dropped",
+      "config.saved",
     ])
       expect(EventType.options).toContain(type);
-    expect(EventType.options).toHaveLength(50);
+    expect(EventType.options).toHaveLength(51);
   });
 
   it("an incident briefing is one strict object on ICS 201's lines; a checked need says what the check showed", () => {
@@ -643,12 +644,15 @@ describe("contracts", () => {
       ActionPlan.parse({ ...plan, discrepancy: "a different problem" })
         .discrepancy,
     ).toBe("a different problem");
-    expect(() =>
+    // A unit missing its leader parses (R4-11: the three form fields are optional so a
+    // saved config can fill them) and is the validator's to reject under Config exists,
+    // recorded, rather than a parse failure that loses the planner's call.
+    expect(
       ActionPlan.parse({
         ...plan,
         createUnits: [{ ...plan.createUnits[0], leader: undefined }],
-      }),
-    ).toThrow(/leader/);
+      }).createUnits[0]?.leader,
+    ).toBeUndefined();
   });
 
   it("a strike team is a kind with a model, tools, prompt, count and why; a task may declare several, a leader may request one, and a task without one parses with none", () => {

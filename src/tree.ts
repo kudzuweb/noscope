@@ -92,7 +92,7 @@ export function describeLeader(
     unit.status === "waiting"
       ? `; waiting on: ${requests.join("; ") || "(nothing recorded)"}`
       : "";
-  return `(${unit.type}; leader ${unit.leader.provider}/${unit.leader.model}; last report: ${report === undefined ? "none" : report.outcome}${verdict === undefined ? "" : `, ${verdict}`}${waits})`;
+  return `(${unit.type}${unit.config === null ? "" : `, from config ${unit.config}`}; leader ${unit.leader.provider}/${unit.leader.model}; last report: ${report === undefined ? "none" : report.outcome}${verdict === undefined ? "" : `, ${verdict}`}${waits})`;
 }
 
 /**

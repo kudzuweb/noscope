@@ -19,7 +19,8 @@ tactics from the incident file and the IC's situation, as a suggestion for the I
 is a type plus a config: the type is the form (the fields a kind of unit fills) and the
 protocol (how it uses what is in the box), the config is the filled form; `base` is the led
 unit, whose leader session runs the unit's tasks in order and reports against the unit's
-objective, and `ic` is command, the root, whose leader is the IC. A leader can send a
+objective, and `ic` is command, the root, whose leader is the IC. A filled form the planner
+keeps producing is saved under a name and deployed by name. A leader can send a
 strike team of subagents at a task. Tasks run through capabilities (grep, read, investigate, reproduce in a
 browser, interpret) and produce claims with a basis (observed or inferred), a confidence and
 evidence. Deterministic code validates every plan, dispatches, records every call and claim
@@ -59,6 +60,7 @@ the runtime starts inherits that directory, read-only.
 | Run cycles until the incident leaves `open` or the cap is hit. | `noscope incident run <id> --max-cycles N` |
 | Read the incident file, the unit tree, the event log. | `noscope incident show <id>`, `tree`, `events` |
 | The After Action Review: every cycle, every call with tokens and cost, verdicts, reports, transfers of command, claims. | `noscope incident review <id>` |
+| Save a unit's config (its type, leader, equipment, Bash allowlist and role text) under a name the planner deploys it by; `step` offers this when the same form has been filled three times unsaved. | `noscope config save <incident> <unit-id> <name>`, `config list`, `config show <name>` |
 
 Environment: `NOSCOPE_DB` names the SQLite file (default `~/.noscope/noscope.sqlite`; use one
 file per investigation); `NOSCOPE_CLAUDE_BIN` names the Claude Code binary (default `claude`);

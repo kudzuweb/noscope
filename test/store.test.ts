@@ -28,6 +28,7 @@ function scripted(store: Store): void {
     equipment: [],
     bashAllowlist: [],
     role: null,
+    config: null,
     sessionId: null,
     status: "active",
     createdAt: at,
@@ -43,6 +44,7 @@ function scripted(store: Store): void {
     equipment: [],
     bashAllowlist: [],
     role: null,
+    config: null,
     sessionId: null,
     status: "active",
     createdAt: at,
@@ -187,6 +189,7 @@ describe("store", () => {
       equipment: [],
       bashAllowlist: [],
       role: null,
+      config: null,
       sessionId: null,
       status: "active",
       createdAt: now(),
@@ -316,6 +319,7 @@ describe("store", () => {
           equipment: [],
           bashAllowlist: [],
           role: null,
+          config: null,
           sessionId: null,
           status: "active",
           createdAt: at,
@@ -518,6 +522,7 @@ describe("store", () => {
             equipment: [],
             bashAllowlist: [],
             role: null,
+            config: null,
             sessionId: null,
             status: "active",
             createdAt: now(),
@@ -536,6 +541,7 @@ describe("store", () => {
             equipment: [],
             bashAllowlist: [],
             role: null,
+            config: null,
             sessionId: null,
             status: "active",
             createdAt: now(),
@@ -564,14 +570,14 @@ describe("store", () => {
     s1.db.pragma("user_version = 1");
     s1.close();
     const first = new Store(path);
-    expect(first.db.pragma("user_version", { simple: true })).toBe(8);
+    expect(first.db.pragma("user_version", { simple: true })).toBe(9);
     first.close();
     // A crash after the column was added but before the version was written: reopening finishes the job.
     const half = new Store(path);
     half.db.pragma("user_version = 1");
     half.close();
     const s2 = new Store(path);
-    expect(s2.db.pragma("user_version", { simple: true })).toBe(8);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(9);
     expect(
       s2
         .listClaims("i1")
@@ -599,7 +605,7 @@ describe("store", () => {
     s1.db.pragma("user_version = 2");
     s1.close();
     const s2 = new Store(path);
-    expect(s2.db.pragma("user_version", { simple: true })).toBe(8);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(9);
     expect(s2.listTasks("i1").map((t) => t.evidenceFrom)).toEqual([
       { claims: [], tasks: [] },
     ]);
@@ -620,7 +626,7 @@ describe("store", () => {
     s1.db.pragma("user_version = 3");
     s1.close();
     const s2 = new Store(path);
-    expect(s2.db.pragma("user_version", { simple: true })).toBe(8);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(9);
     expect(s2.listUnits("i1").map((u) => [u.id, u.objective])).toEqual([
       ["u-command", "command"],
       ["u1", "delete-handler investigation"],
@@ -643,6 +649,7 @@ describe("store", () => {
         equipment: ["Read"],
         bashAllowlist: ["ls"],
         role: null,
+        config: null,
         sessionId: null,
         status: "active",
         createdAt: now(),
@@ -664,7 +671,7 @@ describe("store", () => {
     s1.db.pragma("user_version = 4");
     s1.close();
     const s2 = new Store(path);
-    expect(s2.db.pragma("user_version", { simple: true })).toBe(8);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(9);
     expect(s2.listTasks("i1").map((t) => t.strikeTeam)).toEqual([[]]);
     const team = {
       kind: "pinger",
@@ -720,7 +727,7 @@ describe("store", () => {
     s1.db.pragma("user_version = 5");
     s1.close();
     const s2 = new Store(path);
-    expect(s2.db.pragma("user_version", { simple: true })).toBe(8);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(9);
     expect(s2.getIncident("i1")?.period).toBeUndefined();
     expect(s2.listUnits("i1").map((u) => [u.id, u.sessionId])).toEqual([
       ["u-command", null],
@@ -798,7 +805,7 @@ describe("store", () => {
     s1.db.pragma("user_version = 6");
     s1.close();
     const s2 = new Store(path);
-    expect(s2.db.pragma("user_version", { simple: true })).toBe(8);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(9);
     expect(s2.listUnits("i1").map((u) => [u.id, u.type, u.role])).toEqual([
       ["u-command", "ic", null],
       ["u1", "base", null],
@@ -833,6 +840,7 @@ describe("store", () => {
         equipment: [],
         bashAllowlist: [],
         role: "Your role: a reader.",
+        config: null,
         sessionId: null,
         status: "active",
         createdAt: now(),
@@ -884,7 +892,7 @@ describe("store", () => {
     s1.db.pragma("user_version = 7");
     s1.close();
     const s2 = new Store(path);
-    expect(s2.db.pragma("user_version", { simple: true })).toBe(8);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(9);
     expect(s2.listEvents("i1").map((e) => e.runtime)).toEqual(
       Array(before).fill(null),
     );
@@ -900,6 +908,112 @@ describe("store", () => {
       RUNTIME,
     ]);
     b.close();
+    s2.close();
+  });
+
+  it("migrates a version 8 file: every unit reads as filled by hand, a pre-R4-11 log replays the same, and a saved config round-trips through the row and the log as a system event", async () => {
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const path = `${mkdtempSync(`${tmpdir()}/noscope-`)}/v8.sqlite`;
+    const s1 = new Store(path);
+    scripted(s1);
+    s1.db.exec("ALTER TABLE units DROP COLUMN config");
+    s1.db.exec("DROP TABLE unit_configs");
+    s1.db.pragma("user_version = 8");
+    s1.close();
+    const s2 = new Store(path);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(9);
+    expect(s2.listUnits("i1").map((u) => [u.id, u.config])).toEqual([
+      ["u-command", null],
+      ["u1", null],
+    ]);
+    expect(s2.listUnitConfigs()).toEqual([]);
+    // A unit.create recorded before units named a config replays as filled by hand.
+    const events = s2.listEvents("i1").map((e) => {
+      const m = e.payload.mutation as
+        | { kind: string; unit?: Record<string, unknown> }
+        | undefined;
+      if (m === undefined || m.kind !== "unit.create" || m.unit === undefined)
+        return e;
+      const { config: _c, ...unit } = m.unit;
+      return { ...e, payload: { ...e.payload, mutation: { ...m, unit } } };
+    });
+    const b = new Store(":memory:");
+    b.replay([...s2.listEvents(null), ...events]);
+    expect(b.snapshot()).toEqual(s2.snapshot());
+    // A config saved now is a system event with the config.save mutation, read back by
+    // name and restored by a replay before any incident's events.
+    s2.saveUnitConfig(
+      {
+        name: "reader",
+        type: "base",
+        form: {
+          leader: { provider: "claude-code", model: "claude-haiku-4-5" },
+          equipment: ["Read"],
+          bashAllowlist: ["ls"],
+          role: "Your role: a reader.",
+        },
+        savedFrom: { incidentId: "i1", unitId: "u1" },
+        savedAt: now(),
+      },
+      "cli",
+    );
+    const saved = s2.listEvents(null).find((e) => e.type === "config.saved");
+    expect(saved?.scope).toBe("system");
+    expect(saved?.payload.mutation).toMatchObject({
+      kind: "config.save",
+      config: { name: "reader", type: "base" },
+    });
+    expect(s2.getUnitConfig("reader")?.form).toEqual({
+      leader: { provider: "claude-code", model: "claude-haiku-4-5" },
+      equipment: ["Read"],
+      bashAllowlist: ["ls"],
+      role: "Your role: a reader.",
+    });
+    expect(() =>
+      s2.saveUnitConfig(
+        {
+          name: "reader",
+          type: "base",
+          form: {},
+          savedFrom: { incidentId: "i1", unitId: "u1" },
+          savedAt: now(),
+        },
+        "cli",
+      ),
+    ).toThrow(/UNIQUE/);
+    // A unit deployed from it carries the name through the row and the log.
+    s2.createUnit(
+      {
+        id: "u-from-reader",
+        incidentId: "i1",
+        parentId: "u-command",
+        type: "base",
+        objective: "deployed from the saved config",
+        leader: { provider: "claude-code", model: "claude-haiku-4-5" },
+        equipment: ["Read"],
+        bashAllowlist: ["ls"],
+        role: "Your role: a reader.",
+        config: "reader",
+        sessionId: null,
+        status: "active",
+        createdAt: now(),
+        closedAt: null,
+      },
+      "runtime",
+    );
+    expect(
+      s2.listUnits("i1").find((u) => u.id === "u-from-reader")?.config,
+    ).toBe("reader");
+    const c = new Store(":memory:");
+    c.replay([...s2.listEvents("i1"), ...s2.listEvents(null)]);
+    expect(c.snapshot()).toEqual(s2.snapshot());
+    expect(c.getUnitConfig("reader")?.savedFrom).toEqual({
+      incidentId: "i1",
+      unitId: "u1",
+    });
+    b.close();
+    c.close();
     s2.close();
   });
 

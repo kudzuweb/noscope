@@ -1,5 +1,11 @@
 import { type Capability, getCapability } from "./capabilities/index.js";
 import {
+  configReasons,
+  type OutfittedPlan,
+  type OutfittedUnit,
+  outfit,
+} from "./configs.js";
+import {
   BUILTIN_TOOLS,
   getExternalEquipment,
   isBuiltinTool,
@@ -15,20 +21,21 @@ import {
   reportsAwaitingVerdict,
   requestTargetOf,
 } from "./leader.js";
-import type {
-  ActionPlan,
-  Claim,
-  CommandTurn,
-  Event,
-  Incident,
-  Situation,
-  StrikeTeam,
-  Task,
-  TaskProposal,
-  Unit,
-  UnitClose,
-  UnitProposal,
-  Usage,
+import {
+  type ActionPlan,
+  type Claim,
+  type CommandTurn,
+  type Event,
+  type Incident,
+  type Situation,
+  type StrikeTeam,
+  stable,
+  type Task,
+  type TaskProposal,
+  type Unit,
+  type UnitClose,
+  type UnitConfig,
+  type Usage,
 } from "./models.js";
 import { PLANNER_RULES, PLANNER_WARNINGS } from "./planner.js";
 import type { Provider } from "./providers/index.js";
@@ -69,6 +76,8 @@ export type ValidationContext = {
   situation: Situation | null;
   /** The incident's log, from which a unit's share of the budget is computed. */
   events: readonly Event[];
+  /** The saved unit configs (R4-11), which a new unit may name in `config`. */
+  configs: readonly UnitConfig[];
 };
 
 export type Rejection<R = RuleName> = { rule: R; reason: string };
@@ -76,17 +85,18 @@ export type Rejection<R = RuleName> = { rule: R; reason: string };
 /** What the validator noticed and let through (R4-6): recorded as `plan.warned`, printed by `step`, read by the planner in section 9. */
 type Warning = { rule: WarningName; reason: string };
 
+/** A passing plan comes back outfitted (R4-11): every config a new unit named is filled in, and that is the plan to apply. */
 export type Verdict<R = RuleName> =
-  | { ok: true; plan: ActionPlan; warnings: Warning[] }
+  | { ok: true; plan: OutfittedPlan; warnings: Warning[] }
   | { ok: false; rejections: Rejection<R>[] };
 
-type Rule = (plan: ActionPlan, ctx: ValidationContext) => string[];
+type Rule = (plan: OutfittedPlan, ctx: ValidationContext) => string[];
 
 const OPEN_TASK = new Set(["pending", "ready", "running"]);
 const isOpen = (t: Task) => OPEN_TASK.has(t.status);
 
 const label = (t: TaskProposal) => `task "${t.objective}"`;
-const unitLabel = (u: UnitProposal) => `new unit ${u.ref}`;
+const unitLabel = (u: OutfittedUnit) => `new unit ${u.ref}`;
 
 /** Whether a provider by name serves a model: the reason it does not, or null. */
 function modelUnknown(
@@ -168,7 +178,7 @@ export function strikeTeamRejections(
 /** A plan's new tasks' strike teams under one rule. */
 function plannedStrikeTeams(
   rule: (typeof STRIKE_TEAM_RULES)[number],
-  plan: ActionPlan,
+  plan: OutfittedPlan,
   ctx: ValidationContext,
 ): string[] {
   return plan.createTasks.flatMap((t) =>
@@ -177,26 +187,13 @@ function plannedStrikeTeams(
 }
 
 /** The refs of tasks created in this plan, which other new tasks may name in dependsOn. */
-const taskRefs = (plan: ActionPlan): Set<string> =>
+const taskRefs = (plan: OutfittedPlan): Set<string> =>
   new Set(
     plan.createTasks.flatMap((t) => (t.ref === undefined ? [] : [t.ref])),
   );
 
-/** A key-sorted JSON serialization, so two values compare equal whatever their key order. */
-export function stable(value: unknown): string {
-  return JSON.stringify(value, (_k, v: unknown) =>
-    v !== null && typeof v === "object" && !Array.isArray(v)
-      ? Object.fromEntries(
-          Object.entries(v as Record<string, unknown>).sort(([a], [b]) =>
-            a.localeCompare(b),
-          ),
-        )
-      : v,
-  );
-}
-
 /** Ids a plan may refer to as a unit: every active unit, plus the refs of units created in this plan. */
-function activeUnits(plan: ActionPlan, ctx: ValidationContext): Set<string> {
+function activeUnits(plan: OutfittedPlan, ctx: ValidationContext): Set<string> {
   return new Set([
     ...ctx.units.filter((u) => u.status === "active").map((u) => u.id),
     ...plan.createUnits.map((u) => u.ref),
@@ -205,7 +202,7 @@ function activeUnits(plan: ActionPlan, ctx: ValidationContext): Set<string> {
 
 /** A check over each new task whose capability is registered; an unregistered one is Capabilities exist's to reject. */
 function perRegisteredTask(
-  plan: ActionPlan,
+  plan: OutfittedPlan,
   check: (task: TaskProposal, capability: Capability) => string[],
 ): string[] {
   return plan.createTasks.flatMap((t) => {
@@ -266,6 +263,10 @@ const CHECKS: Record<RuleName, Rule> = {
           ];
     });
   },
+
+  // Checked before the other rules run, on the plan as proposed: a unit whose config
+  // cannot outfit it has no form for the rules below to read (`validatePlan`).
+  "Config exists": (plan, ctx) => configReasons(plan, ctx.configs),
 
   "No cycles": (plan, ctx) => {
     const reasons: string[] = [];
@@ -742,7 +743,7 @@ const WARNINGS: readonly { name: WarningName; check: Rule }[] =
   });
 
 /** The warnings a plan draws, none when it is rejected, since only an applied plan's are recorded. */
-function warningsOf(plan: ActionPlan, ctx: ValidationContext): Warning[] {
+function warningsOf(plan: OutfittedPlan, ctx: ValidationContext): Warning[] {
   return WARNINGS.flatMap(({ name, check }) =>
     check(plan, ctx).map((reason) => ({ rule: name, reason })),
   );
@@ -781,7 +782,7 @@ function typeRuleRejections(
 }
 
 /** A leader's assignments as the task rules see them: a plan that creates those tasks and nothing else. */
-function asPlan(tasks: readonly TaskProposal[]): ActionPlan {
+function asPlan(tasks: readonly TaskProposal[]): OutfittedPlan {
   return {
     createUnits: [],
     closeUnits: [],
@@ -850,16 +851,28 @@ export function validateLeaderTasksAndRecord(
   return verdict;
 }
 
-/** The whole plan passes every rule or is rejected whole, with every failing rule and its reason; a passing plan carries its warnings. */
+/**
+ * The whole plan passes every rule or is rejected whole, with every failing rule and its
+ * reason; a passing plan carries its warnings and comes back outfitted (R4-11). Config
+ * exists runs first, on the plan as proposed: a new unit whose config is not saved, or is
+ * of another type, has no form for the other rules to read, so such a plan is rejected on
+ * that rule alone and the rest run once the planner names a saved config.
+ */
 export function validatePlan(
   plan: ActionPlan,
   ctx: ValidationContext,
 ): Verdict {
+  const unresolved = configReasons(plan, ctx.configs).map((reason) => ({
+    rule: "Config exists" as const,
+    reason,
+  }));
+  if (unresolved.length > 0) return { ok: false, rejections: unresolved };
+  const whole = outfit(plan, ctx.configs);
   const rejections = RULES.flatMap(({ name, check }) =>
-    check(plan, ctx).map((reason) => ({ rule: name, reason })),
+    check(whole, ctx).map((reason) => ({ rule: name, reason })),
   );
   return rejections.length === 0
-    ? { ok: true, plan, warnings: warningsOf(plan, ctx) }
+    ? { ok: true, plan: whole, warnings: warningsOf(whole, ctx) }
     : { ok: false, rejections };
 }
 
@@ -883,6 +896,7 @@ export function validationContext(
     reassignments: openReassignments(events),
     situation: icSituation(events),
     events,
+    configs: store.listUnitConfigs(),
   };
 }
 
@@ -1114,7 +1128,7 @@ export function validateCommand(
   };
   // The assignments are the plan's tasks, so "Units exist" sees their unit and "Status
   // is earned" refuses `satisfied` beside them; the verdicts' closes are the plan's closes.
-  const commandAsPlan: ActionPlan = {
+  const commandAsPlan: OutfittedPlan = {
     createUnits: [],
     closeUnits: [...turn.closeUnits, ...verdictCloses(answering)],
     createTasks: turn.assignTasks,

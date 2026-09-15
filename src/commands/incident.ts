@@ -2,6 +2,13 @@ import { parseArgs } from "node:util";
 import { z } from "zod";
 import { recordActivity } from "../activity.js";
 import { listCapabilities } from "../capabilities/index.js";
+import {
+  describeForm,
+  formKey,
+  matchingConfig,
+  savedFormOf,
+  unsavedRepeats,
+} from "../configs.js";
 import { type Context, EXIT, type Handler } from "../context.js";
 import { dispatch } from "../dispatcher.js";
 import {
@@ -35,6 +42,7 @@ import {
   type IncidentStatus,
   type Leader,
   type StrikeTeam,
+  type Unit,
 } from "../models.js";
 import { proposePlan, renderSituation } from "../planner.js";
 import { getProvider, SessionError } from "../providers/index.js";
@@ -53,8 +61,13 @@ import {
 import { INITIAL_MODEL, sizeUp } from "../size-up.js";
 import { cycleOf, now, resolveDbPath, Store, sumUsage } from "../store.js";
 import { describeStrikeTeam } from "../strike-team.js";
-import { renderTree } from "../tree.js";
-import { commandUnitOf, newCommandUnit } from "../units/index.js";
+import {
+  describeLeader,
+  lastReports as lastReportsOf,
+  lastVerdicts,
+  renderTree,
+} from "../tree.js";
+import { commandUnitOf, getUnitType, newCommandUnit } from "../units/index.js";
 import {
   validateAndRecord,
   validateCommand,
@@ -465,6 +478,12 @@ function renderIncidentFile(
   lines.push(
     `units: ${units.filter((u) => u.status === "active").length} active, ${units.filter((u) => u.status === "waiting").length} waiting, ${units.filter((u) => u.status === "closed").length} closed`,
   );
+  const reportsByUnit = lastReportsOf(events);
+  const verdictsByUnit = lastVerdicts(events);
+  for (const u of units)
+    lines.push(
+      `  ${u.id} [${u.status}] ${u.objective} ${describeLeader(u, reportsByUnit, openRequestsByUnit(incident, events), verdictsByUnit)}`,
+    );
   lines.push(
     `tasks: ${tasks.filter((t) => t.status !== "completed" && t.status !== "cancelled" && t.status !== "failed").length} open, ${tasks.length} total`,
   );
@@ -643,8 +662,54 @@ export const tree: Handler = async (args, ctx) => {
   }
 };
 
+/**
+ * The offer to save a repeated config (R4-11): after a plan is applied, each new unit
+ * filled by hand is compared with every unit in the file, across incidents, and when the
+ * same filled form has now appeared three times or more unsaved, and no saved config
+ * matches it, `step` prints the offer with the command that saves it. Nothing is saved
+ * here; one offer per distinct form, naming the first new unit that carries it.
+ */
+function saveOffers(
+  store: Store,
+  incidentId: string,
+  created: readonly Unit[],
+): string[] {
+  const all = store.listAllUnits();
+  const configs = store.listUnitConfigs();
+  const offered = new Set<string>();
+  const lines: string[] = [];
+  for (const u of created) {
+    if (u.config !== null || !(getUnitType(u.type)?.plannable ?? false))
+      continue;
+    if (matchingConfig(configs, u) !== undefined) continue;
+    const form = savedFormOf(u);
+    const key = formKey(u.type, form);
+    if (offered.has(key)) continue;
+    const repeats = unsavedRepeats(all, u);
+    if (repeats < SAVE_OFFER_REPEATS) continue;
+    offered.add(key);
+    lines.push(
+      `  unit ${u.id}'s config (${u.type}: ${describeForm(form)}) has now been filled by hand ${repeats} times across this file's incidents and is not saved; to deploy it by name from the next plan on, save it: noscope config save ${incidentId} ${u.id} <name>`,
+    );
+  }
+  return lines;
+}
+
+/** How many times the same filled form appears unsaved before `step` offers to save it. */
+const SAVE_OFFER_REPEATS = 3;
+
 /** What one cycle came to: the incident's status afterwards, and a budget stop if the pass ended on one. */
 type CycleOutcome = { status: IncidentStatus; stopped: string | null };
+
+/** A new unit's seat as `step` prints it: the saved config it names (R4-11), the leader it gives, or both when a leader is given beside the config. */
+function proposalSeat(u: ActionPlan["createUnits"][number]): string {
+  return [
+    ...(u.config === undefined ? [] : [`config ${u.config}`]),
+    ...(u.leader === undefined
+      ? []
+      : [`leader ${u.leader.provider}/${u.leader.model}`]),
+  ].join(", ");
+}
 
 /** A plan as `step` prints it: what it creates, closes, cancels, asks and requests, and its status. */
 function printPlan(ctx: Context, plan: ActionPlan): void {
@@ -652,7 +717,7 @@ function printPlan(ctx: Context, plan: ActionPlan): void {
     ctx.io.out(`  discrepancy: ${plan.discrepancy}`);
   for (const u of plan.createUnits)
     ctx.io.out(
-      `  create unit ${u.ref} under ${u.parent} (leader ${u.leader.provider}/${u.leader.model}): ${u.objective}${u.takes === undefined ? "" : ` (takes reassignment ${u.takes})`}`,
+      `  create unit ${u.ref} under ${u.parent} (${proposalSeat(u)}): ${u.objective}${u.takes === undefined ? "" : ` (takes reassignment ${u.takes})`}`,
     );
   for (const c of plan.closeUnits)
     ctx.io.out(`  close unit ${c.unitId}: ${c.reason}`);
@@ -903,7 +968,7 @@ async function cycle(
   ctx.io.out("plan approved");
   for (const w of verdict.warnings)
     ctx.io.out(`  warned, applied anyway: ${w.rule}: ${w.reason}`);
-  const applied = applyPlan(store, current, plan, "runtime", {
+  const applied = applyPlan(store, current, verdict.plan, "runtime", {
     verdict: review.output.verdict,
     corrections,
     diff: planDiff(draft.plan, plan),
@@ -911,9 +976,11 @@ async function cycle(
   for (const u of applied.units) {
     const takes = applied.taken.find((t) => t.unitId === u.id);
     ctx.io.out(
-      `  unit ${u.id} created under ${u.parentId}: ${u.objective}${takes === undefined ? "" : ` (takes reassignment ${takes.reassignmentId})`}`,
+      `  unit ${u.id} created under ${u.parentId}${u.config === null ? "" : ` from saved config ${u.config}`}: ${u.objective}${takes === undefined ? "" : ` (takes reassignment ${takes.reassignmentId})`}`,
     );
   }
+  for (const line of saveOffers(store, incident.id, applied.units))
+    ctx.io.out(line);
   for (const id of applied.closedUnits) ctx.io.out(`  unit ${id} closed`);
   for (const t of applied.tasks)
     ctx.io.out(
