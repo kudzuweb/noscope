@@ -916,3 +916,38 @@ Not exactly to spec, with reasons:
 - `setClaimStatus` in `src/store.ts` keeps no caller in `src/`; it stays so the replay
   test can write a `claim.status` mutation and prove old logs from runs 001 and 002 still
   rebuild, since those logs carry promotion events.
+
+## R3-3: Persistent sessions (#29, merged 2026-09-15)
+
+R3-3 of the round 3 plan. Built: `SessionRequest` gains optional `resume`, a session id;
+the Claude Code renderer adds `--resume <id>` when it is set, and `--no-session-persistence`
+is never among the flags, so every session stays resumable. `SessionOutcome` is unchanged:
+a resumed call returns one structured result and reports that call's usage alone, with the
+session's id unchanged. The provider spawns every session with `DISABLE_COMPACT=1` in its
+environment, so auto-compaction never rewrites a session between the calls that resume it.
+The stub binary answers a `--resume` call with the id it was given as `session_id` and
+records `DISABLE_COMPACT` in its log. Tests: the renderer with and without `resume`, the
+stub resumed twice, the environment reaching the stub, and a live test behind
+`NOSCOPE_LIVE=1` that runs two Haiku calls on one session with one schema and asserts the
+id is kept, the word from the first call is recalled, and the second call reads from cache.
+DESIGN.md Step 3 (a `resume` row in the session table, the compaction sentence beside the
+isolation flags) and the Speed section's last sentence follow; `docs/architecture.html`
+names both on the session line. No caller sets `resume` yet; R3-4's unit leaders do.
+
+Not exactly to spec, with reasons:
+
+- The open observation from R3-0 resolves: cache reads were 0 on its resumed calls, and on a
+  first live run of this PR's test too, because the first call had written nothing to
+  cache. Haiku 4.5's minimum cacheable prefix is 4096 tokens (Anthropic's prompt caching
+  docs, read 2026-09-15), above a bare session's context of about 3k, so a short session
+  caches nothing on any call, resumed or not; the schema changing per call was not the
+  cause. The live test pads its role text past the minimum and asserts the first call's
+  cache write as well as the second call's cache read; with the padding, the first call
+  wrote 5457 tokens and the resumed call read 11128 (Claude Code 2.1.272, 2026-09-15). The
+  design's `resume` row records the minimum, since a leader's session on Haiku will only
+  cache once its context has grown past it.
+- `DISABLE_COMPACT` is set inside `runProcess` on the spawned environment rather than by
+  each caller of the provider, so no request can forget it.
+- The Reference table gains no row here; R3-0 lands the resume rows, and this PR's finding
+  is in the `resume` row of Step 3's session table instead, so the two PRs do not both
+  append to one table.
