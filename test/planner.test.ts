@@ -258,7 +258,7 @@ describe("planner", () => {
     store.close();
   });
 
-  it("renders the incident file as the ten sections in the design's order", () => {
+  it("renders the incident file as the nine sections in the design's order", () => {
     const store = new Store(":memory:");
     cycledIncident(store);
     const incident = store.getIncident("i1");

@@ -865,7 +865,7 @@ Not exactly to spec, with reasons:
 - Cache reads were 0 on every resumed call in `resume.sh`, which the row records as an
   open observation rather than a fact; R3-3's live test settles it with a fixed schema.
 
-## R3-2: Status is a label (#PR, merged 2026-09-15)
+## R3-2: Status is a label (#30, merged 2026-09-15)
 
 R3-2 of the round 3 plan. Built: a claim's status now says only which kind of source
 produced it, `verified` for deterministic equipment and `asserted` for a session, and
@@ -913,3 +913,6 @@ Not exactly to spec, with reasons:
   leaders and lands after this.
 - Section numbers cited in the planner prompt ("Section 10", "section 8") follow the
   renumbering; the plan block did not mention them.
+- `setClaimStatus` in `src/store.ts` keeps no caller in `src/`; it stays so the replay
+  test can write a `claim.status` mutation and prove old logs from runs 001 and 002 still
+  rebuild, since those logs carry promotion events.

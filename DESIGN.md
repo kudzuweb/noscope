@@ -102,7 +102,7 @@ noscope/
 │   ├── runtime.ts        # the cycle
 │   ├── store.ts          # SQLite: schema, transactions, queries
 │   ├── models.ts         # zod contracts shared by every module
-│   ├── planner.ts        # the one provider call per cycle: renders the ten sections, records plan.proposed
+│   ├── planner.ts        # the one provider call per cycle: renders the nine sections, records plan.proposed
 │   ├── validator.ts      # action plan rules
 │   ├── dispatcher.ts     # runs ready tasks through capabilities
 │   ├── verifier.ts       # turns results into claims
@@ -299,7 +299,7 @@ Input, rendered as labeled sections in a stable order so the prefix caches:
 Output:
 
 ```ts
-const ActionPlan = z.object({
+const ActionPlan = z.strictObject({
   createUnits: z.array(UnitProposal),            // purpose, parent unit
   closeUnits: z.array(UnitClose),                // unit id, with a reason each
   createTasks: z.array(TaskProposal),// ref, unit, capability, objective, inputs, criteria, dependsOn (task ids or refs in this plan), evidenceFrom (claims by id, tasks by id or ref), instructions, provider, model
