@@ -2768,8 +2768,8 @@ report after its brief says `not yet reported`. `LEADER_ROLE` gains a paragraph 
 verdicts and the brief: the unit and its objective stand, the instructions open the next
 turn, the leader assigns what is missing or reports at once, and the next report is
 numbered. DESIGN.md Step 2 (the event and the `revision` field), Step 4 (the revise
-sentence), Step 6 (the brief in the pass) and Step 7 (the review row), and the
-architecture page's dispatch step follow.
+sentence), Step 5 (the Closing is clean row), Step 6 (the brief in the pass) and Step 7
+(the review row), and the architecture page's dispatch step follow.
 
 Tests: a stub run (`test/ic.test.ts`) where the leader reports `progress` in cycle 1, the
 IC revises with instructions, cycle 2's pass resumes the leader's session with the brief
@@ -2825,10 +2825,14 @@ Not exactly to spec, with reasons:
   per cycle for a unit that keeps reporting `progress`, since each revise is delivered;
   the four tests named above absorbed it. A test that wants a unit left alone after a
   `progress` report scripts an `accepted` verdict.
-- Not built, noted for a follow-up: nothing stops a plan, or a later command turn's
-  `closeUnits`, from closing a revised unit before its brief is delivered (a pass halted
-  by another unit's picture-changing report can leave one undelivered); "Closing is
-  clean" does not count an undelivered revise as a report owed, and the planner's tree
-  shows the unit as `last report: progress, revise`. Adding a reason there would also
-  refuse the IC's own later close, which is its decision to make, so the rule is left
-  for a ruling.
+- A plan may not close a unit whose revise is not yet delivered, ruled by the
+  orchestrator in review on 2026-09-15 when the gap was flagged: the plan drafted in the
+  verdict's cycle would otherwise close the unit before its leader read the brief.
+  `ValidationContext` gains `revised` (the keys of `revisedUnits`, set in
+  `validationContext`), "Closing is clean" refuses such a close with `unit X has a
+  revision not yet delivered; its leader answers it first`, and `validateCommand` runs
+  the command rules with `revised` blanked, since the IC's next command turn comes after
+  the pass that delivers the brief and its own close stays free. The planner's rule text,
+  the planner snapshot and DESIGN.md Step 5's row follow; a validator test pins the
+  plan's rejection, the IC's close of the same unit passing, and the close freed once
+  `unit.revised` follows.
