@@ -90,7 +90,7 @@ function nextTurn() {
   if (process.env.NOSCOPE_STUB_TURN) return JSON.parse(process.env.NOSCOPE_STUB_TURN);
   return prompt.includes("No ready tasks remain")
     ? { kind: "report", report: { outcome: "progress", changed: [], pictureChanged: false } }
-    : { kind: "continue" };
+    : { kind: "continue", report: null };
 }
 
 function nextPlan() {

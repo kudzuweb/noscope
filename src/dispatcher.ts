@@ -536,7 +536,7 @@ export async function dispatch(
       options,
       actor,
     );
-    if (turned.turn.kind === "report" && turned.turn.report !== undefined) {
+    if (turned.turn.kind === "report" && turned.turn.report !== null) {
       reports.push({
         unitId: unit.id,
         sessionId: turned.sessionId,

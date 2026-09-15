@@ -236,16 +236,33 @@ describe("contracts", () => {
   });
 
   it("a leader's turn is a report or a continue; a not_met report says why and what to do, and a discrepancy rides on either", () => {
-    expect(LeaderTurn.parse({ kind: "continue" })).toEqual({
+    expect(LeaderTurn.parse({ kind: "continue", report: null })).toEqual({
       kind: "continue",
+      report: null,
     });
     expect(
-      LeaderTurn.parse({ kind: "continue", discrepancy: "a hurricane" })
-        .discrepancy,
+      LeaderTurn.parse({
+        kind: "continue",
+        report: null,
+        discrepancy: "a hurricane",
+      }).discrepancy,
     ).toBe("a hurricane");
-    expect(() => LeaderTurn.parse({ kind: "report" })).toThrow(
+    // The report is required, null on a continue turn and present on a report turn.
+    expect(() => LeaderTurn.parse({ kind: "continue" })).toThrow(/report/);
+    expect(() => LeaderTurn.parse({ kind: "report", report: null })).toThrow(
       /a report turn carries its report/,
     );
+    // A report flattened onto the turn, as a Haiku leader answered in R3-5's live runs, is
+    // refused: the object is strict, so the provider's own validation refuses it too.
+    expect(() =>
+      LeaderTurn.parse({
+        kind: "report",
+        report: null,
+        outcome: "progress",
+        changed: [],
+        pictureChanged: false,
+      }),
+    ).toThrow(/Unrecognized key/);
     const met = {
       kind: "report",
       report: {
@@ -271,14 +288,29 @@ describe("contracts", () => {
           why: "nothing matched",
           suggestion: "widen the search",
         },
-      }).report?.pictureChanged,
-    ).toBe(true);
+      }).kind,
+    ).toBe("report");
+    // Exported as one closed object with the report required (nullable), never a union:
+    // the API refuses oneOf, anyOf and allOf at the top level of a tool's input schema.
     const schema = jsonSchemaFor(LeaderTurn) as {
       type: string;
-      properties: { kind: { enum: string[] } };
+      properties: { kind: { enum: string[] }; report: { anyOf?: unknown[] } };
+      required: string[];
+      additionalProperties: boolean;
     };
     expect(schema.type).toBe("object");
     expect(schema.properties.kind.enum).toEqual(["report", "continue"]);
+    expect(schema.required).toEqual(["kind", "report"]);
+    expect(schema.additionalProperties).toBe(false);
+    expect(schema.properties.report.anyOf).toHaveLength(2);
+    expect(() =>
+      jsonSchemaFor(
+        z.discriminatedUnion("kind", [
+          z.strictObject({ kind: z.literal("a") }),
+          z.strictObject({ kind: z.literal("b") }),
+        ]),
+      ),
+    ).toThrow(/union of objects is refused/);
     expect(
       ActionPlan.parse({ ...plan, discrepancy: "a different problem" })
         .discrepancy,
@@ -319,8 +351,11 @@ describe("contracts", () => {
       }).strikeTeam,
     ).toHaveLength(2);
     expect(
-      LeaderTurn.parse({ kind: "continue", requestStrikeTeam: [team] })
-        .requestStrikeTeam,
+      LeaderTurn.parse({
+        kind: "continue",
+        report: null,
+        requestStrikeTeam: [team],
+      }).requestStrikeTeam,
     ).toEqual([team]);
     const schema = jsonSchemaFor(LeaderTurn) as {
       properties: { requestStrikeTeam: { items: { required: string[] } } };

@@ -959,7 +959,10 @@ describe("dispatcher, unit leaders", () => {
     });
     // Next pass: u-b runs; its leader says continue with nothing left, so the pass ends
     // without its report, and the pass after that asks u-b for one with no task to show.
-    process.env.NOSCOPE_STUB_TURN = JSON.stringify({ kind: "continue" });
+    process.env.NOSCOPE_STUB_TURN = JSON.stringify({
+      kind: "continue",
+      report: null,
+    });
     let second: Awaited<ReturnType<typeof dispatch>>;
     try {
       second = await dispatch(store, incident, stubbed);
@@ -1134,10 +1137,11 @@ describe("dispatcher, unit leaders", () => {
     process.env.NOSCOPE_STUB_CALLS = log;
     process.env.NOSCOPE_STUB_TURNS = JSON.stringify([
       // After the grep: ask for pingers on the next task (t-inv).
-      { kind: "continue", requestStrikeTeam: [pinger] },
+      { kind: "continue", report: null, requestStrikeTeam: [pinger] },
       // After the investigate: a writing tool, refused on t-read.
       {
         kind: "continue",
+        report: null,
         requestStrikeTeam: [
           { ...pinger, kind: "editor", tools: ["Edit"], count: 1 },
         ],
@@ -1323,24 +1327,16 @@ describe("dispatcher, unit leaders", () => {
       };
       const [created] = applyPlan(store, incident, plan).tasks;
       if (created === undefined) throw new Error("the plan creates one task");
-      // The task's events are written before the leader's turn. That turn is R3-4's, and a
-      // Haiku leader sometimes flattens the optional report onto the turn (seen 2026-09-15:
-      // `{kind: "report", outcome: ..., changed: ...}`), which ends the pass with an error
-      // after the task is filed; the check here is the task's log, so that error is let through.
-      try {
-        const { ran } = await dispatch(store, incident, { cwd: tree, env: {} });
-        expect(ran.map((r) => [r.taskId, r.status])).toEqual([
-          [created.id, "completed"],
-        ]);
-      } catch (error) {
-        if (
-          !(error instanceof Error) ||
-          !/^leader of unit .*: the result did not fit its schema/.test(
-            error.message,
-          )
-        )
-          throw error;
-      }
+      const { ran, reports } = await dispatch(store, incident, {
+        cwd: tree,
+        env: {},
+      });
+      expect(ran.map((r) => [r.taskId, r.status])).toEqual([
+        [created.id, "completed"],
+      ]);
+      // The leader's turn fits the closed LeaderTurn schema (a Haiku leader flattened the
+      // report while `report` was optional on one open object).
+      expect(reports).toHaveLength(1);
       const events = store.listEvents("i1");
       expect(
         events.find((e) => e.type === "task.completed")?.payload,

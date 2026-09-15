@@ -1258,12 +1258,20 @@ Not exactly to spec, with reasons:
   calls and the test links each member to one of them. In both live runs the binary launched
   the members as background agents ("Async agent launched successfully") and the session
   waited for their notifications; both transcripts were read as before.
-- In both live runs the Haiku leader's turn after the task did not fit `LeaderTurn`: it
-  flattened the report's fields onto the turn (`{kind: "report", outcome: ..., changed:
-  ...}`) rather than nesting them under the optional `report`. That turn is R3-4's ground
-  and the task's events were already written, so the live test lets that one failure
-  through and asserts the log; the schema shape (an optional `report` a small model skips)
-  is for R3-7, which gives the IC its own schemas, to settle.
+- `LeaderTurn` is now one `strictObject` with `report` required and nullable (null on a
+  continue turn), the not-met refinement moved onto `LeaderReport`, every field name kept.
+  In the first live runs the Haiku leader's turn did not fit the R3-4 shape, one open
+  object with `report` optional: it flattened the report's fields onto the turn (`{kind:
+  "report", outcome: ..., changed: ...}`), which ended the pass at parse. The closed object
+  puts `additionalProperties: false` and the required `report` into the schema the
+  provider validates against, so a flattened turn is refused at the `StructuredOutput`
+  call and retried by the session. The orchestrator asked for a discriminated union of two
+  strict variants; the API refuses one at the top level of a tool's input schema
+  ("input_schema does not support oneOf, allOf, or anyOf at the top level", a 400 seen
+  2026-09-15 on 2.1.272 with the union rendered from zod as `oneOf`), so `jsonSchemaFor`
+  now names that in its refusal and the closed object with the required nullable report is
+  the nearest shape the API takes. In the live run after the change the Haiku leader's turn
+  nested its report and parsed on the first answer.
 - The `Agent` tool's result on 2.1.272 tells the model the `agentId` is internal and not to
   quote it; the brief tells the session to cite it in a claim's evidence, and in the live
   runs Haiku did. A claim can also cite the member's `subagent.ran` event id, which only a

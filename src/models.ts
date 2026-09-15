@@ -416,7 +416,7 @@ export const ReportChange = z.object({
   claims: z.array(z.string()).describe("Claim ids the change rests on"),
 });
 
-export const LeaderReport = z.object({
+const LeaderReportFields = z.object({
   outcome: z.enum(["met", "not_met", "progress"]),
   changed: z
     .array(ReportChange)
@@ -440,50 +440,66 @@ export const LeaderReport = z.object({
     .describe("When the objective is not met: what to do about it"),
 });
 
+/** A report whose objective is not met says why and what to do about it. */
+export const LeaderReport = LeaderReportFields.superRefine((r, ctx) => {
+  if (r.outcome !== "not_met") return;
+  if (r.why === undefined)
+    ctx.addIssue({
+      code: "custom",
+      path: ["why"],
+      message: "a not_met report says why",
+    });
+  if (r.suggestion === undefined)
+    ctx.addIssue({
+      code: "custom",
+      path: ["suggestion"],
+      message: "a not_met report carries a suggestion",
+    });
+});
+
+/** The fields both kinds of turn carry: a strike-team request for the next task, and a discrepancy. */
+const TurnFields = {
+  requestStrikeTeam: z
+    .array(StrikeTeam)
+    .optional()
+    .describe(
+      "A strike team to send on your next task, each kind with its model, tools, prompt, count and why; the runtime declares it on that task and provides the kinds on your next call for it",
+    ),
+  discrepancy: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Only when the update received describes a different problem from the one being worked, not a different detail: what differs",
+    ),
+};
+
 /**
  * A leader's next move: `continue` to the next ready task in its unit, or `report` against
- * the unit's objective, which ends the unit's pass. One object, not a union, since a provider
- * takes only an object schema; the kind decides which fields must be filled.
+ * the unit's objective, which ends the unit's pass. One closed object, not a union: the
+ * API refuses `oneOf`, `anyOf` and `allOf` at the top level of a tool's input schema
+ * (verified 2026-09-15 on Claude Code 2.1.272: "input_schema does not support oneOf,
+ * allOf, or anyOf at the top level"). `report` is required and null on a continue turn,
+ * and the object is strict (`additionalProperties: false`), so a leader that flattens the
+ * report's fields onto the turn (a Haiku leader did, 2026-09-15, while `report` was
+ * optional on an open object) is refused by the provider's own validation and retried,
+ * rather than parsed here after the call has ended.
  */
 export const LeaderTurn = z
-  .object({
+  .strictObject({
     kind: z.enum(["report", "continue"]),
-    report: LeaderReport.optional(),
-    requestStrikeTeam: z
-      .array(StrikeTeam)
-      .optional()
-      .describe(
-        "A strike team to send on your next task, each kind with its model, tools, prompt, count and why; the runtime declares it on that task and provides the kinds on your next call for it",
-      ),
-    discrepancy: z
-      .string()
-      .min(1)
-      .optional()
-      .describe(
-        "Only when the update received describes a different problem from the one being worked, not a different detail: what differs",
-      ),
+    report: LeaderReport.nullable().describe(
+      "The report on a report turn; null on a continue turn",
+    ),
+    ...TurnFields,
   })
   .superRefine((t, ctx) => {
-    if (t.kind === "report" && t.report === undefined)
+    if (t.kind === "report" && t.report === null)
       ctx.addIssue({
         code: "custom",
         path: ["report"],
         message: "a report turn carries its report",
       });
-    if (t.report?.outcome === "not_met") {
-      if (t.report.why === undefined)
-        ctx.addIssue({
-          code: "custom",
-          path: ["report", "why"],
-          message: "a not_met report says why",
-        });
-      if (t.report.suggestion === undefined)
-        ctx.addIssue({
-          code: "custom",
-          path: ["report", "suggestion"],
-          message: "a not_met report carries a suggestion",
-        });
-    }
   });
 
 // What a session returns.
@@ -587,7 +603,9 @@ export type SessionResult = z.infer<typeof SessionResult>;
 /**
  * The JSON Schema a provider receives for a structured output. Claude Code's --json-schema
  * rejects a `$schema` key and requires a top-level object (verified 2026-09-12 on 2.1.270),
- * so the key is dropped and a non-object schema is refused here rather than at the provider.
+ * and the API refuses `oneOf`, `anyOf` and `allOf` at the top level of a tool's input
+ * schema (verified 2026-09-15 on 2.1.272), so the key is dropped and a non-object schema,
+ * a union of objects included, is refused here rather than at the provider.
  */
 export function jsonSchemaFor(schema: z.ZodType): Record<string, unknown> {
   const { $schema: _dropped, ...json } = z.toJSONSchema(schema, {
@@ -596,7 +614,7 @@ export function jsonSchemaFor(schema: z.ZodType): Record<string, unknown> {
   }) as Record<string, unknown>;
   if (json.type !== "object") {
     throw new Error(
-      "a provider-facing schema must be an object at the top level",
+      "a provider-facing schema must be an object at the top level; a union of objects is refused by the API there",
     );
   }
   return json;
