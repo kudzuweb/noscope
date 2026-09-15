@@ -18,6 +18,7 @@ import {
   LEADER_TURN_SCHEMA,
   leaderRequest,
   type RefusedCall,
+  reassignmentTakenBy,
   renderLeaderOrientation,
   renderTurnPrompt,
   resumedUnits,
@@ -290,7 +291,7 @@ function briefContext(
   };
 }
 
-/** The leader's orientation, sent once at the top of its first call, before the first brief or result. */
+/** The leader's orientation, sent once at the top of its first call, before the first brief or result; a unit that took a reassignment (R4-4) reads its instructions and the predecessor's claims here. */
 function orientation(
   store: Store,
   incident: Incident,
@@ -298,18 +299,29 @@ function orientation(
   units: readonly Unit[],
   beforeBrief = false,
 ): string[] {
-  return unit.sessionId !== null
-    ? []
-    : [
-        ...renderLeaderOrientation(
-          incident,
-          lastSituation(store.listEvents(incident.id)),
-          unit,
-          units,
-          beforeBrief,
-        ),
-        "",
-      ];
+  if (unit.sessionId !== null) return [];
+  const events = store.listEvents(incident.id);
+  const reassignment = reassignmentTakenBy(events, unit.id);
+  const taken =
+    reassignment === null
+      ? null
+      : {
+          reassignment,
+          claims: store
+            .listClaims(incident.id)
+            .filter((c) => reassignment.claims.includes(c.id)),
+        };
+  return [
+    ...renderLeaderOrientation(
+      incident,
+      lastSituation(events),
+      unit,
+      units,
+      beforeBrief,
+      taken,
+    ),
+    "",
+  ];
 }
 
 /**

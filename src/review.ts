@@ -3,6 +3,7 @@ import {
   IC_ACTOR,
   LEADER_ACTOR,
   type RefusedCall,
+  reassignments,
 } from "./leader.js";
 import {
   type Claim,
@@ -708,6 +709,23 @@ function revisionLines(
   return lines;
 }
 
+/**
+ * Each reassignment the IC recorded (R4-4), beside the revisions: the closed unit and its
+ * objective, the cycle, the claims it carried, and where it stands: taken by which unit,
+ * dropped by the verdict, or still open for the next plan.
+ */
+function reassignmentLines(events: readonly Event[]): string[] {
+  const all = reassignments(events);
+  if (all.length === 0) return ["reassignments: none"];
+  return [
+    `reassignments: ${all.length}`,
+    ...all.map(
+      (r) =>
+        `  ${r.id} from ${r.unitId} in cycle ${r.cycle}: ${r.claims.length} claim(s); ${r.dropped ? "dropped by the IC" : r.takenBy === null ? "open, taken by no unit yet" : `taken by ${r.takenBy}`}; instructions: ${clip(r.instructions)}`,
+    ),
+  ];
+}
+
 /** How much of the briefing the IC kept: the verdicts on its first accepted command turn that evaluated one, counted by kind. */
 function briefingKept(events: readonly Event[]): string {
   const briefed = events.find((e) => e.type === "incident.briefed");
@@ -1077,6 +1095,14 @@ export function renderReview(
         lines.push(
           `  revision ${String(e.payload.revision)} briefed to the leader of ${str(e.payload.unitId)} on report ${str(e.payload.reportId)}: ${clip(str(e.payload.instructions))}${session(str(e.payload.sessionId))}`,
         );
+      if (e.type === "unit.reassigned")
+        lines.push(
+          `  reassignment ${str(e.payload.reassignmentId)} ${e.payload.dropped === true ? "dropped" : "recorded"} from ${str(e.payload.unitId)} with ${list(e.payload.claims).length} claim(s)`,
+        );
+      if (e.type === "reassignment.taken")
+        lines.push(
+          `  reassignment ${str(e.payload.reassignmentId)} taken by ${str(e.payload.unitId)}`,
+        );
       if (e.actor !== LEADER_ACTOR) continue;
       if (e.type === "plan.applied") {
         const assigned = list(e.payload.tasks).length;
@@ -1170,6 +1196,7 @@ export function renderReview(
   );
   lines.push(...reportVerdictLines(events));
   lines.push(...revisionLines(events, taskById));
+  lines.push(...reassignmentLines(events));
   lines.push(briefingKept(events));
   lines.push(refusalsLine(events));
   const transfers = events.filter((e) => e.type === "command.transferred");

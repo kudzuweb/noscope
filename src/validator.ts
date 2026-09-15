@@ -10,7 +10,9 @@ import {
   LEADER_ACTOR,
   LEADER_RULES,
   latestReports,
+  openReassignments,
   openRequests,
+  type Reassignment,
   reportsAwaitingVerdict,
   requestTargetOf,
   revisedUnits,
@@ -56,6 +58,8 @@ export type ValidationContext = {
   owing: ReadonlySet<string>;
   /** Units with a revise verdict not yet delivered to their leader (R4-3); a plan cannot close one, while the IC's own close is its decision (`validateCommand` blanks this). */
   revised: ReadonlySet<string>;
+  /** The reassignments open (R4-4): recorded, not dropped, taken by no unit; a plan gives each to a new unit that names it in `takes`. */
+  reassignments: readonly Reassignment[];
   /** The incident's log, from which a unit's share of the budget is computed. */
   events: readonly Event[];
 };
@@ -681,6 +685,28 @@ const CHECKS: Record<RuleName, Rule> = {
       reasons.push("satisfied with no observed claim");
     return reasons;
   },
+
+  "Reassignments taken": (plan, ctx) => {
+    const open = new Map(ctx.reassignments.map((r) => [r.id, r]));
+    const takes = plan.createUnits.flatMap((u) =>
+      u.takes === undefined ? [] : [u.takes],
+    );
+    return [
+      ...plan.createUnits
+        .filter((u) => u.takes !== undefined && !open.has(u.takes))
+        .map(
+          (u) =>
+            `${unitLabel(u)} takes ${u.takes}, which is no open reassignment`,
+        ),
+      ...repeated(takes).map((id) => `reassignment ${id} is taken twice`),
+      ...[...open.values()]
+        .filter((r) => !takes.includes(r.id))
+        .map(
+          (r) =>
+            `reassignment ${r.id}, the slice of closed unit ${r.unitId}, is not taken: no new unit names it in takes`,
+        ),
+    ];
+  },
 };
 
 /** Every rule the design names, in the order the planner reads them; the checks are keyed by the planner's own rule names. */
@@ -906,6 +932,7 @@ export function validationContext(
     usage: sumUsage(events),
     owing: unitsOwingReport(units, tasks, events),
     revised: new Set(revisedUnits(units, events).keys()),
+    reassignments: openReassignments(events),
     events,
   };
 }

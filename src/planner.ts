@@ -2,7 +2,13 @@ import type { z } from "zod";
 import { recordActivity } from "./activity.js";
 import { listCapabilities } from "./capabilities/index.js";
 import { READ_ONLY_SESSION_COMMANDS } from "./equipment/index.js";
-import { IC_ACTOR, LEADER_ACTOR, openRequestsByUnit } from "./leader.js";
+import {
+  IC_ACTOR,
+  LEADER_ACTOR,
+  openReassignments,
+  openRequestsByUnit,
+  type Reassignment,
+} from "./leader.js";
 import {
   ActionPlan,
   type Claim,
@@ -34,7 +40,7 @@ An incident is any objective Mauria asks to have pursued; it does not mean somet
 
 The terms: a unit is a box in the incident's tree that owns a slice of the problem, with an objective and a leader, a session on the provider and model the unit names that directs the unit's tasks and reports against the objective; a task is one assignment, owned by one unit, bound to one capability; a capability is the assignable thing, deterministic or session-backed; a claim is a statement with a status and a basis. A task to a session-backed capability on the leader's model, needing no equipment beyond the unit's, runs inside the leader's session; any other task runs in its own session or in process and its result reaches the leader. The status names the source and gates nothing: verified means deterministic equipment produced it, asserted means a session did. The basis says whether it was seen: observed means seen in code, in output or in a browser, inferred means reasoned to from what was seen. An observed claim counts as proven whichever source produced it.
 
-You propose structure only. You do not run tools, you do not write, and you never mark your own conclusions true. Read the incident file that follows, in its ten sections, and return one action plan. Section 10 is the situation you wrote last cycle; write this cycle's in the plan: what changed, the hypothesis, the observed claims it rests on, every inferred link with what this plan does to settle it, and the claims to keep in view.
+You propose structure only. You do not run tools, you do not write, and you never mark your own conclusions true. Read the incident file that follows, in its eleven sections, and return one action plan. Section 10 is the situation you wrote last cycle; write this cycle's in the plan: what changed, the hypothesis, the observed claims it rests on, every inferred link with what this plan does to settle it, and the claims to keep in view. Section 11 lists the reassignments open: each is the slice of a unit the IC closed with a reassign verdict, with the IC's instructions, written from what that unit found and did not find, and the claims the unit produced. Every open reassignment is taken by exactly one new unit in this plan, of the shape the instructions call for, naming the reassignment's id in takes; its leader is oriented with the instructions and the claims, so the new unit starts from what was found.
 
 When you lack something, use the channel for it: a task to a capability for a fact it can retrieve; a grant request for permission; a capability request for means that do not exist yet; a question for a human only for what only a human knows. A unit's leader resolves its own lacks the same way at its level: it assigns a task under its unit for a retrievable fact, and sends the other three kinds up as resource requests on its report, which put the unit in waiting until Mauria answers; a waiting unit runs nothing and takes no new task, and the incident stays open. A link the repository cannot establish, such as what a running program does after an interaction, is settled by reproducing it (a reproduce task, when section 8 lists one), by a capability request for it when none is listed, or by a question for the human, in the same plan; never by reading more code. A brief to interpret carries the question and the evidence, named by id in evidenceFrom, and not the conclusion you expect: the runtime attaches your hypothesis to every brief, and the session's job is to test that. The rationale says why this plan, names the priority that chose between the plans you could have drafted, and says nothing the situation already says. Name a provider and model on every task to a session-backed capability, and none on a task to a deterministic one. A new unit names its objective, its leader's provider and model, its equipment (built-in tool names and external equipment names, as a capability declares them) and its Bash allowlist. A task to a session-backed capability may declare a strike team (strikeTeam): the subagent kinds its leader may send on it, each with a kind name, a model the task's provider serves, read-only built-in tools, the member's system prompt, how many to send and why; more than one kind is a task force. No kind exists unless the task declares it or the leader asks for it, so declare one only where the task's shape calls for several parallel readers, and say why. discrepancy is for one thing only: the file describes a different problem from the one you have been planning, a hurricane where you believed there was a fire; a different detail is not a discrepancy. A chain of tasks belongs in one plan: give a task a ref and name that ref in the dependsOn of the task that uses its result, and the chain runs in one cycle. Independent tasks run at once, across units and within one (only tasks inside a leader's session run one at a time), and dependsOn is what serializes them: declare one where a task needs another's result, and nowhere else. Keep every unit at five or fewer direct children. Set incidentStatus to satisfied only when the objective is established by observed claims and nothing is left open.`;
 
@@ -53,6 +59,7 @@ export const PLANNER_RULES = [
   "Closing is clean: a unit closed in this plan is active, has no running task after this plan's cancels, is closed once, is given no new unit or task in the same plan, its leader has reported since its last task ended or has no session, and no revise verdict on it is still to be delivered to its leader.",
   "Status is earned: satisfied requires every open task completed or cancelled, no new tasks, and at least one observed claim; satisfied or failed raises no question, capability request or grant request; blocked raises at least one.",
   "Inferred links are worked: every inferred link in the situation names what settles it: a task in this plan by its ref, an open task by its id, a question this plan raises by its position, or a reproduce task by its ref or id; every claim id in proven, inferred and keep names a claim in the incident, and every proven claim has basis observed, whichever task observed it.",
+  "Reassignments taken: every open reassignment in section 11 is taken by exactly one new unit in this plan, naming its id in takes; a takes names an open reassignment, and no reassignment is taken twice; a reassignment the IC dropped (its instructions begin drop:) is closed already and takes nothing.",
 ] as const;
 
 /**
@@ -226,9 +233,9 @@ function lastCycleSequence(events: readonly Event[]): number {
 }
 
 /**
- * The incident file rendered as the ten labeled sections in the design's order, each in a
- * stable form, so the prompt prefix caches across cycles; the situation, which changes
- * every cycle, comes last.
+ * The incident file rendered as the eleven labeled sections in the design's order, each in
+ * a stable form, so the prompt prefix caches across cycles; the situation, which changes
+ * every cycle, and the reassignments open (R4-4), come last.
  */
 export function renderPlannerInput(
   store: Store,
@@ -490,8 +497,27 @@ export function renderPlannerInput(
     "",
     "## 10. Situation from the last cycle",
     ...renderSituation(situation),
+    "",
+    "## 11. Reassignments",
+    ...renderReassignments(openReassignments(events)),
   ];
   return lines.join("\n");
+}
+
+/**
+ * The reassignments open (R4-4), each with the id a new unit's `takes` names, the closed
+ * unit and its objective, the IC's instructions and why, and the claims the unit produced
+ * by id; the planner must give each to a new unit. "(none)" when nothing is open, which is
+ * every cycle until the IC reassigns.
+ */
+function renderReassignments(open: readonly Reassignment[]): string[] {
+  if (open.length === 0) return ["  (none)"];
+  return open.flatMap((r) => [
+    `  - ${r.id}: from unit ${r.unitId} (objective: ${r.objective}), closed in cycle ${r.cycle} on report ${r.reportId}`,
+    `    instructions: ${r.instructions}`,
+    `    why: ${r.why}`,
+    `    claims: ${r.claims.join(", ") || "(none)"}`,
+  ]);
 }
 
 /** A planner call's outcome: the validated action plan plus what it cost, which is its provenance. */

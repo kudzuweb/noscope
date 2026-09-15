@@ -1,9 +1,12 @@
 import {
+  dropsSlice,
   IC_ACTOR,
   LEADER_ACTOR,
   openRequestsByUnit,
+  type Reassignment,
   type RefusedCall,
   type RequestTarget,
+  reassignments,
   requestTargetOf,
 } from "./leader.js";
 import type {
@@ -24,9 +27,10 @@ import type {
 import { now, type Store } from "./store.js";
 import { stable, verdictCloses } from "./validator.js";
 
-/** What applying a plan changed, by id, so the caller can print it and the dispatcher can pick up the ready tasks. */
+/** What applying a plan changed, by id, so the caller can print it and the dispatcher can pick up the ready tasks; `taken` pairs each new unit that took a reassignment with the reassignment's id (R4-4). */
 export type Applied = {
   units: Unit[];
+  taken: { unitId: string; reassignmentId: string }[];
   closedUnits: string[];
   tasks: Task[];
   cancelledTasks: string[];
@@ -541,11 +545,12 @@ export function answerRequest(
 }
 
 /**
- * Apply a validated action plan in one transaction: units created and closed, tasks created
- * and cancelled, questions and requests recorded, the incident's status set, then
- * `plan.applied` (DESIGN.md Step 4). The validator has already passed the plan; this trusts
- * it and only writes. The incident is read from the store, not the argument, so a stale
- * caller cannot overwrite questions; only an open incident takes a plan.
+ * Apply a validated action plan in one transaction: units created (a unit that `takes` a
+ * reassignment recorded as `reassignment.taken` after its `unit.created`, R4-4) and closed,
+ * tasks created and cancelled, questions and requests recorded, the incident's status set,
+ * then `plan.applied` (DESIGN.md Step 4). The validator has already passed the plan; this
+ * trusts it and only writes. The incident is read from the store, not the argument, so a
+ * stale caller cannot overwrite questions; only an open incident takes a plan.
  */
 export function applyPlan(
   store: Store,
@@ -593,9 +598,26 @@ export function applyPlan(
   );
   const questions = newQuestions(incident, plan.questionsForHuman);
   const incidentStatus = statusAfter(plan);
+  const taken = plan.createUnits.flatMap((u) =>
+    u.takes === undefined
+      ? []
+      : [{ unitId: resolveUnit(u.ref), reassignmentId: u.takes }],
+  );
+  const fromUnit = new Map(
+    reassignments(store.listEvents(incident.id)).map((r) => [r.id, r.unitId]),
+  );
 
   store.batch(() => {
-    for (const u of units) store.createUnit(u, actor);
+    for (const u of units) {
+      store.createUnit(u, actor);
+      const takes = taken.find((t) => t.unitId === u.id);
+      if (takes !== undefined)
+        store.record(incident.id, "reassignment.taken", actor, {
+          reassignmentId: takes.reassignmentId,
+          unitId: u.id,
+          fromUnitId: fromUnit.get(takes.reassignmentId) ?? null,
+        });
+    }
     for (const t of tasks) {
       store.createTask(t, actor);
       // The plan's declaration is on the task row already; the event is the record of who
@@ -633,6 +655,7 @@ export function applyPlan(
   });
   return {
     units,
+    taken,
     closedUnits: plan.closeUnits.map((c) => c.unitId),
     tasks,
     cancelledTasks: plan.cancelTasks,
@@ -641,9 +664,11 @@ export function applyPlan(
   };
 }
 
-/** What applying a command turn changed: the units closed (by `closeUnits` and by verdict), the questions raised, the requests answered, the tasks assigned under command, the period set and the incident's status. */
+/** What applying a command turn changed: the units closed (by `closeUnits` and by verdict), the reassignments recorded and the tasks cancelled by reassign verdicts (R4-4), the questions raised, the requests answered, the tasks assigned under command, the period set and the incident's status. */
 export type Commanded = {
   closedUnits: string[];
+  reassignments: Reassignment[];
+  cancelledTasks: string[];
   questions: Question[];
   answered: Answered[];
   tasks: Task[];
@@ -652,13 +677,52 @@ export type Commanded = {
 };
 
 /**
+ * The reassignments a command turn's reassign verdicts record (R4-4), in verdict order:
+ * numbered after the incident's (`<incident>-rNN`), each carrying the closed unit's id and
+ * objective, the IC's instructions and why, the ids of the claims the unit's tasks
+ * produced, and whether the instructions drop the slice. Only a verdict that names a
+ * listed report and its unit reassigns anything; the validator has checked that.
+ */
+function reassignmentsOf(
+  incident: Incident,
+  turn: CommandTurn,
+  units: readonly Unit[],
+  tasks: readonly Task[],
+  claims: readonly { id: string; provenance: { taskId: string } }[],
+  recorded: number,
+  cycle: number,
+): Reassignment[] {
+  const unitOfTask = new Map(tasks.map((t) => [t.id, t.unitId]));
+  return turn.reportVerdicts
+    .filter((v) => v.verdict === "reassign")
+    .map((v, i) => ({
+      id: `${incident.id}-r${pad(recorded + i + 1)}`,
+      reportId: v.reportId,
+      unitId: v.unitId,
+      objective: units.find((u) => u.id === v.unitId)?.objective ?? "",
+      instructions: v.instructions,
+      why: v.why,
+      claims: claims
+        .filter((c) => unitOfTask.get(c.provenance.taskId) === v.unitId)
+        .map((c) => c.id),
+      cycle,
+      dropped: dropsSlice(v.instructions),
+      takenBy: null,
+    }));
+}
+
+/**
  * Apply the IC's validated command turn in one transaction: `command.turned` first, carrying
  * the turn, the call's provenance (`extra`: unit, session, model, usage) and the period as
  * its mutation, so it opens the cycle in the log; then `record`, which files the call
  * itself; then one `report.reviewed` per verdict (the report's event id, the unit, the
- * verdict, the instructions and the why, with the cycle, actor `ic`; R4-2), the units
- * closed, by `closeUnits` and by an accepted or reassigned verdict (through the same close
- * path, the verdict as the reason; a revised unit stays active for R4-3 to brief), then
+ * verdict, the instructions and the why, with the cycle, actor `ic`; R4-2), one
+ * `unit.reassigned` per reassign verdict (R4-4: the reassignment's id, the report and unit,
+ * the unit's objective, the instructions and why, its claims by id, the cycle, and
+ * `dropped` when the instructions begin `drop:`), the units closed, by `closeUnits` and by
+ * an accepted or reassigned verdict (through the same close path, the verdict as the
+ * reason; a revised unit stays active for R4-3 to brief), a reassigned unit's open tasks
+ * cancelled (`task.cancelled` naming the reassignment; `unit.close` sets status only), then
  * questions and requests recorded, and the incident's status set (DESIGN.md Step 4). The
  * period's number is the cycle. Each answer to a unit's resource request is delivered with
  * `answerRequest` (validated to name an open request of a waiting unit), so the unit
@@ -691,13 +755,15 @@ export function applyCommand(
     priorities: turn.priorities,
   };
   const answered: Answered[] = [];
-  const root = store.listUnits(incident.id).find((u) => u.parentId === null);
+  const units = store.listUnits(incident.id);
+  const existingTasks = store.listTasks(incident.id);
+  const root = units.find((u) => u.parentId === null);
   const tasks =
     turn.assignTasks.length === 0 || root === undefined
       ? []
       : buildTasks(
           incident.id,
-          store.listTasks(incident.id),
+          existingTasks,
           turn.assignTasks,
           (ref) => ref,
           now(),
@@ -705,6 +771,27 @@ export function applyCommand(
   // The turn was validated: every verdict names a listed report and its unit, so the
   // closes here are the same set the validator folded into "Closing is clean".
   const closes = [...turn.closeUnits, ...verdictCloses(turn)];
+  const events = store.listEvents(incident.id);
+  const reassigned = reassignmentsOf(
+    incident,
+    turn,
+    units,
+    existingTasks,
+    store.listClaims(incident.id),
+    reassignments(events).length,
+    cycle,
+  );
+  // A reassigned unit's open tasks are cancelled with it: the unit closes, and the
+  // slice's work is the taking unit's to plan afresh. Nothing runs at a command turn,
+  // and "Closing is clean" refuses a close over a running task.
+  const reassignedUnits = new Set(reassigned.map((r) => r.unitId));
+  const cancelled = existingTasks.filter(
+    (t) =>
+      reassignedUnits.has(t.unitId) &&
+      (t.status === "pending" ||
+        t.status === "ready" ||
+        t.status === "running"),
+  );
   store.batch(() => {
     store.setIncidentPeriod(incident.id, period, actor, {
       ...extra,
@@ -723,8 +810,36 @@ export function applyCommand(
         why: v.why,
         cycle,
       });
+    for (const r of reassigned)
+      store.record(incident.id, "unit.reassigned", IC_ACTOR, {
+        reassignmentId: r.id,
+        reportId: r.reportId,
+        unitId: r.unitId,
+        objective: r.objective,
+        instructions: r.instructions,
+        why: r.why,
+        claims: r.claims,
+        cycle,
+        dropped: r.dropped,
+      });
     for (const c of closes)
       store.closeUnit(incident.id, c.unitId, c.reason, actor);
+    for (const t of cancelled) {
+      const r = reassigned.find((x) => x.unitId === t.unitId);
+      store.setTaskStatus(
+        incident.id,
+        t.id,
+        "cancelled",
+        actor,
+        "task.cancelled",
+        {
+          extra: {
+            rationale: `reassign: ${r?.why ?? ""}`,
+            reassignmentId: r?.id ?? null,
+          },
+        },
+      );
+    }
     recordChannels(store, incident, turn, questions, incidentStatus, actor);
     for (const a of turn.answers) {
       const current = store.getIncident(incident.id);
@@ -753,6 +868,8 @@ export function applyCommand(
   });
   return {
     closedUnits: closes.map((c) => c.unitId),
+    reassignments: reassigned,
+    cancelledTasks: cancelled.map((t) => t.id),
     questions,
     answered,
     tasks,

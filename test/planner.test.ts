@@ -347,6 +347,9 @@ describe("planner", () => {
         "  - c3, settled by question 1 of that plan",
         "  - c4, settled by reproduce browser",
         "keep: c5",
+        "",
+        "## 11. Reassignments",
+        "  (none)",
       ].join("\n"),
     );
     store.close();
@@ -379,7 +382,7 @@ describe("planner", () => {
     store.close();
   });
 
-  it("renders the incident file as the ten sections in the design's order", () => {
+  it("renders the incident file as the eleven sections in the design's order", () => {
     const store = new Store(":memory:");
     cycledIncident(store);
     const incident = store.getIncident("i1");
@@ -470,6 +473,7 @@ describe("planner", () => {
         - Closing is clean: a unit closed in this plan is active, has no running task after this plan's cancels, is closed once, is given no new unit or task in the same plan, its leader has reported since its last task ended or has no session, and no revise verdict on it is still to be delivered to its leader.
         - Status is earned: satisfied requires every open task completed or cancelled, no new tasks, and at least one observed claim; satisfied or failed raises no question, capability request or grant request; blocked raises at least one.
         - Inferred links are worked: every inferred link in the situation names what settles it: a task in this plan by its ref, an open task by its id, a question this plan raises by its position, or a reproduce task by its ref or id; every claim id in proven, inferred and keep names a claim in the incident, and every proven claim has basis observed, whichever task observed it.
+        - Reassignments taken: every open reassignment in section 11 is taken by exactly one new unit in this plan, naming its id in takes; a takes names an open reassignment, and no reassignment is taken twice; a reassignment the IC dropped (its instructions begin drop:) is closed already and takes nothing.
       warned on, and applied anyway:
         - Session work under a unit: a task to a session-backed capability belongs under a unit with a leader, never under command, the root; one placed under command runs in a session of its own, with no leader to judge it and no leader turn after it, and its result reaches the IC as a task result; the IC's own session runs no task. A deterministic task under command is fine.
       rejected last cycle:
@@ -478,6 +482,9 @@ describe("planner", () => {
         (nothing warned)
 
       ## 10. Situation from the last cycle
+        (none)
+
+      ## 11. Reassignments
         (none)"
     `);
   });
@@ -600,6 +607,6 @@ describe("planner", () => {
       delete process.env.NOSCOPE_STUB_OUTPUT;
     }
     store.close();
-    expect(PLANNER_RULES).toHaveLength(13);
+    expect(PLANNER_RULES).toHaveLength(14);
   });
 });
