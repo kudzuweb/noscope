@@ -2356,7 +2356,11 @@ null session, `not_met`, both refusals as the why, the IC's choices as the sugge
 picture-changing), and the pass ends on it. A task session (`runTask`): the refused call is
 filed on the task as `task.usage` carrying the refusal, the model and the fallback, plus its
 activity, and the task is retried once in its own session on the fallback whatever the
-first call ran in; `task.completed` and `task.usage` then carry `model` and `fallbackFrom`;
+first call ran in, and a first call refused inside the leader's resumed session releases
+that session there (`leader.released` with `refused: <category>`, as a refused leader turn
+does; review finding), so the leader's next turn starts fresh instead of paying a refusal
+the runtime already knows is coming; `task.completed` and `task.usage` then carry `model`
+and `fallbackFrom`;
 refused there too, or refused when the task's own model is the fallback, `TaskRefused`
 carries both, `task.failed` records `refused` with both and the models, and `dispatch`
 writes the same runtime report for the unit instead of asking its leader, ending the pass.
@@ -2387,9 +2391,10 @@ on `claude-opus-4-8`, and `review` names the move; a leader refused on the fallb
 its unit report `not_met` by the runtime with both refusals, the pass stops, `review` lists
 the runtime's report and both refusals, and the IC's next change report carries it; a task
 in its own session refused is retried on the fallback with both models on its events; a
-task refused on both (the first call inside its leader's session) fails with both, the unit
-reports by the runtime, and no leader turn is asked; `NOSCOPE_IC_FALLBACK_MODEL` is
-validated against the provider's list.
+task refused on both fails with both, the unit reports by the runtime, and no leader turn
+is asked; a task refused inside its leader's resumed session releases it, and the leader's
+turn after the retry starts fresh; `NOSCOPE_IC_FALLBACK_MODEL` is validated against the
+provider's list.
 
 Not exactly to spec, with reasons:
 
@@ -2407,9 +2412,11 @@ Not exactly to spec, with reasons:
   second time; for a leader or task, the seat's model already being the fallback. The
   question then names the refusals that call sequence filed, one or two.
 - A task refused inside its leader's session is retried in its own session on the fallback,
-  not inside the leader (the leader's session is on the refused model and is itself flagged);
-  the leader's next turn on that session is then refused and falls back on its own. R3-10a
-  had such a task simply fail.
+  not inside the leader (the leader's session is on the refused model and is itself flagged),
+  and the leader's session is released with the refusal, so its next turn starts fresh on
+  the unit's own model rather than resuming the flagged session; the leader itself does not
+  move to the fallback, since its own turn was not refused. R3-10a had such a task simply
+  fail.
 - An answer naming no model re-asks the question under the next id rather than leaving the
   first unanswered: the answer is a record of what Mauria said, and an open question is
   what `incident answer` acts on, so the hold "the IC's model" and the re-asked question

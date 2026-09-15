@@ -194,6 +194,8 @@ type Outcome = {
   inside: boolean;
   /** The task's model, and the one it was retried on after a refusal (R4-7), when the run fell back. */
   fallback?: { from: string; to: string };
+  /** The leader's session the refused first call ran in, released so the leader's next turn starts fresh (R4-7). */
+  released?: string;
   record: () => Claim[];
 };
 
@@ -207,6 +209,8 @@ class TaskRefused extends SessionError {
   constructor(
     readonly refusals: readonly RefusedCall[],
     readonly fallbackFrom: string | null,
+    /** The leader's session the first call ran in, released for its refusal (R4-7). */
+    readonly released: string | null,
     last: SessionError,
   ) {
     super(
@@ -287,8 +291,10 @@ function orientation(
  * retried once, in the task's own session on the fallback model (R4-7): the refused call
  * is filed on the task (`task.usage` with the refusal, the model and the fallback, so the
  * budget counts what it spent, plus its activity), and the retry's outcome carries the
- * models. Refused on the fallback too, or refused when the task's own model is the
- * fallback, `TaskRefused` carries both.
+ * models; a first call refused inside the leader's resumed session releases that session
+ * (`leader.released`, the outcome's `released`), since it is refused on every later call.
+ * Refused on the fallback too, or refused when the task's own model is the fallback,
+ * `TaskRefused` carries both.
  */
 async function runTask(
   store: Store,
@@ -347,6 +353,7 @@ async function runTask(
     : buildSessionRequest(capability, task, unit, options.cwd, context);
   let session: Awaited<ReturnType<typeof runSession>>;
   let fallback: Outcome["fallback"];
+  let releasedLeader: string | undefined;
   try {
     session = await runSession(
       capability,
@@ -365,14 +372,37 @@ async function runTask(
     )
       throw error;
     const model = task.model;
+    const refused = error.refused;
     const first: RefusedCall = {
       model,
       sessionId: error.sessionId,
-      refused: error.refused,
+      refused,
     };
     const to = fallbackModel(options.env, provider);
-    if (model === to) throw new TaskRefused([first], null, error);
+    // A refusal inside the leader's resumed session flags that session (a refused session
+    // stays refused on every later call), so it is released here with the category, as a
+    // refused leader turn releases it, and the leader's next turn starts fresh rather than
+    // paying a refusal the runtime already knows is coming.
+    const released =
+      inside && unit.sessionId !== null && error.sessionId === unit.sessionId
+        ? unit.sessionId
+        : null;
+    const releaseLeader = () => {
+      if (released !== null)
+        store.setUnitSession(incident.id, unit.id, null, actor, {
+          unitId: unit.id,
+          released,
+          ...unit.leader,
+          reason: `refused: ${refused.category}`,
+          refused,
+        });
+    };
+    if (model === to) {
+      releaseLeader();
+      throw new TaskRefused([first], null, released, error);
+    }
     store.batch(() => {
+      releaseLeader();
       if (error.sessionId !== null)
         recordActivity(store, incident.id, actor, error.activity, {
           sessionId: error.sessionId,
@@ -385,7 +415,7 @@ async function runTask(
         usage: error.usage ?? NO_USAGE,
         sessionId: error.sessionId,
         model,
-        refused: error.refused,
+        refused,
         fallback: to,
       });
     });
@@ -408,11 +438,13 @@ async function runTask(
             { model: to, sessionId: again.sessionId, refused: again.refused },
           ],
           model,
+          released,
           again,
         );
       throw again;
     }
     fallback = { from: model, to };
+    if (released !== null) releasedLeader = released;
   }
   const result = SessionResult.parse(session.result);
   const sessionId = session.sessionId;
@@ -424,6 +456,7 @@ async function runTask(
     // A retry runs in its own session, whatever the first call ran in.
     inside: fallback === undefined && inside,
     ...(fallback === undefined ? {} : { fallback }),
+    ...(releasedLeader === undefined ? {} : { released: releasedLeader }),
     record: () =>
       recordSessionResult(store, task, capability, result, sessionId),
   };
@@ -1154,7 +1187,12 @@ async function runOne(
     });
     return {
       ending: { task: next, status: "completed", inside: outcome.inside },
-      unit: started === null ? unit : { ...unit, sessionId: started },
+      unit:
+        started !== null
+          ? { ...unit, sessionId: started }
+          : outcome.released !== undefined
+            ? { ...unit, sessionId: null }
+            : unit,
     };
   } catch (error) {
     const reason = describe(error);
@@ -1244,7 +1282,12 @@ async function runOne(
     });
     return {
       ending: { task: next, status: "failed", reason },
-      unit: orphaned === null ? unit : { ...unit, sessionId: orphaned },
+      unit:
+        orphaned !== null
+          ? { ...unit, sessionId: orphaned }
+          : error instanceof TaskRefused && error.released !== null
+            ? { ...unit, sessionId: null }
+            : unit,
       ...(error instanceof TaskRefused ? { refusals: error.refusals } : {}),
     };
   }

@@ -950,8 +950,80 @@ describe("a refusal replaces the session", () => {
       model: "claude-opus-4-8",
       fallbackFrom: "claude-sonnet-5",
     });
-    // The retry ran in its own session, so the unit's leader session is the turn's.
+    // The unit holds no equipment, so both calls ran in the task's own sessions and the
+    // unit's leader session is the turn's.
     expect(store.listUnits("i1")[1]?.sessionId).toBe("stub-session-3");
+    store.close();
+  });
+
+  it("a task refused inside its leader's resumed session releases that session, so the leader's next turn starts fresh", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "noscope-refusal-"));
+    const store = new Store(":memory:");
+    const { incident, addUnit, task } = scriptedIncident(store);
+    const unit = addUnit({
+      id: "i1-u1",
+      objective: "read the handler",
+      equipment: ["default"],
+      sessionId: "leader-old",
+    });
+    task({
+      id: "t-inv",
+      unitId: unit.id,
+      capability: "investigate",
+      inputs: { question: "where is deletion handled?" },
+      provider: "claude-code",
+      model: "claude-haiku-4-5",
+      budget: { seconds: 30 },
+      status: "ready",
+    });
+    const env = {
+      NOSCOPE_CLAUDE_BIN: stub,
+      NOSCOPE_STUB_CALLS: join(dir, "calls"),
+      NOSCOPE_STUB_SESSION_COUNTER: join(dir, "sessions"),
+      NOSCOPE_STUB_CALL_COUNTER: join(dir, "ordinal"),
+      NOSCOPE_STUB_REFUSE: "1",
+      NOSCOPE_STUB_OUTPUT: JSON.stringify(answered),
+    };
+    const { ran, reports } = await dispatch(store, incident, {
+      cwd: tree,
+      env,
+    });
+    expect(ran.map((r) => [r.taskId, r.status])).toEqual([
+      ["t-inv", "completed"],
+    ]);
+    expect(reports.map((r) => [r.unitId, r.report.outcome])).toEqual([
+      ["i1-u1", "progress"],
+    ]);
+    // The first call resumed the leader's session and was refused there; the retry ran in
+    // its own session; the leader's turn did not resume the refused session.
+    const calls = readFileSync(env.NOSCOPE_STUB_CALLS, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l) as Call);
+    expect(calls.map((c) => [c.kind, c.resume, modelOf(c)])).toEqual([
+      ["task", "leader-old", "claude-haiku-4-5"],
+      ["task", null, "claude-opus-4-8"],
+      ["leader", null, "claude-haiku-4-5"],
+    ]);
+    const events = store.listEvents("i1");
+    expect(
+      events.find((e) => e.type === "leader.released")?.payload,
+    ).toMatchObject({
+      unitId: "i1-u1",
+      released: "leader-old",
+      reason: "refused: reasoning_extraction",
+      refused: refusal,
+    });
+    expect(events.filter((e) => e.type === "leader.failed")).toHaveLength(0);
+    expect(
+      events
+        .filter((e) => e.type === "leader.started")
+        .map((e) => [e.payload.sessionId, e.payload.replaced]),
+    ).toEqual([["stub-session-2", undefined]]);
+    expect(store.listUnits("i1")[1]).toMatchObject({
+      sessionId: "stub-session-2",
+      leader: { model: "claude-haiku-4-5" },
+    });
     store.close();
   });
 
@@ -992,8 +1064,8 @@ describe("a refusal replaces the session", () => {
     expect(
       reports.map((r) => [r.unitId, r.sessionId, r.report.outcome]),
     ).toEqual([["i1-u1", null, "not_met"]]);
-    // The task's first call ran inside the leader's session (same model); the retry did
-    // not, and no leader turn was asked: the runtime reported for the unit.
+    // The unit holds no equipment, so the task ran in its own session both times, and no
+    // leader turn was asked: the runtime reported for the unit.
     const calls = readFileSync(env.NOSCOPE_STUB_CALLS, "utf8")
       .trim()
       .split("\n")
@@ -1037,7 +1109,7 @@ describe("a refusal replaces the session", () => {
     ).toMatch(
       /^a task session under the unit was refused by the API on claude-haiku-4-5/,
     );
-    // The refused leader session was never put on the unit.
+    // No session was put on the unit: the task never ran inside its leader.
     expect(store.listUnits("i1")[1]?.sessionId).toBeNull();
     expect(store.listTasks("i1")[0]?.status).toBe("failed");
     store.close();

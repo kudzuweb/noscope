@@ -720,7 +720,10 @@ changes on the `leader.failed` that filed the refusal (`fallback`, the mutation
 (`replaced`) and `fallbackFrom`. For a task session the task itself is retried once, in its
 own session on the fallback whatever the first call ran in, the refused call filed on the
 task (`task.usage` with the refusal, its activity) and the retry's outcome carrying both
-models. A refusal on the fallback, or a refusal after the fallback has been tried for that
+models; a first call refused inside the leader's resumed session releases that session
+(`leader.released` with the reason `refused: <category>`), since a refused session is
+refused on every later call, and the leader's next turn starts fresh on the unit's own
+model. A refusal on the fallback, or a refusal after the fallback has been tried for that
 seat (the IC's model was already changed once, a leader already moved, a task whose own
 model is the fallback), goes to judgment and no seat retries beyond the one fallback: for
 a unit leader's or a task session's refusals the runtime writes the unit's report on the
