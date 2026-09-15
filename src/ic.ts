@@ -847,7 +847,7 @@ export function renderCommandBriefing(
     ...renderBriefingBody(store, incident, providers, transfer, env),
     "",
     `# Your command turn for operational period ${cycleOf(events) + 1}`,
-    `${transfer === null ? "S" : `${evaluateAsk(transfer)}s`}et the period's objectives and priorities, answer each report the change report lists with a verdict (accepted, revise or reassign), close what is done, answer the resource requests you can, raise for Mauria what only she can supply, and say whether the incident continues.`,
+    `${transfer === null ? "S" : `${evaluateAsk(transfer)}s`}et the period's objectives and priorities, answer each unit's last report the change report lists with a verdict (accepted, revise or reassign), close what is done, answer the resource requests you can, raise for Mauria what only she can supply, and say whether the incident continues.`,
   ].join("\n");
 }
 

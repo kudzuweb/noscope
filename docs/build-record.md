@@ -2650,7 +2650,7 @@ three-way judgment with its reasons: accepted when the work shows the objective 
 observed claims and the unit closes; revise when the same unit is placed to finish and
 the instructions say what is missing; reassign when a different shape of unit would do
 better, the instructions carrying what was found and not found; the outcome is the
-leader's opinion and the verdict the IC's; exactly one per report; a reported unit is closed by its verdict, never by `closeUnits` as well; a
+leader's opinion and the verdict the IC's; exactly one per unit that reported, on its last report; a reported unit is closed by its verdict, never by `closeUnits` as well; a
 report's why or suggestion is answered through the verdict's instructions and the period
 objectives. The command turn's ask names the verdicts. The stub (`test/stub-claude`)
 answers every report its briefing lists: a turn with no `reportVerdicts`, or an empty
