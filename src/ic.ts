@@ -6,8 +6,11 @@ import {
   CommandTurn,
   type Event,
   FinalReviewTurn,
+  FirstCommandTurn,
   type Incident,
+  IncidentBriefing,
   jsonSchemaFor,
+  type Leader,
   ReviewTurn,
   type Unit,
   type Usage,
@@ -26,6 +29,7 @@ import { cycleOf, type Store } from "./store.js";
 const IC_TURN_SECONDS = 300;
 
 const COMMAND_TURN_SCHEMA = jsonSchemaFor(CommandTurn);
+const FIRST_COMMAND_TURN_SCHEMA = jsonSchemaFor(FirstCommandTurn);
 const REVIEW_TURN_SCHEMA = jsonSchemaFor(ReviewTurn);
 const FINAL_REVIEW_TURN_SCHEMA = jsonSchemaFor(FinalReviewTurn);
 
@@ -191,6 +195,81 @@ export function renderChangeReport(
   ];
 }
 
+/** The incident briefing the initial IC wrote (R3-8), with the call that wrote it, or null for an incident created without a size-up. */
+export function briefingOf(
+  events: readonly Event[],
+): { briefing: IncidentBriefing; event: Event } | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e === undefined || e.type !== "incident.briefed") continue;
+    const parsed = IncidentBriefing.safeParse(e.payload.briefing);
+    return parsed.success ? { briefing: parsed.data, event: e } : null;
+  }
+  return null;
+}
+
+/** The transfer that handed command to the IC's session, when the log holds one: kind and who chose the model. */
+function transferOf(events: readonly Event[]): Event | null {
+  let last: Event | null = null;
+  for (const e of events) if (e.type === "command.transferred") last = e;
+  return last;
+}
+
+/**
+ * The incident briefing as the IC reads it on taking command: every line the initial IC
+ * wrote, who wrote it on what model, and how the IC's own model was chosen (the briefing's
+ * recommendation, `--ic-model`, or the default when the briefing named a model the provider
+ * does not serve).
+ */
+function renderIncidentBriefing(
+  briefed: { briefing: IncidentBriefing; event: Event },
+  transfer: Event | null,
+): string[] {
+  const b = briefed.briefing;
+  const p = briefed.event.payload;
+  const chosen =
+    transfer === null
+      ? []
+      : [
+          `your model: ${str((transfer.payload.incoming as { model?: unknown } | undefined)?.model)}, chosen by ${str(transfer.payload.chosenBy)}${str(transfer.payload.reason) === "" ? "" : ` (${str(transfer.payload.reason)})`}`,
+        ];
+  return [
+    "# Transfer of command: the initial IC's briefing",
+    `Written by the initial IC on ${str(p.provider)}/${str(p.model)} (session ${str(p.sessionId)}) from a size-up with read-only tools. Nothing in it binds you.`,
+    `kind: ${b.kind}`,
+    `dominant problem: ${b.dominantProblem}`,
+    "obviously needed:",
+    ...bullets(
+      b.obviouslyNeeded.map(
+        (need) =>
+          `${need.what} (${need.checked ? `checked: ${need.finding ?? ""}` : "not checked"})`,
+      ),
+    ),
+    "initial objectives:",
+    ...bullets(b.initialObjectives),
+    "initial organization:",
+    ...bullets(b.initialOrganization),
+    "hazards:",
+    ...bullets(b.hazards),
+    "questions it raised for Mauria (answered ones are in the incident file):",
+    ...bullets(b.questionsForHuman),
+    `incoming commander it recommended: ${b.incomingCommander.provider}/${b.incomingCommander.model}: ${b.incomingCommander.why}`,
+    ...chosen,
+  ];
+}
+
+/** The IC's first instruction on taking command from a briefing: judge it, item by item, before setting the period. */
+const EVALUATE_BRIEFING =
+  "First, evaluate the briefing you took command with: for each initial objective and each unit sketched, say in briefingEvaluation whether you accept it, rewrite it or discard it, and why; you are not bound by any of it, and a rewritten or discarded item costs nothing. Then ";
+
+/** Whether this command turn is the IC's first on a briefed incident: the briefing is rendered and its evaluation asked for. */
+function evaluatesBriefing(
+  events: readonly Event[],
+): { briefing: IncidentBriefing; event: Event } | null {
+  if (lastActed(events) !== null) return null;
+  return briefingOf(events);
+}
+
 /** The change report, then the incident file as the planner reads it (the same ten sections): what the IC reads before any ask. */
 function renderBriefingBody(
   store: Store,
@@ -218,11 +297,18 @@ export function renderCommandBriefing(
   incident: Incident,
   providers: readonly Provider[],
 ): string {
+  const events = store.listEvents(incident.id);
+  const briefed = evaluatesBriefing(events);
   return [
-    ...renderBriefingBody(store, incident, providers),
+    ...renderChangeReport(events),
     "",
-    `# Your command turn for operational period ${cycleOf(store.listEvents(incident.id)) + 1}`,
-    "Set the period's objectives and priorities, close what is done, answer the resource requests you can, raise for Mauria what only she can supply, and say whether the incident continues.",
+    ...(briefed === null
+      ? []
+      : [...renderIncidentBriefing(briefed, transferOf(events)), ""]),
+    renderPlannerInput(store, incident, providers),
+    "",
+    `# Your command turn for operational period ${cycleOf(events) + 1}`,
+    `${briefed === null ? "S" : `${EVALUATE_BRIEFING}s`}et the period's objectives and priorities, close what is done, answer the resource requests you can, raise for Mauria what only she can supply, and say whether the incident continues.`,
   ].join("\n");
 }
 
@@ -428,15 +514,58 @@ export function commandTurn(
   providers: readonly Provider[],
   options: IcOptions,
 ): Promise<IcCall<CommandTurn>> {
+  const events = store.listEvents(incident.id);
+  // On the IC's first turn after a transfer of command the schema requires the
+  // briefing's evaluation, so the provider's own validation holds the IC to it.
+  const evaluates = evaluatesBriefing(events) !== null;
   return icCall(
     store,
     incident,
     "command",
-    cycleOf(store.listEvents(incident.id)) + 1,
+    cycleOf(events) + 1,
     () => renderCommandBriefing(store, incident, providers),
-    COMMAND_TURN_SCHEMA,
-    (o) => CommandTurn.parse(o),
+    evaluates ? FIRST_COMMAND_TURN_SCHEMA : COMMAND_TURN_SCHEMA,
+    (o): CommandTurn =>
+      evaluates ? FirstCommandTurn.parse(o) : CommandTurn.parse(o),
     options,
+  );
+}
+
+/** A transfer of command's payload (R3-8, R3-9): the same event for the initial transfer and a handoff. */
+export type Transfer = {
+  kind: "initial" | "handoff";
+  unitId: string;
+  /** The session command passes from: the initial IC's, or the outgoing IC's. */
+  outgoingSessionId: string;
+  outgoing: Leader;
+  /** The session command passes to; null on the initial transfer, whose IC session starts at its first command turn (`leader.started` follows). */
+  incomingSessionId: string | null;
+  incoming: Leader;
+  /** The handoff document: the incident briefing, or the outgoing IC's handoff document. */
+  document: unknown;
+  /** Who chose the incoming model: the briefing, `--ic-model`, or the default. */
+  chosenBy: string;
+  reason: string;
+};
+
+/**
+ * Record a transfer of command: `command.transferred` with the transfer as its payload and
+ * the root unit's leader as its mutation (`unit.leader`), so the incoming commander's
+ * model is set through the log and a replay routes it the same way.
+ */
+export function recordTransfer(
+  store: Store,
+  incidentId: string,
+  transfer: Transfer,
+  actor = "runtime",
+): void {
+  store.setUnitLeader(
+    incidentId,
+    transfer.unitId,
+    transfer.incoming,
+    actor,
+    "command.transferred",
+    transfer,
   );
 }
 

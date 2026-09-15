@@ -159,6 +159,7 @@ describe("the IC above the planner", () => {
       [
         "incident",
         "create",
+        "--no-size-up",
         "where is the delete handler",
         "--priority",
         "cheap first",
@@ -370,7 +371,10 @@ describe("the IC above the planner", () => {
       },
       discrepancy: "this tree is not the application",
     });
-    await run(["incident", "create", "where is the delete handler"], h.ctx);
+    await run(
+      ["incident", "create", "--no-size-up", "where is the delete handler"],
+      h.ctx,
+    );
     const code = await run(["incident", "step", "001"], h.ctx);
     expect(h.err).toEqual([]);
     expect(code).toBe(EXIT.ok);
@@ -449,7 +453,10 @@ describe("the IC above the planner", () => {
         },
       ],
     );
-    await run(["incident", "create", "where is the delete handler"], h.ctx);
+    await run(
+      ["incident", "create", "--no-size-up", "where is the delete handler"],
+      h.ctx,
+    );
     expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
     expect(h.out).toContain("IC review: amend: one grep is not enough");
     expect(h.out).toContain("plan amended by the IC: grep for both names");
@@ -495,7 +502,10 @@ describe("the IC above the planner", () => {
         { verdict: "correct", corrections: "and again", rationale: "still no" },
       ],
     );
-    await run(["incident", "create", "where is the delete handler"], h.ctx);
+    await run(
+      ["incident", "create", "--no-size-up", "where is the delete handler"],
+      h.ctx,
+    );
     expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.failed);
     expect(h.err.at(-1)).toMatch(
       /^noscope incident step: the IC: the answer did not fit its schema: verdict /,
@@ -538,7 +548,7 @@ describe("the IC above the planner", () => {
     const failing = harness([findIt], [command()], []);
     failing.ctx.env.NOSCOPE_STUB_LEADER_FAIL = "1";
     await run(
-      ["incident", "create", "where is the delete handler"],
+      ["incident", "create", "--no-size-up", "where is the delete handler"],
       failing.ctx,
     );
     expect(await run(["incident", "step", "001"], failing.ctx)).toBe(
@@ -581,7 +591,10 @@ describe("the IC above the planner", () => {
       [{ verdict: "approve", rationale: "fine" }],
     );
     h.ctx.env.NOSCOPE_STUB_RESUME_FAIL = "stub-session";
-    await run(["incident", "create", "where is the delete handler"], h.ctx);
+    await run(
+      ["incident", "create", "--no-size-up", "where is the delete handler"],
+      h.ctx,
+    );
     expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
     const calls = h.calls();
     expect(calls.map((c) => [c.kind, c.resume])).toEqual([
@@ -635,7 +648,10 @@ describe("the IC above the planner", () => {
       ],
       [],
     );
-    await run(["incident", "create", "where is the delete handler"], h.ctx);
+    await run(
+      ["incident", "create", "--no-size-up", "where is the delete handler"],
+      h.ctx,
+    );
     expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
     expect(h.out).toContain("command turn rejected:");
     expect(h.out).toContain(

@@ -6,14 +6,15 @@ import type { Store } from "./store.js";
  * the task in flight, or the cycle for a call above the units. A leader's turn files under
  * its unit with no task and no cycle; the planner's call under its cycle with no unit; the
  * IC's own turns under the root unit and the cycle, marked `seat: "ic"` so review tells
- * them from the planner's calls in the same cycle.
+ * them from the planner's calls in the same cycle; the initial IC's size-up under the root
+ * unit and cycle 0, before any period, marked `seat: "initial_ic"`.
  */
 export type SessionPlace = {
   sessionId: string;
   unitId: string | null;
   taskId: string | null;
   cycle: number | null;
-  seat?: "ic";
+  seat?: "ic" | "initial_ic";
 };
 
 function toolEvent(

@@ -256,7 +256,10 @@ describe("apply and tree", () => {
       err: (l: string) => out.push(l),
     };
     const ctx = { io, cwd: process.cwd(), env: { NOSCOPE_DB: db } };
-    await run(["incident", "create", "why does it scroll"], ctx);
+    await run(
+      ["incident", "create", "--no-size-up", "why does it scroll"],
+      ctx,
+    );
     const store = new Store(db);
     const incident = () => {
       const i = store.getIncident("001");

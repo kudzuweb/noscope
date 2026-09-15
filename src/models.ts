@@ -77,6 +77,8 @@ export const EventType = z.enum([
   "leader.released",
   "unit.waiting",
   "unit.resumed",
+  "incident.briefed",
+  "command.transferred",
 ]);
 
 export const Budget = z.object({
@@ -576,6 +578,21 @@ export const ResourceAnswer = z.strictObject({
 });
 
 /**
+ * The IC's verdict on one item of the briefing it took command with (R3-8): an initial
+ * objective or a unit sketched, accepted as written, rewritten into the period, or
+ * discarded, and why. `incident review` counts them, which is how much of the briefing the
+ * IC kept.
+ */
+export const BriefingVerdict = z.strictObject({
+  item: z
+    .string()
+    .min(1)
+    .describe("The briefing item, as the briefing states it"),
+  verdict: z.enum(["accepted", "rewritten", "discarded"]),
+  why: z.string().min(1),
+});
+
+/**
  * The IC's command turn, at the top of each cycle: the period's objectives and priorities,
  * units to close, answers to what units asked for, what only Mauria can supply, and whether
  * the incident continues. The planner then drafts against the period. Every turn schema is
@@ -584,6 +601,12 @@ export const ResourceAnswer = z.strictObject({
  * refinement enforces them after parse (verified on Claude Code 2.1.272, R3-5).
  */
 export const CommandTurn = z.strictObject({
+  briefingEvaluation: z
+    .array(BriefingVerdict)
+    .optional()
+    .describe(
+      "On the first turn after a transfer of command: each initial objective and each unit sketched in the briefing, accepted, rewritten or discarded, and why",
+    ),
   periodObjectives: z
     .array(z.string().min(1))
     .min(1)
@@ -611,6 +634,103 @@ export const CommandTurn = z.strictObject({
     .describe("Why these objectives and this status, one paragraph"),
   discrepancy: DISCREPANCY,
 });
+
+/**
+ * The command turn an IC takes on taking command from a briefing: the same turn with the
+ * evaluation required, so the schema the provider receives says the briefing is judged
+ * before the period is set, and a stronger model is never bound by what the initial IC
+ * thought without saying so.
+ */
+export const FirstCommandTurn = CommandTurn.extend({
+  briefingEvaluation: z
+    .array(BriefingVerdict)
+    .min(1)
+    .describe(
+      "Each initial objective and each unit sketched in the briefing, accepted, rewritten or discarded, and why; nothing in the briefing binds you",
+    ),
+});
+
+// What the initial IC returns: the incident briefing (R3-8), on ICS 201's lines.
+
+/** One thing the incident obviously needs, and whether the initial IC's tools checked it. */
+export const ObviousNeed = z.strictObject({
+  what: z.string().min(1),
+  checked: z.boolean().describe("Whether a tool checked it during the size-up"),
+  finding: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("With checked: which tool checked it and what it showed"),
+});
+
+/** The provider and model the initial IC recommends for the IC proper, and why. */
+export const IncomingCommander = z.strictObject({
+  provider: z.string().min(1),
+  model: z.string().min(1).describe("A model the provider serves"),
+  why: z
+    .string()
+    .min(1)
+    .describe(
+      "Why this model for this incident: what the judgment it needs is",
+    ),
+});
+
+/**
+ * The incident briefing the initial IC writes from its size-up, the first handoff
+ * document, on ICS 201's lines: what sort of incident this is, the dominant problem, what
+ * is obviously needed (checked where a tool could check it), initial objectives, an
+ * initial organization sketched one unit per line, questions for Mauria, hazards, and the
+ * incoming commander's model with a reason. The IC proper evaluates every line of it on
+ * taking command (`FirstCommandTurn`). One strict object, like every turn schema.
+ */
+export const IncidentBriefing = z
+  .strictObject({
+    kind: z
+      .string()
+      .min(1)
+      .describe(
+        "What sort of incident this is, in a few words: a bug hunt, a build, a question about a codebase, a migration",
+      ),
+    dominantProblem: z
+      .string()
+      .min(1)
+      .describe("The one problem the incident turns on, one paragraph"),
+    obviouslyNeeded: z
+      .array(ObviousNeed)
+      .describe(
+        "What the incident obviously needs: access, equipment, facts, permissions; each checked where a tool could check it",
+      ),
+    initialObjectives: z
+      .array(z.string().min(1))
+      .min(1)
+      .describe("Objectives for the first operational period, as you see them"),
+    initialOrganization: z
+      .array(z.string().min(1))
+      .describe(
+        "Units sketched, one line each: what the unit is for and what model its leader should be on",
+      ),
+    questionsForHuman: z
+      .array(z.string().min(1))
+      .describe(
+        "What only Mauria knows or may decide; each blocks the incident until she answers",
+      ),
+    hazards: z
+      .array(z.string().min(1))
+      .describe(
+        "What could go wrong or mislead: a stale document, a writing command, an ambiguous objective",
+      ),
+    incomingCommander: IncomingCommander,
+  })
+  .superRefine((b, ctx) => {
+    b.obviouslyNeeded.forEach((need, i) => {
+      if (need.checked && need.finding === undefined)
+        ctx.addIssue({
+          code: "custom",
+          path: ["obviouslyNeeded", i, "finding"],
+          message: "a checked need says what the check showed",
+        });
+    });
+  });
 
 /**
  * The IC's review of the planner's draft: approve it, correct it (the planner redrafts
@@ -776,6 +896,8 @@ export type LeaderTurn = z.infer<typeof LeaderTurn>;
 export type Period = z.infer<typeof Period>;
 export type ResourceAnswer = z.infer<typeof ResourceAnswer>;
 export type CommandTurn = z.infer<typeof CommandTurn>;
+export type BriefingVerdict = z.infer<typeof BriefingVerdict>;
+export type IncidentBriefing = z.infer<typeof IncidentBriefing>;
 export type ReviewTurn = z.infer<typeof ReviewTurn>;
 export type Settlement = z.infer<typeof Settlement>;
 export type Needed = z.infer<typeof Needed>;

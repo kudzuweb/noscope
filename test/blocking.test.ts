@@ -127,7 +127,10 @@ describe("blocking channels", () => {
         { kind: "retrievable_fact", what: "the scroll handler's source" },
       ],
     });
-    await run(["incident", "create", "why does it scroll"], h.ctx);
+    await run(
+      ["incident", "create", "--no-size-up", "why does it scroll"],
+      h.ctx,
+    );
     expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
     expect(h.out).toContain("  ran 001-t01 (interpret): completed; 0 claim(s)");
     const store = h.store();
@@ -169,7 +172,7 @@ describe("blocking channels", () => {
         { capability: "write_note", effect: "writes_local", reason: "to save" },
       ],
     });
-    await run(["incident", "create", "save a note"], h.ctx);
+    await run(["incident", "create", "--no-size-up", "save a note"], h.ctx);
     expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
     h.out.length = 0;
     expect(await run(["incident", "answer", "001", "yes"], h.ctx)).toBe(
@@ -203,7 +206,10 @@ describe("blocking channels", () => {
         },
       ],
     });
-    await run(["incident", "create", "why does it scroll"], h.ctx);
+    await run(
+      ["incident", "create", "--no-size-up", "why does it scroll"],
+      h.ctx,
+    );
     expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
     h.out.length = 0;
     expect(await run(["incident", "answer", "001", "Chrome"], h.ctx)).toBe(
@@ -258,7 +264,10 @@ describe("blocking channels", () => {
       rationale: "two things only Mauria knows",
     };
     h.env.NOSCOPE_STUB_PLAN = JSON.stringify(asking);
-    await run(["incident", "create", "why does it scroll"], h.ctx);
+    await run(
+      ["incident", "create", "--no-size-up", "why does it scroll"],
+      h.ctx,
+    );
     expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
     expect(h.out.at(-1)).toBe("incident 001 is now blocked");
     expect(await run(["incident", "step", "001"], h.ctx)).toBe(

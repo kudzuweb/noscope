@@ -2120,7 +2120,10 @@ describe("incident step", () => {
       cwd: tree,
       env: { NOSCOPE_DB: db, NOSCOPE_CLAUDE_BIN: stub },
     };
-    await run(["incident", "create", "where is the delete handler"], ctx);
+    await run(
+      ["incident", "create", "--no-size-up", "where is the delete handler"],
+      ctx,
+    );
     const plan: ActionPlan = {
       createUnits: [unitProposal("find", "locate the handler", "001-command")],
       closeUnits: [],

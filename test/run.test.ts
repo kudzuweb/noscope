@@ -93,7 +93,10 @@ describe("incident run", () => {
         rationale: "the handler is at a.txt:2",
       },
     ]);
-    await run(["incident", "create", "where is the delete handler"], h.ctx);
+    await run(
+      ["incident", "create", "--no-size-up", "where is the delete handler"],
+      h.ctx,
+    );
     expect(await run(["incident", "run", "001"], h.ctx)).toBe(EXIT.ok);
     expect(h.out[1]).toBe("--- cycle 1 ---");
     expect(h.out).toContain("--- cycle 2 ---");
@@ -164,7 +167,10 @@ describe("incident run", () => {
       findings: { conclusion: "it is the handler", reasoning: "the match" },
       needed: [],
     });
-    await run(["incident", "create", "where is the delete handler"], h.ctx);
+    await run(
+      ["incident", "create", "--no-size-up", "where is the delete handler"],
+      h.ctx,
+    );
     expect(await run(["incident", "run", "001"], h.ctx)).toBe(EXIT.ok);
     const store = h.store();
     const events = store.listEvents("001");
@@ -190,7 +196,10 @@ describe("incident run", () => {
     const h = harness([
       { ...empty, incidentStatus: "satisfied", rationale: "too early" },
     ]);
-    await run(["incident", "create", "where is the delete handler"], h.ctx);
+    await run(
+      ["incident", "create", "--no-size-up", "where is the delete handler"],
+      h.ctx,
+    );
     expect(
       await run(["incident", "run", "001", "--max-cycles", "3"], h.ctx),
     ).toBe(EXIT.ok);
@@ -229,7 +238,10 @@ describe("incident run", () => {
         rationale: "the tree has no such handler",
       },
     ]);
-    await run(["incident", "create", "where is the delete handler"], h.ctx);
+    await run(
+      ["incident", "create", "--no-size-up", "where is the delete handler"],
+      h.ctx,
+    );
     expect(
       await run(["incident", "run", "001", "--max-cycles", "0"], h.ctx),
     ).toBe(EXIT.usage);
@@ -261,6 +273,7 @@ describe("incident run", () => {
       [
         "incident",
         "create",
+        "--no-size-up",
         "where is the delete handler",
         "--budget-tokens",
         "10",
@@ -280,7 +293,7 @@ describe("incident run", () => {
     );
     h.ctx.env.NOSCOPE_CLAUDE_BIN = "/nonexistent/claude";
     h.out.length = 0;
-    await run(["incident", "create", "second"], h.ctx);
+    await run(["incident", "create", "--no-size-up", "second"], h.ctx);
     expect(await run(["incident", "run", "002"], h.ctx)).toBe(EXIT.failed);
     expect(h.out.at(-1)).toBe(
       "stopped after 1 cycle(s): the cycle could not run",

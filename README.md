@@ -30,13 +30,14 @@ pnpm build
 ```
 
 Environment: `NOSCOPE_DB` is the SQLite file (default `~/.noscope/noscope.sqlite`);
-`NOSCOPE_CLAUDE_BIN` is the Claude Code binary every provider call runs on, the IC's, the
-planner's, each unit leader's and each task session's (default `claude`; tests point it at
-`test/stub-claude`).
+`NOSCOPE_CLAUDE_BIN` is the Claude Code binary every provider call runs on, the initial
+IC's size-up at `create`, the IC's, the planner's, each unit leader's and each task
+session's (default `claude`; tests point it at `test/stub-claude`).
 `CLAUDE_CONFIG_DIR`, when set for Claude Code, is where the runtime looks for session and
 subagent transcripts (default `~/.claude`).
 `NOSCOPE_LIVE=1` also runs the live tests, which call the real binary: a Haiku session, a
-Haiku leader sending a two-member `pinger` strike team, and a
+Haiku leader sending a two-member `pinger` strike team, a Haiku initial IC sizing up this
+checkout read-only, and a
 `reproduce` session that drives Playwright's MCP server, which needs Playwright's Chromium
 installed (`npx playwright install chromium`) and network access for
 `npx --yes @playwright/mcp@latest`.

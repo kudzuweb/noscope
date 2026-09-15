@@ -16,9 +16,14 @@
 // next entry of NOSCOPE_STUB_COMMANDS (counter file NOSCOPE_STUB_COMMAND_COUNTER), or by
 // default one objective and `continue`; its review, recognised by the ReviewTurn schema (a
 // `verdict` property), gets NOSCOPE_STUB_REVIEW, or the next entry of NOSCOPE_STUB_REVIEWS
-// (counter file NOSCOPE_STUB_REVIEW_COUNTER), or by default `approve`. NOSCOPE_STUB_CALLS,
+// (counter file NOSCOPE_STUB_REVIEW_COUNTER), or by default `approve`. A command turn whose
+// schema requires `briefingEvaluation` (the IC's first turn after a transfer of command)
+// gets one default verdict added when the answer carries none. The initial IC's size-up,
+// recognised by the IncidentBriefing schema (an `incomingCommander` property), gets
+// NOSCOPE_STUB_BRIEFING, or by default an investigation briefing with one objective, one
+// unit sketched, no questions and claude-opus-5 as the incoming commander. NOSCOPE_STUB_CALLS,
 // when set, gets one JSON line appended per call: its kind (planner, leader, command,
-// review, task), the resumed id, args and prompt.
+// review, size-up, task), the resumed id, args and prompt.
 // NOSCOPE_STUB_FAIL and NOSCOPE_STUB_EXIT leave a leader's and the IC's turns alone, so a test
 // of a failing task session still gets its leader's turn; NOSCOPE_STUB_LEADER_FAIL fails every
 // turn instead.
@@ -73,7 +78,8 @@ const schema = JSON.parse(args[args.indexOf("--json-schema") + 1] ?? "{}");
 const isLeaderTurn = Array.isArray(schema.properties?.kind?.enum) && schema.properties.kind.enum.includes("report");
 const isCommandTurn = schema.properties?.periodObjectives !== undefined;
 const isReviewTurn = schema.properties?.verdict !== undefined;
-const isTurn = isLeaderTurn || isCommandTurn || isReviewTurn;
+const isSizeUp = schema.properties?.incomingCommander !== undefined;
+const isTurn = isLeaderTurn || isCommandTurn || isReviewTurn || isSizeUp;
 if (calls)
   appendFileSync(
     calls,
@@ -86,7 +92,9 @@ if (calls)
             ? "command"
             : isReviewTurn
               ? "review"
-              : "task",
+              : isSizeUp
+                ? "size-up"
+                : "task",
       resume: resumed === -1 ? null : args[resumed + 1],
       concurrent,
       args,
@@ -110,8 +118,8 @@ function nextOf(one, many, counterName, fallback) {
   return fallback();
 }
 
-const nextCommand = () =>
-  nextOf("NOSCOPE_STUB_COMMAND", "NOSCOPE_STUB_COMMANDS", "NOSCOPE_STUB_COMMAND_COUNTER", () => ({
+const nextCommand = () => {
+  const turn = nextOf("NOSCOPE_STUB_COMMAND", "NOSCOPE_STUB_COMMANDS", "NOSCOPE_STUB_COMMAND_COUNTER", () => ({
     periodObjectives: ["pursue the incident objective"],
     priorities: [],
     closeUnits: [],
@@ -122,6 +130,34 @@ const nextCommand = () =>
     incidentStatus: "continue",
     rationale: "stub command turn",
   }));
+  const evaluates = Array.isArray(schema.required) && schema.required.includes("briefingEvaluation");
+  return evaluates && turn.briefingEvaluation === undefined
+    ? {
+        ...turn,
+        briefingEvaluation: [
+          { item: "the briefing's first objective", verdict: "accepted", why: "stub evaluation" },
+        ],
+      }
+    : turn;
+};
+
+const nextBriefing = () =>
+  process.env.NOSCOPE_STUB_BRIEFING
+    ? JSON.parse(process.env.NOSCOPE_STUB_BRIEFING)
+    : {
+        kind: "investigation",
+        dominantProblem: "stub size-up: where the objective points",
+        obviouslyNeeded: [{ what: "the working directory", checked: true, finding: "Bash ls: present" }],
+        initialObjectives: ["establish where the objective points"],
+        initialOrganization: ["one unit to read the code, leader on claude-haiku-4-5"],
+        questionsForHuman: [],
+        hazards: [],
+        incomingCommander: {
+          provider: "claude-code",
+          model: "claude-opus-5",
+          why: "stub: the default commander",
+        },
+      };
 
 const nextReview = () =>
   nextOf("NOSCOPE_STUB_REVIEW", "NOSCOPE_STUB_REVIEWS", "NOSCOPE_STUB_REVIEW_COUNTER", () => ({
@@ -174,7 +210,9 @@ const planned = isPlanner
       ? nextCommand()
       : isReviewTurn
         ? nextReview()
-        : null;
+        : isSizeUp
+          ? nextBriefing()
+          : null;
 const output = planned ?? nextOutput();
 const failing = isTurn
   ? Boolean(process.env.NOSCOPE_STUB_LEADER_FAIL)

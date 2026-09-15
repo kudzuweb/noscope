@@ -29,6 +29,7 @@ describe("incident commands", () => {
         [
           "incident",
           "create",
+          "--no-size-up",
           "why does Roughdraft scroll after a delete",
           "--constraint",
           "read only",
@@ -61,6 +62,7 @@ describe("incident commands", () => {
         [
           "incident",
           "create",
+          "--no-size-up",
           "a cheaper one",
           "--ic-model",
           "claude-haiku-4-5",
@@ -71,7 +73,7 @@ describe("incident commands", () => {
     expect(other.out[0]).toMatch(/\(IC claude-code\/claude-haiku-4-5\)$/);
     expect(
       await run(
-        ["incident", "create", "x", "--ic-model", "gpt-9"],
+        ["incident", "create", "--no-size-up", "x", "--ic-model", "gpt-9"],
         other.context,
       ),
     ).toBe(EXIT.usage);
@@ -81,7 +83,14 @@ describe("incident commands", () => {
   it("prints the incident file with every section, empty ones marked", async () => {
     const db = freshDb();
     await run(
-      ["incident", "create", "objective one", "--constraint", "no writes"],
+      [
+        "incident",
+        "create",
+        "--no-size-up",
+        "objective one",
+        "--constraint",
+        "no writes",
+      ],
       ctx(db).context,
     );
     const s = ctx(db);
@@ -130,13 +139,14 @@ describe("incident commands", () => {
 
   it("numbers incidents in order and accepts budgets", async () => {
     const db = freshDb();
-    await run(["incident", "create", "first"], ctx(db).context);
+    await run(["incident", "create", "--no-size-up", "first"], ctx(db).context);
     const c = ctx(db);
     expect(
       await run(
         [
           "incident",
           "create",
+          "--no-size-up",
           "second",
           "--budget-tokens",
           "50000",
@@ -166,13 +176,16 @@ describe("incident commands", () => {
     const badBudget = ctx(db);
     expect(
       await run(
-        ["incident", "create", "x", "--budget-tokens", "-5"],
+        ["incident", "create", "--no-size-up", "x", "--budget-tokens", "-5"],
         badBudget.context,
       ),
     ).toBe(EXIT.usage);
     const unknownFlag = ctx(db);
     expect(
-      await run(["incident", "create", "x", "--nope"], unknownFlag.context),
+      await run(
+        ["incident", "create", "--no-size-up", "x", "--nope"],
+        unknownFlag.context,
+      ),
     ).toBe(EXIT.usage);
   });
 });
