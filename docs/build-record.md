@@ -1588,3 +1588,141 @@ Not exactly to spec, with reasons:
 - A leader that assigns a task and asks a strike team for it in the same turn declares the
   team on the task's own `strikeTeam` field; `requestStrikeTeam` targets the task computed
   as next before the turn, so on such a turn it is refused as R3-5 records it.
+
+## R3-8: Initial IC and transfer of command (#PR, merged 2026-09-15)
+
+R3-8 of the round 3 plan. Built: `incident create` runs the size-up. After the incident and
+its root unit are written, the initial IC, a session on `--initial-model` (default
+`claude-haiku-4-5`, checked against the models Claude Code serves) with the read-only tool
+set (`Read`, `Grep`, `Glob`, `Bash` under the read-only allowlist), the preamble, the new
+`initial_ic` seat and `INITIAL_IC_ROLE` (`src/size-up.ts`), reads the objective,
+constraints, priorities and budget and the runtime's own findings, gathered in code before
+the session runs (`gatherFindings`: the registered capabilities and equipment, the budget,
+whether the cwd is a git repository and its root, branch, HEAD and changed-path count,
+whether each URL a constraint names answers on one HEAD request with a five-second bound,
+falling back to GET when the server refuses HEAD, and the models each provider serves), and
+returns the `IncidentBriefing`: `kind`, `dominantProblem`, `obviouslyNeeded` (each `what`,
+`checked`, and `finding` required when checked), `initialObjectives` (at least one),
+`initialOrganization`, `questionsForHuman`, `hazards`, `incomingCommander` (`provider`,
+`model`, `why`); one strict object, bounded at 300 seconds. The briefing is recorded as
+`incident.briefed` (the root unit, the session, the initial IC's provider and model, `seat:
+"initial_ic"`, cycle 0, the usage, the cwd, the findings and the briefing) and the session's
+tool calls filed under the root unit and cycle 0 with the same seat. Command then transfers:
+`command.transferred` with `kind: "initial"`, the outgoing session and leader, the incoming
+leader with `incomingSessionId: null` (the IC's session starts at its first command turn;
+`leader.started` follows), the briefing as `document`, `chosenBy` and `reason`; its mutation
+is the new `unit.leader`, which sets the root unit's leader and replays. The incoming model
+is the briefing's `incomingCommander` when Claude Code serves it, `--ic-model` when given
+(now an override rather than a default), and `claude-opus-5` when the briefing names a pair
+the provider does not serve. A question in the briefing becomes an incident question
+(`question.asked` with `seat: "initial_ic"`) and the incident goes `blocked` before the IC
+starts; `incident answer` reopens it as it reopens any block. `--no-size-up` creates the
+incident on `--ic-model` or the default with no briefing and prints the R3-4 line. A size-up
+that fails (the provider's error, or an output that does not fit) is filed as
+`command.failed` with `seat: "initial_ic"` and `turn: "size-up"`, with the session's usage
+and activity when the provider returned an id; the incident stands, unbriefed, on
+`--ic-model` or the default, and `create` exits 1 saying so. `create` prints the briefing
+line by line and the transfer; `incident show` prints the briefing's kind and dominant
+problem and the transfer after the period.
+
+The IC's first command turn on a briefed incident (its first turn, judged by no
+`command.turned` or `plan.reviewed` in the log) renders the briefing after the change report
+and before the incident file (`# Transfer of command: the initial IC's briefing`: who wrote
+it on what model, every line, and `your model: …, chosen by …`), and its ask opens with the
+evaluation instruction; the turn is taken under `FirstCommandTurn`, `CommandTurn` with the
+new `briefingEvaluation` (an array of `{ item, verdict: accepted | rewritten | discarded,
+why }`) required and non-empty, so the provider's own validation holds the IC to it. Every
+other command turn keeps the optional field and the plain ask. `IC_ROLE` gains one paragraph:
+the IC takes command from a briefing, the initial IC's or an outgoing IC's handoff document,
+its first act is to evaluate it, and nothing in it binds it. `incident review` gains a
+`size-up` block before the cycles (the initial IC's call with its usage, priced under the
+role `initial_ic`; what the briefing said in numbers and the model it recommended; the
+transfer with who chose the model; the briefing's questions; a failed size-up; the initial
+IC's tool calls) and the line `briefing kept: a of n item(s) accepted, r rewritten, d
+discarded` from the first `command.turned` carrying an evaluation, or `briefing kept: not
+evaluated yet`, or `briefing: none (created without a size-up)`. The stub recognises the
+size-up by its schema (`incomingCommander`), answers `NOSCOPE_STUB_BRIEFING` or a default
+briefing naming `claude-opus-5`, logs the kind `size-up`, and adds one default verdict to a
+command turn whose schema requires `briefingEvaluation` when the scripted turn carries none.
+DESIGN.md Vocabulary (a row for the incident briefing and transfer of command), the ICS
+mapping (a row for the initial IC and transfer of command, from ICS 201), Step 2 (the two
+event types, the mutation, the failed size-up), Step 3 (the seat and the role text), Step 4
+(the first briefing, `FirstCommandTurn`, `briefingEvaluation` and `IncidentBriefing` in the
+schema blocks), Step 6 (the initial IC's usage and where its calls file), Step 7 (`create`'s
+flags and `review`) and the Model choices table (the initial IC on Haiku; the IC routed per
+incident) follow; `docs/architecture.html` gains the initial IC node and follows on the IC
+node, step 1 and the system prompt; the README's environment paragraph names the size-up and
+the new live test.
+
+Tests (`test/size-up.test.ts`): `create` on the stub records the briefing, sets the IC's
+model from it, writes the transfer with its mutation, and the log replays into a fresh store
+with the same leader; the size-up call's model, tools, allowlist, system prompt, schema and
+prompt (the runtime's findings rendered) are checked against the stub's call log; `--ic-model`
+overrides the briefing, an unknown recommended model falls back to the default, and a bad
+`--initial-model` is a usage error; `--initial-model` routes the size-up and `--no-size-up`
+makes no call and gives the IC the plain first turn; a briefing question blocks the incident
+with the question recorded, `step` is refused, `answer` reopens it, and the first command
+turn then shows the question and its answer; the first command turn carries the briefing
+section and the evaluation instruction, its schema requires the evaluation, the turn's
+verdicts land on `command.turned`, and the second turn carries neither; `review` shows the
+size-up block, the transfer, the initial IC's tool calls, the role total and the kept count
+before and after the first turn; a failing size-up files `command.failed` and exits 1 with
+the incident standing; an inline snapshot of the briefing section and the ask in the IC's
+first briefing; `gatherFindings` on a plain directory, a fresh `git init` and a refused URL,
+and `urlsIn`; the seat and role texts; a live test behind `NOSCOPE_LIVE=1` that sizes up the
+noscope checkout read-only on Haiku and asserts a `kind`, an objective, a commander and the
+git finding come back. The models test counts 41 event types and covers `IncidentBriefing`,
+`briefingEvaluation` and `FirstCommandTurn`. Every earlier test that calls `create` passes
+`--no-size-up`, so those tests keep testing what they tested.
+
+Observed in the live test (2026-09-15, Claude Code 2.1.272, the noscope checkout, objective
+"where does this repository decide which model the Incident Commander runs on?"): Haiku made
+19 tool calls in 80 seconds (`ls`, `find`, `Grep`, `Read`, and `grep` through Bash), 507k
+input tokens of which 465k were cache reads, $0.16 at list price; it named the kind "an
+investigation of model routing decision points", found the three decision points and their
+precedence, recommended `claude-opus-5` because "this is subtle investigation, not a narrow
+read", raised three questions for Mauria (two of them things it could not have found: why
+this matters now, whether the defaults should change) and named as a hazard that an unserved
+recommendation falls back to the default silently. One thing it did that the design says it
+cannot: it ran `grep` through Bash, which is not on the read-only allowlist, and the call
+succeeded; the transcript shows `is_error: false` on all four `grep` calls (verified from the
+session transcript). The inference from that one run is that in `-p` mode `--allowedTools`
+does not bound Bash to the listed commands on 2.1.272, or that Claude Code passes `grep` as
+read-only on its own; either way the session's Bash was read-only in fact but not by the
+policy as written. This is the provider's ground (R3-4 built the allowlist), not this PR's,
+and is reported rather than changed.
+
+Not exactly to spec, with reasons:
+
+- The transfer's incoming session id is null on the initial transfer: the IC's session does
+  not exist at `create`, it is created at the first command turn, and the plan's "the
+  transfer from the initial IC's session to the IC's" is recorded as the outgoing session
+  plus the incoming leader, with `leader.started` naming the session when it starts. R3-9's
+  handoff, which creates the fresh session before recording, fills both ids on the same
+  event.
+- The evaluate-the-briefing instruction is in the first command turn's user message, and the
+  schema requires the evaluation there, because a resumed call ignores `systemPrompt`; the
+  role text carries the general rule in a sentence so a session started by R3-9's handoff
+  reads it too.
+- The root unit is created before the size-up, on `--ic-model` or the default, and the
+  transfer sets its leader through the `unit.leader` mutation, so a failed size-up leaves a
+  usable incident with the failure filed (`command.failed`) rather than an orphaned paid
+  session and no incident; the plan block does not say what a failed size-up does.
+- No schema migration: the briefing lives in the log (`incident.briefed`) and is read from it
+  (`briefingOf`), and the root unit's leader column already existed, so the store stays at
+  version 6 and an incident from before R3-8 has no briefing and gets the plain first turn.
+- The size-up's usage is on `incident.briefed` and is not counted against the budget, like
+  every seat above a task; it is in the IC's first change report's spend and in review's
+  totals under `initial_ic`.
+- The briefing's `incomingCommander.provider` is checked against `claude-code` alone, since it
+  is the only provider; a briefing naming another provider falls back to the default the
+  same way as an unserved model, with the reason on the transfer.
+- `obviouslyNeeded` records whether a tool checked each need as `checked` plus `finding`,
+  rather than the plan's "whether a tool checked it" alone, so the check's result is in the
+  record; the refinement requires `finding` when `checked`.
+- The size-up prompt tells the session the runtime's findings are checked and to cite rather
+  than re-check them; the live run cited them and still spent most of its calls reading,
+  which is the seat's job.
+- The live test uses the noscope checkout itself, read-only, rather than a fixture repository;
+  `test/fixtures/tree` is inside the checkout, so a fixture repository would need its own
+  `.git`, which a checkout cannot carry.
