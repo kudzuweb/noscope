@@ -10,7 +10,8 @@ have to zoom in, not even to one-shot. `DESIGN.md` is the design. `BUILD-PLAN.md
 `CLAUDE.md` orients a Claude pointed at the repository: the framework in a paragraph, install, use, what to read next.
 
 Layout: `src/` is the runtime (`src/units/` registers the unit types, `base` and `ic`,
-each a form and a protocol; `src/capabilities/` the capabilities), `test/` its vitest
+each a form and a protocol; `src/configs.ts` the saved unit configs a plan deploys by
+name; `src/capabilities/` the capabilities), `test/` its vitest
 tests, `bin/noscope.mjs` the launcher that
 loads the built `dist/`; `biome.json`, `knip.json`, `tsconfig.json` and `tsconfig.typecheck.json`
 configure lint, unused-code detection, the build and the typecheck that includes tests.

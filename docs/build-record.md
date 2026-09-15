@@ -3392,3 +3392,137 @@ Not exactly to spec, with reasons:
   `runtime: null`.
 - R4-11 (saved configs) is being built in parallel and also raises the schema version;
   whichever merges second renumbers its step and pins.
+
+## R4-11: Saved unit configs (#PR, merged 2026-09-15)
+
+R4-11 of the round 4 plan, ruled by Mauria on 2026-09-15 (13:00 to 13:34): a unit is a
+type plus a config, the config is the filled form, and when the planner keeps filling the
+same form with the same answers, that config is saved under a name and deployed by name
+without thinking about the fields again, which is ICS resource typing (the planner
+outfitting a unit); the role text is part of a saved config. Built on R4-10 (#49) in two
+code commits and a docs commit: the table, the config on a unit and the proposal that
+names one; then the commands, the offer and the review.
+
+The saved config (`UnitConfig` in `src/models.ts`): a `name`, the `type`, the `form` (the
+filled form less the objective and the parent, as JSON keyed by the type: for `base` the
+leader, equipment, Bash allowlist and, when the unit has one, the role text; PR 49's
+design reviewer's note, so a later type's config is saved the same way), `savedFrom` (the
+incident and unit) and `savedAt`. `src/configs.ts` reads a unit's saved form off its
+type's form (`savedFormOf`: every form field but `objective`, a null role left out),
+keys a form (`formKey`: the type and the form through `stable`, which moved from the
+validator to `src/models.ts` so `configs.ts` imports no validator), builds the config
+from a unit (`configOf`), finds the saved config a unit's form matches
+(`matchingConfig`), counts the units filled the same way by hand across the file
+(`unsavedRepeats`), prints a form on one line (`describeForm`), and outfits a plan.
+
+The store (`src/store.ts`): `SCHEMA_VERSION` is 9 (rebased over R4-12's 8 after #50
+merged); `units` gains `config` (null when the
+form was filled by hand); the `unit_configs` table (`name` primary key, `type`,
+`form_json`, `saved_from_incident_id`, `saved_from_unit_id`, `saved_at`; no foreign
+keys, since a config outlives its incident and its event replays before any incident's);
+migration step 8 adds the column, and the table arrives with the schema; the
+`unit.create` mutation's preprocess (`withConfig`, over `withType`) reads a unit recorded
+without a config as filled by hand, so a round 4 log replays to the same rows; the
+`config.save` mutation, written by `saveUnitConfig` as the system event `config.saved`
+(scope `system`, no incident, `EventType` gains it), inserts the row, and `apply` refuses
+it under an incident; `listUnitConfigs`, `getUnitConfig` and `listAllUnits` (every
+incident's units, for the repeat count) read; `STATE_TABLES` carries each table's
+ordering column so `snapshot` orders `unit_configs` by name. The `events` table is
+untouched; every event this PR writes carries R4-12's runtime tag as the rest do.
+
+The proposal (`UnitProposal` in `src/models.ts`): `BaseUnitForm.partial` on `leader`,
+`equipment` and `bashAllowlist`, extended with `config` (optional, described for the
+planner) before `ref`, `parent`, `type` and `takes`, and a `superRefine` requiring the
+three when no config is named, so the planner's schema stays one strict object with the
+three fields optional in it. `OutfittedUnit` and `OutfittedPlan` (`src/configs.ts`) are
+the proposal and plan with every form whole; `outfit` fills a proposal's leader,
+equipment, Bash allowlist and role from the config it names where the proposal gave none
+(a field given beside `config` overrides the config's) and throws on a form still not
+whole; `configReasons` says why a config cannot outfit its unit.
+
+The validator (`src/validator.ts`): `ValidationContext` gains `configs`
+(`store.listUnitConfigs()`); the rule "Config exists" (sixteen now; `PLANNER_RULES`
+carries its line) refuses a name not saved, with the names saved, and a config of another
+type, with both types; `validatePlan` runs it first on the plan as proposed and, when it
+rejects, returns those rejections alone, since a unit whose config cannot outfit it has
+no form for the other rules to read; otherwise it outfits the plan, every rule reads the
+outfitted plan (`Rule` takes an `OutfittedPlan`; Model known reads the config's model),
+and the verdict's `plan` is the outfitted one. `applyPlan` outfits the plan it is given
+against the store's configs (idempotent on a whole proposal, so a caller that skipped the
+validator gets its units whole) and writes `config` on each new unit.
+
+The planner (`src/planner.ts`): section 8 ends with the saved configs, each by name with
+its type and fields, so the ten sections stand; the preamble says section 8 lists them,
+to deploy one by name in `config` when it fits, filling only the objective and the parent
+and giving a field beside `config` only to override it, and to fill the form by hand only
+when none fits.
+
+The commands (`src/commands/config.ts`, a third command group `config` in `src/cli.ts`,
+help and dispatch covering it): `config save <incident> <unit-id> <name>` (a name is
+saved once: a taken name exits 2, a missing argument 2, an unknown incident or unit 4;
+prints the fields and how a plan deploys it), `config list` (one line each: name, type,
+fields, when and where from; a sentence when none is saved) and `config show <name>` (in
+full, the role text whole; 4 when not saved). `step` (`src/commands/incident.ts`) prints
+each proposal's seat as the config it names, the leader it gives, or both
+(`proposalSeat`), names the saved config on each unit created, and after the plan is
+applied prints the offer (`saveOffers`): each new unit of a plannable type filled by hand
+is compared with every unit in the file, across incidents, and when the same filled form
+has now appeared `SAVE_OFFER_REPEATS` (3) times or more unsaved and no saved config
+matches it, one line per distinct form names the unit, the form, the count and the
+`config save` command to run; nothing is saved by `step`. `incident review`
+(`src/review.ts`) names each unit deployed from a saved config under its cycle
+(`configDeployed`, read off the `unit.created` mutation) and counts them at the end
+(`units from saved configs`).
+
+Tests: `test/configs.test.ts` (new) pins the saved form, the key, the repeat count, the
+matching config, the one-line form, outfitting with an override and its reasons, section
+8 listing a saved config, and the three commands with their exits and output.
+`test/validator.test.ts` pins Config exists in the failing table and in its own case: an
+unknown name and a wrong-typed config refused with the reasons, the passing plan
+outfitted with the config's fields, an override, and a config on an unserved model
+failing Model known through the outfitted unit. `test/run.test.ts` drives the
+acceptance on the stub: a unit filled by hand, `config save`, the next plan naming the
+config, the applied unit carrying its fields and the name, `step` and `review` naming
+it; and the offer printed on the third repeat and not the second, nothing saved.
+`test/store.test.ts` migrates a version 8 file, replays a pre-R4-11 log to the same
+snapshot, round-trips a saved config through the row and the log as a system event and a
+unit deployed from it, and refuses a second save under a name. `test/units.test.ts` pins
+`config` in the proposal's schema and the refinement; the planner snapshot and the rule
+count, the event type count (51) and the schema version pins (9) follow; the R4-10
+round 4 store test also strips the `config` column and key.
+
+Not exactly to spec, with reasons:
+
+- The config is recorded on the unit as a `config` column (and so in the `unit.create`
+  mutation), not as a separate event or a field on `plan.applied`: `incident review`
+  reads the log, and the `unit.created` mutation is where the unit's other fields are, so
+  a replay carries the name with the row.
+- "The same filled form" is the type and the saved form (`savedFormOf`) as key-sorted
+  JSON (`stable`), compared across every incident in the same database; arrays keep their
+  order, so `["Read", "Grep"]` and `["Grep", "Read"]` are two forms, as the planner wrote
+  them.
+- A saved config is a system event, `config.saved`, so the `unit_configs` table is
+  rebuildable from the log like every other state table; the plan block names the table
+  only. A replay applies system events first, so a saved config is restored before any
+  incident's plan names it.
+- A plan naming a config that is not saved, or is of another type, is rejected on Config
+  exists alone, and the other rules are not reported for that plan: such a unit has no
+  leader, equipment or allowlist for them to read. The planner names a saved config on the
+  redraft and then sees the rest.
+- The offer prints on the third repeat and on every later one while the form stays
+  unsaved (three or more, not exactly three), and stops once a saved config matches the
+  form; the acceptance names the second and the third.
+- A name is saved once; there is no overwrite or delete command. Changing a config means
+  saving another name.
+- `step` prints the offer; `incident run` prints it through `step`'s cycle. The offer
+  reads the file after the plan is applied, so the unit just created counts.
+- `applyPlan` outfits the plan again rather than taking the validator's outfitted
+  verdict: the tests call it with plain plans, and outfitting a whole proposal changes
+  nothing.
+- The IC's review turn reads the draft as proposed (a `config` name, not the fields), as
+  the planner wrote it; the outfitted form is what the validator and `applyPlan` see.
+- `docs/architecture.html`'s command line under the CLI node gains `review`, which it
+  omitted, beside the three config commands.
+- For the next type (PR 49's design review, still open): a saved form is read back as the
+  base form's fields in `outfit`, since `base` is the one type a plan may create; a second
+  plannable type needs `UnitProposal` built from the registry first.
