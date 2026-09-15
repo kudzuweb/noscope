@@ -1256,7 +1256,10 @@ describe("dispatcher, unit leaders", () => {
           "Effect policy: task t-read gives strike team editor the tool Edit, which is not one of the read-only built-ins (Read, Grep, Glob, Bash)",
         ],
       ],
-      [null, ["no ready task remains in the unit to send it on"]],
+      [
+        null,
+        ["the unit reported, so no task runs next in this pass to send it on"],
+      ],
     ]);
     expect(
       store.listTasks("i1").find((t) => t.id === "t-read")?.strikeTeam,

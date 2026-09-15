@@ -453,7 +453,7 @@ what the agent tool's result shows the session (the fixture's `Agent` result car
 `agentId: <id>`, captured 2026-09-15). A leader's `requestStrikeTeam` on a `continue` turn
 is checked and declared on the task that runs next, in the turn's transaction after
 `unit.continued` (Step 4); on a `report` turn, or with no task left, it is refused as
-asked with nothing to send it on. `strike_team.defined` carries the task, the unit, who
+asked with nothing to send it on (the reason says which). `strike_team.defined` carries the task, the unit, who
 declared it (`plan`, written by `applyPlan` beside `task.created`, or `leader`, with the
 session id and the mutation `task.strikeTeam`) and the kinds; `strike_team.rejected`
 carries the same and `reasons`, one per rule line. A member's run is the `subagent.ran`

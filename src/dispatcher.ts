@@ -340,7 +340,11 @@ function declareRequestedTeam(
     store.record(incident.id, "strike_team.rejected", actor, {
       ...asked,
       taskId: null,
-      reasons: ["no ready task remains in the unit to send it on"],
+      reasons: [
+        turn.kind === "report"
+          ? "the unit reported, so no task runs next in this pass to send it on"
+          : "no ready task remains in the unit to send it on",
+      ],
     });
     return;
   }
