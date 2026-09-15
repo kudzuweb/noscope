@@ -1404,3 +1404,7 @@ Not exactly to spec, with reasons:
   rather than answering nothing.
 - Review's "plans:" line now reads "N drafted in M cycle(s)", since a cycle can hold two
   drafts.
+- An IC that cannot answer (a failed session, or an output that does not fit, which is
+  what a second `correct` is) ends the step with exit 1 naming the IC, after the events
+  written so far; the period it set stands and the next step opens a new command turn. Its
+  usage for that call is not recorded, as a leader's is not.
