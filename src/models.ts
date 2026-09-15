@@ -69,6 +69,9 @@ export const EventType = z.enum([
   "picture.discrepancy",
   "strike_team.defined",
   "strike_team.rejected",
+  "command.turned",
+  "command.rejected",
+  "plan.reviewed",
 ]);
 
 export const Budget = z.object({
@@ -110,15 +113,28 @@ export const CapabilityRequest = z.object({
   answer: z.string().optional(),
 });
 
+/**
+ * The current operational period, set by the IC at the top of each cycle: the objectives
+ * for the period and the incident's priorities as the IC restated or revised them. `number`
+ * is the cycle that set it. Absent until the IC has acted once.
+ */
+export const Period = z.object({
+  number: z.number().int().positive(),
+  objectives: z.array(z.string()),
+  priorities: z.array(z.string()),
+});
+
 export const Incident = z.object({
   id: z.string().min(1),
   objective: z.string().min(1),
   constraints: z.array(z.string()),
+  /** The priorities Mauria gave at `create`; the IC's restatement each period is on `period`. */
   priorities: z.array(z.string()),
   budget: Budget,
   questions: z.array(Question),
   capabilityRequests: z.array(CapabilityRequest),
   status: IncidentStatus,
+  period: Period.optional(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });
@@ -502,6 +518,97 @@ export const LeaderTurn = z
       });
   });
 
+// What the Incident Commander returns: a command turn at the top of each cycle, and a
+// review of the planner's draft.
+
+const DISCREPANCY = z
+  .string()
+  .min(1)
+  .optional()
+  .describe(
+    "Only when the update received describes a different problem from the one being worked, not a different detail: what differs",
+  );
+
+/** The IC's answer to a resource request a unit sent up, when the IC can answer it itself (the requests arrive with R3-6). */
+export const ResourceAnswer = z.object({
+  unitId: z.string().min(1).describe("The unit that raised the request"),
+  request: z.string().min(1).describe("The request, as the unit stated it"),
+  answer: z.string().min(1),
+});
+
+/**
+ * The IC's command turn, at the top of each cycle: the period's objectives and priorities,
+ * units to close, answers to what units asked for, what only Mauria can supply, and whether
+ * the incident continues. The planner then drafts against the period.
+ */
+export const CommandTurn = z.object({
+  periodObjectives: z
+    .array(z.string().min(1))
+    .min(1)
+    .describe(
+      "The objectives for this operational period, from the incident objective, the constraints, the priorities and the units' reports",
+    ),
+  priorities: z
+    .array(z.string().min(1))
+    .describe("The incident's priorities, restated or revised for this period"),
+  closeUnits: z.array(UnitClose),
+  answers: z
+    .array(ResourceAnswer)
+    .default([])
+    .describe("Resource requests from units that the IC can answer itself"),
+  questionsForHuman: z.array(z.string().min(1)),
+  capabilityRequests: z.array(CapabilityRequest.omit({ answer: true })),
+  grantRequests: z.array(GrantRequest),
+  incidentStatus: z.enum(["continue", "blocked", "satisfied", "failed"]),
+  rationale: z
+    .string()
+    .describe("Why these objectives and this status, one paragraph"),
+  discrepancy: DISCREPANCY,
+});
+
+/**
+ * The IC's review of the planner's draft: approve it, correct it (the planner redrafts
+ * once against the corrections), or amend it directly. After a redraft only approve and
+ * amend remain (`FinalReviewTurn`), so a cycle has at most two planner calls.
+ */
+function reviewTurn<const V extends readonly ["approve", ...string[]]>(
+  verdicts: V,
+) {
+  return z
+    .object({
+      verdict: z.enum(verdicts),
+      corrections: z
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          "With verdict correct: what the planner must change, as text it redrafts against",
+        ),
+      plan: ActionPlan.optional().describe(
+        "With verdict amend: the whole plan as amended, which is applied in place of the draft",
+      ),
+      rationale: z.string().describe("Why this verdict, one paragraph"),
+      discrepancy: DISCREPANCY,
+    })
+    .superRefine((t, ctx) => {
+      if (t.verdict === "correct" && t.corrections === undefined)
+        ctx.addIssue({
+          code: "custom",
+          path: ["corrections"],
+          message: "a correct verdict carries its corrections",
+        });
+      if (t.verdict === "amend" && t.plan === undefined)
+        ctx.addIssue({
+          code: "custom",
+          path: ["plan"],
+          message: "an amend verdict carries the amended plan",
+        });
+    });
+}
+
+export const ReviewTurn = reviewTurn(["approve", "correct", "amend"]);
+export const FinalReviewTurn = reviewTurn(["approve", "amend"]);
+
 // What a session returns.
 
 export const Needed = z.object({
@@ -595,6 +702,10 @@ export type ActionPlan = z.infer<typeof ActionPlan>;
 export type Situation = z.infer<typeof Situation>;
 export type LeaderReport = z.infer<typeof LeaderReport>;
 export type LeaderTurn = z.infer<typeof LeaderTurn>;
+export type Period = z.infer<typeof Period>;
+export type ResourceAnswer = z.infer<typeof ResourceAnswer>;
+export type CommandTurn = z.infer<typeof CommandTurn>;
+export type ReviewTurn = z.infer<typeof ReviewTurn>;
 export type Settlement = z.infer<typeof Settlement>;
 export type Needed = z.infer<typeof Needed>;
 export type ClaimProposal = z.infer<typeof ClaimProposal>;

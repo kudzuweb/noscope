@@ -148,10 +148,20 @@ describe("incident review", () => {
     );
     expect(h.out[1]).toMatch(/^2 cycle\(s\) from .* events$/);
     expect(text).toMatch(
-      /cycle 1 {2}\S+ {2}applied open {2}units \+1 -0 {2}tasks \+1 cancelled 0$/m,
+      /cycle 1 {2}\S+ {2}applied open {2}ic approve {2}units \+1 -0 {2}tasks \+1 cancelled 0$/m,
+    );
+    // The IC's command turn and its review are priced on the root leader's model, before the planner's draft.
+    expect(text).toContain(
+      "  ic claude-opus-5: in 1,500 (uncached 1,000 / write 200 / read 300)  out 42  1.5 s  $0.01  set period 1: 1 objective(s), 0 close(s), continue  session stub-session",
+    );
+    expect(text).toContain(
+      "  ic claude-opus-5: in 1,500 (uncached 1,000 / write 200 / read 300)  out 42  1.5 s  $0.01  reviewed the draft: approve  session stub-session",
     );
     expect(text).toContain(
       "planner claude-opus-5: in 1,500 (uncached 1,000 / write 200 / read 300)  out 42  1.5 s  $0.01  session stub-session",
+    );
+    expect(text).toMatch(
+      /ic\s+claude-opus-5\s+4\s+6,000\s+168\s+6\.0\s+\$0\.05/,
     );
     expect(text).toMatch(
       /001-t01 grep \(deterministic\): \d+\.\d s {2}completed {2}claims 1 verified$/m,
@@ -173,14 +183,17 @@ describe("incident review", () => {
       "  001-u02: cycle 1: reported progress, 0 change(s)",
     );
     expect(text).toContain(
-      "plans: 2 proposed, 2 applied, 0 rejected (0 rule lines)",
+      "plans: 2 drafted in 2 cycle(s), 2 applied, 0 rejected (0 rule lines)",
+    );
+    expect(text).toContain(
+      "ic verdicts: 2 review(s): 2 approve, 0 correct, 0 amend",
     );
     expect(text).toContain(
       "tasks: 1 ran (1 deterministic, 0 sessions) of 1 created",
     );
     expect(text).toContain("claims: 1 verified, 0 asserted, 0 rejected");
     expect(text).toContain("questions: none");
-    expect(h.out.at(-1)).toBe("cost: $0.04");
+    expect(h.out.at(-1)).toBe("cost: $0.09");
   });
 
   it("exits 4 for an incident that does not exist", async () => {
@@ -376,9 +389,12 @@ describe("incident review", () => {
     expect(text).toMatch(
       /interpret\s+claude-opus-5\s+2\s+2,000,000\s+20,000\s+90\.0\s+est \$4\.15/,
     );
+    // A log from before the IC: cycles cut at plan.proposed, no IC lines, no verdicts.
     expect(text).toContain(
-      "plans: 2 proposed, 1 applied, 1 rejected (1 rule lines)",
+      "plans: 2 drafted in 2 cycle(s), 1 applied, 1 rejected (1 rule lines)",
     );
+    expect(text).toContain("ic verdicts: none");
+    expect(text).not.toContain("  ic ");
     expect(text).toContain(
       "tasks: 4 ran (0 deterministic, 4 sessions) of 5 created, 1 failed before running",
     );

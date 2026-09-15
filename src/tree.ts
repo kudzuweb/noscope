@@ -1,4 +1,20 @@
-import type { Event, LeaderReport, Task, Unit } from "./models.js";
+import type { Event, LeaderReport, Period, Task, Unit } from "./models.js";
+
+/**
+ * The current operational period as every seat below the IC reads it, in a brief or an
+ * orientation: the period's objectives and priorities; nothing before the IC has set one.
+ */
+export function renderPeriod(period: Period | undefined): string[] {
+  if (period === undefined) return [];
+  const list = (items: readonly string[]) =>
+    items.length === 0 ? ["  (none)"] : items.map((i) => `  - ${i}`);
+  return [
+    `Operational period ${period.number} objectives:`,
+    ...list(period.objectives),
+    "Priorities this period:",
+    ...list(period.priorities),
+  ];
+}
 
 /** The mark a task shows in the tree (DESIGN.md Step 7): done, running, ready, pending, and the two ways a task ends without finishing. */
 function taskMark(task: Task): string {

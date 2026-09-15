@@ -551,14 +551,14 @@ describe("store", () => {
     s1.db.pragma("user_version = 1");
     s1.close();
     const first = new Store(path);
-    expect(first.db.pragma("user_version", { simple: true })).toBe(5);
+    expect(first.db.pragma("user_version", { simple: true })).toBe(6);
     first.close();
     // A crash after the column was added but before the version was written: reopening finishes the job.
     const half = new Store(path);
     half.db.pragma("user_version = 1");
     half.close();
     const s2 = new Store(path);
-    expect(s2.db.pragma("user_version", { simple: true })).toBe(5);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(6);
     expect(
       s2
         .listClaims("i1")
@@ -586,7 +586,7 @@ describe("store", () => {
     s1.db.pragma("user_version = 2");
     s1.close();
     const s2 = new Store(path);
-    expect(s2.db.pragma("user_version", { simple: true })).toBe(5);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(6);
     expect(s2.listTasks("i1").map((t) => t.evidenceFrom)).toEqual([
       { claims: [], tasks: [] },
     ]);
@@ -607,7 +607,7 @@ describe("store", () => {
     s1.db.pragma("user_version = 3");
     s1.close();
     const s2 = new Store(path);
-    expect(s2.db.pragma("user_version", { simple: true })).toBe(5);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(6);
     expect(s2.listUnits("i1").map((u) => [u.id, u.objective])).toEqual([
       ["u-command", "command"],
       ["u1", "delete-handler investigation"],
@@ -649,7 +649,7 @@ describe("store", () => {
     s1.db.pragma("user_version = 4");
     s1.close();
     const s2 = new Store(path);
-    expect(s2.db.pragma("user_version", { simple: true })).toBe(5);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(6);
     expect(s2.listTasks("i1").map((t) => t.strikeTeam)).toEqual([[]]);
     const team = {
       kind: "pinger",
@@ -688,6 +688,51 @@ describe("store", () => {
     expect(b.listTasks("i1")[0]?.strikeTeam).toEqual([team]);
     s2.close();
     b.close();
+  });
+
+  it("migrates a version 5 file: incidents gain a period, and a root unit's session started under the old role text is dropped", async () => {
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const path = `${mkdtempSync(`${tmpdir()}/noscope-`)}/v5.sqlite`;
+    const s1 = new Store(path);
+    scripted(s1);
+    s1.setUnitSession("i1", "u-command", "old-ic-session", "dispatcher");
+    s1.setUnitSession("i1", "u1", "leader-session", "dispatcher");
+    s1.db.exec("ALTER TABLE incidents DROP COLUMN period_json");
+    s1.db.pragma("user_version = 5");
+    s1.close();
+    const s2 = new Store(path);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(6);
+    expect(s2.getIncident("i1")?.period).toBeUndefined();
+    expect(s2.listUnits("i1").map((u) => [u.id, u.sessionId])).toEqual([
+      ["u-command", null],
+      ["u1", "leader-session"],
+    ]);
+    s2.setIncidentPeriod(
+      "i1",
+      { number: 1, objectives: ["find the handler"], priorities: [] },
+      "runtime",
+      { rationale: "first period" },
+    );
+    expect(s2.getIncident("i1")?.period).toEqual({
+      number: 1,
+      objectives: ["find the handler"],
+      priorities: [],
+    });
+    const turned = s2.listEvents("i1").at(-1);
+    expect(turned?.type).toBe("command.turned");
+    expect(turned?.payload).toMatchObject({
+      rationale: "first period",
+      mutation: { kind: "incident.period", incidentId: "i1" },
+    });
+    // The period replays with the rest: a fresh store rebuilt from the log carries it.
+    const rebuilt = new Store(":memory:");
+    rebuilt.replay(s2.listEvents("i1"));
+    expect(rebuilt.getIncident("i1")?.period?.objectives).toEqual([
+      "find the handler",
+    ]);
+    rebuilt.close();
+    s2.close();
   });
 
   it("replays a unit recorded before units had a leader, and a unit's session and its report events", () => {

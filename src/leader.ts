@@ -15,12 +15,13 @@ import {
 } from "./models.js";
 import { type SessionRequest, sessionSystemPrompt } from "./providers/index.js";
 import { describeStrikeTeam } from "./strike-team.js";
-import { renderHierarchy } from "./tree.js";
+import { renderHierarchy, renderPeriod } from "./tree.js";
 
 // A unit's leader is a persistent session: created when the unit first has a ready task,
 // resumed for every task that runs inside it and for every turn, demobilized when the unit
 // closes. The root unit's leader is the Incident Commander; its session is built here like
-// any leader's and gets its own schemas in R3-7 (DESIGN.md Step 6).
+// any leader's, and its own turns, the command turn and the review, live in ic.ts
+// (DESIGN.md Step 6).
 
 /** The root unit's leader until the size-up routes it (R3-8); `incident create --ic-model` overrides it. */
 export const IC_MODEL = "claude-opus-5";
@@ -29,7 +30,7 @@ export const IC_PROVIDER = "claude-code";
 /** A turn is one structured call with no task of its own; it gets the planner's bound. */
 const LEADER_TURN_SECONDS = 300;
 
-/** The role text as a unit leader reads it; the IC's differs in its first sentence and in who decides on a not_met report. */
+/** The role text as a unit leader reads it; the IC reads `IC_ROLE`. */
 export const LEADER_ROLE = `Your role: unit leader. You own your unit's objective and direct its tasks, in order, until you can report against it.
 
 Report what changed, not what you did: each item in changed is something now true that was not, naming the claim ids it rests on; a change with no claims behind it is a claim of its own and counts for less. Outcome met means the unit's objective is established by observed claims; not_met means it cannot be met as set, and then why and suggestion are required, because the IC, who has more perspective, decides what happens next; progress means the unit has more to run or more to say. Set pictureChanged, and report rather than continue, the moment an outcome changes the picture the incident is working from: the IC acts on it before the next unit runs.
@@ -41,19 +42,24 @@ You may send a strike team: several subagents of one kind and model on one task,
 discrepancy is for one thing only: the update you received describes a different problem from the one you have been working, as if you believed you were fighting a fire and the update describes a hurricane. Say what differs. A different detail, a wrong line number, a claim you disagree with, is not a discrepancy; it goes in your report or your next task.`;
 
 /**
- * The role text per seat: the root unit's leader is the Incident Commander, so it is named
- * as such and a not_met report under command goes to Mauria; the machinery is otherwise the
- * unit leader's until R3-7 gives the IC its own turns.
+ * The role text as the Incident Commander reads it (R3-7): it scopes, breaks down, equips and
+ * judges; its digging is assigned; a period ends when units report or the picture changes;
+ * a not_met report is information for its decision; a discrepancy it cannot reconcile goes
+ * to Mauria; the situation stays the planner's. Fixed at the root session's first call.
  */
+export const IC_ROLE = `Your role: Incident Commander, leader of command, the root unit, and Mauria's delegate on this incident. You scope the incident, break it down, equip it and judge what comes back. You do not dig: a fact is retrieved by a task under a unit, never by you, so what you want known becomes a period objective for the planner to task.
+
+Each operational period opens with a change report and the incident file, and you answer with a command turn: the period's objectives (what this period must establish, from the incident objective, the constraints, the priorities and the units' reports), the priorities restated or revised, the units to close, answers to what units asked for that you can answer yourself, and what only Mauria can supply: a question for what only she knows or may decide, a capability request for means that do not exist yet, a grant request for permission. Set incidentStatus to satisfied only when the period objectives and the incident objective are met by the units' reports, resting on observed claims, with nothing left open; failed when they cannot be met; blocked when you have raised something for Mauria; continue otherwise. A unit's not_met report, with its why and suggestion, is information for your decision and never a decision: you decide what happens to that unit and its objective, and you may close it, re-task it through the period objectives, or ask Mauria.
+
+When the status is continue, the planner drafts an action plan against your objectives and you review it once: approve it as drafted; correct it, with text the planner redrafts against, once; or amend it, returning the whole plan as you want it applied. After a redraft you approve or amend, never correct again. The situation in the plan is the planner's; leave it as written unless you amend the plan, and then carry it over. The plan's rationale names the priority that chose between plans; hold the draft to that and to the period objectives, not to your taste.
+
+A period ends when the units have reported or when one report changes the picture; you are never consulted per task. A task under command runs under you as under any leader, and after it you continue or report the same way: report what changed, not what you did.
+
+discrepancy is for one thing only: the update you received describes a different problem from the one you have been commanding, as if you believed you were fighting a fire and the update describes a hurricane. Say what differs. A discrepancy raised below you that the incident file cannot reconcile becomes a question for Mauria in your command turn. A different detail, a wrong line number, a claim you disagree with, is not a discrepancy.`;
+
+/** The role text per seat: a unit's leader reads `LEADER_ROLE`, the root's leader reads `IC_ROLE`. */
 export function leaderRole(seat: "leader" | "ic"): string {
-  if (seat === "leader") return LEADER_ROLE;
-  return LEADER_ROLE.replace(
-    "Your role: unit leader.",
-    "Your role: Incident Commander, leader of command.",
-  ).replace(
-    "because the IC, who has more perspective, decides what happens next",
-    "because Mauria decides what happens next",
-  );
+  return seat === "leader" ? LEADER_ROLE : IC_ROLE;
 }
 
 export const LEADER_TURN_SCHEMA = jsonSchemaFor(LeaderTurn);
@@ -154,6 +160,7 @@ export function renderLeaderOrientation(
     ? own
     : [
         `Incident objective: ${incident.objective}`,
+        ...renderPeriod(incident.period),
         `Current hypothesis: ${situation?.hypothesis ?? "(none yet)"}`,
         "Established so far:",
         list((situation?.proven ?? []).map((p) => `${p.claimId}: ${p.line}`)),

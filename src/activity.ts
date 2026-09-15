@@ -3,15 +3,17 @@ import type { Store } from "./store.js";
 
 /**
  * Where in the incident a session ran, filed on every event of its activity: the unit and
- * the task in flight, or the planner's cycle. Today one session is one task or one planner
- * call; `taskId` is nullable so a session that runs several tasks (R3-4) can file a call
- * that belongs to none.
+ * the task in flight, or the cycle for a call above the units. A leader's turn files under
+ * its unit with no task and no cycle; the planner's call under its cycle with no unit; the
+ * IC's own turns under the root unit and the cycle, marked `seat: "ic"` so review tells
+ * them from the planner's calls in the same cycle.
  */
 export type SessionPlace = {
   sessionId: string;
   unitId: string | null;
   taskId: string | null;
   cycle: number | null;
+  seat?: "ic";
 };
 
 function toolEvent(

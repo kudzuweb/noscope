@@ -12,6 +12,7 @@ import {
   Grant,
   Incident,
   IncidentStatus,
+  Period,
   Question,
   StrikeTeam,
   Task,
@@ -35,10 +36,11 @@ export function now(): string {
 /**
  * Bumped whenever a table changes shape. A file at an earlier version is migrated in place,
  * one step at a time (1: claims gain `basis`; 2: tasks gain `evidence_from_json`; 3: units
- * gain a leader and `purpose` becomes `objective`; 4: tasks gain `strike_team_json`); a file
- * at a later version is refused.
+ * gain a leader and `purpose` becomes `objective`; 4: tasks gain `strike_team_json`; 5:
+ * incidents gain `period_json` and every root unit's session is dropped); a file at a
+ * later version is refused.
  */
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 
 /**
  * The leader a unit recorded before units had one is read as: the planner's provider and
@@ -65,6 +67,7 @@ CREATE TABLE IF NOT EXISTS incidents (
   questions_json TEXT NOT NULL,
   capability_requests_json TEXT NOT NULL,
   status TEXT NOT NULL,
+  period_json TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -199,6 +202,12 @@ export const Mutation = z.discriminatedUnion("kind", [
     at: Timestamp,
   }),
   z.object({
+    kind: z.literal("incident.period"),
+    incidentId: z.string(),
+    period: Period,
+    at: Timestamp,
+  }),
+  z.object({
     kind: z.literal("unit.create"),
     unit: z.preprocess(withLeader, Unit),
   }),
@@ -312,6 +321,16 @@ export class Store {
             this.db.exec(
               "ALTER TABLE tasks ADD COLUMN strike_team_json TEXT NOT NULL DEFAULT '[]'",
             );
+        // Version 4 incidents had no operational period, and a root unit's session started
+        // under R3-4 keeps the leader role text of that build in its snapshotted system
+        // prompt (a resumed call keeps the first call's system prompt), so it is dropped:
+        // the IC's first turn starts a fresh session under the IC's own role text.
+        5: () => {
+          if (!hasColumn("incidents", "period_json"))
+            this.db.exec("ALTER TABLE incidents ADD COLUMN period_json TEXT");
+          this.db.exec(
+            "UPDATE units SET session_id = NULL WHERE parent_id IS NULL",
+          );
         },
       };
       const missing = [...Array(SCHEMA_VERSION - version).keys()]
@@ -446,6 +465,21 @@ export class Store {
       kind: "incident.capabilityRequests",
       incidentId,
       capabilityRequests,
+      at: now(),
+    });
+  }
+
+  /** The operational period the IC set, recorded on the incident with the IC's turn (`command.turned`). */
+  setIncidentPeriod(
+    incidentId: string,
+    period: Period,
+    actor: string,
+    extra: Extra = {},
+  ): void {
+    this.write(incidentId, "command.turned", actor, extra, {
+      kind: "incident.period",
+      incidentId,
+      period,
       at: now(),
     });
   }
@@ -711,7 +745,7 @@ export class Store {
         owned(i.id, `incident ${i.id}`);
         this.db
           .prepare(
-            "INSERT INTO incidents (id, objective, constraints_json, priorities_json, budget_json, questions_json, capability_requests_json, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO incidents (id, objective, constraints_json, priorities_json, budget_json, questions_json, capability_requests_json, status, period_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           )
           .run(
             i.id,
@@ -722,6 +756,7 @@ export class Store {
             j(i.questions),
             j(i.capabilityRequests),
             i.status,
+            i.period === undefined ? null : j(i.period),
             i.createdAt,
             i.updatedAt,
           );
@@ -757,6 +792,17 @@ export class Store {
               "UPDATE incidents SET capability_requests_json = ?, updated_at = ? WHERE id = ?",
             )
             .run(j(m.capabilityRequests), m.at, m.incidentId),
+          `incident ${m.incidentId}`,
+        );
+        return;
+      case "incident.period":
+        owned(m.incidentId, `incident ${m.incidentId}`);
+        one(
+          this.db
+            .prepare(
+              "UPDATE incidents SET period_json = ?, updated_at = ? WHERE id = ?",
+            )
+            .run(j(m.period), m.at, m.incidentId),
           `incident ${m.incidentId}`,
         );
         return;
@@ -928,6 +974,9 @@ function rowToIncident(r: Row): Incident {
     questions: p(r.questions_json),
     capabilityRequests: p(r.capability_requests_json),
     status: r.status,
+    ...(r.period_json === null || r.period_json === undefined
+      ? {}
+      : { period: p(r.period_json) }),
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   });
@@ -1010,6 +1059,18 @@ function rowToGrant(r: Row): Grant {
     perTask: Number(r.per_task) === 1,
     createdAt: r.created_at,
   });
+}
+
+/**
+ * The number of the cycle the log is in: one per IC command turn (`command.turned`), and
+ * for a log from before the IC one per planner draft (`plan.proposed`), which was then the
+ * cycle's first call. Zero before the first.
+ */
+export function cycleOf(events: readonly Event[]): number {
+  const turned = events.filter((e) => e.type === "command.turned").length;
+  return turned > 0
+    ? turned
+    : events.filter((e) => e.type === "plan.proposed").length;
 }
 
 /**

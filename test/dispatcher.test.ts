@@ -854,7 +854,7 @@ describe("dispatcher, unit leaders", () => {
       calls[0]?.args[calls[0].args.indexOf("--system-prompt") + 1];
     // The root unit's leader is the IC: its seat paragraph and its role text say so.
     expect(leaderSystem).toContain(
-      "Your role: Incident Commander, leader of command.",
+      "Your role: Incident Commander, leader of command, the root unit",
     );
     expect(leaderSystem).toContain("you are the Incident Commander");
     // The investigate ran as the leader's turn: its brief, the capability's schema, the leader's tools.
@@ -1489,10 +1489,14 @@ describe("incident step", () => {
       await withStubOutput(plan, () => run(["incident", "step", "001"], ctx)),
     ).toBe(EXIT.ok);
     expect(out).toEqual([
-      "plan proposed (session stub-session): grep first",
+      "IC command turn for period 1 (session stub-session): stub command turn",
+      "  objective: pursue the incident objective",
+      "  status: continue",
+      "plan drafted (session stub-session): grep first",
       "  create unit find under 001-command (leader claude-code/claude-haiku-4-5): locate the handler",
       "  create task under find: grep: find delete",
       "  status: continue",
+      "IC review: approve: stub review",
       "plan approved",
       "  unit 001-u02 created under 001-command: locate the handler",
       "  task 001-t01 [ready] under 001-u02: grep: find delete",
@@ -1509,8 +1513,8 @@ describe("incident step", () => {
     expect(
       await withStubOutput(bad, () => run(["incident", "step", "001"], ctx)),
     ).toBe(EXIT.ok);
-    expect(out[3]).toBe("plan rejected:");
-    expect(out[4]).toMatch(/^ {2}- Units exist: /);
+    expect(out[7]).toBe("plan rejected:");
+    expect(out[8]).toMatch(/^ {2}- Units exist: /);
     out.length = 0;
     const done: ActionPlan = {
       ...plan,

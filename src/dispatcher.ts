@@ -195,6 +195,7 @@ function briefContext(
   const tasks = new Set(task.evidenceFrom.tasks);
   return {
     objective: incident.objective,
+    ...(incident.period === undefined ? {} : { period: incident.period }),
     situation: lastSituation(store.listEvents(incident.id)),
     units,
     claims: store.listClaims(incident.id).filter((c) => claims.has(c.id)),

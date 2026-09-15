@@ -187,7 +187,13 @@ const taskIdOf = (e: Event): string =>
   str((e.payload.mutation as { taskId?: unknown } | undefined)?.taskId);
 const session = (id: string): string => (id === "" ? "" : `  session ${id}`);
 
-type Cycle = { number: number; proposed: Event; events: Event[] };
+/** One cycle of the log: the event that opened it, the planner's drafts in it (one, or two after a correction), and everything else. */
+type Cycle = {
+  number: number;
+  opened: Event;
+  proposals: Event[];
+  events: Event[];
+};
 
 /** A session's tool calls in one line: the count by tool, errors, and the time spent inside tools. */
 function describeCalls(calls: readonly Event[]): string {
@@ -214,16 +220,18 @@ function activityLines(
   model: string | null,
   cycle: number,
   leaderOf: string | null = null,
+  seat: "planner" | "ic" = "planner",
 ): string[] {
   // A task's calls by its id; a leader's turn by its unit with no task and no cycle; the
-  // planner's by the cycle it drafted.
+  // planner's and the IC's by the cycle, told apart by the IC's `seat`.
   const own = (e: Event) =>
     leaderOf !== null
       ? str(e.payload.unitId) === leaderOf &&
         e.payload.taskId === null &&
         e.payload.cycle === null
       : taskId === null
-        ? e.payload.cycle === cycle
+        ? e.payload.cycle === cycle &&
+          (e.payload.seat === "ic") === (seat === "ic")
         : str(e.payload.taskId) === taskId;
   const lines: string[] = [];
   const calls = events.filter(
@@ -298,15 +306,83 @@ function teamConfigs(events: readonly Event[]): TeamConfig[] {
   return [...configs.values()];
 }
 
-/** The log cut at every `plan.proposed`: a cycle is that event and everything up to the next one. */
+/**
+ * The log cut into cycles: at every `command.turned` (the IC's turn opens a cycle), or, in
+ * a log from before the IC, at every `plan.proposed`, which was then the cycle's first
+ * call. A cycle's drafts are its `plan.proposed` events, two after a correction.
+ */
 function cycles(events: readonly Event[]): Cycle[] {
+  const opener = events.some((e) => e.type === "command.turned")
+    ? "command.turned"
+    : "plan.proposed";
   const result: Cycle[] = [];
   for (const e of events) {
-    if (e.type === "plan.proposed")
-      result.push({ number: result.length + 1, proposed: e, events: [] });
+    if (e.type === opener)
+      result.push({
+        number: result.length + 1,
+        opened: e,
+        proposals: e.type === "plan.proposed" ? [e] : [],
+        events: [],
+      });
+    else if (e.type === "plan.proposed") result.at(-1)?.proposals.push(e);
     else result.at(-1)?.events.push(e);
   }
   return result;
+}
+
+/** The IC's own calls in a cycle: its command turn and its reviews, each with the seat's model and the call's usage. */
+function icLines(
+  cycle: Cycle,
+  roleTotals: (role: string, model: string | null) => Totals,
+  cost: CostSum,
+  verdicts: Map<string, number>,
+): string[] {
+  const lines: string[] = [];
+  const turns = [
+    ...(cycle.opened.type === "command.turned" ? [cycle.opened] : []),
+    ...cycle.events.filter((e) => e.type === "plan.reviewed"),
+  ];
+  let model: string | null = null;
+  for (const e of turns) {
+    model = str(e.payload.model) || null;
+    const usage = (e.payload.usage ?? {}) as Partial<Usage>;
+    const turnCost = costOf(usage, model);
+    add(roleTotals("ic", model), usage, turnCost);
+    addCost(cost, turnCost);
+    let move: string;
+    if (e.type === "command.turned") {
+      const turn = e.payload.turn as
+        | {
+            periodObjectives?: unknown;
+            closeUnits?: unknown;
+            incidentStatus?: unknown;
+          }
+        | undefined;
+      move =
+        e.payload.rejected === true
+          ? "command turn rejected"
+          : `set period ${String(e.payload.cycle)}: ${list(turn?.periodObjectives).length} objective(s), ${list(turn?.closeUnits).length} close(s), ${str(turn?.incidentStatus)}`;
+    } else {
+      const verdict = str(e.payload.verdict);
+      verdicts.set(verdict, (verdicts.get(verdict) ?? 0) + 1);
+      move = `${e.payload.redraft === true ? "reviewed the redraft" : "reviewed the draft"}: ${verdict}`;
+    }
+    lines.push(
+      `  ic ${model ?? "(no model)"}: ${describeUsage(usage, turnCost)}  ${move}${session(str(e.payload.sessionId))}`,
+    );
+  }
+  for (const e of cycle.events)
+    if (e.type === "command.rejected")
+      lines.push(
+        `  rejected ${str(e.payload.rule)}: ${clip(str(e.payload.reason))}`,
+      );
+  if (turns.length > 0)
+    lines.push(
+      ...activityLines(cycle.events, null, model, cycle.number, null, "ic").map(
+        (l) => `${l} (ic)`,
+      ),
+    );
+  return lines;
 }
 
 const OUTCOME_TYPES = new Set<Event["type"]>([
@@ -348,6 +424,7 @@ export function renderReview(
   let sessionsRan = 0;
   let deterministicRan = 0;
   let leaderTurns = 0;
+  const verdicts = new Map<string, number>();
   const reportsByUnit = new Map<string, string[]>();
   let failedWithoutRunning = 0;
   const questions: string[] = [];
@@ -356,7 +433,7 @@ export function renderReview(
     `review of incident ${incident.id} [${incident.status}]  ${incident.objective}`,
   );
   const runCycles = cycles(events);
-  const first = runCycles[0]?.proposed.createdAt;
+  const first = runCycles[0]?.opened.createdAt;
   const last = events.at(-1)?.createdAt;
   if (first !== undefined && last !== undefined) {
     const minutes = (Date.parse(last) - Date.parse(first)) / 60_000;
@@ -367,34 +444,49 @@ export function renderReview(
   lines.push("");
 
   for (const cycle of runCycles) {
-    const p = cycle.proposed.payload;
     const rejections = cycle.events.filter((e) => e.type === "plan.rejected");
     const appliedEvent = cycle.events.find((e) => e.type === "plan.applied");
     const a = appliedEvent?.payload ?? {};
     let verdict: string;
     if (appliedEvent !== undefined) {
       applied += 1;
-      verdict = `applied ${str(a.incidentStatus)}  units +${list(a.units).length} -${list(a.closedUnits).length}  tasks +${list(a.tasks).length} cancelled ${list(a.cancelledTasks).length}`;
+      const ic =
+        str(a.verdict) === ""
+          ? ""
+          : `  ic ${str(a.verdict)}${a.corrections === null || a.corrections === undefined ? "" : " after corrections"}`;
+      verdict = `applied ${str(a.incidentStatus)}${ic}  units +${list(a.units).length} -${list(a.closedUnits).length}  tasks +${list(a.tasks).length} cancelled ${list(a.cancelledTasks).length}`;
     } else if (rejections.length > 0) {
       rejectedPlans += 1;
       verdict = `rejected on ${rejections.length} rule line(s)`;
-    } else verdict = "no verdict recorded";
-    lines.push(
-      `cycle ${cycle.number}  ${cycle.proposed.createdAt}  ${verdict}`,
-    );
+    } else if (cycle.events.some((e) => e.type === "command.rejected"))
+      verdict = "command turn rejected";
+    else if (cycle.opened.type === "command.turned")
+      verdict = `ic set the incident ${str(cycle.opened.payload.incidentStatus)}`;
+    else verdict = "no verdict recorded";
+    lines.push(`cycle ${cycle.number}  ${cycle.opened.createdAt}  ${verdict}`);
+    lines.push(...icLines(cycle, roleTotals, cost, verdicts));
 
-    const plannerModel = str(p.model) || PLANNER_MODEL;
-    if (str(p.model) === "") plannerModelAssumed = true;
-    const plannerUsage = (p.usage ?? {}) as Partial<Usage>;
-    const plannerCost = costOf(plannerUsage, plannerModel);
-    add(roleTotals("planner", plannerModel), plannerUsage, plannerCost);
-    addCost(cost, plannerCost);
-    lines.push(
-      `  planner ${plannerModel}: ${describeUsage(plannerUsage, plannerCost)}${session(str(p.sessionId))}`,
-    );
-    lines.push(
-      ...activityLines(cycle.events, null, plannerModel, cycle.number),
-    );
+    for (const proposed of cycle.proposals) {
+      const p = proposed.payload;
+      const plannerModel = str(p.model) || PLANNER_MODEL;
+      if (str(p.model) === "") plannerModelAssumed = true;
+      const plannerUsage = (p.usage ?? {}) as Partial<Usage>;
+      const plannerCost = costOf(plannerUsage, plannerModel);
+      add(roleTotals("planner", plannerModel), plannerUsage, plannerCost);
+      addCost(cost, plannerCost);
+      lines.push(
+        `  planner ${plannerModel}: ${describeUsage(plannerUsage, plannerCost)}${p.redraft === true ? "  redraft" : ""}${session(str(p.sessionId))}`,
+      );
+    }
+    if (cycle.proposals.length > 0)
+      lines.push(
+        ...activityLines(
+          cycle.events,
+          null,
+          str(cycle.proposals[0]?.payload.model) || PLANNER_MODEL,
+          cycle.number,
+        ),
+      );
 
     for (const r of rejections) {
       ruleLines += 1;
@@ -573,8 +665,15 @@ export function renderReview(
 
   const byStatus = (status: string) =>
     claims.filter((c) => c.status === status).length;
+  const drafts = runCycles.reduce((n, c) => n + c.proposals.length, 0);
   lines.push(
-    `plans: ${runCycles.length} proposed, ${applied} applied, ${rejectedPlans} rejected (${ruleLines} rule lines)`,
+    `plans: ${drafts} drafted in ${runCycles.length} cycle(s), ${applied} applied, ${rejectedPlans} rejected (${ruleLines} rule lines)`,
+  );
+  const reviews = [...verdicts.values()].reduce((n, k) => n + k, 0);
+  lines.push(
+    reviews === 0
+      ? "ic verdicts: none"
+      : `ic verdicts: ${reviews} review(s): ${["approve", "correct", "amend"].map((v) => `${verdicts.get(v) ?? 0} ${v}`).join(", ")}`,
   );
   lines.push(
     `tasks: ${sessionsRan + deterministicRan} ran (${deterministicRan} deterministic, ${sessionsRan} sessions) of ${tasks.length} created${failedWithoutRunning === 0 ? "" : `, ${failedWithoutRunning} failed before running`}`,
