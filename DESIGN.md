@@ -193,7 +193,9 @@ replays the same way); Step 6 says what each carries. A `task.usage` written for
 session the API refused carries the refusal, the model and the fallback it was retried on
 (R4-7), so the refused call still counts against the budget; `task.completed` and
 `task.failed` carry `model` and `fallbackFrom` when the task fell back, and a task refused
-on both models fails with `refused` listing both. `unit.reported` written by the runtime on
+on both models fails with `refusals` listing both (`refused` is one refusal, on
+`command.failed`, `leader.failed` and `task.usage`; `refusals` is a list, on `task.failed`,
+`unit.reported` and `command.transferred`). `unit.reported` written by the runtime on
 a leader's behalf, after two refusals, carries `writtenBy: "runtime"` and the `refusals`,
 with a null session. `question.asked` and `incident.blocked` written for the IC's own
 double refusal carry `icRefusals`, which holds the incident blocked until a transfer of

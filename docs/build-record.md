@@ -2364,7 +2364,7 @@ does; review finding), so the leader's next turn starts fresh instead of paying 
 the runtime already knows is coming; `task.completed` and `task.usage` then carry `model`
 and `fallbackFrom`;
 refused there too, or refused when the task's own model is the fallback, `TaskRefused`
-carries both, `task.failed` records `refused` with both and the models, and `dispatch`
+carries both, `task.failed` records `refusals` with both and the models, and `dispatch`
 writes the same runtime report for the unit instead of asking its leader, ending the pass.
 `incident show` lists every model change under "model changes:"; `step` prints a fallback
 transfer under the turn that forced it; `incident review` lists a fallback transfer with its

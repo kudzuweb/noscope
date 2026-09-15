@@ -1080,7 +1080,7 @@ describe("a refusal replaces the session", () => {
         sessionId: "stub-session-2",
         model: "claude-opus-4-8",
         fallbackFrom: "claude-haiku-4-5",
-        refused: [
+        refusals: [
           {
             model: "claude-haiku-4-5",
             sessionId: "stub-session-1",

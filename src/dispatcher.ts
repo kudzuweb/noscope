@@ -1248,10 +1248,11 @@ async function runOne(
             ...(error instanceof SessionError && error.sessionId !== null
               ? { sessionId: error.sessionId }
               : {}),
-            // Refused on both models (R4-7): the refusals, and the models the task ran on.
+            // Refused on both models (R4-7): the refusals (the same key as `unit.reported`
+            // and `command.transferred` use for a list), and the models the task ran on.
             ...(error instanceof TaskRefused
               ? {
-                  refused: error.refusals,
+                  refusals: error.refusals,
                   model: error.refusals.at(-1)?.model,
                   ...(error.fallbackFrom === null
                     ? {}
