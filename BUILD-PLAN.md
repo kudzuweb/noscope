@@ -628,7 +628,7 @@ the quipu thread `ics-runtime.md`: the IC reviews a unit's work when its report 
 and decides whether the unit is done, goes back for revision, or hands its slice to a
 different unit with instructions built on what it found and did not find. Ten PRs in
 dependency order, each mergeable on its own, the CLI working after every one; the last
-reruns the first incident. Numbered R4-1 to R4-10 here, with R4-9a and R4-9b added on 2026-09-15; the build record maps each to its
+reruns the first incident. Numbered R4-1 to R4-10 here, with R4-9a, R4-9b and R4-9c added on 2026-09-15; the build record maps each to its
 GitHub number. The conventions above apply, and the design wins where this plan disagrees
 with it.
 
@@ -653,6 +653,7 @@ independent units and tasks run at the same time.
 | R4-9 | Parallel dispatch | none | Independent units run their passes concurrently, and independent tasks in their own sessions run at once, under a concurrency cap and the existing stop conditions. |
 | R4-9a | Unit types: the form, the filled form, the protocol | R4-5, R4-7, R4-9 | Every unit names its type; a type is a form (the fields a kind of unit fills) and a protocol (how it uses what is in the box); `base` is today's led unit and `ic` is the root; the dispatcher runs each unit through its type's protocol, with no `parentId === null` guard left. |
 | R4-9b | Saved unit configs | R4-9a | A unit's filled base form, everything but its objective and parent, saved under a name and deployed by name in a plan; the runtime notices a repeated config and offers to save it. |
+| R4-9c | The runtime tag on events | none | Every event carries the noscope commit it was written by, so a briefing can be re-rendered later by checking out that commit and replaying the events before the call; nothing is stored beyond the tag. |
 | R4-10 | Fourth run | all | The first incident rerun with everything above, measured beside runs 001 to 003: the IC's verdicts by kind, what each revise or reassign cost and found, and the wall time parallel dispatch saved. |
 
 R4-6, R4-7, R4-8 and R4-9 can run in parallel with R4-1 to R4-5.
@@ -878,6 +879,26 @@ Acceptance: a run test on the stub where a unit is saved, the next plan names th
 the applied unit carries its fields, and `review` names it; a validator test rejecting an
 unknown config and a config of the wrong type; a test that the third repeat prints the
 offer and the second does not.
+### R4-9c: The runtime tag on events
+Ruled by Mauria on 2026-09-15 13:39: what a seat received is preserved in the Claude Code
+transcript (every call writes a `prompt_snapshot` record with the full system prompt, and
+the user messages are the transcript; verified on run 003's IC session, and transcripts
+are kept for 99999 days on this machine), so briefings are not stored; but a briefing
+should be reproducible later by a tag, not by content. Scope: the `events` table gains a
+`runtime` column, the noscope commit SHA the process was built from, baked into `dist/`
+by the build (`pnpm build` writes it; a checkout with no git or a dirty tree writes the
+SHA with a `-dirty` suffix or `unknown`) and stamped on every event the runtime writes;
+`incident events` prints it when it changes between events, and `incident review` names
+the runtimes an incident ran under. The store's schema version rises; earlier events read
+`null`. Reproduction is by hand and documented in DESIGN.md Step 2: check out the tagged
+commit, `pnpm build`, replay the events with `sequence` below the call's answer event
+(`command.turned`, `plan.proposed`, `unit.reported`, `unit.continued`) into a fresh store,
+and call the renderer; a command for it is not built. DESIGN.md Step 2 and Step 7, the
+README's build section and `docs/architecture.html`'s store node follow.
+
+Acceptance: a store test that every event written carries the runtime tag and a version 7
+migration reads `null` on old rows; a build test that `dist/` carries the SHA the build ran
+at; `review` on the stub names one runtime.
 ### R4-10: Fourth run
 Scope: the first incident's objective run a fourth time from the same roughdraftplus
 working directory at commit 6a996e8, with the scratch document restored, the same
