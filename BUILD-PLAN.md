@@ -628,7 +628,7 @@ the quipu thread `ics-runtime.md`: the IC reviews a unit's work when its report 
 and decides whether the unit is done, goes back for revision, or hands its slice to a
 different unit with instructions built on what it found and did not find. Ten PRs in
 dependency order, each mergeable on its own, the CLI working after every one; the last
-reruns the first incident. Numbered R4-1 to R4-10 here; the build record maps each to its
+reruns the first incident. Numbered R4-1 to R4-10 here, with R4-9a added on 2026-09-15; the build record maps each to its
 GitHub number. The conventions above apply, and the design wins where this plan disagrees
 with it.
 
@@ -651,6 +651,7 @@ independent units and tasks run at the same time.
 | R4-7 | Refusals: the category, and the fallback to Opus 4.8 | none | The provider reads `apiRefusalCategory` from the stream's system line, or from the transcript when the stream lacks it; a refused IC call is retried on `claude-opus-4-8` and the IC stays there for the incident, recorded as a transfer of command. |
 | R4-8 | The size-up scoped to the kind | none | The initial IC's role text ties objectives and questions to the incident kind: a diagnostic objective takes no fix objective, no fix unit and no intended-behavior question. |
 | R4-9 | Parallel dispatch | none | Independent units run their passes concurrently, and independent tasks in their own sessions run at once, under a concurrency cap and the existing stop conditions. |
+| R4-9a | The IC is its own seat | R4-5, R4-7, R4-9 | The command seat (model, provider, session, transfers) lives on the incident, not on a root unit's `leader`; the root stays as the container of the IC's deterministic tasks with no leader; no `parentId === null` guard remains in the leader or dispatcher code. |
 | R4-10 | Fourth run | all | The first incident rerun with everything above, measured beside runs 001 to 003: the IC's verdicts by kind, what each revise or reassign cost and found, and the wall time parallel dispatch saved. |
 
 R4-6, R4-7, R4-8 and R4-9 can run in parallel with R4-1 to R4-5.
@@ -807,6 +808,30 @@ Acceptance: a dispatcher test on the stub with two independent units whose stub 
 sleep, asserting overlapping `task.started` and `task.completed` timestamps and the same
 events as the sequential run; a test that a picture-changing report from one unit ends the
 pass while the other's task in flight completes; a test that the cap holds.
+### R4-9a: The IC is its own seat
+Ruled by Mauria on 2026-09-15 12:38 CDT, after this round's reviews each listed code that
+exists only because the root is a unit and then has to be told it is not one: the IC's
+seat develops separately from what unit leaders do, reusing the unit construct for it is
+not a goal, and the separation lands in this round before the fourth run. Scope:
+`Incident` gains `command` (the `Leader` shape: model and provider, plus `sessionId`),
+written by `recordTransfer` at every transfer of command and by the fallback (R4-7), and
+read by every IC call in `src/ic.ts`; the root unit loses its `leader` and `sessionId`
+fields and keeps `parentId: null`, its equipment and its tasks, so the IC's `assignTasks`
+(R4-6) still hang under it and the validator's Own unit rule still holds. The dispatcher
+runs the root's tasks on a command path of its own and its unit loop never sees the root;
+`leaderTurn`, `fileRefusal`, `refusedTwice`, `runsInsideLeader`, `holdsCapability`,
+`unitShare` and `unitsOwingReport` take units with leaders only, and the `seat` argument
+derived from `parentId === null` goes, as does `leaderRole(seat)`. The tree renders
+"command" above the units from the incident's seat. `incident tree` and `show` print the
+seat there. The store's schema version rises and replay fills `command` from
+`command.transferred` and `leader.started` on the root, so an earlier round 4 database
+reads the same. DESIGN.md Vocabulary (unit, command), the ICS mapping rows for Command and
+the Incident Commander, Steps 2, 5 and 6, and `docs/architecture.html`'s IC node follow.
+
+Acceptance: `grep -n "parentId === null" src/dispatcher.ts src/leader.ts` prints nothing;
+the R4-6 and R4-7 dispatcher and IC tests pass with the same events recorded (root tasks
+run, the fallback lands as a transfer); a replay test on a round 4 store yields the same
+command seat `show` printed before.
 ### R4-10: Fourth run
 Scope: the first incident's objective run a fourth time from the same roughdraftplus
 working directory at commit 6a996e8, with the scratch document restored, the same
@@ -821,7 +846,11 @@ answers whether the IC revised or reassigned any unit and what that changed, and
 the selection's origin (open in run 003) was settled.
 ### Round 4 open questions
 
-None. The two raised while drafting (the IC's model under refusals; who owns the
+One, added with R4-9a. The two raised while drafting (the IC's model under refusals; who owns the
 situation) were ruled in review on 2026-09-15 and are in R4-7 and R4-5. Ruled in the same
 review: the planner's job after round 4 is the tactics only, drafted as a suggestion for
 the IC.
+
+| Question | Blocks |
+|---|---|
+| Whether the root unit stays at all once the seat has left it, or the IC's deterministic tasks hang on the incident directly. The R4-9a block keeps the root as a container, the smaller change. | R4-9a's `Incident` and `Task` schema shape |
