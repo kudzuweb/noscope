@@ -17,14 +17,17 @@ import {
   type SessionRequest,
   sessionSystemPrompt,
 } from "../providers/index.js";
+import { renderHierarchy } from "../tree.js";
 import type { SessionCapability } from "./registry.js";
 
 const DEFAULT_SESSION_SECONDS = 600;
 
-/** What the runtime attaches to a brief beyond the task: the incident's objective and current situation, and what the task reads by reference. */
+/** What the runtime attaches to a brief beyond the task: the incident's objective and current situation, the units around the task's, and what the task reads by reference. */
 export type BriefContext = {
   objective: string;
   situation: Situation | null;
+  /** Every unit in the incident, from which the hierarchy around the task's unit is rendered; empty renders none. */
+  units: readonly Unit[];
   claims: readonly Claim[];
   results: readonly Task[];
 };
@@ -32,6 +35,7 @@ export type BriefContext = {
 const NO_CONTEXT: BriefContext = {
   objective: "",
   situation: null,
+  units: [],
   claims: [],
   results: [],
 };
@@ -52,8 +56,8 @@ function renderObservation(o: unknown): string {
   return JSON.stringify(o);
 }
 
-/** A session's findings in full; any other result as JSON. */
-function renderResult(t: Task): string {
+/** A session's findings in full; any other result as JSON. Also what a leader reads of a task that ran outside its session. */
+export function renderTaskResult(t: Task): string {
   const findings = (t.result as { findings?: unknown } | null)?.findings;
   if (findings !== null && typeof findings === "object") {
     const f = findings as {
@@ -72,7 +76,7 @@ function renderResult(t: Task): string {
   return JSON.stringify(t.result);
 }
 
-/** The user message: the incident's objective and situation, the task's contract, what it reads by reference, then one line on what the owning unit is trying to establish. */
+/** The user message: the incident's objective and situation, the hierarchy around the task's unit, the task's contract, what it reads by reference, then one line on what the owning unit is trying to establish. */
 export function renderTaskBrief(
   task: Task,
   unit: Unit,
@@ -92,6 +96,9 @@ export function renderTaskBrief(
               (p) => `${p.claimId}: ${p.line}`,
             ),
           ),
+          ...(context.units.length === 0
+            ? []
+            : ["", ...renderHierarchy(unit, context.units)]),
           "",
         ];
   const attached =
@@ -110,7 +117,7 @@ export function renderTaskBrief(
           "results:",
           list(
             context.results.map(
-              (t) => `task ${t.id} (${t.capability}): ${renderResult(t)}`,
+              (t) => `task ${t.id} (${t.capability}): ${renderTaskResult(t)}`,
             ),
           ),
         ];
@@ -126,8 +133,39 @@ export function renderTaskBrief(
     ...(task.instructions === "" ? [] : [`Instructions: ${task.instructions}`]),
     ...attached,
     "",
-    `The unit that owns this task is trying to establish: ${unit.purpose}`,
+    `The unit that owns this task is trying to establish: ${unit.objective}`,
   ].join("\n");
+}
+
+/** The session fields a list of equipment names renders to: the provider's built-in tools, and the external equipment's servers and integrations. */
+export type SessionEquipment = Pick<
+  SessionRequest,
+  "tools" | "mcpServers" | "integrations"
+>;
+
+/**
+ * Split declared equipment into what a session receives: every name that is not registered
+ * external equipment is a built-in tool; `chosen` narrows the external equipment attached
+ * (a capability with `equipmentSelect` attaches only the one its task names).
+ */
+export function resolveEquipment(
+  equipment: readonly string[],
+  chosen: (e: ExternalEquipment) => boolean = () => true,
+): SessionEquipment {
+  const external = equipment
+    .map((name) => getExternalEquipment(name))
+    .filter((e): e is ExternalEquipment => e !== undefined);
+  const externalNames = new Set(external.map((e) => e.name));
+  const attached = external.filter(chosen);
+  return {
+    tools: equipment.filter((name) => !externalNames.has(name)),
+    mcpServers: attached.flatMap((e) =>
+      e.mcp === null ? [] : [{ name: e.name, ...e.mcp }],
+    ),
+    integrations: attached.flatMap((e) =>
+      e.integration === null ? [] : [e.integration],
+    ),
+  };
 }
 
 /** Everything a provider needs to run one task's session; the model comes from the task and is required. */
@@ -140,16 +178,14 @@ export function buildSessionRequest(
 ): SessionRequest {
   if (task.model === null)
     throw new Error(`task ${task.id} names no model for ${capability.name}`);
-  const external = capability.equipment
-    .map((name) => getExternalEquipment(name))
-    .filter((e): e is ExternalEquipment => e !== undefined);
-  const externalNames = new Set(external.map((e) => e.name));
   const select = capability.session.equipmentSelect;
-  const chosen =
-    select === undefined
-      ? external
-      : external.filter((e) => e.name === task.inputs[select]);
-  if (select !== undefined && chosen.length === 0)
+  const equipment = resolveEquipment(capability.equipment, (e) =>
+    select === undefined ? true : e.name === task.inputs[select],
+  );
+  if (
+    select !== undefined &&
+    equipment.mcpServers.length + equipment.integrations.length === 0
+  )
     throw new Error(
       `task ${task.id} names no registered ${select} for ${capability.name}`,
     );
@@ -157,13 +193,7 @@ export function buildSessionRequest(
     model: task.model,
     systemPrompt: sessionSystemPrompt(capability.session.systemPrompt),
     prompt: renderTaskBrief(task, unit, context),
-    tools: capability.equipment.filter((name) => !externalNames.has(name)),
-    mcpServers: chosen.flatMap((e) =>
-      e.mcp === null ? [] : [{ name: e.name, ...e.mcp }],
-    ),
-    integrations: chosen.flatMap((e) =>
-      e.integration === null ? [] : [e.integration],
-    ),
+    ...equipment,
     bashAllowlist: capability.session.bashAllowlist ?? [],
     cwd,
     addDirs: [],
@@ -180,6 +210,11 @@ export type SessionRun = {
   activity: SessionActivity;
 };
 
+/**
+ * Run one task's session: the request built from the capability, or a request the caller
+ * prepared from it (a task run inside its unit's leader session, whose request is the
+ * leader's with the task's brief and schema; DESIGN.md Step 6).
+ */
 export async function runSession(
   capability: SessionCapability,
   task: Task,
@@ -187,10 +222,15 @@ export async function runSession(
   provider: Provider,
   cwd: string,
   context: BriefContext = NO_CONTEXT,
+  request: SessionRequest = buildSessionRequest(
+    capability,
+    task,
+    unit,
+    cwd,
+    context,
+  ),
 ): Promise<SessionRun> {
-  const outcome = await provider.run(
-    buildSessionRequest(capability, task, unit, cwd, context),
-  );
+  const outcome = await provider.run(request);
   const parsed = capability.output.safeParse(outcome.output);
   if (!parsed.success)
     throw new SessionError(

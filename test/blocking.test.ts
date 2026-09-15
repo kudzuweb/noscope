@@ -50,25 +50,27 @@ function harness() {
     NOSCOPE_DB: join(dir, "db.sqlite"),
     NOSCOPE_CLAUDE_BIN: stub,
     NOSCOPE_STUB_COUNTER: join(dir, "counter"),
-    NOSCOPE_STUB_LOG: join(dir, "log.json"),
+    NOSCOPE_STUB_CALLS: join(dir, "calls"),
   };
   const ctx = {
     io: { out: (l: string) => out.push(l), err: (l: string) => err.push(l) },
     cwd: tree,
     env,
   };
-  const lastPrompt = () =>
-    (
-      JSON.parse(readFileSync(env.NOSCOPE_STUB_LOG as string, "utf8")) as {
-        prompt: string;
-      }
-    ).prompt;
+  // The last planner call's prompt; a step's last call is a leader's turn, not the planner's.
+  const plannerPrompt = () =>
+    readFileSync(env.NOSCOPE_STUB_CALLS as string, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l) as { kind: string; prompt: string })
+      .filter((c) => c.kind === "planner")
+      .at(-1)?.prompt ?? "";
   return {
     ctx,
     out,
     err,
     env,
-    lastPrompt,
+    plannerPrompt,
     store: () => new Store(env.NOSCOPE_DB as string),
   };
 }
@@ -134,7 +136,7 @@ describe("blocking channels", () => {
     store.close();
     h.out.length = 0;
     expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
-    expect(h.lastPrompt()).toContain(
+    expect(h.plannerPrompt()).toContain(
       '001-t01 (interpret): "say why it scrolls" needed retrievable_fact: the scroll handler\'s source',
     );
     expect(h.out).toContain(
@@ -220,7 +222,7 @@ describe("blocking channels", () => {
     );
     h.env.NOSCOPE_STUB_PLAN = JSON.stringify(empty);
     expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
-    expect(h.lastPrompt()).toContain(
+    expect(h.plannerPrompt()).toContain(
       "capability requests answered:\n  - a way to reset the scratch document → the operator restores it on request",
     );
     const store = h.store();
@@ -293,7 +295,7 @@ describe("blocking channels", () => {
     h.env.NOSCOPE_STUB_PLAN = JSON.stringify(empty);
     h.out.length = 0;
     expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
-    expect(h.lastPrompt()).toContain(
+    expect(h.plannerPrompt()).toContain(
       "001-q01: which scroll position do you expect after a delete? → where the deleted comment was",
     );
   });

@@ -1036,3 +1036,139 @@ Not exactly to spec, with reasons:
   line rather than its first; the planner's calls in `incident review` are selected by
   `cycle`, not by a null `taskId`, so a leader's call filed under no task (R3-4) is not
   counted as the planner's.
+
+## R3-4: Unit leaders (#32, merged 2026-09-15)
+
+R3-4 of the round 3 plan. Built: every unit has a leader. `UnitProposal` and `Unit` gain
+`leader` (provider and model, required), `equipment` (built-in tool names and external
+equipment names, as a capability declares them) and `bashAllowlist`; `Unit` gains
+`sessionId`, null until the leader first runs; `objective` replaces `purpose`. The store is
+at schema version 4: the migration renames `purpose` to `objective` and gives an old unit
+the legacy leader (`claude-code`/`claude-opus-5`, the planner's pair, since the planner was
+then the only seat above a task), no equipment and no session, and replay reads a
+`unit.create` mutation from before leaders the same way, so runs 001 and 002 still review.
+`incident create` gains `--ic-model` (default `claude-opus-5`, checked against the models
+Claude Code serves) and creates the root unit with that leader and the four read-only
+built-ins. The new module `src/leader.ts` holds the leader role text, the orientation, the
+turn prompt, the `LeaderTurn` schema's JSON form, `runsInsideLeader` (a session-backed task
+on the leader's provider and model whose equipment and Bash allowlist the unit holds;
+`default` covers every built-in) and `unitsOwingReport`. The dispatcher runs the units one
+at a time in tree order (`unitsInTreeOrder` in `src/tree.ts`), each until its leader
+reports: a task runs in process, inside the leader's session (the leader's request with the
+task's brief and the capability's schema, resumed once the session exists) or in its own
+session; after each the leader is asked for a `LeaderTurn`, `continue` or `report`
+(`met`, `not_met` or `progress`; `changed` with claim ids; `pictureChanged`; `why` and
+`suggestion` required for `not_met` by a refinement); `report` writes `unit.reported` and
+ends the unit's pass, `pictureChanged` ends the whole pass and `dispatch` returns the unit's
+id beside `ran`, `reports` and `stopped`. The leader's session id is recorded on the unit
+by `leader.started` (mutation `unit.session`) at its first call, whether that call was a
+task or a turn, and `unit.closed` carries it. `ActionPlan` and `LeaderTurn` carry an
+optional `discrepancy`, recorded as `picture.discrepancy` (seat, unit, task in flight) and
+printed by `step`, `incident show` and `incident review`. The preamble in
+`src/providers/base.ts` is rewritten per the plan block, with the session's place as one
+paragraph per seat (`SEAT_PLACES`: `task`, `leader`, `ic`) and the hierarchy around the
+unit rendered from the tree into every brief (`renderHierarchy`). The validator's "Model
+known" covers a new unit's leader, "Closing is clean" refuses to close a unit whose leader
+has a session and has not reported since the unit's last task ended, and "Effect policy"
+holds a new unit's equipment to known equipment and its allowlist to read-only commands.
+The planner's unit tree shows each leader's model and last report outcome, a new section 6
+lists the unit reports since the last cycle, and the prompt says what a new unit names.
+`incident tree` shows each leader's model and last report; `incident review` lists each
+leader's turns with their usage under the role `leader`, counts turns and reports, and
+lists each unit's reports by cycle. The stub recognises a leader's turn by the `LeaderTurn`
+schema and answers `continue` while the prompt says tasks remain and a progress report once
+it says none do, or `NOSCOPE_STUB_TURN` / `NOSCOPE_STUB_TURNS`; `NOSCOPE_STUB_CALLS` appends
+one line per call. DESIGN.md Vocabulary (unit, task), the ICS mapping rows for the
+Operations Section and the organizational levels, Step 1's layout, Step 2 (the `units`
+columns, the event types, the migration), Step 3 (the preamble row, the user message), Step
+4 (the input sections, `UnitProposal`, `discrepancy`), Step 5, Step 6, Step 7 and the Model
+choices follow; `docs/architecture.html` gains the leader node and follows on the cycle and
+the session's prompt; the README's environment paragraph names leaders.
+
+Tests: the dispatcher on the stub runs a grep in process, an investigate on the leader's
+model as a resumed call on the leader's session and an interpret on another model in its
+own session, with per-task events for all three, two `unit.continued` and one
+`unit.reported`, checked against the stub's call log (kind, `--resume`, prompt, schema,
+tools); a `pictureChanged` report stops the pass before the next unit and records the
+discrepancy; a leader that continues with nothing left is asked again next pass with no
+task; a failing leader ends the pass naming the unit after the task's events; the preamble
+test pins the seat paragraphs, the added terms and the leader role text; the planner
+snapshot shows leaders in the tree and a report in section 6; the store replays a unit from
+before leaders, `leader.started`, both turn events and `picture.discrepancy`, and migrates
+a version 3 file; the validator tests cover a leader on an unknown model or provider, unit
+equipment and allowlist, and demobilization; `incident review` prices a leader's turn.
+
+Not exactly to spec, with reasons:
+
+- The unit tree is planner input section 3, not 4 (R3-2 merged sections 2 and 3), and a
+  section 6, "Unit reports since the last cycle", is added, so the file has ten sections
+  and the prompt's section numbers move: without it a report would reach nobody until
+  R3-7, and the planner is the seat that reads the file today.
+- Every leader turn is recorded, `unit.continued` beside `unit.reported`, because each turn
+  is a call with its own usage and `incident review` costs it; `leader.started` is a third
+  event because the session id is a state change (the mutation `unit.session`) and the
+  tables must rebuild from the log.
+- The report field is `pictureChanged`, camel case like every other field in the contracts;
+  the plan block writes `picture_changed`.
+- A leader's turns are not counted against the incident's budget, as the planner's calls
+  are not (the design call on the revisit list); the per-task budget and time-bound
+  behaviour is unchanged, and a turn runs under a fixed 300-second bound.
+- A leader that answers `continue` when no ready task remains ends its unit's pass with no
+  report rather than being re-asked in a loop; the unit then owes a report
+  (`unitsOwingReport`: a task ended after the last report, whether or not a session exists
+  yet, since the turn creates one), is asked for one at the start of the next pass with no
+  task to show, and cannot be closed until it has reported, which is how "Closing is clean"
+  reads demobilization.
+- A leader that cannot answer (a failed session or an output that does not fit) throws,
+  which `step` reports as exit 1 after the task's own events were written, the way a
+  planner that cannot answer does; its usage is not recorded. One failure is recovered
+  from (review, ruled option (a)): a resumed call that dies before the stream's init line,
+  which is what the binary does for a session it cannot find, replaces the session: a fresh
+  one is oriented and asked the same turn, and its `leader.started` carries `replaced` (the
+  dead id) and `reason`; every `leader.started` carries the `cwd` the session was launched
+  from, since a session is found under its original cwd.
+- A session task is bounded by its request's timeout alone, not by the dispatcher's timer
+  (review): the provider kills the process and files its calls under the session id, and a
+  dispatcher-side `TimeBound` would fail the task while that process still ran, so the
+  leader's next call would find its session in use. `withinSeconds` now bounds deterministic
+  tasks only, and `timedOut` on `task.failed` is true only for those.
+- A task that fails on the leader's first call still records that session on the unit
+  (review) when the provider returned its id, so the turn resumes a session that has read
+  the orientation and the brief rather than starting a cold one.
+- A task runs inside the leader's session only when its capability's Bash allowlist is also
+  within the unit's, beyond the model and equipment match the plan names, since a command
+  the leader's session cannot run would be denied there; a capability with
+  `equipmentSelect` (`reproduce`) never runs inside, since the leader's session attaches
+  every piece of its equipment and the per-task check would be skipped.
+- The leader's `--tools`, `--allowedTools` and system prompt are sent on every resumed call
+  as on the first; whether Claude Code honours a changed tool list on `--resume` is not
+  verified and nothing here changes it between calls.
+- The orientation before a task's brief is only the unit's own lines (its id, objective,
+  equipment and allowlist), since the brief already carries the incident objective, the
+  situation and the hierarchy; a turn on a fresh session gets the full orientation.
+- The IC seat paragraph describes the seat R3-7 builds and says a task under command runs
+  under the IC as under any leader; in this PR the root's leader answers `LeaderTurn` like
+  every leader. Its role text (`leaderRole("ic")`) is the unit leader's with two sentences
+  changed: it opens "Your role: Incident Commander, leader of command", and a `not_met`
+  report under command goes to Mauria, who decides what happens next, since nothing sits
+  between the IC and her. For R3-7: a root session started under R3-4 keeps this role text
+  in its snapshotted system prompt (Claude Code keeps the first call's system prompt on
+  every resume), so R3-7 must null `command`'s `session_id` in its migration, or recreate
+  the root session, before the IC's own turns use it.
+- The root unit's equipment at `create` is the four read-only built-ins with the read-only
+  allowlist, which the plan block does not name; a task on the IC's model with no more than
+  that runs inside the IC's session.
+- The "Effect policy" rule, not named in the plan block, is where a new unit's equipment and
+  allowlist are checked, because that is the rule that keeps a session read-only.
+- `renderTaskBrief` renders the hierarchy only when its context carries the units, which
+  dispatch's does, so the bare brief the session tests pin is unchanged.
+- `Leader` replaces the unused `ProviderModel` schema; `runSession` takes an optional
+  prepared request and `resolveEquipment` is shared between a capability's request and a
+  leader's; the step's `ran` lines do not say where a task ran, since the events do
+  (`task.completed`'s session id is the unit's for a task run inside the leader).
+- The stub's `NOSCOPE_STUB_FAIL` and `NOSCOPE_STUB_EXIT` leave a leader's turn alone and
+  `NOSCOPE_STUB_LEADER_FAIL` fails it instead, so a test of a failing task session still
+  gets its leader's turn; `NOSCOPE_STUB_SLEEP_MS` holds a task call past its bound,
+  `NOSCOPE_STUB_RESUME_FAIL` names a session whose resume exits before any output, and each
+  `NOSCOPE_STUB_CALLS` line counts the stub processes still running when the call started,
+  which is how the timeout test shows the turn waited for the killed process.

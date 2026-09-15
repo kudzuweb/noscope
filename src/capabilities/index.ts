@@ -16,8 +16,11 @@ export {
 } from "./registry.js";
 export * from "./reproduce.js";
 export {
+  type BriefContext,
   buildSessionRequest,
   renderTaskBrief,
+  renderTaskResult,
+  resolveEquipment,
   runSession,
   type SessionRun,
 } from "./session.js";

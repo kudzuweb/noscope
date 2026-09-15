@@ -8,17 +8,17 @@ import {
   Grant,
   Incident,
   jsonSchemaFor,
+  LeaderTurn,
   SessionResult,
   sessionResult,
   Task,
   Timestamp,
   Usage,
 } from "../src/models.js";
+import { unitProposal } from "./fixtures/models.js";
 
 const plan = {
-  createUnits: [
-    { ref: "u1", purpose: "delete-handler investigation", parent: "command" },
-  ],
+  createUnits: [unitProposal("u1", "delete-handler investigation", "command")],
   closeUnits: [],
   createTasks: [
     {
@@ -221,7 +221,70 @@ describe("contracts", () => {
     expect(EventType.options).toContain("plan.rejected");
     expect(EventType.options).toContain("tool.called");
     expect(EventType.options).toContain("subagent.ran");
-    expect(EventType.options).toHaveLength(28);
+    for (const type of [
+      "leader.started",
+      "unit.continued",
+      "unit.reported",
+      "picture.discrepancy",
+    ])
+      expect(EventType.options).toContain(type);
+    expect(EventType.options).toHaveLength(32);
+  });
+
+  it("a leader's turn is a report or a continue; a not_met report says why and what to do, and a discrepancy rides on either", () => {
+    expect(LeaderTurn.parse({ kind: "continue" })).toEqual({
+      kind: "continue",
+    });
+    expect(
+      LeaderTurn.parse({ kind: "continue", discrepancy: "a hurricane" })
+        .discrepancy,
+    ).toBe("a hurricane");
+    expect(() => LeaderTurn.parse({ kind: "report" })).toThrow(
+      /a report turn carries its report/,
+    );
+    const met = {
+      kind: "report",
+      report: {
+        outcome: "met",
+        changed: [{ what: "the handler is known", claims: ["i1-c001"] }],
+        pictureChanged: false,
+      },
+    };
+    expect(LeaderTurn.parse(met).report?.outcome).toBe("met");
+    expect(() =>
+      LeaderTurn.parse({
+        kind: "report",
+        report: { outcome: "not_met", changed: [], pictureChanged: true },
+      }),
+    ).toThrow(/says why/);
+    expect(
+      LeaderTurn.parse({
+        kind: "report",
+        report: {
+          outcome: "not_met",
+          changed: [],
+          pictureChanged: true,
+          why: "nothing matched",
+          suggestion: "widen the search",
+        },
+      }).report?.pictureChanged,
+    ).toBe(true);
+    const schema = jsonSchemaFor(LeaderTurn) as {
+      type: string;
+      properties: { kind: { enum: string[] } };
+    };
+    expect(schema.type).toBe("object");
+    expect(schema.properties.kind.enum).toEqual(["report", "continue"]);
+    expect(
+      ActionPlan.parse({ ...plan, discrepancy: "a different problem" })
+        .discrepancy,
+    ).toBe("a different problem");
+    expect(() =>
+      ActionPlan.parse({
+        ...plan,
+        createUnits: [{ ...plan.createUnits[0], leader: undefined }],
+      }),
+    ).toThrow(/leader/);
   });
 
   it("exports provider-facing JSON Schema as a top-level object with no $schema key", () => {

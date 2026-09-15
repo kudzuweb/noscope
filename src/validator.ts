@@ -1,4 +1,10 @@
 import { type Capability, getCapability } from "./capabilities/index.js";
+import {
+  getExternalEquipment,
+  isBuiltinTool,
+  READ_ONLY_COMMANDS,
+} from "./equipment/index.js";
+import { unitsOwingReport } from "./leader.js";
 import type {
   ActionPlan,
   Claim,
@@ -6,6 +12,7 @@ import type {
   Task,
   TaskProposal,
   Unit,
+  UnitProposal,
   Usage,
 } from "./models.js";
 import { PLANNER_RULES } from "./planner.js";
@@ -26,6 +33,8 @@ export type ValidationContext = {
   claims: readonly Claim[];
   providers: readonly Provider[];
   usage: Usage;
+  /** Units whose leader has a session and has not reported since one of the unit's tasks ended; such a unit cannot close yet. */
+  owing: ReadonlySet<string>;
 };
 
 type Rejection = { rule: RuleName; reason: string };
@@ -40,6 +49,20 @@ const OPEN_TASK = new Set(["pending", "ready", "running"]);
 const isOpen = (t: Task) => OPEN_TASK.has(t.status);
 
 const label = (t: TaskProposal) => `task "${t.objective}"`;
+const unitLabel = (u: UnitProposal) => `new unit ${u.ref}`;
+
+/** Whether a provider by name serves a model: the reason it does not, or null. */
+function modelUnknown(
+  providers: readonly Provider[],
+  provider: string,
+  model: string,
+): string | null {
+  const known = providers.find((p) => p.name === provider);
+  if (known === undefined) return `unknown provider ${provider}`;
+  return known.models.includes(model)
+    ? null
+    : `${model}, which ${provider} does not serve`;
+}
 
 /** The refs of tasks created in this plan, which other new tasks may name in dependsOn. */
 const taskRefs = (plan: ActionPlan): Set<string> =>
@@ -271,14 +294,36 @@ const CHECKS: Record<RuleName, Rule> = {
       );
   },
 
-  "Effect policy": (plan) =>
-    perRegisteredTask(plan, (t, capability) =>
+  "Effect policy": (plan) => [
+    ...perRegisteredTask(plan, (t, capability) =>
       capability.effect === "read_only"
         ? []
         : [
             `${label(t)} needs ${t.capability}, whose effect is ${capability.effect}; v0 allows read_only only`,
           ],
     ),
+    ...plan.createUnits.flatMap((u) => [
+      ...u.equipment
+        .filter(
+          (name) =>
+            !(
+              isBuiltinTool(name) ||
+              name === "default" ||
+              getExternalEquipment(name) !== undefined
+            ),
+        )
+        .map(
+          (name) =>
+            `${unitLabel(u)} gives its leader ${name}, which is no built-in tool, default, or registered external equipment`,
+        ),
+      ...u.bashAllowlist
+        .filter((c) => !(READ_ONLY_COMMANDS as readonly string[]).includes(c))
+        .map(
+          (c) =>
+            `${unitLabel(u)} allows its leader's Bash to run ${c}, which is not read-only`,
+        ),
+    ]),
+  ],
 
   "Budget respected": (plan, ctx) => {
     const remaining = {
@@ -417,8 +462,8 @@ const CHECKS: Record<RuleName, Rule> = {
     ];
   },
 
-  "Model known": (plan, ctx) =>
-    perRegisteredTask(plan, (t, capability) => {
+  "Model known": (plan, ctx) => [
+    ...perRegisteredTask(plan, (t, capability) => {
       const named = [
         ...(t.provider === null ? [] : [`provider ${t.provider}`]),
         ...(t.model === null ? [] : [`model ${t.model}`]),
@@ -431,13 +476,20 @@ const CHECKS: Record<RuleName, Rule> = {
         return [
           `${label(t)} names ${named === "" ? "no provider and no model" : `${named} but not both a provider and a model`} for ${t.capability}`,
         ];
-      const provider = ctx.providers.find((p) => p.name === t.provider);
-      if (provider === undefined)
-        return [`${label(t)} names unknown provider ${t.provider}`];
-      return provider.models.includes(t.model)
-        ? []
-        : [`${label(t)} names ${t.model}, which ${t.provider} does not serve`];
+      const unknown = modelUnknown(ctx.providers, t.provider, t.model);
+      return unknown === null ? [] : [`${label(t)} names ${unknown}`];
     }),
+    ...plan.createUnits.flatMap((u) => {
+      const unknown = modelUnknown(
+        ctx.providers,
+        u.leader.provider,
+        u.leader.model,
+      );
+      return unknown === null
+        ? []
+        : [`${unitLabel(u)} names ${unknown} for its leader`];
+    }),
+  ],
 
   "Closing is clean": (plan, ctx) => {
     const cancelling = new Set(plan.cancelTasks);
@@ -458,6 +510,10 @@ const CHECKS: Record<RuleName, Rule> = {
       if (running.length > 0)
         reasons.push(
           `unit ${c.unitId} still runs ${running.map((t) => t.id).join(", ")}`,
+        );
+      if (ctx.owing.has(c.unitId))
+        reasons.push(
+          `unit ${c.unitId}'s leader (session ${unit.sessionId}) has not reported since its last task ended`,
         );
       const tasks = plan.createTasks.filter((t) => t.unit === c.unitId).length;
       const units = plan.createUnits.filter(
@@ -534,13 +590,17 @@ export function validationContext(
   incident: Incident,
   providers: readonly Provider[],
 ): ValidationContext {
+  const units = store.listUnits(incident.id);
+  const tasks = store.listTasks(incident.id);
+  const events = store.listEvents(incident.id);
   return {
     incident,
-    units: store.listUnits(incident.id),
-    tasks: store.listTasks(incident.id),
+    units,
+    tasks,
     claims: store.listClaims(incident.id),
     providers,
-    usage: sumUsage(store.listEvents(incident.id)),
+    usage: sumUsage(events),
+    owing: unitsOwingReport(units, tasks, events),
   };
 }
 

@@ -3,8 +3,10 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { LEADER_ROLE, leaderRole } from "../src/leader.js";
 import { jsonSchemaFor, SessionResult } from "../src/models.js";
 import {
+  SEAT_PLACES,
   SESSION_PREAMBLE,
   SessionError,
   type SessionRequest,
@@ -105,10 +107,70 @@ describe("claude code provider", () => {
     );
   });
 
-  it("puts the preamble before the role and names the four kinds of lack", () => {
+  it("puts the preamble, then the seat's place, before the role, and names the four kinds of lack", () => {
     const text = sessionSystemPrompt("ROLE");
     expect(text.startsWith(SESSION_PREAMBLE)).toBe(true);
     expect(text.endsWith("\n\nROLE")).toBe(true);
+    expect(text).toBe(`${SESSION_PREAMBLE}\n\n${SEAT_PLACES.task}\n\nROLE`);
+    expect(sessionSystemPrompt("ROLE", "leader")).toBe(
+      `${SESSION_PREAMBLE}\n\n${SEAT_PLACES.leader}\n\nROLE`,
+    );
+    expect(sessionSystemPrompt("ROLE", "ic")).toContain(SEAT_PLACES.ic);
+    // The seat paragraphs: a task session answers insufficient; a leader runs its tasks and
+    // reports; the IC leads command and, until R3-7, reports on its tasks like any leader.
+    expect(SEAT_PLACES.task).toMatch(
+      /^Your place: you are a resource assigned to one task inside one unit, under that unit's leader\./,
+    );
+    expect(SEAT_PLACES.task).toContain('set outcome to "insufficient"');
+    expect(SEAT_PLACES.leader).toMatch(
+      /^Your place: you are the leader of one unit\./,
+    );
+    expect(SEAT_PLACES.leader).toContain(
+      "continue to the next ready task, or report against your unit's objective",
+    );
+    expect(SEAT_PLACES.ic).toMatch(
+      /^Your place: you are the Incident Commander, the leader of the root unit, command/,
+    );
+    expect(SEAT_PLACES.ic).toContain(
+      "A task under command runs under you as under any leader",
+    );
+    for (const term of [
+      "Incident Commander (IC)",
+      "initial IC",
+      "unit leader",
+      "situation report",
+      "operational period",
+      "transfer of command",
+      "strike team",
+      "task force",
+      "subagent",
+    ])
+      expect(SESSION_PREAMBLE).toContain(`- ${term}`);
+    expect(SESSION_PREAMBLE).not.toContain("nothing runs as a unit");
+    expect(LEADER_ROLE).toMatch(/^Your role: unit leader\./);
+    for (const line of [
+      "Report what changed, not what you did",
+      "the moment an outcome changes the picture",
+      "You cannot change the organization above or beside you",
+      "discrepancy is for one thing only",
+    ])
+      expect(LEADER_ROLE).toContain(line);
+    expect(LEADER_ROLE).not.toContain("strike team");
+    expect(leaderRole("leader")).toBe(LEADER_ROLE);
+    const ic = leaderRole("ic");
+    expect(ic).toMatch(/^Your role: Incident Commander, leader of command\./);
+    expect(ic).toContain("because Mauria decides what happens next");
+    expect(ic).not.toContain("the IC, who has more perspective");
+    expect(ic.split("\n").slice(1)).toEqual(
+      LEADER_ROLE.split("\n")
+        .slice(1)
+        .map((l) =>
+          l.replace(
+            "because the IC, who has more perspective, decides what happens next",
+            "because Mauria decides what happens next",
+          ),
+        ),
+    );
     expect(claudeCodeProvider().models).toContain("claude-opus-5");
     for (const kind of [
       "retrievable_fact",

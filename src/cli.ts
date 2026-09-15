@@ -21,8 +21,9 @@ export const COMMANDS: readonly Command[] = [
     group: "incident",
     name: "create",
     usage:
-      'incident create "<objective>" [--constraint ...] [--priority ...] [--budget-tokens N] [--budget-seconds N]',
-    summary: "Create an incident and its root unit, command",
+      'incident create "<objective>" [--constraint ...] [--priority ...] [--budget-tokens N] [--budget-seconds N] [--ic-model <model>]',
+    summary:
+      "Create an incident and its root unit, command, whose leader is the Incident Commander",
     arrives: "PR 4",
     handler: incident.create,
   },

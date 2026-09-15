@@ -9,7 +9,11 @@ import { applyPlan } from "../src/runtime.js";
 import { Store } from "../src/store.js";
 import { renderTree } from "../src/tree.js";
 import { validateAndRecord } from "../src/validator.js";
-import { scriptedIncident } from "./fixtures/models.js";
+import {
+  FAKE_LEADER,
+  scriptedIncident,
+  unitProposal,
+} from "./fixtures/models.js";
 
 const provider: Provider = {
   name: "fake",
@@ -87,11 +91,9 @@ describe("apply and tree", () => {
     const applied = apply({
       ...empty,
       createUnits: [
-        {
-          ref: "scroll",
-          purpose: "where the scroll moves",
-          parent: "i1-command",
-        },
+        unitProposal("scroll", "where the scroll moves", "i1-command", {
+          leader: FAKE_LEADER,
+        }),
       ],
       createTasks: [grepTask("scroll", "scrollTo")],
       rationale: "start with the scroll handler",
@@ -135,8 +137,8 @@ describe("apply and tree", () => {
       situation: { hypothesis: "test", proven: [], keep: [] },
     });
     expect(renderTree(store.listUnits("i1"), store.listTasks("i1"))).toEqual([
-      "i1-command [active] command: where deletion moves the scroll position",
-      "  i1-u02 [active] where the scroll moves",
+      "i1-command [active] command: where deletion moves the scroll position (leader claude-code/claude-haiku-4-5; last report: none)",
+      "  i1-u02 [active] where the scroll moves (leader fake/fake-small; last report: none)",
       "    [done] i1-t01 grep: find scrollTo",
       "    [pending] i1-t02 grep: find deleteComment",
       "    [ready] i1-t03 grep: find removeComment",
@@ -164,8 +166,10 @@ describe("apply and tree", () => {
     const applied = apply({
       ...empty,
       createUnits: [
-        { ref: "child", purpose: "the child", parent: "later" },
-        { ref: "later", purpose: "the parent", parent: "i1-command" },
+        unitProposal("child", "the child", "later", { leader: FAKE_LEADER }),
+        unitProposal("later", "the parent", "i1-command", {
+          leader: FAKE_LEADER,
+        }),
       ],
       createTasks: [grepTask("child", "scrollTo")],
     });
@@ -220,7 +224,9 @@ describe("apply and tree", () => {
     applyPlan(store, incident(), {
       ...empty,
       createUnits: [
-        { ref: "scroll", purpose: "the scroll path", parent: "001-command" },
+        unitProposal("scroll", "the scroll path", "001-command", {
+          leader: FAKE_LEADER,
+        }),
       ],
       createTasks: [grepTask("scroll", "scrollTo")],
     });
@@ -231,6 +237,11 @@ describe("apply and tree", () => {
       "dispatcher",
       "task.completed",
     );
+    store.record("001", "unit.reported", "dispatcher", {
+      unitId: "001-u02",
+      sessionId: "s-u02",
+      report: { outcome: "met", changed: [], pictureChanged: false },
+    });
     const verdict = validateAndRecord(
       store,
       incident(),
@@ -250,15 +261,18 @@ describe("apply and tree", () => {
     expect(await run(["incident", "tree", "001"], ctx)).toBe(EXIT.ok);
     expect(out).toEqual([
       "incident 001 [open]  why does it scroll",
-      "001-command [active] command: holds the objective and the current plan",
-      "  001-u02 [closed] the scroll path",
+      "001-command [active] command: holds the objective and the current plan (leader claude-code/claude-opus-5; last report: none)",
+      "  001-u02 [closed] the scroll path (leader fake/fake-small; last report: met)",
       "    [done] 001-t01 grep: find scrollTo",
     ]);
     out.length = 0;
     expect(await run(["incident", "events", "001"], ctx)).toBe(EXIT.ok);
     expect(
       out.some(
-        (l) => l.includes("unit.closed") && l.includes("the path is known"),
+        (l) =>
+          l.includes("unit.closed") &&
+          l.includes("the path is known") &&
+          l.includes('"sessionId":null'),
       ),
     ).toBe(true);
     expect(await run(["incident", "tree", "nope"], ctx)).toBe(EXIT.notFound);
@@ -281,8 +295,8 @@ describe("apply and tree", () => {
     const grouped = apply({
       ...empty,
       createUnits: [
-        { ref: "a", purpose: "first half", parent: "i1-command" },
-        { ref: "b", purpose: "second half", parent: "i1-command" },
+        unitProposal("a", "first half", "i1-command", { leader: FAKE_LEADER }),
+        unitProposal("b", "second half", "i1-command", { leader: FAKE_LEADER }),
       ],
       createTasks: Array.from({ length: 8 }, (_, i) =>
         grepTask(i < 4 ? "a" : "b", `p${i}`),

@@ -39,7 +39,7 @@ describe("incident commands", () => {
       ),
     ).toBe(EXIT.ok);
     expect(c.out[0]).toBe(
-      "incident 001 created: why does Roughdraft scroll after a delete",
+      "incident 001 created: why does Roughdraft scroll after a delete (IC claude-code/claude-opus-5)",
     );
     const e = ctx(db);
     expect(await run(["incident", "events", "001"], e.context)).toBe(EXIT.ok);
@@ -47,6 +47,35 @@ describe("incident commands", () => {
       "incident.created",
       "unit.created",
     ]);
+    const store = new Store(db);
+    expect(store.listUnits("001")[0]).toMatchObject({
+      id: "001-command",
+      leader: { provider: "claude-code", model: "claude-opus-5" },
+      equipment: ["Read", "Grep", "Glob", "Bash"],
+      sessionId: null,
+    });
+    store.close();
+    const other = ctx(db);
+    expect(
+      await run(
+        [
+          "incident",
+          "create",
+          "a cheaper one",
+          "--ic-model",
+          "claude-haiku-4-5",
+        ],
+        other.context,
+      ),
+    ).toBe(EXIT.ok);
+    expect(other.out[0]).toMatch(/\(IC claude-code\/claude-haiku-4-5\)$/);
+    expect(
+      await run(
+        ["incident", "create", "x", "--ic-model", "gpt-9"],
+        other.context,
+      ),
+    ).toBe(EXIT.usage);
+    expect(other.err.at(-1)).toMatch(/--ic-model gpt-9 is not a model/);
   });
 
   it("prints the incident file with every section, empty ones marked", async () => {

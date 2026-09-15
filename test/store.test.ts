@@ -21,7 +21,11 @@ function scripted(store: Store): void {
     id: "u-command",
     incidentId: "i1",
     parentId: null,
-    purpose: "command",
+    objective: "command",
+    leader: { provider: "claude-code", model: "claude-haiku-4-5" },
+    equipment: [],
+    bashAllowlist: [],
+    sessionId: null,
     status: "active",
     createdAt: at,
     closedAt: null,
@@ -30,7 +34,11 @@ function scripted(store: Store): void {
     id: "u1",
     incidentId: "i1",
     parentId: "u-command",
-    purpose: "delete-handler investigation",
+    objective: "delete-handler investigation",
+    leader: { provider: "claude-code", model: "claude-haiku-4-5" },
+    equipment: [],
+    bashAllowlist: [],
+    sessionId: null,
     status: "active",
     createdAt: at,
     closedAt: null,
@@ -167,7 +175,11 @@ describe("store", () => {
       id: "u-orphan",
       incidentId: "i1",
       parentId: "no-such-unit",
-      purpose: "x",
+      objective: "x",
+      leader: { provider: "claude-code", model: "claude-haiku-4-5" },
+      equipment: [],
+      bashAllowlist: [],
+      sessionId: null,
       status: "active",
       createdAt: now(),
       closedAt: null,
@@ -290,7 +302,11 @@ describe("store", () => {
           id: "u-stray",
           incidentId: "i1",
           parentId: null,
-          purpose: "p",
+          objective: "p",
+          leader: { provider: "claude-code", model: "claude-haiku-4-5" },
+          equipment: [],
+          bashAllowlist: [],
+          sessionId: null,
           status: "active",
           createdAt: at,
           closedAt: null,
@@ -486,7 +502,11 @@ describe("store", () => {
             id: "u2",
             incidentId: "i1",
             parentId: "u-command",
-            purpose: "a",
+            objective: "a",
+            leader: { provider: "claude-code", model: "claude-haiku-4-5" },
+            equipment: [],
+            bashAllowlist: [],
+            sessionId: null,
             status: "active",
             createdAt: now(),
             closedAt: null,
@@ -498,7 +518,11 @@ describe("store", () => {
             id: "u3",
             incidentId: "i1",
             parentId: "missing",
-            purpose: "b",
+            objective: "b",
+            leader: { provider: "claude-code", model: "claude-haiku-4-5" },
+            equipment: [],
+            bashAllowlist: [],
+            sessionId: null,
             status: "active",
             createdAt: now(),
             closedAt: null,
@@ -526,14 +550,14 @@ describe("store", () => {
     s1.db.pragma("user_version = 1");
     s1.close();
     const first = new Store(path);
-    expect(first.db.pragma("user_version", { simple: true })).toBe(3);
+    expect(first.db.pragma("user_version", { simple: true })).toBe(4);
     first.close();
     // A crash after the column was added but before the version was written: reopening finishes the job.
     const half = new Store(path);
     half.db.pragma("user_version = 1");
     half.close();
     const s2 = new Store(path);
-    expect(s2.db.pragma("user_version", { simple: true })).toBe(3);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(4);
     expect(
       s2
         .listClaims("i1")
@@ -561,11 +585,133 @@ describe("store", () => {
     s1.db.pragma("user_version = 2");
     s1.close();
     const s2 = new Store(path);
-    expect(s2.db.pragma("user_version", { simple: true })).toBe(3);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(4);
     expect(s2.listTasks("i1").map((t) => t.evidenceFrom)).toEqual([
       { claims: [], tasks: [] },
     ]);
     s2.close();
+  });
+
+  it("migrates a version 3 file, reading each unit's purpose as its objective with the legacy leader and no session", async () => {
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const path = `${mkdtempSync(`${tmpdir()}/noscope-`)}/v3.sqlite`;
+    const s1 = new Store(path);
+    scripted(s1);
+    s1.db.exec("ALTER TABLE units DROP COLUMN leader_json");
+    s1.db.exec("ALTER TABLE units DROP COLUMN equipment_json");
+    s1.db.exec("ALTER TABLE units DROP COLUMN bash_allowlist_json");
+    s1.db.exec("ALTER TABLE units DROP COLUMN session_id");
+    s1.db.exec("ALTER TABLE units RENAME COLUMN objective TO purpose");
+    s1.db.pragma("user_version = 3");
+    s1.close();
+    const s2 = new Store(path);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(4);
+    expect(s2.listUnits("i1").map((u) => [u.id, u.objective])).toEqual([
+      ["u-command", "command"],
+      ["u1", "delete-handler investigation"],
+    ]);
+    expect(s2.listUnits("i1")[0]).toMatchObject({
+      leader: { provider: "claude-code", model: "claude-opus-5" },
+      equipment: [],
+      bashAllowlist: [],
+      sessionId: null,
+    });
+    // A unit created in the migrated file carries its own leader.
+    s2.createUnit(
+      {
+        id: "u2",
+        incidentId: "i1",
+        parentId: "u-command",
+        objective: "new",
+        leader: { provider: "claude-code", model: "claude-haiku-4-5" },
+        equipment: ["Read"],
+        bashAllowlist: ["ls"],
+        sessionId: null,
+        status: "active",
+        createdAt: now(),
+        closedAt: null,
+      },
+      "runtime",
+    );
+    expect(s2.listUnits("i1").at(-1)?.equipment).toEqual(["Read"]);
+    s2.close();
+  });
+
+  it("replays a unit recorded before units had a leader, and a unit's session and its report events", () => {
+    const a = new Store(":memory:");
+    scripted(a);
+    a.setUnitSession("i1", "u-command", "s-lead", "dispatcher", {
+      unitId: "u-command",
+      sessionId: "s-lead",
+    });
+    a.record("i1", "unit.continued", "dispatcher", {
+      unitId: "u-command",
+      sessionId: "s-lead",
+      remaining: 1,
+    });
+    a.record("i1", "unit.reported", "dispatcher", {
+      unitId: "u-command",
+      sessionId: "s-lead",
+      report: { outcome: "met", changed: [], pictureChanged: false },
+    });
+    a.record("i1", "picture.discrepancy", "dispatcher", {
+      seat: "leader",
+      unitId: "u-command",
+      discrepancy: "a hurricane",
+    });
+    expect(a.listUnits("i1")[0]?.sessionId).toBe("s-lead");
+    const events = a.listEvents("i1").map((e) => {
+      const m = e.payload.mutation as
+        | { kind: string; unit?: Record<string, unknown> }
+        | undefined;
+      if (m === undefined || m.kind !== "unit.create" || m.unit === undefined)
+        return e;
+      const {
+        objective,
+        leader: _l,
+        equipment: _e,
+        bashAllowlist: _b,
+        sessionId: _s,
+        ...unit
+      } = m.unit;
+      return {
+        ...e,
+        payload: {
+          ...e.payload,
+          mutation: { ...m, unit: { ...unit, purpose: objective } },
+        },
+      };
+    });
+    const b = new Store(":memory:");
+    b.replay([...a.listEvents(null), ...events]);
+    expect(
+      b.listUnits("i1").map((u) => [u.id, u.objective, u.sessionId]),
+    ).toEqual([
+      ["u-command", "command", "s-lead"],
+      ["u1", "delete-handler investigation", null],
+    ]);
+    expect(b.listUnits("i1")[1]?.leader).toEqual({
+      provider: "claude-code",
+      model: "claude-opus-5",
+    });
+    // The units differ by the leader the migration reads in; every other table matches.
+    const { units: _a, ...restA } = a.snapshot();
+    const { units: _b, ...restB } = b.snapshot();
+    expect(restB).toEqual(restA);
+    expect(
+      b
+        .listEvents("i1")
+        .map((e) => e.type)
+        .slice(-4),
+    ).toEqual([
+      "leader.started",
+      "unit.continued",
+      "unit.reported",
+      "picture.discrepancy",
+    ]);
+    a.close();
+    b.close();
   });
 
   it("replays a task recorded before tasks read by reference", () => {

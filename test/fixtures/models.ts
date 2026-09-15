@@ -1,4 +1,10 @@
-import type { Incident, Task, Unit } from "../../src/models.js";
+import type {
+  Incident,
+  Leader,
+  Task,
+  Unit,
+  UnitProposal,
+} from "../../src/models.js";
 import type { Provider } from "../../src/providers/index.js";
 import { now, type Store } from "../../src/store.js";
 
@@ -10,6 +16,33 @@ export const fakeProvider: Provider = {
     throw new Error("not run");
   },
 };
+
+/** The leader most scripted units get: the stub on Haiku, the same pair the tests' session tasks name. */
+const STUB_LEADER: Leader = {
+  provider: "claude-code",
+  model: "claude-haiku-4-5",
+};
+
+/** A leader on the fake provider, for plans validated against it. */
+export const FAKE_LEADER: Leader = { provider: "fake", model: "fake-small" };
+
+/** A new unit for a plan: objective, parent, and a leader with no equipment unless given. */
+export function unitProposal(
+  ref: string,
+  objective: string,
+  parent: string,
+  over: Partial<Omit<UnitProposal, "ref" | "objective" | "parent">> = {},
+): UnitProposal {
+  return {
+    ref,
+    objective,
+    parent,
+    leader: STUB_LEADER,
+    equipment: [],
+    bashAllowlist: [],
+    ...over,
+  };
+}
 
 /** An incident with its command unit in the store, returned with unit and task builders bound to them. */
 export function scriptedIncident(store: Store, id = "i1", at = now()) {
@@ -29,7 +62,11 @@ export function scriptedIncident(store: Store, id = "i1", at = now()) {
     id: `${id}-command`,
     incidentId: id,
     parentId: null,
-    purpose: "command: where deletion moves the scroll position",
+    objective: "command: where deletion moves the scroll position",
+    leader: STUB_LEADER,
+    equipment: ["Read", "Grep", "Glob", "Bash"],
+    bashAllowlist: ["ls", "cat", "head", "tail", "wc", "find", "stat"],
+    sessionId: null,
     status: "active",
     createdAt: at,
     closedAt: null,
@@ -37,11 +74,15 @@ export function scriptedIncident(store: Store, id = "i1", at = now()) {
   store.createIncident(incident, "cli");
   store.createUnit(unit, "runtime");
   const addUnit = (
-    overrides: Partial<Unit> & Pick<Unit, "id" | "purpose">,
+    overrides: Partial<Unit> & Pick<Unit, "id" | "objective">,
   ): Unit => {
     const u: Unit = {
       incidentId: id,
       parentId: unit.id,
+      leader: STUB_LEADER,
+      equipment: [],
+      bashAllowlist: [],
+      sessionId: null,
       status: "active",
       createdAt: at,
       closedAt: null,
