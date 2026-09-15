@@ -11,7 +11,8 @@ export const IncidentStatus = z.enum([
   "failed",
   "blocked",
 ]);
-export const UnitStatus = z.enum(["active", "closed"]);
+/** A unit is `waiting` when its leader's report carried a resource request nobody has answered; dispatch skips it and its tasks stay pending. */
+export const UnitStatus = z.enum(["active", "waiting", "closed"]);
 export const TaskStatus = z.enum([
   "pending",
   "ready",
@@ -74,6 +75,8 @@ export const EventType = z.enum([
   "command.failed",
   "plan.reviewed",
   "leader.released",
+  "unit.waiting",
+  "unit.resumed",
 ]);
 
 export const Budget = z.object({
@@ -103,16 +106,20 @@ export const Usage = z.object({
   costUsd: z.number().nonnegative().optional(),
 });
 
+/** A question for Mauria; `unitId` names the unit whose leader raised it, absent on the planner's own. */
 export const Question = z.object({
   id: z.string().min(1),
   text: z.string().min(1),
   answer: z.string().optional(),
+  unitId: z.string().min(1).optional(),
 });
 
+/** Means the incident lacks; `unitId` names the unit whose leader raised it, absent on the planner's own. */
 export const CapabilityRequest = z.object({
   need: z.string().min(1),
   why: z.string().min(1),
   answer: z.string().optional(),
+  unitId: z.string().min(1).optional(),
 });
 
 /**
@@ -406,7 +413,7 @@ export const ActionPlan = z.strictObject({
   questionsForHuman: z.array(z.string()),
   grantRequests: z.array(GrantRequest),
   capabilityRequests: z
-    .array(CapabilityRequest.omit({ answer: true }))
+    .array(CapabilityRequest.omit({ answer: true, unitId: true }))
     .describe(
       "What the planner needs and why; the answer is Mauria's, through incident provide",
     ),
@@ -434,6 +441,17 @@ export const ReportChange = z.object({
   claims: z.array(z.string()).describe("Claim ids the change rests on"),
 });
 
+/**
+ * A lack a leader cannot resolve inside its own unit, sent up on its report: the unit waits
+ * on it, the incident does not (DESIGN.md Step 4). A retrievable fact is never one: the
+ * leader assigns a task for it.
+ */
+export const ResourceRequest = z.object({
+  kind: z.enum(["permission", "missing_means", "human_knowledge"]),
+  what: z.string().min(1).describe("What is lacked, in one line"),
+  why: z.string().min(1).describe("Why the unit's objective needs it"),
+});
+
 const LeaderReportFields = z.object({
   outcome: z.enum(["met", "not_met", "progress"]),
   changed: z
@@ -456,6 +474,12 @@ const LeaderReportFields = z.object({
     .min(1)
     .optional()
     .describe("When the objective is not met: what to do about it"),
+  resourceRequests: z
+    .array(ResourceRequest)
+    .optional()
+    .describe(
+      "What you lack and cannot get inside your unit: permission, missing means, or something only a human knows; never a retrievable fact, which you assign a task for. Any request puts your unit in waiting until Mauria answers, and the report counts as picture-changing",
+    ),
 });
 
 /** A report whose objective is not met says why and what to do about it. */
@@ -475,8 +499,14 @@ export const LeaderReport = LeaderReportFields.superRefine((r, ctx) => {
     });
 });
 
-/** The fields both kinds of turn carry: a strike-team request for the next task, and a discrepancy. */
+/** The fields both kinds of turn carry: tasks the leader assigns under its unit, a strike-team request for the next task, and a discrepancy. */
 const TurnFields = {
+  assignTasks: z
+    .array(TaskProposal)
+    .optional()
+    .describe(
+      "Tasks to assign under your own unit, to capabilities your unit holds, inside your unit's budget: how you get a retrievable fact yourself, without waiting for the next plan. Each names your unit id as its unit; a strike team for one of them goes in that task's own strikeTeam field. They are checked by the validator's rules and run in this pass",
+    ),
   requestStrikeTeam: z
     .array(StrikeTeam)
     .optional()
@@ -517,6 +547,13 @@ export const LeaderTurn = z
         code: "custom",
         path: ["report"],
         message: "a report turn carries its report",
+      });
+    if (t.kind === "continue" && t.report !== null)
+      ctx.addIssue({
+        code: "custom",
+        path: ["report"],
+        message:
+          "a continue turn carries no report; to file one, or to raise a resource request, report",
       });
   });
 
@@ -564,7 +601,9 @@ export const CommandTurn = z.strictObject({
       "The resource requests listed in the change report, each answered; nothing else goes here",
     ),
   questionsForHuman: z.array(z.string().min(1)),
-  capabilityRequests: z.array(CapabilityRequest.omit({ answer: true })),
+  capabilityRequests: z.array(
+    CapabilityRequest.omit({ answer: true, unitId: true }),
+  ),
   grantRequests: z.array(GrantRequest),
   incidentStatus: z.enum(["continue", "blocked", "satisfied", "failed"]),
   rationale: z
@@ -732,6 +771,7 @@ export type SopApplication = z.infer<typeof SopApplication>;
 export type ActionPlan = z.infer<typeof ActionPlan>;
 export type Situation = z.infer<typeof Situation>;
 export type LeaderReport = z.infer<typeof LeaderReport>;
+export type ResourceRequest = z.infer<typeof ResourceRequest>;
 export type LeaderTurn = z.infer<typeof LeaderTurn>;
 export type Period = z.infer<typeof Period>;
 export type ResourceAnswer = z.infer<typeof ResourceAnswer>;

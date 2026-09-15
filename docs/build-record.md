@@ -1432,3 +1432,149 @@ Not exactly to spec, with reasons:
   re-brief the incoming session before the draft; `reviewTurn` already does so for a
   session with no id, so releasing the root session (`setUnitSession` with null) before
   the review is the whole mechanism.
+
+## R3-6: Lacks resolve at the leader (#34, merged 2026-09-15)
+
+R3-6 of the round 3 plan. Built: a lack is resolved by the nearest seat that can. A task's
+`insufficient` no longer goes to the planner: the leader's next turn renders what the task
+needed, each with its kind, and what the leader does about each (`RESOLVE_LACKS` in
+`src/leader.ts`); the planner's section 5 lists only needs other than `retrievable_fact`. A
+`LeaderTurn` gains optional `assignTasks: TaskProposal[]`, on either move: after the turn is
+recorded the proposals pass the plan rules that read tasks (Capabilities exist, Units exist,
+No cycles, No duplicates, Inputs validate, Span of control, Effect policy, Budget respected,
+Dependencies resolve, Model known), run on a plan that creates those tasks and nothing else,
+plus three of the leader's own in `LEADER_RULES`, keyed the way `PLANNER_RULES` are: "Own
+unit" (every task names the leader's unit), "Capability held" (`holdsCapability`: a
+deterministic capability always, a session-backed one when the unit's equipment and Bash
+allowlist cover its, an `equipmentSelect` one when the task's pick is held; `runsInsideLeader`
+now delegates to it) and "Budget within share" (`unitShare`: the share is the sum of the
+budgets of the unit's plan-assigned tasks per dimension, undefined where none bounds it;
+charged is the usage of the unit's ended tasks plus the bounds of its open tasks, the
+leader's own included; a dimension no plan task under the unit bounds is a share of zero,
+so an assignment may not bound it, ruled 2026-09-15 in review). A passing assignment is applied by `applyLeaderTasks` in
+`src/runtime.ts` (`buildTasks` is shared with `applyPlan`): `task.created` and `plan.applied`
+with the actor `leader`, the unit, its session and the task ids; the dispatcher runs the
+ready ones in the same pass. A refused one records `plan.rejected` per rule with the actor
+`leader` and the unit, creates nothing, and its reasons open the leader's next prompt
+(`refusedSinceLastTurn`). The report gains optional `resourceRequests` (`ResourceRequest`:
+kind `permission`, `missing_means` or `human_knowledge`, what, why): the report is forced
+`pictureChanged` before it is recorded, then `raiseResourceRequests` in one transaction
+raises a `human_knowledge` request as a question (`text` is "what (why)", `unitId` the unit),
+a `missing_means` one as a capability request naming the unit, a `permission` one as
+`grant.requested` with `unitId`, `what` and `why`, and moves the unit to the new status
+`waiting` (`unit.waiting`, the mutation `unit.status`; `Store.setUnitStatus`); the incident's
+status is untouched. The turn's record, its assignments and its requests land in one
+transaction (the inner `batch` calls run as savepoints), with the assignments validated
+and applied before the requests are raised, so a report that both assigns and asks keeps
+its tasks; the schema refuses a `report` on a `continue` turn, so a request never rides
+on one. Dispatch runs active units only, so a waiting unit is skipped, its
+pending tasks stay pending and it owes no report. `incident answer` and `incident provide`
+answer the oldest open question or request whichever seat raised it; when it named a unit and
+nothing of that unit's is still open (`openRequestsByUnit`), the unit returns to `active`
+(`unit.resumed`); the incident returns to `open` only when a plan had blocked it and nothing
+of the planner's still waits (`holdsOn` and `pendingGrantRequests` count the planner's only).
+The next pass opens a resumed unit (`resumedUnits`: `unit.resumed` after the unit's last
+turn) with a turn carrying every answer to its requests (`answeredRequestsOf`) before any
+task runs. `incident show` marks each question and request with the unit that raised it and
+lists the waiting units with what each waits on; `incident tree` and the planner's section 3
+show `[waiting]` with the requests; section 6 shows a report's requests; `step` prints a
+report's requests and each leader's assignments; `incident review` lists what a leader sent
+up, assigned or was refused under its turns and counts lacks resolved at a leader against
+those sent up. The leader role text says how a lack resolves and lists the leader's rules,
+the turn schema's descriptions say the same, and the planner prompt says what a leader
+does with its own lacks. The stub gains `NOSCOPE_STUB_OUTPUTS`, a walked list of task
+outputs with the counter `NOSCOPE_STUB_OUTPUT_COUNTER`. Rebased over R3-5 and R3-7 (#35,
+#33): `assignTasks` sits in the shared `TurnFields` and `resourceRequests` in the report's
+fields; the refinement reads "a continue turn's `report` is null"; a leader-assigned task
+carries its own `strikeTeam` (recorded as `strike_team.defined` with `declaredBy: leader`),
+while `requestStrikeTeam` still targets the pre-computed next task; the `CommandTurn`'s
+`capabilityRequests` omit `unitId` too. The IC's `answers` are delivered: the change
+report's `resource requests:` heading lists what each waiting unit still asks, with the text
+an answer names it by; `validateCommand` refuses an answer naming a unit that is not
+waiting or a request it did not raise ("Answers match"); `applyCommand` answers each
+through `answerRequest` in `src/runtime.ts`, the one function `incident answer` and
+`incident provide` also call, which stores the answer, reopens the incident when a command
+turn or a plan had blocked it and nothing of theirs still waits, and resumes the unit once
+nothing of its is open, so the same cycle's dispatch delivers the answers. `IC_ROLE` says
+the IC assigns tasks under command like any leader. The schema version stays 6. DESIGN.md Vocabulary (unit), Step 2
+(the `units` status, the question and request fields, the event types), Step 4 (the
+channel table gains a column for the leader), Step 5 (the leader's rules), Step 6 and
+Step 7 follow; `docs/architecture.html` follows on the leader node, the cycle, the
+session's output and the waiting-on-Mauria cards.
+
+Tests: the dispatcher on the stub runs an investigate inside the leader that comes back
+insufficient for a retrievable fact, whose leader assigns a grep, then an investigate with
+the grep's result in `evidenceFrom` that runs as a resumed call on its session, then reports
+`met`, all in one pass, checked against the stub's call log and the `plan.applied` and
+`task.created` events; an assignment under another unit is refused, recorded with the leader
+as actor, creates nothing and is read back into the next turn's prompt; a `human_knowledge`
+request puts the unit in `waiting` with the question naming it, forces `pictureChanged`,
+stops the pass, leaves the incident `open` and the unit's dependent task pending, is skipped
+next pass while the other unit runs, and after `incident answer` the unit is `active`, its
+leader reads the answer before its pending task runs; a `missing_means` request is a
+capability request naming the unit and `incident provide` resumes the unit only once its
+question is answered too, with `show` and `tree` listing what it waits on. The validator
+tests cover each leader rule with its reason, the share before and after a task settles, and
+the plan rules on a leader's tasks; the store test covers the `unit.status` mutation, closing
+a waiting unit and replay; the models test the new fields and the schema descriptions; the
+review test the leader's lines and the `lacks` count; the preamble test the role text; the
+blocking test that a retrievable fact reaches the leader's prompt and not the planner's;
+the planner snapshot shows a waiting unit in section 3, a non-retrievable need in section
+5 and a report's requests in section 6.
+
+Not exactly to spec, with reasons:
+
+- `unitId` on a question or capability request is optional and absent on the planner's own,
+  not null: every stored question and every test's `toEqual` on one stays as it was, and the
+  planner's plan shape (`CapabilityRequest.omit({ answer, unitId })`) is unchanged.
+- A unit has no budget of its own in the schema, so "inside its budget" is read as what the
+  plans allotted the unit's tasks: the share is the sum of the plan-assigned tasks' budgets
+  per dimension. Ruled in review (2026-09-15): a dimension no plan task under the unit
+  bounds is a share of zero, so an assignment may not bound it, and a leader under only
+  unbounded deterministic tasks cannot assign a session task bounded by the incident's
+  budget alone. A deterministic task with no bound asks nothing of the share. The share is
+  cumulative over the incident: a plan task that finishes under its bound frees the rest to
+  its leader.
+- A refused assignment is not re-asked within the pass: the unit's pass goes on as before
+  (a `continue` with nothing left and nothing assigned ends it without a report, and the
+  unit then owes one), and the refusal is rendered into the leader's next turn, which is
+  what a `plan.rejected` is for the planner.
+- `assignTasks` on a `report` turn is applied too, but the unit's pass has ended, so the
+  tasks run next pass; the description says assignments run in this pass, which is true of
+  a `continue`.
+- A `permission` request holds its unit until a grant exists, which is after v0, the way
+  the planner's grant request holds the incident; `openRequestsByUnit` counts every
+  `grant.requested` with a `unitId` as open.
+- A unit with several requests returns to `active` only when all of them are answered; the
+  command says "still waits on N request(s)" otherwise.
+- A resumed unit's leader is asked for a move with the answers before any task runs, so the
+  answer reaches it before a task that runs inside its session; the plan block does not say
+  when the leader reads the answer. `resumedUnits` compares the resume to the leader's last
+  turn of either kind, so the answered turn is given once, and `answeredRequestsOf` renders
+  only the requests of the unit's last wait, so a unit that waited twice is not told the
+  first round's answers again.
+- `plan.applied` and `plan.rejected` by a leader carry the actor `leader` and the unit id,
+  and every reader of those events (`lastSituation` in the dispatcher and the planner,
+  `lastCycleSequence`, the planner's section 9, the review's cycle verdict, `incident show`'s
+  decisions) skips them, since a leader's apply mid-pass is not a cycle boundary.
+- `unit.waiting` and `unit.resumed` are new event types, not named in the plan block, because
+  a status change needs an event carrying its mutation; `user_version` stays 4, since no
+  column changes.
+- The `unit.close` mutation now closes any unit not already closed, so a plan can demobilize
+  a waiting unit ("Closing is clean" only refuses an already closed one); "Units exist"
+  still takes only an active unit for new work.
+- Section 5 keeps an insufficient task's non-retrievable needs, which the leader is also
+  expected to raise, so the planner may read one lack twice (section 5 and the report's
+  requests in section 6) in the cycle it lands.
+- `DispatchOptions` gains `providers`, the list a leader's assignments are validated
+  against; the CLI does not set it, so Claude Code alone is used, as for a plan.
+- Span of control and a parent's "Below it" line count every unit not closed, so a waiting
+  child still counts and shows; "Units exist" still takes only an active unit for new work
+  and names the unit's real status when it refuses.
+- The IC assigns tasks under command like any leader (Mauria's ruling: a deterministic
+  task belongs to whichever leader assigns it, command included): the root's `LeaderTurn`
+  keeps `assignTasks`, and `IC_ROLE` says so; the other three kinds of lack the IC raises
+  in its command turn, never as a leader's resource requests.
+- A leader that assigns a task and asks a strike team for it in the same turn declares the
+  team on the task's own `strikeTeam` field; `requestStrikeTeam` targets the task computed
+  as next before the turn, so on such a turn it is refused as R3-5 records it.

@@ -4,15 +4,13 @@ import { type Context, EXIT, type Handler } from "../context.js";
 import { dispatch } from "../dispatcher.js";
 import { READ_ONLY_COMMANDS } from "../equipment/index.js";
 import { commandTurn, reviewTurn } from "../ic.js";
-import { IC_MODEL, IC_PROVIDER } from "../leader.js";
+import { IC_MODEL, IC_PROVIDER, openRequestsByUnit } from "../leader.js";
 import {
   type ActionPlan,
   Budget,
-  type CapabilityRequest,
   type Event,
   type Incident,
   type IncidentStatus,
-  type Question,
   Situation,
   type StrikeTeam,
   type Unit,
@@ -20,7 +18,14 @@ import {
 import { proposePlan } from "../planner.js";
 import { getProvider } from "../providers/index.js";
 import { renderReview } from "../review.js";
-import { applyCommand, applyPlan, planDiff } from "../runtime.js";
+import {
+  type Answered,
+  answerRequest,
+  applyCommand,
+  applyPlan,
+  holdsOn,
+  planDiff,
+} from "../runtime.js";
 import { cycleOf, now, resolveDbPath, Store, sumUsage } from "../store.js";
 import { describeStrikeTeam } from "../strike-team.js";
 import { renderTree } from "../tree.js";
@@ -212,7 +217,7 @@ function renderIncidentFile(
   );
   lines.push("");
   lines.push(
-    `units: ${units.filter((u) => u.status === "active").length} active, ${units.filter((u) => u.status === "closed").length} closed`,
+    `units: ${units.filter((u) => u.status === "active").length} active, ${units.filter((u) => u.status === "waiting").length} waiting, ${units.filter((u) => u.status === "closed").length} closed`,
   );
   lines.push(
     `tasks: ${tasks.filter((t) => t.status !== "completed" && t.status !== "cancelled" && t.status !== "failed").length} open, ${tasks.length} total`,
@@ -260,17 +265,27 @@ function renderIncidentFile(
         `  - ${String(d.payload.seat)}${d.payload.unitId === undefined ? "" : ` of ${String(d.payload.unitId)}`}: ${String(d.payload.discrepancy)} (${d.createdAt})`,
       );
   }
+  const raisedBy = (unitId: string | undefined) =>
+    unitId === undefined ? "" : ` (raised by unit ${unitId})`;
   lines.push("questions waiting on a human:");
   for (const q of incident.questions.filter((q) => q.answer === undefined))
-    lines.push(`  - ${q.text}`);
+    lines.push(`  - ${q.text}${raisedBy(q.unitId)}`);
   if (incident.questions.every((q) => q.answer !== undefined))
     lines.push("  (none)");
   lines.push("capability requests:");
   for (const r of incident.capabilityRequests)
     lines.push(
-      `  - ${r.need}: ${r.why}${r.answer === undefined ? "" : ` → ${r.answer}`}`,
+      `  - ${r.need}: ${r.why}${raisedBy(r.unitId)}${r.answer === undefined ? "" : ` → ${r.answer}`}`,
     );
   if (incident.capabilityRequests.length === 0) lines.push("  (none)");
+  const waitingOn = openRequestsByUnit(incident, events);
+  const waiting = units.filter((u) => u.status === "waiting");
+  lines.push("units waiting on a resource request:");
+  for (const u of waiting) {
+    lines.push(`  - ${u.id}: ${u.objective}`);
+    for (const r of waitingOn.get(u.id) ?? []) lines.push(`      ${r}`);
+  }
+  if (waiting.length === 0) lines.push("  (none)");
   lines.push("grants:");
   for (const g of grants)
     lines.push(`  - ${g.scope} ${g.capability} (${g.effect}): ${g.reason}`);
@@ -330,10 +345,12 @@ export const tree: Handler = async (args, ctx) => {
     ctx.io.out(
       `incident ${incident.id} [${incident.status}]  ${incident.objective}`,
     );
+    const events = store.listEvents(incident.id);
     for (const line of renderTree(
       store.listUnits(incident.id),
       store.listTasks(incident.id),
-      store.listEvents(incident.id),
+      events,
+      openRequestsByUnit(incident, events),
     ))
       ctx.io.out(line);
     return EXIT.ok;
@@ -441,6 +458,8 @@ async function cycle(
   for (const id of commanded.closedUnits) ctx.io.out(`  unit ${id} closed`);
   for (const q of commanded.questions)
     ctx.io.out(`  question ${q.id}: ${q.text}`);
+  for (const a of commanded.answered)
+    for (const line of describeAnswered(a)) ctx.io.out(`  ${line}`);
   if (commanded.incidentStatus !== "open") {
     ctx.io.out(`incident ${incident.id} is now ${commanded.incidentStatus}`);
     return { status: commanded.incidentStatus, stopped: null };
@@ -538,11 +557,18 @@ async function cycle(
     ctx.io.out(
       `  ran ${r.taskId} (${r.capability}): ${r.status}${r.reason === undefined ? "" : `, ${r.reason}`}; ${r.claims} claim(s)`,
     );
-  for (const r of reports)
+  for (const r of reports) {
     ctx.io.out(
       `  unit ${r.unitId} reported ${r.report.outcome}${r.report.pictureChanged ? ", picture changed" : ""}: ${r.report.changed.map((c) => c.what).join("; ") || "nothing changed"}${r.report.why === undefined ? "" : `; why: ${r.report.why}`}${r.report.suggestion === undefined ? "" : `; suggestion: ${r.report.suggestion}`}`,
     );
+    for (const q of r.report.resourceRequests ?? [])
+      ctx.io.out(`    waits on ${q.kind}: ${q.what} (${q.why})`);
+  }
   for (const e of store.listEvents(incident.id).slice(before)) {
+    if (e.type === "plan.applied" && e.actor === "leader")
+      ctx.io.out(
+        `  leader of ${String(e.payload.unitId)} assigned ${(e.payload.tasks as unknown[]).map(String).join(", ")}`,
+      );
     if (e.type === "picture.discrepancy")
       ctx.io.out(
         `  discrepancy from ${String(e.payload.seat)} of ${String(e.payload.unitId)}: ${String(e.payload.discrepancy)}`,
@@ -711,43 +737,20 @@ export const answer: Handler = async (args, ctx) => {
       );
       return EXIT.cannotProceed;
     }
-    const questions = incident.questions.map((q) =>
-      q.id === open.id ? { ...q, answer: text } : q,
-    );
-    const holds = holdsOn(
+    const answered = answerRequest(
       store,
-      incident.id,
-      questions,
-      incident.capabilityRequests,
+      incident,
+      { kind: "question", id: open.id },
+      text,
+      ACTOR,
     );
-    const reopen = incident.status === "blocked" && holds.length === 0;
-    store.batch(() => {
-      store.setIncidentQuestions(
-        incident.id,
-        questions,
-        ACTOR,
-        "question.answered",
-        { questionId: open.id, answer: text },
-      );
-      if (reopen)
-        store.setIncidentStatus(
-          incident.id,
-          "open",
-          ACTOR,
-          "question.answered",
-          {
-            questionId: open.id,
-          },
-        );
-    });
     ctx.io.out(`answered ${open.id}: ${open.text}`);
-    ctx.io.out(
-      reopen
-        ? `incident ${incident.id} is open again`
-        : holds.length > 0
-          ? `incident ${incident.id} still waits on ${holds.join(", ")}`
-          : `incident ${incident.id} stays ${incident.status}`,
-    );
+    for (const line of describeAnswered(
+      answered,
+      incident,
+      store.listEvents(incident.id),
+    ))
+      ctx.io.out(line);
     return EXIT.ok;
   } finally {
     store.close();
@@ -788,65 +791,70 @@ export const provide: Handler = async (args, ctx) => {
       );
       return EXIT.cannotProceed;
     }
-    const requests = incident.capabilityRequests.map((r, i) =>
-      i === index ? { ...r, answer: text } : r,
+    const answered = answerRequest(
+      store,
+      incident,
+      { kind: "capability", need: open.need, unitId: open.unitId },
+      text,
+      ACTOR,
     );
-    const holds = holdsOn(store, incident.id, incident.questions, requests);
-    const reopen = incident.status === "blocked" && holds.length === 0;
-    store.batch(() => {
-      store.setIncidentCapabilityRequests(
-        incident.id,
-        requests,
-        ACTOR,
-        "capability.answered",
-        { need: open.need, answer: text },
-      );
-      if (reopen)
-        store.setIncidentStatus(
-          incident.id,
-          "open",
-          ACTOR,
-          "capability.answered",
-          { need: open.need },
-        );
-    });
     ctx.io.out(`provided for: ${open.need}`);
-    ctx.io.out(
-      reopen
-        ? `incident ${incident.id} is open again`
-        : holds.length > 0
-          ? `incident ${incident.id} still waits on ${holds.join(", ")}`
-          : `incident ${incident.id} stays ${incident.status}`,
-    );
+    for (const line of describeAnswered(
+      answered,
+      incident,
+      store.listEvents(incident.id),
+    ))
+      ctx.io.out(line);
     return EXIT.ok;
   } finally {
     store.close();
   }
 };
 
-/** What still holds an incident blocked: unanswered questions, unanswered capability requests, grant requests no grant has answered. */
-function holdsOn(
-  store: Store,
-  incidentId: string,
-  questions: readonly Question[],
-  requests: readonly CapabilityRequest[],
+/**
+ * What an answer came to, for the command's output: the incident reopened, or what still
+ * holds it, or its status unchanged; and for a unit's request, whether the unit is active
+ * again or what it still waits on. Without the incident (the IC's answers, printed as the
+ * command turn applies) only the unit's line is printed.
+ */
+function describeAnswered(
+  answered: Answered,
+  incident?: Incident,
+  events: readonly Event[] = [],
 ): string[] {
-  const stillWaiting = questions.filter((q) => q.answer === undefined).length;
-  const unprovided = requests.filter((r) => r.answer === undefined).length;
-  const grantsWaiting = pendingGrantRequests(store, incidentId);
-  return [
-    ...(stillWaiting > 0 ? [`${stillWaiting} question(s)`] : []),
-    ...(unprovided > 0 ? [`${unprovided} capability request(s)`] : []),
-    ...(grantsWaiting > 0 ? [`${grantsWaiting} grant request(s)`] : []),
-  ];
-}
-
-/** Grant requests the planner raised that no grant has answered: `grant.requested` events beyond `grant.given` ones. */
-function pendingGrantRequests(store: Store, incidentId: string): number {
-  const events = store.listEvents(incidentId);
-  const requested = events.filter((e) => e.type === "grant.requested").length;
-  const given = events.filter((e) => e.type === "grant.given").length;
-  return Math.max(0, requested - given);
+  const lines: string[] = [];
+  if (incident !== undefined) {
+    const holds = holdsOn(
+      events,
+      answered.question === null
+        ? incident.questions
+        : incident.questions.map((q) =>
+            q.id === answered.question?.id ? answered.question : q,
+          ),
+      answered.request === null
+        ? incident.capabilityRequests
+        : incident.capabilityRequests.map((r) =>
+            r.need === answered.request?.need &&
+            r.unitId === answered.request?.unitId
+              ? answered.request
+              : r,
+          ),
+    );
+    lines.push(
+      answered.reopened
+        ? `incident ${incident.id} is open again`
+        : incident.status === "blocked" && holds.length > 0
+          ? `incident ${incident.id} still waits on ${holds.join(", ")}`
+          : `incident ${incident.id} stays ${incident.status}`,
+    );
+  }
+  if (answered.unit !== null)
+    lines.push(
+      answered.unit.resumed
+        ? `unit ${answered.unit.id} is active again`
+        : `unit ${answered.unit.id} still waits on ${answered.unit.stillOpen} request(s)`,
+    );
+  return lines;
 }
 
 export const review: Handler = async (args, ctx) => {

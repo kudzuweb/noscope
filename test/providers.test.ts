@@ -200,6 +200,10 @@ describe("claude code provider", () => {
       "the moment an outcome changes the picture",
       "You cannot change the organization above or beside you",
       "discrepancy is for one thing only",
+      "A lack is resolved by the nearest seat that can.",
+      "- Own unit:",
+      "- Capability held:",
+      "- Budget within share:",
     ])
       expect(LEADER_ROLE).toContain(line);
     // R3-5: the leader may send a team the task declares or ask for one, choosing its shape.

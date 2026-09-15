@@ -23,7 +23,7 @@ const fakeProvider: Provider = {
   },
 };
 
-/** An incident one cycle in: a verified and an asserted claim, a completed, an insufficient and an open task, a rejected plan. */
+/** An incident one cycle in: a verified and an asserted claim, a completed, an insufficient and an open task, a unit waiting on its leader's request, a rejected plan. */
 function cycledIncident(store: Store) {
   const s = scriptedIncident(store, "i1", AT);
   store.createUnit(
@@ -118,7 +118,10 @@ function cycledIncident(store: Store) {
     taskId: "t-interp",
     capability: "interpret",
     sessionId: "sess-2",
-    needed: [{ kind: "retrievable_fact", what: "the delete handler's body" }],
+    needed: [
+      { kind: "retrievable_fact", what: "the delete handler's body" },
+      { kind: "human_knowledge", what: "which scroll position is wanted" },
+    ],
   });
   s.task({
     id: "t-interp",
@@ -162,6 +165,57 @@ function cycledIncident(store: Store) {
       suggestion: "read the handler that calls it",
     },
     usage: { inputTokens: 900, outputTokens: 80, seconds: 2 },
+  });
+  store.createUnit(
+    {
+      id: "u-wait",
+      incidentId: "i1",
+      parentId: s.unit.id,
+      objective: "what the author expects after a delete",
+      leader: { provider: "claude-code", model: "claude-haiku-4-5" },
+      equipment: [],
+      bashAllowlist: [],
+      sessionId: "s-wait",
+      status: "active",
+      createdAt: AT,
+      closedAt: null,
+    },
+    "runtime",
+  );
+  store.record("i1", "unit.reported", "dispatcher", {
+    unitId: "u-wait",
+    sessionId: "s-wait",
+    provider: "claude-code",
+    model: "claude-haiku-4-5",
+    report: {
+      outcome: "progress",
+      changed: [],
+      pictureChanged: true,
+      resourceRequests: [
+        {
+          kind: "human_knowledge",
+          what: "where should the view rest after a delete?",
+          why: "the objective does not say",
+        },
+      ],
+    },
+    usage: { inputTokens: 500, outputTokens: 40, seconds: 1 },
+  });
+  store.setIncidentQuestions(
+    "i1",
+    [
+      {
+        id: "i1-q01",
+        text: "where should the view rest after a delete? (the objective does not say)",
+        unitId: "u-wait",
+      },
+    ],
+    "dispatcher",
+    "question.asked",
+    { unitId: "u-wait" },
+  );
+  store.setUnitStatus("i1", "u-wait", "waiting", "dispatcher", "unit.waiting", {
+    unitId: "u-wait",
   });
   store.record("i1", "plan.proposed", "planner", { rationale: "too wide" });
   store.record("i1", "plan.rejected", "validator", {
@@ -319,7 +373,7 @@ describe("planner", () => {
       grant requests waiting:
         (none)
       questions still unanswered:
-        (none)
+        - i1-q01: where should the view rest after a delete? (the objective does not say)
       questions answered:
         (none)
       capability requests outstanding:
@@ -334,15 +388,17 @@ describe("planner", () => {
       ## 3. Unit tree
         i1-command [active] command: where deletion moves the scroll position (leader claude-code/claude-haiku-4-5; last report: none)
           u-scroll [active] where the scroll position is set after a delete (leader claude-code/claude-haiku-4-5; last report: not_met)
+          u-wait [waiting] what the author expects after a delete (leader claude-code/claude-haiku-4-5; last report: progress; waiting on: human_knowledge: where should the view rest after a delete? (the objective does not say) (question i1-q01))
 
       ## 4. Tasks completed since the last cycle
         - t-grep (grep, under u-scroll): objective "find scrollTo calls"; inputs {"root":"src","pattern":"scrollTo"}; expected "every call site"; criteria ["each match cited"]; result {"matches":1}; claims c-verified
 
       ## 5. Tasks that came back insufficient since the last cycle
-        - t-interp (interpret): "say why the view scrolls" needed retrievable_fact: the delete handler's body
+        - t-interp (interpret): "say why the view scrolls" needed human_knowledge: which scroll position is wanted
 
       ## 6. Unit reports since the last cycle
         - u-scroll: not_met; changed: scrollTo is called once, at view.ts:88 (claims c-verified); why: the call site is known but not what reaches it; suggestion: read the handler that calls it
+        - u-wait: progress, picture changed; changed: nothing; resource requests, the unit waits on them: human_knowledge: where should the view rest after a delete? (the objective does not say)
 
       ## 7. Open tasks
         - t-open [ready] under u-scroll: investigate — read the delete handler; inputs {"question":"what does deleteComment do?"}; fake/fake-small; depends on t-grep

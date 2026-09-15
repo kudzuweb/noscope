@@ -92,12 +92,13 @@ describe("incident commands", () => {
     expect(text).toContain(
       "budget: tokens unlimited, seconds unlimited; spent tokens 0, seconds 0.0",
     );
-    expect(text).toContain("units: 1 active, 0 closed");
+    expect(text).toContain("units: 1 active, 0 waiting, 0 closed");
     expect(text).toContain("claims: 0 verified, 0 asserted, 0 rejected");
     for (const section of [
       "decisions:",
       "questions waiting on a human:",
       "capability requests:",
+      "units waiting on a resource request:",
       "grants:",
       "capabilities registered:",
     ]) {

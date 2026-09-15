@@ -19,6 +19,7 @@ import {
   TaskStatus,
   Timestamp,
   Unit,
+  UnitStatus,
   type Usage,
 } from "./models.js";
 
@@ -216,6 +217,11 @@ export const Mutation = z.discriminatedUnion("kind", [
     unitId: z.string(),
     /** Null releases the session: the unit's next call starts fresh (`leader.released`). */
     sessionId: z.string().nullable(),
+  }),
+  z.object({
+    kind: z.literal("unit.status"),
+    unitId: z.string(),
+    status: UnitStatus.exclude(["closed"]),
   }),
   z.object({
     kind: z.literal("unit.close"),
@@ -537,6 +543,22 @@ export class Store {
         sessionId,
       },
     );
+  }
+
+  /** A unit waits on its leader's resource requests (`unit.waiting`) and is active again once they are answered (`unit.resumed`). */
+  setUnitStatus(
+    incidentId: string,
+    unitId: string,
+    status: "active" | "waiting",
+    actor: string,
+    type: EventType,
+    extra: Extra = {},
+  ): void {
+    this.write(incidentId, type, actor, extra, {
+      kind: "unit.status",
+      unitId,
+      status,
+    });
   }
 
   /** Closing demobilizes the leader: its session id, when it has one, is on `unit.closed`. */
@@ -868,11 +890,21 @@ export class Store {
           `unit ${m.unitId}`,
         );
         return;
+      case "unit.status":
+        one(
+          this.db
+            .prepare(
+              "UPDATE units SET status = ? WHERE id = ? AND incident_id = ? AND status != 'closed'",
+            )
+            .run(m.status, m.unitId, incidentId),
+          `unit ${m.unitId}`,
+        );
+        return;
       case "unit.close":
         one(
           this.db
             .prepare(
-              "UPDATE units SET status = 'closed', closed_at = ? WHERE id = ? AND incident_id = ? AND status = 'active'",
+              "UPDATE units SET status = 'closed', closed_at = ? WHERE id = ? AND incident_id = ? AND status != 'closed'",
             )
             .run(m.at, m.unitId, incidentId),
           `unit ${m.unitId}`,

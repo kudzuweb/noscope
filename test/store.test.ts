@@ -768,6 +768,49 @@ describe("store", () => {
     s4.close();
   });
 
+  it("a unit waits and resumes through the unit.status mutation, and a waiting unit can still close", () => {
+    const store = new Store(":memory:");
+    scripted(store);
+    const status = () => store.listUnits("i1")[0]?.status;
+    store.setUnitStatus(
+      "i1",
+      "u-command",
+      "waiting",
+      "dispatcher",
+      "unit.waiting",
+      {
+        unitId: "u-command",
+        requests: [{ kind: "permission", what: "rm", why: "cleanup" }],
+      },
+    );
+    expect(status()).toBe("waiting");
+    expect(store.listEvents("i1").at(-1)?.payload).toMatchObject({
+      unitId: "u-command",
+      mutation: { kind: "unit.status", unitId: "u-command", status: "waiting" },
+    });
+    store.setUnitStatus("i1", "u-command", "active", "cli", "unit.resumed", {
+      unitId: "u-command",
+    });
+    expect(status()).toBe("active");
+    store.setUnitStatus(
+      "i1",
+      "u-command",
+      "waiting",
+      "dispatcher",
+      "unit.waiting",
+    );
+    store.closeUnit("i1", "u-command", "demobilized while waiting", "runtime");
+    expect(status()).toBe("closed");
+    expect(() =>
+      store.setUnitStatus("i1", "u-command", "active", "cli", "unit.resumed"),
+    ).toThrow(/expected to change one row/);
+    const b = new Store(":memory:");
+    b.replay([...store.listEvents(null), ...store.listEvents("i1")]);
+    expect(b.snapshot()).toEqual(store.snapshot());
+    store.close();
+    b.close();
+  });
+
   it("replays a unit recorded before units had a leader, and a unit's session and its report events", () => {
     const a = new Store(":memory:");
     scripted(a);

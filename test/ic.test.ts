@@ -12,8 +12,13 @@ import {
   type ReviewTurn as Review,
   ReviewTurn,
 } from "../src/models.js";
-import { planDiff } from "../src/runtime.js";
+import {
+  applyCommand,
+  planDiff,
+  raiseResourceRequests,
+} from "../src/runtime.js";
 import { Store } from "../src/store.js";
+import { validateCommand, validationContext } from "../src/validator.js";
 import {
   fakeProvider,
   scriptedIncident,
@@ -875,5 +880,98 @@ describe("the IC above the planner", () => {
       },
       changed: ["incidentStatus", "discrepancy"],
     });
+  });
+
+  it("the change report lists what waiting units ask, an answer must name a waiting unit's open request, and a delivered answer resumes the unit", () => {
+    const store = new Store(":memory:");
+    const s = scriptedIncident(store);
+    s.addUnit({ id: "u-a", objective: "the first half" });
+    s.addUnit({ id: "u-b", objective: "the second half" });
+    raiseResourceRequests(
+      store,
+      { id: "i1" },
+      { id: "u-a", sessionId: "s-a" },
+      [
+        { kind: "human_knowledge", what: "which file", why: "two match" },
+        { kind: "missing_means", what: "a browser", why: "to watch it" },
+      ],
+      "dispatcher",
+    );
+    const incident = () => {
+      const current = store.getIncident("i1");
+      if (current === undefined) throw new Error("i1 exists");
+      return current;
+    };
+    const report = renderChangeReport(
+      store.listEvents("i1"),
+      incident(),
+      store.listUnits("i1"),
+    );
+    expect(report.slice(report.indexOf("resource requests:"), -5)).toEqual([
+      "resource requests:",
+      '  - u-a (waiting) asks human_knowledge, request "which file (two match)"',
+      '  - u-a (waiting) asks missing_means, request "a browser": to watch it',
+    ]);
+    const ctx = () => validationContext(store, incident(), [fakeProvider]);
+    expect(
+      validateCommand(
+        command({
+          answers: [
+            { unitId: "u-b", request: "which file (two match)", answer: "x" },
+            { unitId: "u-a", request: "which file", answer: "x" },
+            { unitId: "u-none", request: "a browser", answer: "x" },
+          ],
+        }),
+        ctx(),
+      ).map((r) => [r.rule, r.reason]),
+    ).toEqual([
+      ["Answers match", "unit u-b is active, not waiting on a request"],
+      ["Answers match", 'unit u-a raised no open request "which file"'],
+      ["Answers match", "no unit u-none to answer"],
+    ]);
+    const good = command({
+      answers: [
+        {
+          unitId: "u-a",
+          request: "which file (two match)",
+          answer: "the second",
+        },
+      ],
+    });
+    expect(validateCommand(good, ctx())).toEqual([]);
+    const commanded = applyCommand(store, { id: "i1" }, good, 1, {});
+    expect(commanded.answered.map((a) => [a.question?.answer, a.unit])).toEqual(
+      [["the second", { id: "u-a", resumed: false, stillOpen: 1 }]],
+    );
+    expect(store.listUnits("i1").find((u) => u.id === "u-a")?.status).toBe(
+      "waiting",
+    );
+    const rest = applyCommand(
+      store,
+      { id: "i1" },
+      command({
+        answers: [
+          { unitId: "u-a", request: "a browser", answer: "registered" },
+        ],
+      }),
+      2,
+      {},
+    );
+    expect(rest.answered[0]?.unit).toEqual({
+      id: "u-a",
+      resumed: true,
+      stillOpen: 0,
+    });
+    expect(store.listUnits("i1").find((u) => u.id === "u-a")?.status).toBe(
+      "active",
+    );
+    const types = store.listEvents("i1").map((e) => e.type);
+    expect(types.slice(-3)).toEqual([
+      "command.turned",
+      "capability.answered",
+      "unit.resumed",
+    ]);
+    expect(incident().status).toBe("open");
+    store.close();
   });
 });

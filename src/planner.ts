@@ -1,6 +1,7 @@
 import type { z } from "zod";
 import { recordActivity } from "./activity.js";
 import { listCapabilities } from "./capabilities/index.js";
+import { LEADER_ACTOR, openRequestsByUnit } from "./leader.js";
 import {
   ActionPlan,
   type Claim,
@@ -34,7 +35,7 @@ The terms: a unit is a box in the incident's tree that owns a slice of the probl
 
 You propose structure only. You do not run tools, you do not write, and you never mark your own conclusions true. Read the incident file that follows, in its ten sections, and return one action plan. Section 10 is the situation you wrote last cycle; write this cycle's in the plan: what changed, the hypothesis, the observed claims it rests on, every inferred link with what this plan does to settle it, and the claims to keep in view.
 
-When you lack something, use the channel for it: a task to a capability for a fact it can retrieve; a grant request for permission; a capability request for means that do not exist yet; a question for a human only for what only a human knows. A link the repository cannot establish, such as what a running program does after an interaction, is settled by reproducing it (a reproduce task, when section 8 lists one), by a capability request for it when none is listed, or by a question for the human, in the same plan; never by reading more code. A brief to interpret carries the question and the evidence, named by id in evidenceFrom, and not the conclusion you expect: the runtime attaches your hypothesis to every brief, and the session's job is to test that. The rationale says why this plan, names the priority that chose between the plans you could have drafted, and says nothing the situation already says. Name a provider and model on every task to a session-backed capability, and none on a task to a deterministic one. A new unit names its objective, its leader's provider and model, its equipment (built-in tool names and external equipment names, as a capability declares them) and its Bash allowlist. A task to a session-backed capability may declare a strike team (strikeTeam): the subagent kinds its leader may send on it, each with a kind name, a model the task's provider serves, read-only built-in tools, the member's system prompt, how many to send and why; more than one kind is a task force. No kind exists unless the task declares it or the leader asks for it, so declare one only where the task's shape calls for several parallel readers, and say why. discrepancy is for one thing only: the file describes a different problem from the one you have been planning, a hurricane where you believed there was a fire; a different detail is not a discrepancy. A chain of tasks belongs in one plan: give a task a ref and name that ref in the dependsOn of the task that uses its result, and the chain runs in one cycle. Keep every unit at five or fewer direct children. Set incidentStatus to satisfied only when the objective is established by observed claims and nothing is left open.`;
+When you lack something, use the channel for it: a task to a capability for a fact it can retrieve; a grant request for permission; a capability request for means that do not exist yet; a question for a human only for what only a human knows. A unit's leader resolves its own lacks the same way at its level: it assigns a task under its unit for a retrievable fact, and sends the other three kinds up as resource requests on its report, which put the unit in waiting until Mauria answers; a waiting unit runs nothing and takes no new task, and the incident stays open. A link the repository cannot establish, such as what a running program does after an interaction, is settled by reproducing it (a reproduce task, when section 8 lists one), by a capability request for it when none is listed, or by a question for the human, in the same plan; never by reading more code. A brief to interpret carries the question and the evidence, named by id in evidenceFrom, and not the conclusion you expect: the runtime attaches your hypothesis to every brief, and the session's job is to test that. The rationale says why this plan, names the priority that chose between the plans you could have drafted, and says nothing the situation already says. Name a provider and model on every task to a session-backed capability, and none on a task to a deterministic one. A new unit names its objective, its leader's provider and model, its equipment (built-in tool names and external equipment names, as a capability declares them) and its Bash allowlist. A task to a session-backed capability may declare a strike team (strikeTeam): the subagent kinds its leader may send on it, each with a kind name, a model the task's provider serves, read-only built-in tools, the member's system prompt, how many to send and why; more than one kind is a task force. No kind exists unless the task declares it or the leader asks for it, so declare one only where the task's shape calls for several parallel readers, and say why. discrepancy is for one thing only: the file describes a different problem from the one you have been planning, a hurricane where you believed there was a fire; a different detail is not a discrepancy. A chain of tasks belongs in one plan: give a task a ref and name that ref in the dependsOn of the task that uses its result, and the chain runs in one cycle. Keep every unit at five or fewer direct children. Set incidentStatus to satisfied only when the objective is established by observed claims and nothing is left open.`;
 
 /** The rules the validator applies, stated so the planner does not propose what will be rejected (DESIGN.md Step 5). */
 export const PLANNER_RULES = [
@@ -107,7 +108,11 @@ function claimLine(c: Claim): string {
   return `${c.id}: ${c.subject} ${c.predicate} ${clip(c.object)} (${c.status}, ${c.basis}; confidence ${c.confidence ?? "n/a"}; evidence ${c.evidence.join(", ") || "none"}) [${source}]`;
 }
 
-function unitTree(units: readonly Unit[], events: readonly Event[]): string[] {
+function unitTree(
+  units: readonly Unit[],
+  events: readonly Event[],
+  waitingOn: ReadonlyMap<string, readonly string[]>,
+): string[] {
   const reports = lastReports(events);
   const byParent = new Map<string | null, Unit[]>();
   for (const u of units) {
@@ -119,7 +124,7 @@ function unitTree(units: readonly Unit[], events: readonly Event[]): string[] {
   const walk = (parent: string | null, depth: number) => {
     for (const u of byParent.get(parent) ?? []) {
       lines.push(
-        `${"  ".repeat(depth + 1)}${u.id} [${u.status}] ${u.objective} ${describeLeader(u, reports)}`,
+        `${"  ".repeat(depth + 1)}${u.id} [${u.status}] ${u.objective} ${describeLeader(u, reports, waitingOn)}`,
       );
       walk(u.id, depth + 1);
     }
@@ -135,11 +140,12 @@ function taskLine(t: Task): string {
   return `${t.id} [${t.status}] under ${t.unitId}: ${t.capability} — ${t.objective}; inputs ${clip(t.inputs)}${model}${deps}`;
 }
 
-/** The situation the last applied plan carried, rendered as the planner wrote it; none before the first applied plan. */
+/** The situation the last applied plan carried, rendered as the planner wrote it; none before the first applied plan. A leader's `plan.applied` carries none and is skipped. */
 function lastSituationOf(events: readonly Event[]): Situation | null {
   let last: unknown;
   for (const e of events)
-    if (e.type === "plan.applied") last = e.payload.situation;
+    if (e.type === "plan.applied" && e.payload.situation !== undefined)
+      last = e.payload.situation;
   const parsed = Situation.safeParse(last);
   return parsed.success ? parsed.data : null;
 }
@@ -194,11 +200,14 @@ function renderSituation(s: Situation | null): string[] {
 
 /**
  * The sequence of the last applied plan; everything after it is "since the last cycle". A
- * rejected proposal does not move it, so a retry sees the same results the rejected plan saw.
+ * rejected proposal does not move it, so a retry sees the same results the rejected plan
+ * saw; nor does a leader's assignment, which lands mid-pass.
  */
 function lastCycleSequence(events: readonly Event[]): number {
   let last = -1;
-  for (const e of events) if (e.type === "plan.applied") last = e.sequence;
+  for (const e of events)
+    if (e.type === "plan.applied" && e.actor !== LEADER_ACTOR)
+      last = e.sequence;
   return last;
 }
 
@@ -243,14 +252,20 @@ export function renderPlannerInput(
       return `${t.id} (${t.capability}, under ${t.unitId}): objective "${t.objective}"; inputs ${clip(t.inputs)}; expected "${t.expectedOutput || "(per schema)"}"; criteria ${JSON.stringify(t.completionCriteria)}; result ${resultForPlanner(t)}; claims ${evidence.join(", ") || "none"}`;
     });
 
+  // A retrievable fact a task lacked is its unit leader's to get, so it is not the
+  // planner's; the other kinds are shown here and reach the planner again as the leader's
+  // resource requests in section 6.
   const insufficient = recent
     .filter((e) => e.type === "task.insufficient")
-    .map((e) => {
-      const needed =
-        (e.payload.needed as { kind: string; what: string }[] | undefined) ??
-        [];
+    .flatMap((e) => {
+      const needed = (
+        (e.payload.needed as { kind: string; what: string }[] | undefined) ?? []
+      ).filter((n) => n.kind !== "retrievable_fact");
+      if (needed.length === 0) return [];
       const t = taskById.get(String(e.payload.taskId));
-      return `${String(e.payload.taskId)} (${String(e.payload.capability)}): "${t?.objective ?? "?"}" needed ${needed.map((n) => `${n.kind}: ${n.what}`).join("; ") || "nothing named"}`;
+      return [
+        `${String(e.payload.taskId)} (${String(e.payload.capability)}): "${t?.objective ?? "?"}" needed ${needed.map((n) => `${n.kind}: ${n.what}`).join("; ")}`,
+      ];
     });
 
   const reported = recent
@@ -263,6 +278,11 @@ export function renderPlannerInput(
             pictureChanged?: unknown;
             why?: unknown;
             suggestion?: unknown;
+            resourceRequests?: {
+              kind?: unknown;
+              what?: unknown;
+              why?: unknown;
+            }[];
           }
         | undefined;
       const changed = (r?.changed ?? [])
@@ -271,7 +291,10 @@ export function renderPlannerInput(
             `${String(c.what)} (claims ${Array.isArray(c.claims) && c.claims.length > 0 ? c.claims.join(", ") : "none"})`,
         )
         .join("; ");
-      return `${String(e.payload.unitId)}: ${String(r?.outcome)}${r?.pictureChanged === true ? ", picture changed" : ""}; changed: ${changed || "nothing"}${typeof r?.why === "string" ? `; why: ${r.why}` : ""}${typeof r?.suggestion === "string" ? `; suggestion: ${r.suggestion}` : ""}`;
+      const requests = (r?.resourceRequests ?? [])
+        .map((q) => `${String(q.kind)}: ${String(q.what)} (${String(q.why)})`)
+        .join("; ");
+      return `${String(e.payload.unitId)}: ${String(r?.outcome)}${r?.pictureChanged === true ? ", picture changed" : ""}; changed: ${changed || "nothing"}${typeof r?.why === "string" ? `; why: ${r.why}` : ""}${typeof r?.suggestion === "string" ? `; suggestion: ${r.suggestion}` : ""}${requests === "" ? "" : `; resource requests, the unit waits on them: ${requests}`}`;
     });
 
   const open = tasks.filter(
@@ -280,7 +303,7 @@ export function renderPlannerInput(
   );
 
   const rejections = recent
-    .filter((e) => e.type === "plan.rejected")
+    .filter((e) => e.type === "plan.rejected" && e.actor !== LEADER_ACTOR)
     .map((e) => `${String(e.payload.rule)}: ${String(e.payload.reason)}`);
   const budgetStops = recent
     .filter((e) => e.type === "budget.exceeded")
@@ -370,7 +393,9 @@ export function renderPlannerInput(
     "grant requests waiting:",
     ...bullets(
       events
-        .filter((e) => e.type === "grant.requested")
+        .filter(
+          (e) => e.type === "grant.requested" && e.payload.unitId === undefined,
+        )
         .slice(events.filter((e) => e.type === "grant.given").length)
         .map(
           (e) =>
@@ -406,7 +431,7 @@ export function renderPlannerInput(
     ...bullets(claimLines),
     "",
     "## 3. Unit tree",
-    ...unitTree(units, events),
+    ...unitTree(units, events, openRequestsByUnit(incident, events)),
     "",
     "## 4. Tasks completed since the last cycle",
     ...bullets(completed),

@@ -10,12 +10,16 @@ import {
   runSession,
 } from "./capabilities/index.js";
 import {
+  answeredRequestsOf,
+  LEADER_ACTOR,
   LEADER_TURN_SCHEMA,
   leaderRequest,
   renderLeaderOrientation,
   renderTurnPrompt,
+  resumedUnits,
   runsInsideLeader,
   type TaskEnding,
+  type TurnCause,
   unitsOwingReport,
 } from "./leader.js";
 import {
@@ -34,12 +38,17 @@ import {
 import {
   getProvider,
   listProviders,
+  type Provider,
   type SessionActivity,
   SessionError,
 } from "./providers/index.js";
+import { applyLeaderTasks, raiseResourceRequests } from "./runtime.js";
 import { type Store, sumUsage } from "./store.js";
 import { unitsInTreeOrder } from "./tree.js";
-import { strikeTeamRejections } from "./validator.js";
+import {
+  strikeTeamRejections,
+  validateLeaderTasksAndRecord,
+} from "./validator.js";
 import { recordClaims, recordSessionResult } from "./verifier.js";
 
 /** A session with no time bound of its own still gets one, since a hung process must end; the validator normally requires the task to carry one. */
@@ -76,6 +85,8 @@ export type DispatchOptions = {
   cwd: string;
   env?: NodeJS.ProcessEnv;
   actor?: string;
+  /** The providers a leader's assignments are validated against; Claude Code alone when absent, as a plan's are. */
+  providers?: readonly Provider[];
 };
 
 /** Ready means every dependency is completed (DESIGN.md Step 6). */
@@ -175,11 +186,12 @@ type Outcome = {
   record: () => Claim[];
 };
 
-/** The last applied plan's situation, if a plan has been applied and carried one. */
+/** The last applied plan's situation, if a plan has been applied and carried one; a leader's `plan.applied` carries none and is skipped. */
 function lastSituation(events: readonly Event[]): Situation | null {
   let last: unknown;
   for (const e of events)
-    if (e.type === "plan.applied") last = e.payload.situation;
+    if (e.type === "plan.applied" && e.payload.situation !== undefined)
+      last = e.payload.situation;
   const parsed = Situation.safeParse(last);
   return parsed.success ? parsed.data : null;
 }
@@ -306,8 +318,29 @@ async function runTask(
   };
 }
 
-/** What a turn came to: the leader's move, the session it ran on, and the unit as it now stands (the session recorded on the first call). */
-type Turned = { turn: LeaderTurn; sessionId: string; unit: Unit };
+/** What a turn came to: the leader's move, the session it ran on, the unit as it now stands (the session recorded on the first call), and how many tasks the leader assigned and the validator let through. */
+type Turned = {
+  turn: LeaderTurn;
+  sessionId: string;
+  unit: Unit;
+  assigned: number;
+};
+
+/** The reasons the validator refused this unit's leader's last assignment, since the leader's last turn, for its next prompt. */
+function refusedSinceLastTurn(
+  events: readonly Event[],
+  unitId: string,
+): string[] {
+  const reasons: string[] = [];
+  for (const e of events) {
+    if (e.payload.unitId !== unitId) continue;
+    if (e.type === "unit.continued" || e.type === "unit.reported")
+      reasons.length = 0;
+    if (e.type === "plan.rejected" && e.actor === LEADER_ACTOR)
+      reasons.push(`${String(e.payload.rule)}: ${String(e.payload.reason)}`);
+  }
+  return reasons;
+}
 
 /** A resumed call that died before the stream's init line: the provider found no session to resume. */
 function couldNotResume(error: unknown, unit: Unit): error is SessionError {
@@ -382,27 +415,35 @@ function declareRequestedTeam(
  * and its `leader.started` names the dead session and the reason. Every turn is recorded,
  * `unit.reported` with the report or `unit.continued`, each with the call's usage, a
  * `discrepancy` becomes `picture.discrepancy`, and a `requestStrikeTeam` is declared on
- * the next task or refused. A leader that cannot answer otherwise ends the pass.
+ * the next task or refused. A leader that cannot answer otherwise ends the pass. In the
+ * same transaction: tasks the leader assigns are validated and applied under its unit
+ * (`plan.applied` with the leader as actor) or refused (`plan.rejected`, read back into
+ * its next prompt), then a report carrying resource requests, forced `pictureChanged`, is
+ * raised (`raiseResourceRequests`: the unit waits).
  */
 async function leaderTurn(
   store: Store,
   incident: Incident,
   listed: Unit,
   units: readonly Unit[],
-  ending: TaskEnding | null,
+  cause: TurnCause,
   remaining: number,
   next: Task | null,
   options: DispatchOptions,
   actor: string,
 ): Promise<Turned> {
   const provider = getProvider(listed.leader.provider, options.env);
+  const refused = refusedSinceLastTurn(
+    store.listEvents(incident.id),
+    listed.id,
+  );
   const ask = (unit: Unit) =>
     provider.run(
       leaderRequest(
         unit,
         [
           ...orientation(store, incident, unit, units),
-          renderTurnPrompt(ending, remaining, next),
+          renderTurnPrompt(cause, remaining, next, refused),
         ].join("\n"),
         LEADER_TURN_SCHEMA,
         options.cwd,
@@ -427,6 +468,13 @@ async function leaderTurn(
       cause: error,
     });
   }
+  // A report that asks for something the unit cannot get itself changes the picture by
+  // definition: the IC must see the unit waiting before the next unit runs. The schema
+  // refuses a report on a continue turn, so a request never rides on one.
+  const requests =
+    turn.kind === "report" ? (turn.report?.resourceRequests ?? []) : [];
+  if (turn.report !== null && requests.length > 0)
+    turn = { ...turn, report: { ...turn.report, pictureChanged: true } };
   const sessionId = outcome.sessionId;
   const place = {
     sessionId,
@@ -435,6 +483,12 @@ async function leaderTurn(
     cycle: null,
   };
   const seat = { unitId: unit.id, sessionId, ...unit.leader };
+  const current = { ...unit, sessionId };
+  let assigned = 0;
+  // One transaction for the turn and what it changes: the record of the turn, the tasks it
+  // assigned (validated first, while the unit is still active), then the requests it
+  // raised, so a crash can never leave a recorded report whose requests were not raised.
+  // better-sqlite3 runs a transaction function called inside another as a savepoint.
   store.batch(() => {
     if (unit.sessionId === null)
       store.setUnitSession(incident.id, unit.id, sessionId, actor, {
@@ -449,7 +503,7 @@ async function leaderTurn(
       store.record(incident.id, "picture.discrepancy", actor, {
         ...seat,
         seat: unit.parentId === null ? "ic" : "leader",
-        taskId: ending?.task.id ?? null,
+        taskId: cause !== null && "task" in cause ? cause.task.id : null,
         discrepancy: turn.discrepancy,
       });
     if (turn.kind === "report")
@@ -473,8 +527,25 @@ async function leaderTurn(
       options,
       actor,
     );
+    const proposals = turn.assignTasks ?? [];
+    if (proposals.length > 0) {
+      const providers = options.providers ?? [
+        getProvider("claude-code", options.env),
+      ];
+      const verdict = validateLeaderTasksAndRecord(
+        store,
+        incident,
+        current,
+        proposals,
+        providers,
+      );
+      if (verdict.ok)
+        assigned = applyLeaderTasks(store, incident, current, proposals).length;
+    }
+    if (requests.length > 0)
+      raiseResourceRequests(store, incident, current, requests, actor);
   });
-  return { turn, sessionId, unit: { ...unit, sessionId } };
+  return { turn, sessionId, unit: current, assigned };
 }
 
 /**
@@ -483,12 +554,15 @@ async function leaderTurn(
  * dependencies are complete becomes ready (`task.ready`), then `task.started`, then the
  * claims, the result with `task.completed` and `task.usage` in one transaction, or
  * `task.failed` with the reason and the usage the run still spent; its ending then reaches
- * the leader, which continues to the next task or reports. A unit with nothing left to run
- * and no report is asked for one. A task whose dependencies complete during the pass runs
- * in the same pass when its unit has not yet reported; a unit that has reported is done for
- * the pass, so its dependents wait for the next one. The pass ends when every unit that ran
- * has reported, when a report says the picture changed (`pictureChanged` names the unit),
- * or, with `budget.exceeded`, when the incident's budget has no room for the next task.
+ * the leader, which continues to the next task, assigns tasks of its own (run in the same
+ * pass), or reports. A unit with nothing left to run and no report is asked for one; a unit
+ * resumed since its last report opens with a turn carrying the answers, before any task. A
+ * task whose dependencies complete during the pass runs in the same pass when its unit has
+ * not yet reported; a unit that has reported is done for the pass, so its dependents wait
+ * for the next one. A `waiting` unit is skipped. The pass ends when every unit that ran
+ * has reported, when a report says the picture changed (`pictureChanged` names the unit;
+ * a report with resource requests always does), or, with `budget.exceeded`, when the
+ * incident's budget has no room for the next task.
  */
 export async function dispatch(
   store: Store,
@@ -509,6 +583,7 @@ export async function dispatch(
     store.listTasks(incident.id),
     store.listEvents(incident.id),
   );
+  const resumed = resumedUnits(units, store.listEvents(incident.id));
   const nextIn = (unitId: string): Task | undefined => {
     const tasks = store.listTasks(incident.id);
     return tasks.find(
@@ -523,7 +598,7 @@ export async function dispatch(
   };
   const settle = async (
     unit: Unit,
-    ending: TaskEnding | null,
+    cause: TurnCause,
   ): Promise<{ unit: Unit; stop: boolean }> => {
     const remaining = remainingIn(unit.id);
     const turned = await leaderTurn(
@@ -531,7 +606,7 @@ export async function dispatch(
       incident,
       unit,
       units,
-      ending,
+      cause,
       remaining,
       nextIn(unit.id) ?? null,
       options,
@@ -546,10 +621,22 @@ export async function dispatch(
       done.add(unit.id);
       return { unit: turned.unit, stop: turned.turn.report.pictureChanged };
     }
-    // Continued with nothing left: the unit's pass ends without a report, and the next
-    // pass asks again.
-    if (remaining === 0) done.add(unit.id);
+    // Continued with nothing left and nothing assigned: the unit's pass ends without a
+    // report, and the next pass asks again.
+    if (remaining === 0 && turned.assigned === 0) done.add(unit.id);
     return { unit: turned.unit, stop: false };
+  };
+  const answered = (unit: Unit): TurnCause => {
+    const current = store.getIncident(incident.id);
+    return {
+      status: "answered",
+      answers: answeredRequestsOf(
+        unit.id,
+        current?.questions ?? [],
+        current?.capabilityRequests ?? [],
+        store.listEvents(incident.id),
+      ),
+    };
   };
   for (;;) {
     let progressed = false;
@@ -558,6 +645,16 @@ export async function dispatch(
       let unit =
         store.listUnits(incident.id).find((u) => u.id === listed.id) ?? listed;
       let ranInUnit = false;
+      if (resumed.has(unit.id)) {
+        // The leader reads the answers to its requests before its unit runs anything.
+        resumed.delete(unit.id);
+        progressed = true;
+        const settled = await settle(unit, answered(unit));
+        unit = settled.unit;
+        if (settled.stop)
+          return { ran, reports, stopped: null, pictureChanged: unit.id };
+        if (done.has(unit.id)) continue;
+      }
       for (;;) {
         const next = nextIn(unit.id);
         if (next === undefined) break;

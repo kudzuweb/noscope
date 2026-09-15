@@ -1,3 +1,4 @@
+import { LEADER_ACTOR } from "./leader.js";
 import {
   type Claim,
   type Event,
@@ -441,6 +442,8 @@ export function renderReview(
   let leaderTurns = 0;
   const verdicts = new Map<string, number>();
   const reportsByUnit = new Map<string, string[]>();
+  let resolvedAtLeader = 0;
+  let sentUp = 0;
   let failedWithoutRunning = 0;
   const questions: string[] = [];
 
@@ -459,8 +462,14 @@ export function renderReview(
   lines.push("");
 
   for (const cycle of runCycles) {
-    const rejections = cycle.events.filter((e) => e.type === "plan.rejected");
-    const appliedEvent = cycle.events.find((e) => e.type === "plan.applied");
+    // A leader's assignment lands mid-pass as its own `plan.applied` or `plan.rejected`,
+    // with the leader as actor; it is listed with the leader's turns, not as the cycle's verdict.
+    const rejections = cycle.events.filter(
+      (e) => e.type === "plan.rejected" && e.actor !== LEADER_ACTOR,
+    );
+    const appliedEvent = cycle.events.find(
+      (e) => e.type === "plan.applied" && e.actor !== LEADER_ACTOR,
+    );
     const a = appliedEvent?.payload ?? {};
     let verdict: string;
     if (appliedEvent !== undefined) {
@@ -614,7 +623,30 @@ export function renderReview(
       lines.push(
         `  leader of ${unitId} ${model ?? "(no model)"}: ${describeUsage(usage, turnCost)}  ${move}${session(str(e.payload.sessionId))}`,
       );
+      const requests = list(
+        (e.payload.report as { resourceRequests?: unknown } | undefined)
+          ?.resourceRequests,
+      );
+      for (const r of requests) {
+        const q = r as { kind?: unknown; what?: unknown };
+        sentUp += 1;
+        lines.push(`    sent up ${str(q.kind)}: ${str(q.what)}`);
+      }
       turnedUnits.set(unitId, model);
+    }
+    for (const e of cycle.events) {
+      if (e.actor !== LEADER_ACTOR) continue;
+      if (e.type === "plan.applied") {
+        const assigned = list(e.payload.tasks).length;
+        resolvedAtLeader += assigned;
+        lines.push(
+          `  leader of ${str(e.payload.unitId)} assigned ${assigned} task(s): ${list(e.payload.tasks).map(String).join(", ")}`,
+        );
+      }
+      if (e.type === "plan.rejected")
+        lines.push(
+          `  leader of ${str(e.payload.unitId)} refused ${str(e.payload.rule)}: ${clip(str(e.payload.reason))}`,
+        );
     }
     for (const [unitId, model] of turnedUnits)
       lines.push(
@@ -741,6 +773,9 @@ export function renderReview(
       `  ${c.taskId} ${c.team.kind} ${c.team.model} (by ${c.declaredBy}): declared ${c.team.count}, ran ${c.members.length}, in ${n(usage.inputTokens)}  out ${n(usage.outputTokens)}  ${usage.seconds.toFixed(1)} s  ${money(teamCost)}, ${citing} claim(s) citing a member`,
     );
   }
+  lines.push(
+    `lacks: ${resolvedAtLeader} task(s) assigned by a leader, ${sentUp} resource request(s) sent up`,
+  );
   const toolCalls = events.filter((e) => e.type === "tool.called");
   const inSubagents = toolCalls.filter(
     (e) => e.payload.agentId !== null,

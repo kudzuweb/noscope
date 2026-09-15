@@ -4,7 +4,8 @@
 // assistant and one user line per tool call in NOSCOPE_STUB_TOOLS (a JSON array of
 // {tool, input, result, isError}), and the result envelope. NOSCOPE_STUB_EXIT makes it exit
 // with that code before the envelope, as a killed or crashed session would. The structured output is
-// NOSCOPE_STUB_OUTPUT (or a canned answered result); a planner call, recognised by its
+// NOSCOPE_STUB_OUTPUT, or the next entry of NOSCOPE_STUB_OUTPUTS (a JSON array walked in
+// order with the counter file NOSCOPE_STUB_OUTPUT_COUNTER), or a canned answered result; a planner call, recognised by its
 // system prompt, gets NOSCOPE_STUB_PLAN instead, or the next entry of NOSCOPE_STUB_PLANS
 // (a JSON array walked in order, the position kept in the file NOSCOPE_STUB_COUNTER).
 // A leader's turn, recognised by the LeaderTurn schema (a `kind` of report or continue),
@@ -153,6 +154,18 @@ function nextPlan() {
   return JSON.parse(process.env.NOSCOPE_STUB_PLAN ?? "null");
 }
 
+function nextOutput() {
+  if (process.env.NOSCOPE_STUB_OUTPUTS) {
+    const outputs = JSON.parse(process.env.NOSCOPE_STUB_OUTPUTS);
+    const counter = process.env.NOSCOPE_STUB_OUTPUT_COUNTER ?? "";
+    const i = counter && existsSync(counter) ? Number(readFileSync(counter, "utf8")) : 0;
+    if (counter) writeFileSync(counter, String(i + 1));
+    return outputs[Math.min(i, outputs.length - 1)];
+  }
+  if (process.env.NOSCOPE_STUB_OUTPUT) return JSON.parse(process.env.NOSCOPE_STUB_OUTPUT);
+  return { outcome: "answered", claims: [], findings: { note: "stub" }, needed: [] };
+}
+
 const planned = isPlanner
   ? nextPlan()
   : isLeaderTurn
@@ -162,11 +175,7 @@ const planned = isPlanner
       : isReviewTurn
         ? nextReview()
         : null;
-const output =
-  planned ??
-  (process.env.NOSCOPE_STUB_OUTPUT
-    ? JSON.parse(process.env.NOSCOPE_STUB_OUTPUT)
-    : { outcome: "answered", claims: [], findings: { note: "stub" }, needed: [] });
+const output = planned ?? nextOutput();
 const failing = isTurn
   ? Boolean(process.env.NOSCOPE_STUB_LEADER_FAIL)
   : Boolean(process.env.NOSCOPE_STUB_FAIL);
