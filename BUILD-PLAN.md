@@ -862,12 +862,13 @@ says a saved config is deployed by name when it fits. After a plan is applied, t
 compares each new unit's config with every earlier unit's in the database, and when the
 same filled form has appeared three times unsaved, `step` prints an offer to save it with
 the command to run; nothing is saved without the command. `incident review` names the
-config each unit came from. A saved config is what ICS resource typing produces, a
-resource everyone means the same thing by when they say its name, so the DESIGN.md ICS
-mapping row for resource typing points at saved configs (the capability registry stays as
-the typing of what a task can do). DESIGN.md Step 2 (the table), Step 4 (the planner's
-input) and Step 7 (the commands), README's command list and `docs/architecture.html`
-follow.
+config each unit came from. Outfitting a unit, filling a type's form into a config, is
+what ICS calls resource typing, and the planner does it today in every `UnitProposal`; a
+saved config is a typed resource kept under its name, so everyone means the same thing by
+it. The DESIGN.md ICS mapping row for resource typing says so, pointing at the planner's
+outfitting and the saved configs (the capability registry stays as the typing of what a
+task can do). DESIGN.md Step 2 (the table), Step 4 (the planner's input) and Step 7 (the
+commands), README's command list and `docs/architecture.html` follow.
 
 Acceptance: a run test on the stub where a unit is saved, the next plan names the config,
 the applied unit carries its fields, and `review` names it; a validator test rejecting an
