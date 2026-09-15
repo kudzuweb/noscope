@@ -5,6 +5,7 @@ import {
 import {
   type Claim,
   jsonSchemaFor,
+  type Period,
   type Situation,
   type Task,
   type Unit,
@@ -18,7 +19,7 @@ import {
   sessionSystemPrompt,
 } from "../providers/index.js";
 import { renderStrikeTeamBrief } from "../strike-team.js";
-import { renderHierarchy } from "../tree.js";
+import { renderHierarchy, renderPeriod } from "../tree.js";
 import type { SessionCapability } from "./registry.js";
 
 const DEFAULT_SESSION_SECONDS = 600;
@@ -26,6 +27,8 @@ const DEFAULT_SESSION_SECONDS = 600;
 /** What the runtime attaches to a brief beyond the task: the incident's objective and current situation, the units around the task's, and what the task reads by reference. */
 export type BriefContext = {
   objective: string;
+  /** The current operational period, when the incident has one; rendered after the objective. */
+  period?: Period;
   situation: Situation | null;
   /** Every unit in the incident, from which the hierarchy around the task's unit is rendered; empty renders none. */
   units: readonly Unit[];
@@ -90,6 +93,7 @@ export function renderTaskBrief(
       ? []
       : [
           `Incident objective: ${context.objective}`,
+          ...renderPeriod(context.period),
           `Current hypothesis: ${context.situation?.hypothesis ?? "(none yet)"}`,
           "Established so far:",
           list(

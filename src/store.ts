@@ -12,6 +12,7 @@ import {
   Grant,
   Incident,
   IncidentStatus,
+  Period,
   Question,
   StrikeTeam,
   Task,
@@ -35,10 +36,11 @@ export function now(): string {
 /**
  * Bumped whenever a table changes shape. A file at an earlier version is migrated in place,
  * one step at a time (1: claims gain `basis`; 2: tasks gain `evidence_from_json`; 3: units
- * gain a leader and `purpose` becomes `objective`; 4: tasks gain `strike_team_json`); a file
- * at a later version is refused.
+ * gain a leader and `purpose` becomes `objective`; 4: tasks gain `strike_team_json`; 5:
+ * incidents gain `period_json` and every root unit's session is dropped); a file at a
+ * later version is refused.
  */
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 
 /**
  * The leader a unit recorded before units had one is read as: the planner's provider and
@@ -65,6 +67,7 @@ CREATE TABLE IF NOT EXISTS incidents (
   questions_json TEXT NOT NULL,
   capability_requests_json TEXT NOT NULL,
   status TEXT NOT NULL,
+  period_json TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -199,13 +202,20 @@ export const Mutation = z.discriminatedUnion("kind", [
     at: Timestamp,
   }),
   z.object({
+    kind: z.literal("incident.period"),
+    incidentId: z.string(),
+    period: Period,
+    at: Timestamp,
+  }),
+  z.object({
     kind: z.literal("unit.create"),
     unit: z.preprocess(withLeader, Unit),
   }),
   z.object({
     kind: z.literal("unit.session"),
     unitId: z.string(),
-    sessionId: z.string(),
+    /** Null releases the session: the unit's next call starts fresh (`leader.released`). */
+    sessionId: z.string().nullable(),
   }),
   z.object({
     kind: z.literal("unit.close"),
@@ -311,6 +321,34 @@ export class Store {
           if (!hasColumn("tasks", "strike_team_json"))
             this.db.exec(
               "ALTER TABLE tasks ADD COLUMN strike_team_json TEXT NOT NULL DEFAULT '[]'",
+            );
+        },
+        // Version 5 incidents had no operational period, and a root unit's session started
+        // under R3-4 keeps the leader role text of that build in its snapshotted system
+        // prompt (a resumed call keeps the first call's system prompt), so it is released
+        // through the log, one `leader.released` per root unit with a session, so that a
+        // replay does not restore it: the IC's first turn starts a fresh session under the
+        // IC's own role text.
+        5: () => {
+          if (!hasColumn("incidents", "period_json"))
+            this.db.exec("ALTER TABLE incidents ADD COLUMN period_json TEXT");
+          const roots = this.db
+            .prepare(
+              "SELECT id, incident_id, session_id FROM units WHERE parent_id IS NULL AND session_id IS NOT NULL",
+            )
+            .all() as { id: string; incident_id: string; session_id: string }[];
+          for (const root of roots)
+            this.write(
+              root.incident_id,
+              "leader.released",
+              "migration",
+              {
+                unitId: root.id,
+                released: root.session_id,
+                reason:
+                  "the session was started before the IC had its own role text (schema version 5)",
+              },
+              { kind: "unit.session", unitId: root.id, sessionId: null },
             );
         },
       };
@@ -450,6 +488,21 @@ export class Store {
     });
   }
 
+  /** The operational period the IC set, recorded on the incident with the IC's turn (`command.turned`). */
+  setIncidentPeriod(
+    incidentId: string,
+    period: Period,
+    actor: string,
+    extra: Extra = {},
+  ): void {
+    this.write(incidentId, "command.turned", actor, extra, {
+      kind: "incident.period",
+      incidentId,
+      period,
+      at: now(),
+    });
+  }
+
   createUnit(unit: Unit, actor: string): void {
     this.write(
       unit.incidentId,
@@ -460,19 +513,30 @@ export class Store {
     );
   }
 
-  /** The leader's session is recorded on the unit once it has run (`leader.started`), so later calls resume it. */
+  /**
+   * The leader's session is recorded on the unit once it has run (`leader.started`), so
+   * later calls resume it; null releases it (`leader.released`), so the next call starts
+   * fresh, which is how a root session is dropped through the log (the version 4
+   * migration, R3-9's handoff).
+   */
   setUnitSession(
     incidentId: string,
     unitId: string,
-    sessionId: string,
+    sessionId: string | null,
     actor: string,
     extra: Extra = {},
   ): void {
-    this.write(incidentId, "leader.started", actor, extra, {
-      kind: "unit.session",
-      unitId,
-      sessionId,
-    });
+    this.write(
+      incidentId,
+      sessionId === null ? "leader.released" : "leader.started",
+      actor,
+      extra,
+      {
+        kind: "unit.session",
+        unitId,
+        sessionId,
+      },
+    );
   }
 
   /** Closing demobilizes the leader: its session id, when it has one, is on `unit.closed`. */
@@ -711,7 +775,7 @@ export class Store {
         owned(i.id, `incident ${i.id}`);
         this.db
           .prepare(
-            "INSERT INTO incidents (id, objective, constraints_json, priorities_json, budget_json, questions_json, capability_requests_json, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO incidents (id, objective, constraints_json, priorities_json, budget_json, questions_json, capability_requests_json, status, period_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           )
           .run(
             i.id,
@@ -722,6 +786,7 @@ export class Store {
             j(i.questions),
             j(i.capabilityRequests),
             i.status,
+            i.period === undefined ? null : j(i.period),
             i.createdAt,
             i.updatedAt,
           );
@@ -757,6 +822,17 @@ export class Store {
               "UPDATE incidents SET capability_requests_json = ?, updated_at = ? WHERE id = ?",
             )
             .run(j(m.capabilityRequests), m.at, m.incidentId),
+          `incident ${m.incidentId}`,
+        );
+        return;
+      case "incident.period":
+        owned(m.incidentId, `incident ${m.incidentId}`);
+        one(
+          this.db
+            .prepare(
+              "UPDATE incidents SET period_json = ?, updated_at = ? WHERE id = ?",
+            )
+            .run(j(m.period), m.at, m.incidentId),
           `incident ${m.incidentId}`,
         );
         return;
@@ -928,6 +1004,9 @@ function rowToIncident(r: Row): Incident {
     questions: p(r.questions_json),
     capabilityRequests: p(r.capability_requests_json),
     status: r.status,
+    ...(r.period_json === null || r.period_json === undefined
+      ? {}
+      : { period: p(r.period_json) }),
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   });
@@ -1010,6 +1089,28 @@ function rowToGrant(r: Row): Grant {
     perTask: Number(r.per_task) === 1,
     createdAt: r.created_at,
   });
+}
+
+/** Whether an event opens a cycle: an accepted IC command turn, or, before the first command turn, a planner draft, which was then the cycle's first call. */
+export function opensCycle(e: Event, seenCommandTurn: boolean): boolean {
+  if (e.type === "command.turned") return e.payload.rejected !== true;
+  return e.type === "plan.proposed" && !seenCommandTurn;
+}
+
+/**
+ * The number of the cycle the log is in: one per accepted IC command turn, plus, for an
+ * incident that ran before the IC, one per planner draft before the first command turn. A
+ * rejected command turn does not advance it, so the next briefing asks for the same
+ * period. Zero before the first.
+ */
+export function cycleOf(events: readonly Event[]): number {
+  let cycles = 0;
+  let seen = false;
+  for (const e of events) {
+    if (opensCycle(e, seen)) cycles += 1;
+    if (e.type === "command.turned") seen = true;
+  }
+  return cycles;
 }
 
 /**

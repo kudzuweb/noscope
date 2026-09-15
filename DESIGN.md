@@ -51,10 +51,11 @@ Still proposed rather than ruled, and settled by building them: the storage tabl
 | Provider | A program that can run a session: Claude Code first, Codex second, later an HTTP API or a human. A provider maps the session fields onto its own command line and turns its output back into the runtime's result shape. Everything above the session layer is provider-blind. |
 | Claim | A statement about reality with a status, a basis and provenance. The status is a label for the source and gates nothing: `verified` when deterministic equipment produced it, `asserted` when a session did; `rejected` is in the enum and nothing sets it yet. The basis is what the validator keys on: `observed` when it was seen in code, in output or in a browser, `inferred` when it was reasoned to from what was seen; an observed claim counts as proven whichever source produced it, and a status never changes after entry (ruled 2026-09-14: promotion fired in neither live run, and sessions were right about the code 74 of 75 audited times). Confidence means the same on every claim: observed, 0.9 to 1; inferred from code, at most 0.7; runtime behavior not reproduced, at most 0.5. |
 | Event | One append-only record of something that happened, written in the same transaction as the state change it describes. |
-| Action plan | The planner's plan for one cycle: units to create or close, tasks to create or cancel, questions for a human, grant requests, capability requests, incident status. It is proposed by the planner and approved by the validator, and only an approved plan is applied. |
-| Cycle | Observe, organize, validate, dispatch, record, stop. `incident step` runs exactly one. |
+| Action plan | The planner's plan for one operational period: units to create or close, tasks to create or cancel, questions for a human, grant requests, capability requests, incident status, the situation. It is drafted by the planner against the period's objectives, reviewed once by the IC (approved, corrected for one redraft, or amended), checked by the validator, and only then applied. |
+| Cycle | One operational period, in eight steps (round 3, R3-7): (1) the runtime renders the IC's briefing, the change report since the IC last acted followed by the incident file; (2) the IC's command turn sets the period's objectives and priorities, closes units, answers what it can, raises what only Mauria can supply, and says whether the incident continues, and when it does not the cycle stops here; (3) the planner drafts an action plan against the period; (4) the IC reviews the draft: approve, correct (the planner redrafts once against the corrections and the IC then approves or amends), or amend; (5) the validator checks the plan to apply; (6) it is applied; (7) the units run under their leaders until they report or one report changes the picture; (8) stop. At most two planner calls and two IC reads per cycle; the IC is never consulted per task. `incident step` runs exactly one. |
 | SOP, standard operating procedure | A saved unit configuration that can be added to any incident: the unit's purpose, the tasks it opens, each with its capability, instructions and equipment, the angles the planner may choose among for this incident, and the unit's completion criteria. A code review SOP, for example, opens a review unit whose tasks read the change from the angles that matter for it. Capabilities compose work into one assignable result; SOPs compose organization into a unit. Declared in code under `sops/`, applied by command or by the planner. After v0. |
-| Incident file | The one place command keeps the state of an incident: objective, constraints, priorities, budget and what is spent, the current tree, findings by status, every decision with its reason, questions waiting on a human, grants given, and pointers to evidence. The planner's input is rendered from it in full; a task receives the objective, the last situation's hypothesis and proven list, its own slice, and what it names in `evidenceFrom`. Stored across the tables in Step 2 and printed by `incident show`. |
+| Incident file | The one place command keeps the state of an incident: objective, constraints, priorities, the current operational period's objectives and priorities as the IC set them, budget and what is spent, the current tree, findings by status, every decision with its reason, questions waiting on a human, grants given, and pointers to evidence. The IC's briefing and the planner's input are both rendered from it in full, the IC's opening with the change report since it last acted; a task receives the objective, the period, the last situation's hypothesis and proven list, its own slice, and what it names in `evidenceFrom`. Stored across the tables in Step 2 and printed by `incident show`. |
+| Operational period | ICS's word for the span one action plan covers; here it is one cycle. The IC opens it by setting its objectives (what this period must establish) and priorities (the incident's, restated or revised), recorded on the incident and rendered into the planner's section 1 and into every leader's orientation and every task's brief. It ends when the units have reported or when one report changes the picture. |
 | Budget | A bound on tokens, wall time or both, set on an incident or on a task. The planner sees what remains and plans inside it; the validator rejects a task that does not fit; the dispatcher enforces the time bound and records usage. The costs it reasons with are facts stored on the equipment and capabilities themselves (see `cost` in Step 3), never estimated elsewhere. Unlimited is allowed and is the v0 default. |
 | Grant | Permission from Mauria for a capability whose effect is not `read_only`, with the planner's stated reason attached. Least privilege: nothing that writes runs without one. Three levels stack: an incident grant covers every task on that incident for that capability, which is the default; a standing grant in a config file whitelists a capability everywhere, so she stops approving the same thing; and per-task approval can be switched on for a capability when a single use deserves its own yes. Auto-whitelisting after some number of unqualified approvals is a later feature, and whether its count is per incident or global is decided after she has used it. v0 registers only `read_only` capabilities, so no grants are needed until after v0. |
 
@@ -68,13 +69,13 @@ Definitions checked against the NIMS Third Edition (FEMA, October 2017) on 2026-
 | Agency Administrator: the executive above the incident who delegates authority to the Incident Commander, sets policy and priorities, and is briefed. | Mauria. Grants are her delegation of authority, `op show` is her briefing, and questions for a human go to her. |
 | Safety Officer: on the Command Staff, with independent authority to stop any unsafe act. | The validator's effect policy plus grants: nothing that writes runs without her permission, and the validator can stop an action plan on its own. |
 | Public Information Officer and Liaison Officer: what is told outside the incident, and the contact point for other agencies. | None. An incident is not charged with keeping anyone informed; providers and external MCP servers cover the liaison work without a role. |
-| Incident Commander: develops objectives, orders and releases resources. Planning Section: collects the situation picture, tracks resources, drafts the Incident Action Plan for the commander to approve. | Command, the root unit with its incident file, holds the objective and priorities as the Incident Commander does. The planner drafts the action plan as the Planning Section does. The situation the planner writes into each plan, read back to it next cycle and printed by `incident show`, is the Planning Section's situation picture. The validator, and Mauria for grants and questions, approve it, which is the commander's approval of the plan. One model call per cycle in v0; a separate commander call that revises objectives and priorities is R3-7's, which gives the IC its own turns above the planner. |
+| Incident Commander: develops objectives, orders and releases resources. Planning Section: collects the situation picture, tracks resources, drafts the Incident Action Plan for the commander to approve. | The Incident Commander is the root unit's leader (round 3, R3-7): one persistent session, briefed with the full incident file at the top of every cycle, that sets the operational period's objectives and priorities, reads the units' reports, closes or re-tasks units, reviews the planner's draft in one round, and declares the incident met, failed or blocked on a question for Mauria. It scopes, breaks down, equips and judges; its digging is assigned to tasks under units, never done itself. The planner drafts the action plan as the Planning Section does, stateless, fed the full file plus the period's objectives and priorities; the situation it writes into each plan, read back next cycle and printed by `incident show`, is the Planning Section's situation picture and stays the planner's. The runtime is the Planning Section's bookkeeping: it renders the briefing, records every turn, checks the plan's shape, dispatches and records. The IC's review is the commander's approval of the plan; the validator's check follows it, and Mauria answers grants and questions. |
 | Section, Branch, Division, Group, Unit: the organizational levels, distinguished by depth and by functional versus geographic responsibility, each with a supervisor. | All are the one thing called a unit here. Depth is whatever the tree needs, a unit's objective says what it is responsible for, and its leader is the supervisor: a session that holds the objective, directs the unit's tasks and files a situation report (`unit.reported`: outcome `met`, `not_met` or `progress`, what changed on which claims, whether the picture changed, and for `not_met` why and a suggestion for the IC to decide on). A unit's leader is called its leader; the root's is the IC. |
 | Single Resource, Strike Team (same kind and type, one leader), Task Force (mixed kinds for one mission). | A capability is a single resource, and equipment is equipment; the word is ICS's. A strike team is several subagents of one kind and model that a unit leader sends on one task, declared on the task by the plan or requested by the leader in a turn (round 3, R3-5); a task force is the mixed-kind version, the same field with several kinds. No presets and no default kind: whoever defines the task defines the team, choosing kind, model, tools, prompt and count and saying why, and the record of what leaders ask for is how presets and least privilege are learned later. A capability that includes other capabilities is composition in code, not a team. |
 | Resource typing: categorizing resources by capability so everyone means the same thing by a name. | The capability registry: name, description, schemas, side effects. |
 | Assignment: a task given to a person or team based on the objectives in the Incident Action Plan. | Task, ruled by Mauria as the software word for the same thing. |
-| Incident Action Plan and Operational Period: the objectives and tactics for one period, then a new plan. | Action plan, same word: the planner's proposed plan for the next cycle, approved by the validator before it is applied. One cycle is the operational period. |
-| The Planning P: objectives, tactics meeting, planning meeting, plan approval, briefing, execute, repeat. | The cycle: observe, organize, validate, dispatch, record. |
+| Incident Action Plan and Operational Period: the objectives and tactics for one period, then a new plan. | Action plan, same word: the planner's draft for the period, reviewed by the IC and checked by the validator before it is applied. One cycle is the operational period, opened by the IC's command turn. |
+| The Planning P: objectives, tactics meeting, planning meeting, plan approval, briefing, execute, repeat. | The cycle's eight steps: the IC is briefed and sets the period's objectives (objectives), the planner drafts (tactics and planning meetings), the IC approves, corrects or amends (plan approval), the validator checks and the plan applies (briefing), the units run to their reports (execute), stop, repeat. |
 | Span of control: one supervisor to five is the guideline, not a rule. | Validator rule: target 5 direct children, maximum 7. |
 | Demobilization: the orderly release of a resource when no longer needed. | Closing a unit and cancelling its tasks. |
 | Situation Unit and Resources Unit: who tracks what is known and where every resource is. | The store. Claims are the situation; tasks and their statuses are the resource tracking. |
@@ -104,7 +105,8 @@ noscope/
 │   ├── runtime.ts        # the cycle
 │   ├── store.ts          # SQLite: schema, transactions, queries
 │   ├── models.ts         # zod contracts shared by every module
-│   ├── planner.ts        # the one provider call per cycle: renders the nine sections, records plan.proposed
+│   ├── planner.ts        # the planner's call: renders the ten sections, records plan.proposed, redrafts once on a correction
+│   ├── ic.ts             # the Incident Commander: the change report and briefing, the command turn, the review
 │   ├── validator.ts      # action plan rules
 │   ├── dispatcher.ts     # runs each unit's tasks under its leader, one unit at a time
 │   ├── leader.ts         # a unit's leader: role text, orientation, turns, what runs inside its session
@@ -144,7 +146,7 @@ mutation in its payload, which is what makes the tables rebuildable from the eve
 
 | Table | Columns |
 |---|---|
-| `incidents` | `id`, `objective`, `constraints_json`, `priorities_json`, `budget_json`, `questions_json`, `capability_requests_json`, `status` (`open`, `satisfied`, `failed`, `blocked`), `created_at`, `updated_at` |
+| `incidents` | `id`, `objective`, `constraints_json`, `priorities_json` (Mauria's, from `create`), `budget_json`, `questions_json`, `capability_requests_json`, `status` (`open`, `satisfied`, `failed`, `blocked`), `period_json` (the current operational period: its number, objectives and priorities as the IC set them; null before the IC's first turn), `created_at`, `updated_at` |
 | `units` | `id`, `incident_id`, `parent_id`, `objective`, `leader_json` (provider and model), `equipment_json`, `bash_allowlist_json`, `session_id` (the leader's session, null until it first runs), `status` (`active`, `closed`), `created_at`, `closed_at` |
 | `tasks` | `id`, `incident_id`, `unit_id`, `capability`, `objective`, `inputs_json`, `expected_output`, `completion_criteria_json`, `evidence_required_json`, `depends_on_json`, `evidence_from_json`, `provider`, `model` (both required for a session-backed capability), `instructions`, `budget_json`, `strike_team_json` (the kinds the leader may send on the task; `[]` when none), `status` (`pending`, `ready`, `running`, `completed`, `failed`, `cancelled`), `result_json`, `created_at`, `completed_at` |
 | `claims` | `id`, `incident_id`, `subject`, `predicate`, `object_json`, `status` (`asserted`, `verified`, `rejected`), `basis` (`observed`, `inferred`), `confidence`, `evidence_json`, `provenance_json`, `created_at` |
@@ -160,10 +162,13 @@ Event types in v0: `incident.created`, `incident.blocked`, `incident.closed`, `u
 session makes and one per subagent it spawns; `leader.started` (a unit's leader session
 recorded on the unit, the mutation `unit.session`), `unit.continued` and `unit.reported`
 (one per leader turn, with the call's usage), `picture.discrepancy` (a seat saying the
-update it received describes a different problem), and `strike_team.defined` and
+update it received describes a different problem), `strike_team.defined` and
 `strike_team.rejected` (a strike team declared on a task by the plan or by its leader, with
 the mutation `task.strikeTeam` when a leader's request is accepted, and a leader's request
-refused with its reasons); Step 6 says what each carries.
+refused with its reasons), `command.turned` (the IC's command turn,
+the mutation `incident.period` when it was accepted), `command.rejected` (one per rule the
+turn failed) and `plan.reviewed` (one per IC review of a draft, with the verdict); Step 6
+says what each carries.
 
 The file records its schema version in `user_version`. A file at an earlier version is
 migrated in place when opened, one step at a time: version 1 (before `basis`) gives
@@ -173,7 +178,11 @@ every task an empty `evidenceFrom`; version 3 (before leaders) renames a unit's 
 `objective` and gives it the legacy leader, `claude-code`/`claude-opus-5` (the planner was
 then the only seat above a task), no equipment and no session, so `incident review` still
 reads runs 001 and 002; version 4 (before strike teams) gives every task an empty
-`strikeTeam`. A file at a later version is refused.
+`strikeTeam`; version 5 (before the IC's turns) gives incidents `period_json`
+and nulls every root unit's `session_id`, because a root session started under R3-4 keeps
+that build's leader role text in its snapshotted system prompt (a resumed call keeps the
+first call's system prompt), so the IC's first command turn starts a fresh session under
+the IC's own role text. A file at a later version is refused.
 
 Capabilities are not a table. The registry is code, and `incident show` prints what is
 registered.
@@ -244,7 +253,7 @@ provider, and the provider renders the fields onto its own command from them:
 | Field | Claude Code renders it to | Codex renders it to |
 |---|---|---|
 | `provider` | The choice of column. | The choice of column. |
-| session preamble, fixed in `providers/base.ts` | The first part of `--system-prompt`, identical for every session on every provider and every seat; the planner's call carries its own system prompt in place of it, since it is the Planning Section and not a seat in the organization. It orients the session: this is an agentic runtime modeled on the Incident Command System; an incident is any objective Mauria asks to have pursued, not necessarily something gone wrong; a temporary organization of units is built around it and torn down when it is done; the IC sets objectives and priorities, the planner drafts an action plan each operational period, the IC approves it, a validator checks its shape, and the units run their tasks under their leaders and report. Then the mapping of terms, one line each: incident, Incident Commander, initial IC, unit, unit leader, task, capability, equipment, subagent, strike team, task force, claim with its statuses and bases, situation report, action plan, operational period, planner, transfer of command, grant, budget, SOP. Then the confidence scale and the four kinds of lack. Then the seat's place, one paragraph chosen per seat (`Seat`: `task`, `leader`, `ic`): a task session is a resource assigned to one task inside one unit under its leader, reports only against the task's contract, cannot change the organization, and answers `insufficient` naming the kind of lack; a leader owns one unit's objective, runs a task on its own model and equipment as one of its turns, receives any other task's result, and after each task continues or reports; the IC is the root unit's leader and Mauria's delegate, and until R3-7 reports on tasks under command as any leader does. Then the role text. The hierarchy around the session (its unit and leader, who it reports to, what is below it) is rendered from the tree into the brief at call time, not fixed in the prompt. | Prepended to the prompt, since `codex exec` has no system-prompt flag in its help. |
+| session preamble, fixed in `providers/base.ts` | The first part of `--system-prompt`, identical for every session on every provider and every seat; the planner's call carries its own system prompt in place of it, since it is the Planning Section and not a seat in the organization. It orients the session: this is an agentic runtime modeled on the Incident Command System; an incident is any objective Mauria asks to have pursued, not necessarily something gone wrong; a temporary organization of units is built around it and torn down when it is done; the IC sets objectives and priorities, the planner drafts an action plan each operational period, the IC approves it, a validator checks its shape, and the units run their tasks under their leaders and report. Then the mapping of terms, one line each: incident, Incident Commander, initial IC, unit, unit leader, task, capability, equipment, subagent, strike team, task force, claim with its statuses and bases, situation report, action plan, operational period, planner, transfer of command, grant, budget, SOP. Then the confidence scale and the four kinds of lack. Then the seat's place, one paragraph chosen per seat (`Seat`: `task`, `leader`, `ic`): a task session is a resource assigned to one task inside one unit under its leader, reports only against the task's contract, cannot change the organization, and answers `insufficient` naming the kind of lack; a leader owns one unit's objective, runs a task on its own model and equipment as one of its turns, receives any other task's result, and after each task continues or reports; the IC is the root unit's leader and Mauria's delegate, sets each period's objectives and priorities, reviews the planner's draft, reads the reports and closes or reorganizes units, and runs a task under command as any leader does. Then the role text: a capability's for a task session, `LEADER_ROLE` for a unit leader, `IC_ROLE` for the IC (it scopes, breaks down, equips and judges; its digging is assigned; a period ends when units report or the picture changes; it declares `satisfied` when the period objectives and the incident objective are met by the reports; a `not_met` report's why and suggestion are information for its decision and never a decision; a discrepancy it cannot reconcile from the file becomes a question for Mauria; the situation stays the planner's; one review, one redraft). The hierarchy around the session (its unit and leader, who it reports to, what is below it) is rendered from the tree into the brief at call time, not fixed in the prompt. | Prepended to the prompt, since `codex exec` has no system-prompt flag in its help. |
 | `system_prompt` | The rest of `--system-prompt`: the capability's own role text, after the preamble. | Prepended to the prompt after the preamble. |
 | `model` | `--model <id>`, always explicit, taken from the task. A capability declares no default. | `-m <model>`, same rule. |
 | `equipment` | `--tools "<list>"` naming the Claude Code built-in tools in the capability's equipment, or `--tools default` when the capability declares `default`. | `-s read-only` bounds what the built-in shell can do; per-tool selection is not in the help and is an open item for this provider. |
@@ -316,14 +325,58 @@ capabilities every incident used under which unit purposes; a composition that r
 incidents with the same shape is a candidate for a new capability, and one whose shape varies
 with context stays with the planner. The quipu CLI's objective catalog is the first
 planned set of such capabilities. v0 registers none.
-### Step 4: the planner
-One call per cycle, through a provider, as a headless Claude Code call on the subscription, with `--json-schema` so the
+### Step 4: the IC and the planner
+The IC is the root unit's leader session (Step 6), resumed at the top of every cycle with
+its briefing under the `CommandTurn` schema, and again with the planner's draft under the
+`ReviewTurn` schema; its system prompt (the preamble, the IC's seat and `IC_ROLE`) is
+fixed at its first call, so everything that changes goes in the user message. The briefing
+is the change report since the IC last acted, then the incident file rendered as the
+planner reads it, then the ask. The change report opens with every `picture.discrepancy`
+raised since the IC's last turn, then every `unit.reported` (outcome, whether the picture
+changed, what changed on which claims, and for `not_met` the why and suggestion), every
+question answered and capability provided, the rules the IC's last turn failed if it was
+rejected, and the spend since then (every usage any seat recorded after the IC's last
+turn, summed). The IC's first briefing on an incident says so.
+
+```ts
+const CommandTurn = z.object({
+  periodObjectives: z.array(z.string()).min(1),  // what this period must establish, from the incident objective, the constraints, the priorities and the reports
+  priorities: z.array(z.string()),               // the incident's, restated or revised
+  closeUnits: z.array(UnitClose),
+  answers: z.array(ResourceAnswer).default([]),  // unit, request, answer: resource requests from units the IC can answer itself (the requests arrive with R3-6; the answers ride on command.turned until then)
+  questionsForHuman: z.array(z.string()),
+  capabilityRequests: z.array(CapabilityRequest),
+  grantRequests: z.array(GrantRequest),
+  incidentStatus: z.enum(["continue", "blocked", "satisfied", "failed"]),
+  rationale: z.string(),
+  discrepancy: z.string().optional(),
+});
+
+const ReviewTurn = z.object({
+  verdict: z.enum(["approve", "correct", "amend"]),  // after a redraft: approve | amend (FinalReviewTurn), so a cycle has at most two planner calls and two IC reads
+  corrections: z.string().optional(),               // with correct: text the planner redrafts against, once
+  plan: ActionPlan.optional(),                      // with amend: the whole plan as the IC wants it applied
+  rationale: z.string(),
+  discrepancy: z.string().optional(),
+});
+```
+
+A command turn is held to the validator's rules that cover what it can do (Units exist,
+Closing is clean, Status is earned; Step 5) and applied as a plan is: units closed,
+questions and requests recorded, the incident's status set, then `command.turned` with the
+turn, the call's session, model and usage, and the period as its mutation. A turn that
+fails a rule is recorded as `command.turned` with `rejected` and one `command.rejected`
+per rule, the cycle ends, and the next briefing names the rules. When the turn's status is
+not `continue` the cycle ends after it: the incident is `blocked` on what the IC raised,
+or closed `satisfied` or `failed` with the turn's rationale. Otherwise the planner drafts.
+
+The planner is one stateless call per draft, through a provider, as a headless Claude Code call on the subscription, with `--json-schema` so the
 response is a validated `ActionPlan` and never prose. Model `claude-opus-5`, no tools,
 the same four fixed flags as every session. Tested 2026-09-12 with an
 planner-shaped prompt: 3.6k tokens of context and a valid action plan back.
 Input, rendered as labeled sections in a stable order so the prefix caches:
 
-1. The incident file's command picture: objective, constraints, priorities, budget remaining, grants given, questions still unanswered.
+1. The incident file's command picture: objective, constraints, priorities (Mauria's), the current operational period's number, objectives and priorities as the IC set them, budget remaining, grants given, questions still unanswered.
 2. Claims, each line showing its status and basis and its provenance. A claim with the predicate its capability declares as `summarize` (grep's `matches`, in v0) appears in full only in the cycle after it lands, or when the last situation names it in `proven` or `keep`; the rest of its task's claims collapse to one line per task: the inputs, the claim count, and the files with counts.
 3. The current unit tree with each unit's objective, status, leader model and last report outcome.
 4. Tasks completed since the last cycle, each against its contract, with a session's findings (summary, observations, conclusion, reasoning) in full and a deterministic result clipped.
@@ -358,9 +411,10 @@ Every turn schema in round 3 (`LeaderTurn`, `ActionPlan`, and R3-7's `CommandTur
 describes a different problem from the one it has been working (it believed it was fighting
 a fire and the update describes a hurricane), and what differs. The runtime records
 `picture.discrepancy` with the seat and, for a leader, its unit and the task in flight;
-`step`, `incident show` and `incident review` print it; the IC's change report opening
-with it is R3-7's. Every seat's role text bounds it to a real difference in what the problem
-is, never a disagreement over a detail.
+`step`, `incident show` and `incident review` print it, and the IC's change report opens
+with it. Every seat's role text bounds it to a real difference in what the problem is,
+never a disagreement over a detail; a discrepancy the IC cannot reconcile from the file
+becomes a question for Mauria in its command turn.
 
 `LeaderTurn` also carries an optional `requestStrikeTeam` (R3-5): the same shape a task's
 `strikeTeam` entry has, which the runtime holds to the strike team's three validator rules
@@ -372,21 +426,37 @@ reasons. The turn prompt names the task that runs next, the team it already decl
 how to ask.
 
 The planner proposes structure. It never runs a tool, never writes to the store, and never
-marks its own conclusions true.
+marks its own conclusions true. Its rationale names the priority that chose between the
+plans it could have drafted.
 
-The planner is never without a way to get what it lacks, and each kind of lack has its own
+The IC reviews each draft once. `approve` applies the draft as drafted. `correct` sends the
+corrections to the planner, whose input is the same file with its draft and the corrections
+appended after section 10 (last, so the file's prefix still caches), and the redraft comes
+back to the IC under `FinalReviewTurn`, which cannot say `correct` again. `amend` applies
+the plan the IC returned in place of the draft. `plan.proposed` is recorded per draft, the
+redraft marked with its corrections; `plan.reviewed` per read with the verdict, the
+corrections or the amended plan, and the call's usage; `plan.applied` carries the final
+verdict, the corrections, and `diff`, how the applied plan differs from the planner's first
+draft: each array field of the plan compared as a set of items under a key-sorted JSON
+serialization (a reordered item is no change, an edited one is removed and added), and the
+other fields (`incidentStatus`, `situation`, `rationale`, `discrepancy`) named in `changed`
+when they differ; empty when the draft was approved as drafted. `incident review` counts
+verdicts by kind, which is the evidence for cutting the planner if the IC never changes its
+draft.
+
+The IC and the planner are never without a way to get what they lack, and each kind of lack has its own
 channel:
 
-| The planner lacks | The channel | Who resolves it |
+| The seat lacks | The channel | Who resolves it |
 |---|---|---|
 | A fact a registered capability can retrieve, from the machine or anything its equipment reaches. | A task. | The runtime, next cycle. |
 | Permission for a capability that writes. | A grant request. | Mauria, with `incident grant`. After v0. |
 | The means: equipment or a capability that does not exist yet, stated as what it would need and why. | A capability request. | Mauria, by registering it and answering the request with `incident provide`, which returns the incident to `open` once nothing else waits; after v0 the planner itself when the missing equipment is an external MCP server it can declare. A capability request is also the runtime telling her what to build next. |
 | Something only a human knows or may decide. | A question for a human. | Mauria, with `incident answer`. |
 
-The incident goes to `blocked` on any of the last three, `incident show` prints them, and
-every session is told the same four kinds in its preamble so that an `insufficient` answer
-names which one it hit.
+The incident goes to `blocked` on any of the last three, raised in a command turn or in a
+plan, `incident show` prints them, and every session is told the same four kinds in its
+preamble so that an `insufficient` answer names which one it hit.
 ### Step 5: the validator
 Every action plan passes all of these or is rejected whole, with each failing rule and its
 reason recorded as a `plan.rejected` event and fed back as input 9 on the next cycle:
@@ -403,10 +473,14 @@ reason recorded as a `plan.rejected` event and fed back as input 9 on the next c
 | Budget respected | A task's budget, where it sets one, fits inside the incident's remaining budget. A session-backed task carries a time bound and, when the incident bounds tokens, a token bound. A deterministic task runs no model and needs neither. A strike team's `count` times the least a member spends (`STRIKE_MEMBER_MIN_TOKENS`, 600: the fixture's `pinger` with no tools read 672) fits the task's token bound where it sets one; a task with no token bound has nothing for the count to exceed. |
 | Dependencies resolve | Every `dependsOn` names a task in the incident that is completed or still open and not cancelled in this plan, or the ref of a task created in this plan, so the new task can become ready. Every `evidenceFrom` claim exists, and every `evidenceFrom` task is completed or in the task's `dependsOn`, so its result exists when the brief is built. Every `cancelTasks` entry names an open task, once. |
 | Model known | Every task to a session-backed capability, and every new unit's leader, names a provider and model pair. The known list is every model the provider serves, never a curated subset, so Mauria can ask for whatever she wants and the planner sees every option. For Claude Code the known list is every Anthropic model currently served: `claude-fable-5-1`, `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5`, `claude-fable-5`, `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6`, `claude-sonnet-4-6`; Codex pairs are added when that provider is tested. A task to a deterministic capability has no model field at all, since nothing in it runs a model. A strike team's `model` is one the task's provider serves, and a team on a task that runs no session is refused here, since there is no session to send it from. These three rules, and nothing else, are what a strike team is held to, whether the plan declares it or a leader requests it (the same checks run on a leader's `requestStrikeTeam`, outside a plan). |
-| Closing is clean | A unit closed in this plan is active, has no running task after the plan's cancels, is closed once, and is given no new unit or task in the same plan. Demobilization is clean too: a unit whose leader has a session closes only after the leader has reported since the unit's last task ended (`unit.reported` after the last `task.completed` or `task.failed` under it); a unit whose leader never ran closes freely. |
+| Closing is clean | A unit closed in this plan is active, is not the root (command is never closed), has no running task after the plan's cancels, is closed once, and is given no new unit or task in the same plan. Demobilization is clean too: a unit whose leader has a session closes only after the leader has reported since the unit's last task ended (`unit.reported` after the last `task.completed` or `task.failed` under it); a unit whose leader never ran closes freely. |
 | Status is earned | `satisfied` requires every open task completed or cancelled, no new tasks in the plan, and at least one claim with basis `observed`, whichever source produced it. `satisfied` or `failed` raises no question, capability request or grant request, since a closed incident answers none. `blocked` raises at least one, since nothing else could unblock it. |
 | Inferred links are worked | Every inferred link in the plan's situation names what settles it: a task in this plan by its ref, an open task by its id, a question this plan raises by its position, or a reproduce task by its ref or id. Every claim id the situation names, in `proven`, `inferred` and `keep`, is a claim in the incident, and every `proven` claim has basis `observed`, whichever task observed it: a session's observation counts, an inference from either source does not (both checked under Dependencies resolve). |
 
+The IC's command turn is checked by the same code as a plan that creates nothing, under
+Units exist, Closing is clean and Status is earned, since closing units and setting the
+status is all it does to the tree; a failing rule is recorded as `command.rejected` and
+the cycle ends there (Step 4).
 ### Step 6: dispatch, record, verify
 Ready means every dependency is completed. Dispatch runs the units one at a time in tree
 order (parents before children, siblings as created), each until its leader reports
@@ -422,7 +496,7 @@ asked for its next move under `LeaderTurn`, resumed with the task's ending (the 
 rendered, or "recorded in this session", or the failure) and how many ready tasks remain:
 `continue` runs the next, `report` files `unit.reported` and ends the unit's pass, and
 `pictureChanged: true` on a report ends the whole pass, which `dispatch` returns as the
-unit's id, so the planner sees it before the next unit runs. With nothing left to run the
+unit's id, so the IC's next change report opens with it before the next unit runs. With nothing left to run the
 leader is asked for its report; a leader that answers `continue` with nothing left ends the
 unit's pass without one, and a unit whose leader owes a report (a task ended after the last
 report) is asked for it at the start of the next pass even with no task, the turn creating
@@ -471,12 +545,17 @@ tokens and costs nothing; a run that fails before the provider answers records n
 since none is known, and a spend summed with such an event in it carries no cost, so a
 figure is never printed that a failed session would have raised. The spend `incident show`
 prints, and a budget counts, is the tasks'; the planner's usage is recorded on
-`plan.proposed` and not counted, a design call on the revisit list.
+`plan.proposed`, the IC's on `command.turned`, `plan.reviewed` and `command.failed`, and
+the leaders' on their
+turns, none of them counted against the budget, a design call on the revisit list. The IC's
+change report sums every usage recorded since its last turn, whichever seat spent it.
 
 What the log holds per session, beyond its outcome and usage. Every tool call the session
 makes is a `tool.called` event, written in the task's transaction before its claims: the
 session id, the unit, the task in flight (`taskId`, null on a planner call, which carries
-its `cycle` instead, and null on a leader's turn, which carries its unit; a task run inside
+its `cycle` instead, null on a leader's turn, which carries its unit, and null on the IC's
+own turns, which carry the root unit, the `cycle` and `seat: "ic"` so review tells them
+from the planner's; a task run inside
 the leader's session files its calls under the task with the leader's session id), `toolUseId`, the tool name, the full input, the result clipped at 4,000 characters
 with `resultChars` saying how long it was, `isError`, `startedAt`, `endedAt` and
 `durationMs` from the two messages' timestamps, and `transcriptPath`, the session's
@@ -523,15 +602,15 @@ to verified, and the validator gates `proven` and `satisfied` on basis `observed
 ### Step 7: the command surface
 | Command | Does |
 |---|---|
-| `noscope incident create "<objective>" [--constraint ...] [--priority ...] [--ic-model <model>]` | Creates the incident and its root unit, `command`, whose leader is the Incident Commander on `--ic-model` (default `claude-opus-5`, a model Claude Code serves; the size-up that routes it is R3-8's), with the read-only built-ins as its equipment. |
-| `noscope incident show <id>` | The incident file: objective, constraints, priorities, budget and spend, claims by status, open tasks, decisions with reasons, questions waiting on Mauria, capability requests, grants, registered capabilities. |
+| `noscope incident create "<objective>" [--constraint ...] [--priority ...] [--ic-model <model>]` | Creates the incident and its root unit, `command`, whose leader is the Incident Commander on `--ic-model` (default `claude-opus-5`, a model Claude Code serves; the size-up that routes it is R3-8's), with the read-only built-ins as its equipment. `--priority`, like `--constraint`, may repeat; the priorities are an input the IC restates or revises each period and the planner's rationale names when one chose between plans. |
+| `noscope incident show <id>` | The incident file: objective, constraints, priorities, the current operational period's objectives and priorities, budget and spend, claims by status, open tasks, decisions with reasons, questions waiting on Mauria, capability requests, grants, registered capabilities. |
 | `noscope incident tree <id>` | The unit tree with each unit's leader model and last report outcome, and task marks: done, running, ready, pending. |
-| `noscope incident step <id>` | One cycle, then stop. Prints the action plan, the validator's verdict, what ran, each unit's report, any discrepancy raised, and whether a report stopped the pass. |
+| `noscope incident step <id>` | One cycle, then stop. Prints the IC's command turn (objectives, priorities, closes, answers, what it raised, status), the planner's draft, the IC's verdict with its corrections or amended plan and the redraft when there is one, the validator's verdict, what ran, each unit's report, any discrepancy raised, and whether a report stopped the pass. |
 | `noscope incident run <id> [--max-cycles N]` | Repeats `step` until the incident leaves `open` or the cap is hit. |
 | `noscope incident events <id>` | The event log with timestamps and actors. |
-| `noscope incident review <id>` | The After Action Review computed from the event log: each cycle with its verdict, rejections, tasks run (capability, model, tokens with the cache split, seconds, cost, claims), each leader's turns with their usage and outcome, discrepancies, strike teams declared or refused, questions and answers; totals by role and model (leaders under `leader`); plan, task, leader-turn and claim counts, each unit's reports by cycle, and each declared strike-team config against what ran under it (members, usage, cost, claims citing a member); the cost, recorded where the provider priced it and bounded at list rates where it did not. Deterministic; the judged review is the session-backed `review` capability, after v0. |
+| `noscope incident review <id>` | The After Action Review computed from the event log: each cycle (cut at the IC's command turn; at `plan.proposed` in a log from before the IC) with its verdict, the IC's command turn and reviews with their usage, each draft's planner call, rejections, tasks run (capability, model, tokens with the cache split, seconds, cost, claims), each leader's turns with their usage and outcome, discrepancies, strike teams declared or refused, questions and answers; totals by role and model (the IC under `ic`, leaders under `leader`); plan, IC-verdict (by kind: approve, correct, amend), task, leader-turn and claim counts, each unit's reports by cycle, and each declared strike-team config against what ran under it (members, usage, cost, claims citing a member); the cost, recorded where the provider priced it and bounded at list rates where it did not. Deterministic; the judged review is the session-backed `review` capability, after v0. |
 | `noscope incident sop <id> <name>` | Adds an SOP's unit and its tasks to the incident in one action plan. After v0. |
-| `noscope incident answer <id> "<text>"` | Answers the planner's open question and returns the incident to `open`. |
+| `noscope incident answer <id> "<text>"` | Answers the oldest open question, the IC's or the planner's, and returns the incident to `open`; the IC's next change report carries the answer. |
 | `noscope incident provide <id> "<text>"` | Answers the planner's oldest unanswered capability request with what was provided, or why not, and returns the incident to `open` once nothing else waits. |
 | `noscope incident grant <id> <capability> [--per-task]` | Gives a grant for one capability on this incident, recording the planner's reason; `--per-task` makes each task under it ask again. After v0. |
 | `noscope grant standing <capability>` | Whitelists a capability everywhere. After v0. |
@@ -658,7 +737,9 @@ Measured 2026-09-12 on this machine, all with the five flags then fixed (the fou
 | The Opus planner returning six units and five tasks | 14.2 s of API time, plus startup. |
 | A deterministic capability | Milliseconds. |
 
-So one cycle as written is the planner, about 15 to 20 s, plus its tasks run one
+So one cycle as written is the IC's command turn and review, two resumed Opus calls on a
+context that grows with the file, plus the planner, about 15 to 20 s, twice on a
+correction, plus its tasks run one
 after another, each session-backed one roughly 7 to 30 s and each deterministic one
 negligible. An incident that takes five cycles with two sessions each runs three to four minutes.
 That is slow for a daemon and right for v0, which is stepped by hand to be watched. The

@@ -3,8 +3,10 @@ import { listCapabilities } from "../capabilities/index.js";
 import { type Context, EXIT, type Handler } from "../context.js";
 import { dispatch } from "../dispatcher.js";
 import { READ_ONLY_COMMANDS } from "../equipment/index.js";
+import { commandTurn, reviewTurn } from "../ic.js";
 import { IC_MODEL, IC_PROVIDER } from "../leader.js";
 import {
+  type ActionPlan,
   Budget,
   type CapabilityRequest,
   type Event,
@@ -18,11 +20,15 @@ import {
 import { proposePlan } from "../planner.js";
 import { getProvider } from "../providers/index.js";
 import { renderReview } from "../review.js";
-import { applyPlan } from "../runtime.js";
-import { now, resolveDbPath, Store, sumUsage } from "../store.js";
+import { applyCommand, applyPlan, planDiff } from "../runtime.js";
+import { cycleOf, now, resolveDbPath, Store, sumUsage } from "../store.js";
 import { describeStrikeTeam } from "../strike-team.js";
 import { renderTree } from "../tree.js";
-import { validateAndRecord } from "../validator.js";
+import {
+  validateAndRecord,
+  validateCommand,
+  validationContext,
+} from "../validator.js";
 
 const ACTOR = "cli";
 
@@ -191,6 +197,16 @@ function renderIncidentFile(
   lines.push("priorities:");
   for (const p of incident.priorities) lines.push(`  - ${p}`);
   if (incident.priorities.length === 0) lines.push("  (none)");
+  if (incident.period === undefined)
+    lines.push("operational period: none set yet");
+  else {
+    lines.push(`operational period ${incident.period.number} objectives:`);
+    for (const o of incident.period.objectives) lines.push(`  - ${o}`);
+    if (incident.period.objectives.length === 0) lines.push("  (none)");
+    lines.push("period priorities:");
+    for (const p of incident.period.priorities) lines.push(`  - ${p}`);
+    if (incident.period.priorities.length === 0) lines.push("  (none)");
+  }
   lines.push(
     `budget: tokens ${incident.budget.tokens ?? "unlimited"}, seconds ${incident.budget.seconds ?? "unlimited"}; spent tokens ${usage.tokens}, seconds ${usage.seconds.toFixed(1)}${spent.costUsd === undefined ? "" : `, task cost $${spent.costUsd.toFixed(2)} at list price`}`,
   );
@@ -329,26 +345,8 @@ export const tree: Handler = async (args, ctx) => {
 /** What one cycle came to: the incident's status afterwards, and a budget stop if the pass ended on one. */
 type CycleOutcome = { status: IncidentStatus; stopped: string | null };
 
-/**
- * One cycle (DESIGN.md Step 1): observe and plan, validate, apply, dispatch, verify and
- * record, then stop. Prints the proposed plan, the verdict, what changed and what ran. A
- * provider that cannot run throws; the command decides the exit code.
- */
-async function cycle(
-  store: Store,
-  incident: Incident,
-  ctx: Context,
-): Promise<CycleOutcome> {
-  const planner = getProvider("claude-code", ctx.env);
-  const providers = [planner];
-  const proposal = await proposePlan(store, incident, planner, {
-    providers,
-    cwd: ctx.cwd,
-  });
-  const { plan } = proposal;
-  ctx.io.out(
-    `plan proposed (session ${proposal.sessionId}): ${plan.rationale}`,
-  );
+/** A plan as `step` prints it: what it creates, closes, cancels, asks and requests, and its status. */
+function printPlan(ctx: Context, plan: ActionPlan): void {
   if (plan.discrepancy !== undefined)
     ctx.io.out(`  discrepancy: ${plan.discrepancy}`);
   for (const u of plan.createUnits)
@@ -369,7 +367,141 @@ async function cycle(
   for (const r of plan.capabilityRequests)
     ctx.io.out(`  request capability: ${r.need} (${r.why})`);
   ctx.io.out(`  status: ${plan.incidentStatus}`);
-  const verdict = validateAndRecord(store, incident, plan, providers);
+}
+
+/**
+ * One cycle, the eight steps of DESIGN.md's cycle: (1) the IC's briefing is rendered, (2)
+ * the IC's command turn sets the period or ends the incident, (3) the planner drafts, (4)
+ * the IC reviews the draft once, with one redraft on a correction, (5) the validator checks
+ * the plan to apply, (6) it is applied, (7) the units run under their leaders to their
+ * reports or to a change of picture, (8) stop. Prints each turn, the verdicts, what
+ * changed and what ran. A provider that cannot run throws; the command decides the exit
+ * code.
+ */
+async function cycle(
+  store: Store,
+  incident: Incident,
+  ctx: Context,
+): Promise<CycleOutcome> {
+  const planner = getProvider("claude-code", ctx.env);
+  const providers = [planner];
+  const icOptions = { cwd: ctx.cwd, env: ctx.env };
+  const number = cycleOf(store.listEvents(incident.id)) + 1;
+
+  const command = await commandTurn(store, incident, providers, icOptions);
+  const turn = command.output;
+  ctx.io.out(
+    `IC command turn for period ${number} (session ${command.sessionId}): ${turn.rationale}`,
+  );
+  if (turn.discrepancy !== undefined)
+    ctx.io.out(`  discrepancy: ${turn.discrepancy}`);
+  for (const o of turn.periodObjectives) ctx.io.out(`  objective: ${o}`);
+  for (const p of turn.priorities) ctx.io.out(`  priority: ${p}`);
+  for (const c of turn.closeUnits)
+    ctx.io.out(`  close unit ${c.unitId}: ${c.reason}`);
+  for (const a of turn.answers)
+    ctx.io.out(`  answer to ${a.unitId} (${a.request}): ${a.answer}`);
+  for (const q of turn.questionsForHuman) ctx.io.out(`  ask: ${q}`);
+  for (const r of turn.capabilityRequests)
+    ctx.io.out(`  request capability: ${r.need} (${r.why})`);
+  ctx.io.out(`  status: ${turn.incidentStatus}`);
+  const rejections = validateCommand(
+    turn,
+    validationContext(store, incident, providers),
+  );
+  if (rejections.length > 0) {
+    store.batch(() => {
+      store.record(incident.id, "command.turned", "runtime", {
+        ...command.provenance,
+        turn,
+        rationale: turn.rationale,
+        cycle: number,
+        rejected: true,
+      });
+      command.record();
+      for (const r of rejections)
+        store.record(incident.id, "command.rejected", "validator", {
+          rule: r.rule,
+          reason: r.reason,
+          rationale: turn.rationale,
+        });
+    });
+    ctx.io.out("command turn rejected:");
+    for (const r of rejections) ctx.io.out(`  - ${r.rule}: ${r.reason}`);
+    return { status: incident.status, stopped: null };
+  }
+  const commanded = applyCommand(
+    store,
+    incident,
+    turn,
+    number,
+    command.provenance,
+    command.record,
+  );
+  for (const id of commanded.closedUnits) ctx.io.out(`  unit ${id} closed`);
+  for (const q of commanded.questions)
+    ctx.io.out(`  question ${q.id}: ${q.text}`);
+  if (commanded.incidentStatus !== "open") {
+    ctx.io.out(`incident ${incident.id} is now ${commanded.incidentStatus}`);
+    return { status: commanded.incidentStatus, stopped: null };
+  }
+  const current = store.getIncident(incident.id);
+  if (current === undefined)
+    throw new Error(`incident ${incident.id} vanished`);
+
+  const draft = await proposePlan(store, current, planner, {
+    providers,
+    cwd: ctx.cwd,
+  });
+  ctx.io.out(
+    `plan drafted (session ${draft.sessionId}): ${draft.plan.rationale}`,
+  );
+  printPlan(ctx, draft.plan);
+  let review = await reviewTurn(
+    store,
+    current,
+    providers,
+    draft.plan,
+    null,
+    icOptions,
+  );
+  ctx.io.out(`IC review: ${review.output.verdict}: ${review.output.rationale}`);
+  let corrections: string | null = null;
+  let proposed = draft.plan;
+  if (review.output.verdict === "correct") {
+    corrections = review.output.corrections ?? "";
+    ctx.io.out(`  corrections: ${corrections}`);
+    const redraft = await proposePlan(store, current, planner, {
+      providers,
+      cwd: ctx.cwd,
+      redraft: { draft: draft.plan, corrections },
+    });
+    proposed = redraft.plan;
+    ctx.io.out(
+      `plan redrafted (session ${redraft.sessionId}): ${proposed.rationale}`,
+    );
+    printPlan(ctx, proposed);
+    review = await reviewTurn(
+      store,
+      current,
+      providers,
+      proposed,
+      corrections,
+      icOptions,
+    );
+    ctx.io.out(
+      `IC review: ${review.output.verdict}: ${review.output.rationale}`,
+    );
+  }
+  const plan =
+    review.output.verdict === "amend" && review.output.plan !== undefined
+      ? review.output.plan
+      : proposed;
+  if (review.output.verdict === "amend") {
+    ctx.io.out(`plan amended by the IC: ${plan.rationale}`);
+    printPlan(ctx, plan);
+  }
+  const verdict = validateAndRecord(store, current, plan, providers);
   if (!verdict.ok) {
     ctx.io.out("plan rejected:");
     for (const r of verdict.rejections)
@@ -377,7 +509,11 @@ async function cycle(
     return { status: incident.status, stopped: null };
   }
   ctx.io.out("plan approved");
-  const applied = applyPlan(store, incident, plan);
+  const applied = applyPlan(store, current, plan, "runtime", {
+    verdict: review.output.verdict,
+    corrections,
+    diff: planDiff(draft.plan, plan),
+  });
   for (const u of applied.units)
     ctx.io.out(`  unit ${u.id} created under ${u.parentId}: ${u.objective}`);
   for (const id of applied.closedUnits) ctx.io.out(`  unit ${id} closed`);
@@ -395,7 +531,7 @@ async function cycle(
   const before = store.listEvents(incident.id).length;
   const { ran, reports, stopped, pictureChanged } = await dispatch(
     store,
-    incident,
+    current,
     { cwd: ctx.cwd, env: ctx.env },
   );
   for (const r of ran)

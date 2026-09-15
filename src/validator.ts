@@ -9,6 +9,7 @@ import { unitsOwingReport } from "./leader.js";
 import type {
   ActionPlan,
   Claim,
+  CommandTurn,
   Incident,
   StrikeTeam,
   Task,
@@ -148,7 +149,8 @@ const taskRefs = (plan: ActionPlan): Set<string> =>
     plan.createTasks.flatMap((t) => (t.ref === undefined ? [] : [t.ref])),
   );
 
-function stable(value: unknown): string {
+/** A key-sorted JSON serialization, so two values compare equal whatever their key order. */
+export function stable(value: unknown): string {
   return JSON.stringify(value, (_k, v: unknown) =>
     v !== null && typeof v === "object" && !Array.isArray(v)
       ? Object.fromEntries(
@@ -587,6 +589,8 @@ const CHECKS: Record<RuleName, Rule> = {
       if (unit === undefined) continue;
       if (unit.status === "closed")
         reasons.push(`unit ${c.unitId} is already closed`);
+      if (unit.parentId === null)
+        reasons.push(`unit ${c.unitId} is the root and is never closed`);
       const running = ctx.tasks.filter(
         (t) =>
           t.unitId === c.unitId &&
@@ -688,6 +692,48 @@ export function validationContext(
     usage: sumUsage(events),
     owing: unitsOwingReport(units, tasks, events),
   };
+}
+
+/** The rules a command turn is held to: it closes units and sets a status, and nothing else the other rules check. */
+const COMMAND_RULES: readonly RuleName[] = [
+  "Units exist",
+  "Closing is clean",
+  "Status is earned",
+];
+
+/**
+ * The IC's command turn is held to the rules that cover what it can do, closing units and
+ * setting the incident's status, by checking it as a plan that creates nothing (DESIGN.md
+ * Step 5). Returns the failing rules with their reasons; the caller records
+ * `command.rejected` and ends the cycle.
+ */
+export function validateCommand(
+  turn: CommandTurn,
+  ctx: ValidationContext,
+): Rejection[] {
+  const asPlan: ActionPlan = {
+    createUnits: [],
+    closeUnits: turn.closeUnits,
+    createTasks: [],
+    cancelTasks: [],
+    questionsForHuman: turn.questionsForHuman,
+    grantRequests: turn.grantRequests,
+    capabilityRequests: turn.capabilityRequests,
+    applySops: [],
+    incidentStatus: turn.incidentStatus,
+    situation: {
+      changed: "-",
+      hypothesis: "-",
+      proven: [],
+      inferred: [],
+      keep: [],
+    },
+    rationale: turn.rationale,
+  };
+  return RULES.filter(({ name }) => COMMAND_RULES.includes(name)).flatMap(
+    ({ name, check }) =>
+      check(asPlan, ctx).map((reason) => ({ rule: name, reason })),
+  );
 }
 
 /**

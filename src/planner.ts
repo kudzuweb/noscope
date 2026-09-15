@@ -14,11 +14,12 @@ import {
   type Usage,
 } from "./models.js";
 import type { Provider } from "./providers/index.js";
-import { type Store, sumUsage } from "./store.js";
+import { cycleOf, type Store, sumUsage } from "./store.js";
 import { describeLeader, lastReports } from "./tree.js";
 
-// The planner is ICS's Planning Section: one provider call per cycle that drafts an action
-// plan from the incident file. It proposes structure and never runs a tool, writes to the
+// The planner is ICS's Planning Section: a stateless provider call each cycle that drafts an
+// action plan from the incident file and the period objectives the IC set, and redrafts
+// once when the IC corrects it. It proposes structure and never runs a tool, writes to the
 // store, or marks its own conclusions true (DESIGN.md Step 4).
 
 export const PLANNER_MODEL = "claude-opus-5";
@@ -27,13 +28,13 @@ const CLIP = 200;
 
 export const PLANNER_SYSTEM_PROMPT = `You are the Planning Section of noscope, an agentic runtime modeled on the Incident Command System (ICS).
 
-An incident is any objective Mauria asks to have pursued; it does not mean something went wrong. Around it a temporary organization of units is built and torn down when it is done. Each cycle you draft an action plan; a validator approves it or rejects it whole; the units then run their tasks under their leaders, and their results come back to you as claims and reports.
+An incident is any objective Mauria asks to have pursued; it does not mean something went wrong. Around it a temporary organization of units is built and torn down when it is done. Each operational period the Incident Commander sets the period's objectives and priorities; you draft an action plan against them; the IC reviews your draft once, approving it, correcting it (you then redraft once against the corrections) or amending it; a validator checks the plan's shape or rejects it whole; the units then run their tasks under their leaders, and their results come back to you as claims and reports.
 
 The terms: a unit is a box in the incident's tree that owns a slice of the problem, with an objective and a leader, a session on the provider and model the unit names that runs the unit's tasks in order and reports against the objective; a task is one assignment, owned by one unit, bound to one capability; a capability is the assignable thing, deterministic or session-backed; a claim is a statement with a status and a basis. A task to a session-backed capability on the leader's model, needing no equipment beyond the unit's, runs inside the leader's session; any other task runs in its own session or in process and its result reaches the leader. The status names the source and gates nothing: verified means deterministic equipment produced it, asserted means a session did. The basis says whether it was seen: observed means seen in code, in output or in a browser, inferred means reasoned to from what was seen. An observed claim counts as proven whichever source produced it.
 
 You propose structure only. You do not run tools, you do not write, and you never mark your own conclusions true. Read the incident file that follows, in its ten sections, and return one action plan. Section 10 is the situation you wrote last cycle; write this cycle's in the plan: what changed, the hypothesis, the observed claims it rests on, every inferred link with what this plan does to settle it, and the claims to keep in view.
 
-When you lack something, use the channel for it: a task to a capability for a fact it can retrieve; a grant request for permission; a capability request for means that do not exist yet; a question for a human only for what only a human knows. A link the repository cannot establish, such as what a running program does after an interaction, is settled by reproducing it (a reproduce task, when section 8 lists one), by a capability request for it when none is listed, or by a question for the human, in the same plan; never by reading more code. A brief to interpret carries the question and the evidence, named by id in evidenceFrom, and not the conclusion you expect: the runtime attaches your hypothesis to every brief, and the session's job is to test that. The rationale says why this plan, and nothing the situation already says. Name a provider and model on every task to a session-backed capability, and none on a task to a deterministic one. A new unit names its objective, its leader's provider and model, its equipment (built-in tool names and external equipment names, as a capability declares them) and its Bash allowlist. A task to a session-backed capability may declare a strike team (strikeTeam): the subagent kinds its leader may send on it, each with a kind name, a model the task's provider serves, read-only built-in tools, the member's system prompt, how many to send and why; more than one kind is a task force. No kind exists unless the task declares it or the leader asks for it, so declare one only where the task's shape calls for several parallel readers, and say why. discrepancy is for one thing only: the file describes a different problem from the one you have been planning, a hurricane where you believed there was a fire; a different detail is not a discrepancy. A chain of tasks belongs in one plan: give a task a ref and name that ref in the dependsOn of the task that uses its result, and the chain runs in one cycle. Keep every unit at five or fewer direct children. Set incidentStatus to satisfied only when the objective is established by observed claims and nothing is left open.`;
+When you lack something, use the channel for it: a task to a capability for a fact it can retrieve; a grant request for permission; a capability request for means that do not exist yet; a question for a human only for what only a human knows. A link the repository cannot establish, such as what a running program does after an interaction, is settled by reproducing it (a reproduce task, when section 8 lists one), by a capability request for it when none is listed, or by a question for the human, in the same plan; never by reading more code. A brief to interpret carries the question and the evidence, named by id in evidenceFrom, and not the conclusion you expect: the runtime attaches your hypothesis to every brief, and the session's job is to test that. The rationale says why this plan, names the priority that chose between the plans you could have drafted, and says nothing the situation already says. Name a provider and model on every task to a session-backed capability, and none on a task to a deterministic one. A new unit names its objective, its leader's provider and model, its equipment (built-in tool names and external equipment names, as a capability declares them) and its Bash allowlist. A task to a session-backed capability may declare a strike team (strikeTeam): the subagent kinds its leader may send on it, each with a kind name, a model the task's provider serves, read-only built-in tools, the member's system prompt, how many to send and why; more than one kind is a task force. No kind exists unless the task declares it or the leader asks for it, so declare one only where the task's shape calls for several parallel readers, and say why. discrepancy is for one thing only: the file describes a different problem from the one you have been planning, a hurricane where you believed there was a fire; a different detail is not a discrepancy. A chain of tasks belongs in one plan: give a task a ref and name that ref in the dependsOn of the task that uses its result, and the chain runs in one cycle. Keep every unit at five or fewer direct children. Set incidentStatus to satisfied only when the objective is established by observed claims and nothing is left open.`;
 
 /** The rules the validator applies, stated so the planner does not propose what will be rejected (DESIGN.md Step 5). */
 export const PLANNER_RULES = [
@@ -353,6 +354,11 @@ export function renderPlannerInput(
     ...bullets(incident.constraints),
     "priorities:",
     ...bullets(incident.priorities),
+    `operational period: ${incident.period === undefined ? "none set yet" : `${incident.period.number}`}`,
+    "period objectives:",
+    ...bullets(incident.period?.objectives ?? []),
+    "period priorities:",
+    ...bullets(incident.period?.priorities ?? []),
     `budget remaining: tokens ${remaining(incident.budget.tokens, spentTokens)}, seconds ${remaining(incident.budget.seconds, usage.seconds)} (spent tokens ${spentTokens}, seconds ${usage.seconds.toFixed(1)})`,
     ...budgetStops,
     "grants:",
@@ -441,26 +447,48 @@ export type PlanProposal = {
   usage: Usage;
 };
 
+/** What the planner redrafts against: its own draft and the IC's corrections to it. */
+export type Redraft = { draft: ActionPlan; corrections: string };
+
+/** The corrections rendered after the incident file, last so the file's prefix still caches. */
+function renderRedraft(redraft: Redraft): string {
+  return [
+    "",
+    "# Corrections from the Incident Commander",
+    "Your draft for this period was:",
+    JSON.stringify(redraft.draft, null, 2),
+    "",
+    "The IC's corrections:",
+    redraft.corrections,
+    "",
+    "Redraft the plan against them; the IC then approves or amends it.",
+  ].join("\n");
+}
+
 /**
  * One planner call: render the incident file, ask the provider for an action plan against
- * the ActionPlan schema, and record `plan.proposed` with the plan and its rationale. The
- * plan is validated (PR 10) and applied (PR 11) by the caller; this writes nothing else.
+ * the ActionPlan schema, and record `plan.proposed` with the plan and its rationale. With
+ * `redraft`, the draft and the IC's corrections follow the file and `plan.proposed` says
+ * so. The plan is reviewed, validated and applied by the caller; this writes nothing else.
  */
 export async function proposePlan(
   store: Store,
   incident: Incident,
   provider: Provider,
-  options: { providers?: readonly Provider[]; model?: string; cwd: string },
+  options: {
+    providers?: readonly Provider[];
+    model?: string;
+    cwd: string;
+    redraft?: Redraft;
+  },
 ): Promise<PlanProposal> {
   const model = options.model ?? PLANNER_MODEL;
   const outcome = await provider.run({
     model,
     systemPrompt: PLANNER_SYSTEM_PROMPT,
-    prompt: renderPlannerInput(
-      store,
-      incident,
-      options.providers ?? [provider],
-    ),
+    prompt:
+      renderPlannerInput(store, incident, options.providers ?? [provider]) +
+      (options.redraft === undefined ? "" : renderRedraft(options.redraft)),
     tools: [],
     mcpServers: [],
     integrations: [],
@@ -478,6 +506,10 @@ export async function proposePlan(
       sessionId: outcome.sessionId,
       model,
       usage: outcome.usage,
+      redraft: options.redraft !== undefined,
+      ...(options.redraft === undefined
+        ? {}
+        : { corrections: options.redraft.corrections }),
     });
     if (plan.discrepancy !== undefined)
       store.record(incident.id, "picture.discrepancy", "planner", {
@@ -486,9 +518,7 @@ export async function proposePlan(
         discrepancy: plan.discrepancy,
       });
     // The planner runs with no tools today; its activity is filed under the cycle it drafted.
-    const cycle = store
-      .listEvents(incident.id)
-      .filter((e) => e.type === "plan.proposed").length;
+    const cycle = cycleOf(store.listEvents(incident.id));
     recordActivity(store, incident.id, "planner", outcome.activity, {
       sessionId: outcome.sessionId,
       unitId: null,

@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { EXIT, run } from "../src/cli.js";
 import type { ActionPlan, Event, Incident, Task } from "../src/models.js";
 import { renderReview } from "../src/review.js";
+import { cycleOf } from "../src/store.js";
 import { unitProposal } from "./fixtures/models.js";
 
 const tree = resolve("test/fixtures/tree");
@@ -148,10 +149,20 @@ describe("incident review", () => {
     );
     expect(h.out[1]).toMatch(/^2 cycle\(s\) from .* events$/);
     expect(text).toMatch(
-      /cycle 1 {2}\S+ {2}applied open {2}units \+1 -0 {2}tasks \+1 cancelled 0$/m,
+      /cycle 1 {2}\S+ {2}applied open {2}ic approve {2}units \+1 -0 {2}tasks \+1 cancelled 0$/m,
+    );
+    // The IC's command turn and its review are priced on the root leader's model, before the planner's draft.
+    expect(text).toContain(
+      "  ic claude-opus-5: in 1,500 (uncached 1,000 / write 200 / read 300)  out 42  1.5 s  $0.01  set period 1: 1 objective(s), 0 close(s), continue  session stub-session",
+    );
+    expect(text).toContain(
+      "  ic claude-opus-5: in 1,500 (uncached 1,000 / write 200 / read 300)  out 42  1.5 s  $0.01  reviewed the draft: approve  session stub-session",
     );
     expect(text).toContain(
       "planner claude-opus-5: in 1,500 (uncached 1,000 / write 200 / read 300)  out 42  1.5 s  $0.01  session stub-session",
+    );
+    expect(text).toMatch(
+      /ic\s+claude-opus-5\s+4\s+6,000\s+168\s+6\.0\s+\$0\.05/,
     );
     expect(text).toMatch(
       /001-t01 grep \(deterministic\): \d+\.\d s {2}completed {2}claims 1 verified$/m,
@@ -173,14 +184,17 @@ describe("incident review", () => {
       "  001-u02: cycle 1: reported progress, 0 change(s)",
     );
     expect(text).toContain(
-      "plans: 2 proposed, 2 applied, 0 rejected (0 rule lines)",
+      "plans: 2 drafted in 2 cycle(s), 2 applied, 0 rejected (0 rule lines)",
+    );
+    expect(text).toContain(
+      "ic verdicts: 2 review(s): 2 approve, 0 correct, 0 amend",
     );
     expect(text).toContain(
       "tasks: 1 ran (1 deterministic, 0 sessions) of 1 created",
     );
     expect(text).toContain("claims: 1 verified, 0 asserted, 0 rejected");
     expect(text).toContain("questions: none");
-    expect(h.out.at(-1)).toBe("cost: $0.04");
+    expect(h.out.at(-1)).toBe("cost: $0.09");
   });
 
   it("exits 4 for an incident that does not exist", async () => {
@@ -376,9 +390,12 @@ describe("incident review", () => {
     expect(text).toMatch(
       /interpret\s+claude-opus-5\s+2\s+2,000,000\s+20,000\s+90\.0\s+est \$4\.15/,
     );
+    // A log from before the IC: cycles cut at plan.proposed, no IC lines, no verdicts.
     expect(text).toContain(
-      "plans: 2 proposed, 1 applied, 1 rejected (1 rule lines)",
+      "plans: 2 drafted in 2 cycle(s), 1 applied, 1 rejected (1 rule lines)",
     );
+    expect(text).toContain("ic verdicts: none");
+    expect(text).not.toContain("  ic ");
     expect(text).toContain(
       "tasks: 4 ran (0 deterministic, 4 sessions) of 5 created, 1 failed before running",
     );
@@ -531,5 +548,95 @@ describe("incident review", () => {
     const none = renderReview({ ...incident, status: "open" }, [], [], []);
     expect(none[1]).toBe("no cycle has run");
     expect(none.at(-1)).toBe("cost: $0.00");
+  });
+
+  it("numbers the cycles of an incident migrated under the IC the way cycleOf does: drafts before the first command turn, then command turns, a rejected or failed turn as the period it attempted", () => {
+    const usage = {
+      inputTokens: 1,
+      outputTokens: 1,
+      seconds: 1,
+      costUsd: 0.01,
+    };
+    const events = [
+      event(1, "plan.proposed", { usage, model: "claude-opus-5" }),
+      event(2, "plan.applied", { incidentStatus: "open" }),
+      event(3, "plan.proposed", { usage, model: "claude-opus-5" }),
+      event(4, "plan.rejected", { rule: "Units exist", reason: "x" }),
+      event(5, "command.turned", {
+        usage,
+        model: "claude-opus-5",
+        cycle: 3,
+        rejected: true,
+        turn: {
+          periodObjectives: ["a"],
+          closeUnits: [],
+          incidentStatus: "satisfied",
+        },
+      }),
+      event(6, "command.rejected", { rule: "Status is earned", reason: "y" }),
+      event(7, "command.failed", {
+        usage,
+        model: "claude-opus-5",
+        cycle: 3,
+        turn: "command",
+        reason: "the answer did not fit its schema",
+      }),
+      event(8, "command.turned", {
+        usage,
+        model: "claude-opus-5",
+        cycle: 3,
+        incidentStatus: "open",
+        turn: {
+          periodObjectives: ["a"],
+          closeUnits: [],
+          incidentStatus: "continue",
+        },
+      }),
+      event(9, "plan.proposed", {
+        usage,
+        model: "claude-opus-5",
+        redraft: false,
+      }),
+      event(10, "plan.reviewed", {
+        usage,
+        model: "claude-opus-5",
+        cycle: 3,
+        verdict: "approve",
+      }),
+      event(11, "plan.applied", {
+        incidentStatus: "open",
+        verdict: "approve",
+        corrections: null,
+      }),
+    ];
+    expect(cycleOf(events)).toBe(3);
+    const lines = renderReview({ ...incident, status: "open" }, events, [], []);
+    expect(lines[1]).toMatch(/^5 cycle\(s\) from/);
+    expect(lines.filter((l) => l.startsWith("cycle "))).toEqual([
+      expect.stringMatching(/^cycle 1 {2}\S+ {2}applied open {2}units/),
+      expect.stringMatching(/^cycle 2 {2}\S+ {2}rejected on 1 rule line\(s\)$/),
+      expect.stringMatching(/^cycle 3 {2}\S+ {2}command turn rejected$/),
+      expect.stringMatching(/^cycle 3 {2}\S+ {2}command turn failed$/),
+      expect.stringMatching(
+        /^cycle 3 {2}\S+ {2}applied open {2}ic approve {2}units/,
+      ),
+    ]);
+    expect(lines).toContain(
+      "plans: 3 drafted in 5 cycle(s), 2 applied, 1 rejected (1 rule lines)",
+    );
+    expect(
+      lines.some((l) =>
+        /^ {2}ic claude-opus-5: .* command turn failed: the answer did not fit/.test(
+          l,
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      lines.some((l) =>
+        /^ {2}ic claude-opus-5: .* set period 3: 1 objective\(s\), 0 close\(s\), continue$/.test(
+          l,
+        ),
+      ),
+    ).toBe(true);
   });
 });

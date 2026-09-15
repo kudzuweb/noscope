@@ -1284,3 +1284,151 @@ Not exactly to spec, with reasons:
 - A leader's declaration replaces a kind of the same name the task already declares rather
   than being refused, since `--agents` is keyed by name and a later definition is what the
   leader asked for; the event carries the whole resulting list.
+
+## R3-7: The IC above the planner (#33, merged 2026-09-15)
+
+R3-7 of the round 3 plan. Built: the root unit's leader, the Incident Commander, has its
+own two schemas and the cycle runs through it. `src/ic.ts` renders the IC's briefing, the
+change report since the IC last acted (every `picture.discrepancy` first, every
+`unit.reported` with its why, suggestion and whether the picture changed, every question
+answered and capability provided, the rules its last turn failed, and the spend since then:
+every usage any seat recorded after the IC's last turn, summed) followed by
+`renderPlannerInput`'s ten sections and the ask, and makes the IC's two calls on the root
+unit's session through `leaderRequest`: the command turn under `CommandTurn`
+(`periodObjectives`, `priorities`, `closeUnits`, `answers` with an empty default,
+`questionsForHuman`, `capabilityRequests`, `grantRequests`, `incidentStatus`, `rationale`,
+`discrepancy`) and the review under `ReviewTurn` (`approve`, `correct` with `corrections`,
+`amend` with `plan`), or `FinalReviewTurn` after a redraft, whose verdict enum is `approve
+| amend` so the provider's schema and the parse both refuse a second correction. The cycle
+in `src/commands/incident.ts` is the eight steps: briefing; command turn, validated under
+Units exist, Closing is clean and Status is earned (`validateCommand`, the turn checked as
+a plan that creates nothing) and applied by `applyCommand` (closes, questions, requests,
+status, and `command.turned` carrying the turn, the call's provenance and the period as the
+mutation `incident.period`), the cycle ending there when the status is not `continue` or
+the turn was rejected (`command.rejected` per rule); the planner's draft; the IC's review,
+with one redraft on `correct` (the planner's input is the file with its draft and the
+corrections appended after section 10, `plan.proposed` marked `redraft` with the
+corrections) and a second read under `FinalReviewTurn`; the validator on the plan to apply
+(the draft, the redraft, or the amended plan); `applyPlan`, whose `plan.applied` now
+carries `verdict`, `corrections` and `diff`; dispatch; stop. `planDiff` compares each
+array field of the plan as a set of items under a key-sorted JSON serialization (a
+reordered item is no change, an edited one is removed and added) and names the other
+fields that differ in `changed`. The incident carries `period` (`number`, `objectives`,
+`priorities`) in the new `period_json` column; the store is at schema version 6, and the
+migration also nulls every root unit's `session_id`, since a root session started under
+R3-4 keeps that build's leader role text in its snapshotted system prompt, so the IC's
+first command turn starts a fresh session under `IC_ROLE`. The period renders into the
+planner's section 1, every leader's orientation and every task's brief (`renderPeriod` in
+`src/tree.ts`, nothing before a period exists). `leaderRole("ic")` returns the new
+`IC_ROLE`: it scopes, breaks down, equips and judges; its digging is assigned; a period
+ends when units report or the picture changes; `satisfied` when the period objectives and
+the incident objective are met by the reports on observed claims; a `not_met` report's
+why and suggestion are information for its decision and never a decision; a discrepancy
+it cannot reconcile from the file becomes a question for Mauria; the situation stays the
+planner's; one review, one redraft; a task under command runs under it as under any
+leader. The planner's prompt says the IC sets the period and reviews the draft, and that
+the rationale names the priority that chose between plans. The IC's own activity is filed
+under the root unit and the cycle with `seat: "ic"`; `cycleOf` in `src/store.ts` counts
+`command.turned` events, falling back to `plan.proposed` for a log from before the IC, and
+`incident review` cuts cycles the same way, prints the IC's command turn and each review
+with their usage under the role `ic`, each draft's planner line (`redraft` marked), the
+cycle's verdict with the IC's, and `ic verdicts: N review(s): a approve, c correct, m
+amend`. `incident show` prints the current period's objectives and priorities. The stub
+recognises the two schemas (`periodObjectives`, `verdict`) and answers
+`NOSCOPE_STUB_COMMAND(S)` and `NOSCOPE_STUB_REVIEW(S)` walked with their own counter
+files, or by default one objective and `continue`, and `approve`; `NOSCOPE_STUB_CALLS`
+lines carry the kinds `command` and `review`. DESIGN.md Vocabulary (action plan, cycle,
+incident file, a new operational period row), the ICS mapping rows for the Incident
+Commander and Planning Section, the action plan and the Planning P, Step 1's layout, Step 2
+(the `period_json` column, the new event types, the version 5 migration), Step 3 (the
+preamble row), Step 4 (retitled the IC and the planner: the briefing, both schemas, the
+review and the diff, the channel table), Step 5 (the root is never closed; what a command
+turn is held to), Step 6 (the IC's usage and activity), Step 7 (`create`, `show`, `step`,
+`review`, `answer`) and the Speed section follow; `docs/architecture.html` gains the IC
+node and the eight-step cycle; the README's environment paragraph names the IC.
+
+Tests (`test/ic.test.ts`): a run on the stub where cycle 1's IC sets objectives, the
+planner drafts, the IC corrects, the planner redrafts with the corrections in its input,
+the IC approves under a schema that cannot say correct, the plan applies with the verdict,
+corrections and diff on `plan.applied`, a unit reports, `show` prints the period and
+`review` counts the verdicts; a `pictureChanged` report ends the pass and the next step's
+briefing opens with the discrepancy and the report, with the spend since the IC's last
+act; `amend` applies the amended plan and records the diff; a second `correct` fails the
+step with the IC named; a `satisfied` turn with no observed claim and a close of the root
+are rejected with `command.rejected` and named in the next briefing, a `blocked` turn with
+a question stops before the planner and `answer` reopens the incident, and a `failed` turn
+closes it; the change report and briefing rendered from a scripted log; the two schemas;
+the diff. The models test counts 39 event types; the store test migrates a version 5 file,
+replays the period, and asserts the root session is dropped and a leader's kept; the
+planner snapshot shows the period in section 1; the review test pins the IC lines and the
+verdict counts, and that a log from before the IC shows none; the step test's printout
+gains the IC's lines.
+
+Not exactly to spec, with reasons:
+
+- `command.turned` is written before the IC's own filing events (`leader.started`, its
+  `tool.called` and `picture.discrepancy`) in the same transaction: `icCall` returns a
+  `record` closure the caller runs after the turn's event, so the turn opens the cycle in
+  the log and review's cut at `command.turned` keeps the IC's activity in its cycle.
+- The command turn is validated, which the plan block does not say: a close of a unit that
+  is closed, running, owing a report, or the root would throw inside `closeUnit` or leave
+  the tree wrong, and a `satisfied` with no observed claim would close the incident
+  unearned. The three rules that cover what a turn can do are applied by the same checks
+  as a plan's; `command.rejected` is a new event type for it, and "Closing is clean" now
+  refuses the root for plans too.
+- `diff` on `plan.applied` is between the planner's first draft and the applied plan, not
+  the redraft and the applied plan, so after a correction it shows what the correction
+  changed; with `corrections` beside it that is the whole record of the IC's hand.
+- `Period` carries `number`, the cycle that set it, so `show` and a brief can say which
+  period this is; `period` is optional on `Incident` rather than nullable, so the many
+  incident literals in tests keep compiling and an `incident.create` mutation from an old
+  log parses unchanged.
+- The IC's `answers` are recorded on `command.turned` and printed by `step`; delivering
+  them to a waiting unit is R3-6's, whose resource requests and `waiting` status are not on
+  this base.
+- The IC's usage is not counted against the budget, like the planner's and the leaders'
+  (the design call on the revisit list); the change report's spend does include it.
+- `--priority` on `create` and `priorities` on the incident already existed (PR 4) and
+  rendered in section 1; this PR adds the planner prompt's sentence that the rationale
+  names the priority, the IC's restatement on the period, and the priorities in every
+  brief.
+- The IC's session is always created by a command turn, never by a task under command:
+  the command turn is step 2 and dispatch is step 7, and the migration nulls a session
+  R3-4 had started, so no root session ever carries the old role text.
+- A resumed IC call that dies before the stream's init line replaces the session the way a
+  leader's turn does (`leader.started` with `replaced`), so a lost root session does not
+  end every cycle.
+- The stub's `NOSCOPE_STUB_FAIL`, `NOSCOPE_STUB_EXIT` and `NOSCOPE_STUB_SLEEP_MS` leave the
+  IC's turns alone as they leave a leader's, and `NOSCOPE_STUB_LEADER_FAIL` fails them; an
+  empty `NOSCOPE_STUB_COMMANDS` or `NOSCOPE_STUB_REVIEWS` list falls back to the default
+  rather than answering nothing.
+- Review's "plans:" line now reads "N drafted in M cycle(s)", since a cycle can hold two
+  drafts.
+- An IC that cannot answer (a failed session, or an output that does not fit, which is
+  what a second `correct` is) ends the step with exit 1 naming the IC; the call is filed
+  first as `command.failed` (session id, which turn, cycle, reason, the usage the provider
+  returned) and a first call's session goes on the unit (`leader.started` with `failed`),
+  so R3-9's context sum and `incident review` see it and no paid session is orphaned. The
+  period it set stands and the next step opens a new command turn.
+- From the review (PR 33): every turn schema is `z.strictObject`, including `UnitClose` and
+  `GrantRequest`, which the plan shares; `FinalReviewTurn` omits `corrections` before its
+  refinement, and the refinement also refuses a `plan` without `amend` and `corrections`
+  without `correct`, so only an amend verdict's plan is ever applied. A review on a session
+  with no id (lost since the command turn, or fresh after a handoff) is briefed with the
+  change report and the file before the draft: `icCall` takes a prompt builder that sees
+  the unit as it stands. The IC's `leader.started` carries no usage and the change report
+  skips the IC's own discrepancies, so a turn that ends the cycle is not reported back to
+  the IC as news. The migration releases a root session through the log (`leader.released`,
+  the `unit.session` mutation with a null id; `setUnitSession` takes null), so a replay
+  drops it too, and R3-9 drops a session the same way. `cycleOf` counts the drafts before
+  the first command turn plus the accepted command turns, so a migrated incident keeps its
+  numbering and a rejected turn does not advance the period; review cuts on the same
+  openers and lists a rejected or failed command turn as the period it attempted. The
+  change report's heading names its window (the command turn or the review it follows),
+  renders a `resource requests:` heading with `(none)` for R3-6 to fill, and the role text
+  says `answers` is for those and nothing else, that the IC's tools are for a task under
+  command and not its turns, and that `satisfied` is refused while a task is open.
+- For R3-9: a handoff between the command turn (step 2) and the review (step 4) must
+  re-brief the incoming session before the draft; `reviewTurn` already does so for a
+  session with no id, so releasing the root session (`setUnitSession` with null) before
+  the review is the whole mechanism.

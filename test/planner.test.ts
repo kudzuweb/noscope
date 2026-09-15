@@ -42,6 +42,16 @@ function cycledIncident(store: Store) {
     },
     "runtime",
   );
+  store.setIncidentPeriod(
+    "i1",
+    {
+      number: 1,
+      objectives: ["establish what moves the scroll position after a delete"],
+      priorities: ["settling by observation over reading"],
+    },
+    "runtime",
+    { rationale: "first period" },
+  );
   store.record("i1", "plan.proposed", "planner", { rationale: "first look" });
   store.record("i1", "plan.applied", "runtime", { rationale: "first look" });
   const done = s.task({
@@ -298,6 +308,11 @@ describe("planner", () => {
         (none)
       priorities:
         (none)
+      operational period: 1
+      period objectives:
+        - establish what moves the scroll position after a delete
+      period priorities:
+        - settling by observation over reading
       budget remaining: tokens unlimited, seconds unlimited (spent tokens 1500, seconds 4.5)
       grants:
         (none)

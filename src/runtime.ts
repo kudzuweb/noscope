@@ -1,12 +1,15 @@
 import type {
   ActionPlan,
+  CommandTurn,
   Incident,
   IncidentStatus,
+  Period,
   Question,
   Task,
   Unit,
 } from "./models.js";
 import { now, type Store } from "./store.js";
+import { stable } from "./validator.js";
 
 /** What applying a plan changed, by id, so the caller can print it and the dispatcher can pick up the ready tasks. */
 export type Applied = {
@@ -19,6 +22,126 @@ export type Applied = {
 };
 
 const pad = (n: number) => String(n).padStart(2, "0");
+
+/** The incident's status after a plan or a command turn: a closing status stands, a raised channel blocks, otherwise open. */
+function statusAfter(turn: {
+  incidentStatus: ActionPlan["incidentStatus"];
+  questionsForHuman: readonly string[];
+  capabilityRequests: readonly unknown[];
+  grantRequests: readonly unknown[];
+}): IncidentStatus {
+  const blocked =
+    turn.questionsForHuman.length > 0 ||
+    turn.capabilityRequests.length > 0 ||
+    turn.grantRequests.length > 0;
+  return turn.incidentStatus === "satisfied" || turn.incidentStatus === "failed"
+    ? turn.incidentStatus
+    : blocked
+      ? "blocked"
+      : "open";
+}
+
+/** New questions numbered after the incident's, from the texts a plan or a command turn raises. */
+function newQuestions(
+  incident: Incident,
+  texts: readonly string[],
+): Question[] {
+  const asked = incident.questions.length;
+  return texts.map((text, i) => ({
+    id: `${incident.id}-q${pad(asked + i + 1)}`,
+    text,
+  }));
+}
+
+/** The channels a plan or a command turn raises, written with their events; the status change follows in the same transaction. */
+function recordChannels(
+  store: Store,
+  incident: Incident,
+  turn: Pick<
+    ActionPlan,
+    "questionsForHuman" | "capabilityRequests" | "grantRequests" | "rationale"
+  >,
+  questions: readonly Question[],
+  incidentStatus: IncidentStatus,
+  actor: string,
+): void {
+  if (questions.length > 0)
+    store.setIncidentQuestions(
+      incident.id,
+      [...incident.questions, ...questions],
+      actor,
+      "question.asked",
+      { questions },
+    );
+  if (turn.capabilityRequests.length > 0)
+    store.setIncidentCapabilityRequests(
+      incident.id,
+      [...incident.capabilityRequests, ...turn.capabilityRequests],
+      actor,
+      "capability.requested",
+      { capabilityRequests: turn.capabilityRequests },
+    );
+  for (const g of turn.grantRequests)
+    store.record(incident.id, "grant.requested", actor, g);
+  if (incidentStatus !== "open")
+    store.setIncidentStatus(
+      incident.id,
+      incidentStatus,
+      actor,
+      incidentStatus === "blocked" ? "incident.blocked" : "incident.closed",
+      { rationale: turn.rationale },
+    );
+}
+
+/** The IC's verdict on the draft, recorded on `plan.applied` beside the plan (DESIGN.md Step 4). */
+export type PlanReview = {
+  verdict: "approve" | "correct" | "amend";
+  corrections: string | null;
+  diff: PlanDiff;
+};
+
+/** Per plan array, the items the applied plan has that the draft did not and the reverse; `changed` names the other fields that differ. */
+export type PlanDiff = {
+  arrays: Record<string, { added: unknown[]; removed: unknown[] }>;
+  changed: string[];
+};
+
+const PLAN_ARRAYS = [
+  "createUnits",
+  "closeUnits",
+  "createTasks",
+  "cancelTasks",
+  "questionsForHuman",
+  "grantRequests",
+  "capabilityRequests",
+  "applySops",
+] as const;
+
+/**
+ * How the applied plan differs from the draft, structurally: each array field compared as
+ * sets of items under a key-sorted JSON serialization, so a reordered item is no change
+ * and an edited one shows as removed and added; every other field (`incidentStatus`,
+ * `situation`, `rationale`, `discrepancy`) is named in `changed` when its serialization
+ * differs. Empty when the IC approved the draft as drafted.
+ */
+export function planDiff(draft: ActionPlan, applied: ActionPlan): PlanDiff {
+  const arrays: PlanDiff["arrays"] = {};
+  for (const field of PLAN_ARRAYS) {
+    const before = new Set((draft[field] as unknown[]).map(stable));
+    const after = new Set((applied[field] as unknown[]).map(stable));
+    const added = (applied[field] as unknown[]).filter(
+      (item) => !before.has(stable(item)),
+    );
+    const removed = (draft[field] as unknown[]).filter(
+      (item) => !after.has(stable(item)),
+    );
+    if (added.length + removed.length > 0) arrays[field] = { added, removed };
+  }
+  const changed = (
+    ["incidentStatus", "situation", "rationale", "discrepancy"] as const
+  ).filter((field) => stable(draft[field]) !== stable(applied[field]));
+  return { arrays, changed };
+}
 
 /** New units ordered so every parent created in the same plan is written before its children; the validator has ruled out cycles. */
 function parentsFirst(
@@ -52,6 +175,7 @@ export function applyPlan(
   incidentRef: Pick<Incident, "id">,
   plan: ActionPlan,
   actor = "runtime",
+  review?: PlanReview,
 ): Applied {
   const incident = store.getIncident(incidentRef.id);
   if (incident === undefined)
@@ -121,21 +245,8 @@ export function applyPlan(
     createdAt: at,
     completedAt: null,
   }));
-  const asked = incident.questions.length;
-  const questions: Question[] = plan.questionsForHuman.map((text, i) => ({
-    id: `${incident.id}-q${pad(asked + i + 1)}`,
-    text,
-  }));
-  const blocked =
-    questions.length > 0 ||
-    plan.capabilityRequests.length > 0 ||
-    plan.grantRequests.length > 0;
-  const incidentStatus: IncidentStatus =
-    plan.incidentStatus === "satisfied" || plan.incidentStatus === "failed"
-      ? plan.incidentStatus
-      : blocked
-        ? "blocked"
-        : "open";
+  const questions = newQuestions(incident, plan.questionsForHuman);
+  const incidentStatus = statusAfter(plan);
 
   store.batch(() => {
     for (const u of units) store.createUnit(u, actor);
@@ -162,32 +273,7 @@ export function applyPlan(
       );
     for (const c of plan.closeUnits)
       store.closeUnit(incident.id, c.unitId, c.reason, actor);
-    if (questions.length > 0)
-      store.setIncidentQuestions(
-        incident.id,
-        [...incident.questions, ...questions],
-        actor,
-        "question.asked",
-        { questions },
-      );
-    if (plan.capabilityRequests.length > 0)
-      store.setIncidentCapabilityRequests(
-        incident.id,
-        [...incident.capabilityRequests, ...plan.capabilityRequests],
-        actor,
-        "capability.requested",
-        { capabilityRequests: plan.capabilityRequests },
-      );
-    for (const g of plan.grantRequests)
-      store.record(incident.id, "grant.requested", actor, g);
-    if (incidentStatus !== "open")
-      store.setIncidentStatus(
-        incident.id,
-        incidentStatus,
-        actor,
-        incidentStatus === "blocked" ? "incident.blocked" : "incident.closed",
-        { rationale: plan.rationale },
-      );
+    recordChannels(store, incident, plan, questions, incidentStatus, actor);
     store.record(incident.id, "plan.applied", actor, {
       rationale: plan.rationale,
       situation: plan.situation,
@@ -196,6 +282,7 @@ export function applyPlan(
       tasks: tasks.map((t) => t.id),
       cancelledTasks: plan.cancelTasks,
       incidentStatus,
+      ...(review === undefined ? {} : review),
     });
   });
   return {
@@ -204,6 +291,66 @@ export function applyPlan(
     tasks,
     cancelledTasks: plan.cancelTasks,
     questions,
+    incidentStatus,
+  };
+}
+
+/** What applying a command turn changed: the units closed, the questions raised, the period set and the incident's status. */
+export type Commanded = {
+  closedUnits: string[];
+  questions: Question[];
+  period: Period;
+  incidentStatus: IncidentStatus;
+};
+
+/**
+ * Apply the IC's validated command turn in one transaction: `command.turned` first, carrying
+ * the turn, the call's provenance (`extra`: unit, session, model, usage) and the period as
+ * its mutation, so it opens the cycle in the log; then `record`, which files the call
+ * itself; then units closed, questions and requests recorded, and the incident's status
+ * set (DESIGN.md Step 4). The period's number is the cycle. Answers to resource requests
+ * ride on the event; delivering them to a waiting unit is R3-6's.
+ */
+export function applyCommand(
+  store: Store,
+  incidentRef: Pick<Incident, "id">,
+  turn: CommandTurn,
+  cycle: number,
+  extra: Record<string, unknown>,
+  record: () => void = () => {},
+  actor = "runtime",
+): Commanded {
+  const incident = store.getIncident(incidentRef.id);
+  if (incident === undefined)
+    throw new Error(`no incident ${incidentRef.id} to command`);
+  if (incident.status !== "open")
+    throw new Error(
+      `incident ${incident.id} is ${incident.status}; a command turn applies only to an open incident`,
+    );
+  const questions = newQuestions(incident, turn.questionsForHuman);
+  const incidentStatus = statusAfter(turn);
+  const period: Period = {
+    number: cycle,
+    objectives: turn.periodObjectives,
+    priorities: turn.priorities,
+  };
+  store.batch(() => {
+    store.setIncidentPeriod(incident.id, period, actor, {
+      ...extra,
+      turn,
+      rationale: turn.rationale,
+      cycle,
+      incidentStatus,
+    });
+    record();
+    for (const c of turn.closeUnits)
+      store.closeUnit(incident.id, c.unitId, c.reason, actor);
+    recordChannels(store, incident, turn, questions, incidentStatus, actor);
+  });
+  return {
+    closedUnits: turn.closeUnits.map((c) => c.unitId),
+    questions,
+    period,
     incidentStatus,
   };
 }
