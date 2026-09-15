@@ -896,8 +896,8 @@ commit, `pnpm build`, replay the events with `sequence` below the call's answer 
 and call the renderer; a command for it is not built. DESIGN.md Step 2 and Step 7, the
 README's build section and `docs/architecture.html`'s store node follow.
 
-Acceptance: a store test that every event written carries the runtime tag and a version 7
-migration reads `null` on old rows; a build test that `dist/` carries the SHA the build ran
+Acceptance: a store test that every event written carries the runtime tag and the
+migration that adds the column reads `null` on old rows; a build test that `dist/` carries the SHA the build ran
 at; `review` on the stub names one runtime.
 ### R4-10: Fourth run
 Scope: the first incident's objective run a fourth time from the same roughdraftplus
