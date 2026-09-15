@@ -2,6 +2,7 @@ import { z } from "zod";
 import { recordActivity } from "./activity.js";
 import {
   describeRefusedCall,
+  eventsSinceLastCommand,
   fallbackModel,
   latestReports,
   leaderRequest,
@@ -503,7 +504,8 @@ export function renderReport(
  * report or under command, is clipped at `workChars` (R4-1). The reports listed are those
  * since the IC's last accepted command turn, the ones its verdicts must answer (R4-2), so a
  * report a rejected turn left unanswered is listed again for the retry; a unit's earlier
- * report in that window is marked as answered through its last.
+ * report in that window is marked as answered through its last. The tasks under command
+ * use the same window, so a rejected turn does not drop the root's ended tasks either.
  */
 export function renderChangeReport(
   events: readonly Event[],
@@ -554,7 +556,7 @@ export function renderChangeReport(
     .map((e) => `${str(e.payload.rule)}: ${str(e.payload.reason)}`);
   const underCommand = renderTasksUnderCommand(
     events,
-    recent,
+    eventsSinceLastCommand(events),
     units.find((u) => u.parentId === null),
     workChars,
   );

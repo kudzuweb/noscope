@@ -485,11 +485,23 @@ export function unitsOwingReport(
  * any leader's. The change report lists them all; the verdicts answer `latestReports`.
  */
 export function reportsAwaitingVerdict(events: readonly Event[]): Event[] {
+  return eventsSinceLastCommand(events).filter(
+    (e) => e.type === "unit.reported",
+  );
+}
+
+/**
+ * Everything after the IC's last accepted `command.turned`: the window its verdicts
+ * answer and, with no leader turn on the root (R4-6), the window the tasks under command
+ * are judged in. A rejected turn does not move it, so what a rejected turn saw is listed
+ * again for the retry.
+ */
+export function eventsSinceLastCommand(events: readonly Event[]): Event[] {
   let since = -1;
   for (const e of events)
     if (e.type === "command.turned" && e.payload.rejected !== true)
       since = e.sequence;
-  return events.filter((e) => e.type === "unit.reported" && e.sequence > since);
+  return events.filter((e) => e.sequence > since);
 }
 
 /**

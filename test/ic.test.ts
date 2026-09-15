@@ -1186,6 +1186,54 @@ describe("the IC above the planner", () => {
     store.close();
   });
 
+  it("a rejected command turn keeps the root's ended tasks listed on the retry, the same window as the reports; an accepted turn clears them (R4-2)", () => {
+    const store = new Store(":memory:");
+    const s = scriptedIncident(store);
+    const grep = s.task({
+      id: "c-grep",
+      capability: "grep",
+      objective: "find the handler",
+    });
+    store.setTaskStatus(
+      "i1",
+      grep.id,
+      "completed",
+      "dispatcher",
+      "task.completed",
+      { result: { root: "/r", matches: [], truncated: false } },
+    );
+    const under = () => {
+      const lines = renderChangeReport(
+        store.listEvents("i1"),
+        s.incident,
+        store.listUnits("i1"),
+      );
+      const start = lines.indexOf(
+        "tasks under command, ended with no leader to report them:",
+      );
+      return start === -1
+        ? []
+        : lines.slice(start, lines.indexOf("resource requests:"));
+    };
+    expect(under()[1]).toBe("  - task c-grep (grep): find the handler");
+    store.record("i1", "command.turned", "runtime", {
+      turn: command(),
+      cycle: 1,
+      rejected: true,
+    });
+    store.record("i1", "command.rejected", "validator", {
+      rule: "Status is earned",
+      reason: "task c-grep is still open",
+    });
+    expect(under()[1]).toBe("  - task c-grep (grep): find the handler");
+    store.record("i1", "command.turned", "runtime", {
+      turn: command(),
+      cycle: 1,
+    });
+    expect(under()).toEqual([]);
+    store.close();
+  });
+
   it("a long summary never clips the claims: they come first and the summary is cut, and a wide grep lists its claims past the first three by id (R4-1)", () => {
     const store = new Store(":memory:");
     const s = scriptedIncident(store);

@@ -2688,6 +2688,12 @@ Not exactly to spec, with reasons:
   the IC is deciding on; the earlier is listed and marked, and a verdict naming it is
   refused with the id that takes one. The stub answers each reporting unit on its last
   listed report. Decided with the orchestrator on PR 44's second review.
+- The "tasks under command" block of the change report (R4-6) used the window since the
+  IC's last turn of any kind, so after a rejected command turn the retry's briefing
+  re-listed the reports but dropped the root's tasks that ended before the rejection.
+  Fixed here: both use `eventsSinceLastCommand` in `src/leader.ts`, everything after the
+  last accepted `command.turned`; tested by a rejected turn that keeps a completed root
+  task listed and an accepted one that clears it.
 - The window is the reports since the IC's last accepted command turn, not since it last
   acted, and the change report's report list now uses the same window: a rejected turn
   answered nothing, and under the old window the reports vanished from the retry's

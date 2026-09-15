@@ -380,7 +380,8 @@ work (capability, objective, claims, then how it ended: a deterministic result's
 whole under the cap, since no leader reads the root's results and this block is the IC's
 only view of them; a session result's summary, or what an insufficient result needed; a
 failure's reason), because no leader reports on the root's tasks and the IC judges them
-here (R4-6), then every
+here (R4-6; the tasks listed are those ended since the IC's last accepted command turn,
+the reports' window, so a rejected turn drops none of them from the retry), then every
 question answered and capability provided, the rules the IC's last turn failed if it was
 rejected, and the spend since then (every usage any seat recorded after the IC's last
 turn, summed). The reports listed are every `unit.reported` since the IC's last accepted
