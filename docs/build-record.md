@@ -2480,10 +2480,16 @@ task starts after it, every run in flight finishes and lands, and a task that la
 the halt still gets its leader's turn (the leader hears the ending; nothing starts from
 it), so a result is never left unread; `dispatch` returns once every pass has landed its
 runs, with the first halt (`pictureChanged` names the first such unit). The budget is
-checked before every start with what the tasks in flight are held to (`reservationFor`:
-the task's own bound or the capability's typical cost) beside what is spent, so concurrent
-starts cannot overrun it together; the `budget.exceeded` reason says what is in flight. A
-leader that cannot answer, or a run that throws past `runOne`, sets the halt, and the
+checked before every start (`budgetRoom`): a task that does not fit what is spent stops
+the pass with `budget.exceeded`, round 3's test and reason; a task that fits what is spent
+but not what is spent plus what the tasks in flight are held to (`reservationFor`: the
+task's own bound or the capability's typical cost) is deferred, left unattempted for the
+sweep after the next landing anywhere (a dispatch-wide promise replaced on every
+landing), so concurrent starts cannot overrun the budget together and a reservation never
+stops an incident, since `incident run` ends on any stop and the planner reads
+`budget.exceeded` as the budget having stopped the pass. A pass with a deferred start and
+nothing of its own in flight waits on that promise rather than ending. A leader that
+cannot answer, or a run that throws past `runOne`, sets the halt, and the
 error is thrown once every pass has landed its runs, so nothing writes to the store after
 `dispatch` returns. `failInterrupted` keeps its job, since a pass lands every run before it
 returns. `Dispatched.ran` is in landing order. `LEADER_ROLE` says tasks in sessions of
@@ -2519,9 +2525,11 @@ asks the leader to continue or report rather than for its report; two tasks insi
 leader's session run one at a time, each followed by its turn; a leader that reports while
 its own task runs leaves the task to land without a turn, and the next pass's owed turn
 renders that ending before asking for the report; a task in flight is held against the
-budget, so a second unit's task that would not fit is refused before it starts with the
-reason naming what is in flight, while the first still lands and its leader still hears
-it; `NOSCOPE_PARALLEL=0` is refused. The round 3 dispatcher tests that read as a sequence
+budget, so a second unit's task that fits by spend but not by reservation waits for the
+landing and is then stopped on what is spent, with one `budget.exceeded` after the first
+task's `task.completed`, while the first's leader still hears it; two units whose tasks
+fit one at a time by spend but not by reservation both run, the second starting after the
+first lands, with nothing stopped; `NOSCOPE_PARALLEL=0` is refused. The round 3 dispatcher tests that read as a sequence
 now declare it: the grep, investigate and interpret test and the strike-team test chain
 their tasks with `dependsOn` (and so also pin that a chain still serializes: `task.ready`
 per dependent, the same call order as before), the two-unit picture-change and waiting

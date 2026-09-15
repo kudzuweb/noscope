@@ -2575,7 +2575,7 @@ describe("dispatcher, parallel dispatch", () => {
     store.close();
   }, 20_000);
 
-  it("a task in flight is held against the budget: a second unit's task that would not fit is refused before it starts", async () => {
+  it("a task in flight is held against the budget: a second unit's task that fits by spend but not by reservation waits for the landing, and the budget stops it only on what is then spent", async () => {
     const store = new Store(":memory:");
     const { task, addUnit } = scriptedIncident(store);
     const incident = store.getIncident("i1");
@@ -2589,9 +2589,9 @@ describe("dispatcher, parallel dispatch", () => {
       { ...incident, budget: { tokens: 100 } },
       { cwd: tree, env: stubEnv(scratch(), { NOSCOPE_STUB_SLEEP_MS: "500" }) },
     );
-    expect(dispatched.stopped).toBe(
-      "tokens: 0 spent and 60 in flight of 100, t-b needs 60",
-    );
+    // While t-a ran, t-b was deferred (0 spent, 60 held, 60 needed); once t-a's usage
+    // landed (the stub's 1,542 tokens), the stop fired on spend, never on the reservation.
+    expect(dispatched.stopped).toBe("tokens: 1542 spent of 100, t-b needs 60");
     expect(dispatched.ran.map((r) => [r.taskId, r.status])).toEqual([
       ["t-a", "completed"],
     ]);
@@ -2599,12 +2599,45 @@ describe("dispatcher, parallel dispatch", () => {
       "ready",
     );
     const types = store.listEvents("i1").map((e) => e.type);
-    expect(types).toContain("budget.exceeded");
-    // The stop came while t-a ran; t-a still landed and its leader still heard it.
-    expect(types.indexOf("budget.exceeded")).toBeLessThan(
+    expect(types.filter((t) => t === "budget.exceeded")).toHaveLength(1);
+    expect(types.filter((t) => t === "task.started")).toHaveLength(1);
+    // The stop came after t-a landed, and t-a's leader still heard it.
+    expect(types.indexOf("budget.exceeded")).toBeGreaterThan(
       types.indexOf("task.completed"),
     );
     expect(types.at(-1)).toBe("unit.reported");
+    store.close();
+  });
+
+  it("two units whose tasks fit the budget one at a time by spend but not by reservation both run: the second starts after the first lands, and nothing stops", async () => {
+    const store = new Store(":memory:");
+    const { task, addUnit } = scriptedIncident(store);
+    const incident = store.getIncident("i1");
+    if (incident === undefined) throw new Error("exists");
+    addUnit({ id: "u-a", objective: "the first half" });
+    addUnit({ id: "u-b", objective: "the second half" });
+    task(investigate("t-a", "u-a", { budget: { seconds: 30, tokens: 3000 } }));
+    task(investigate("t-b", "u-b", { budget: { seconds: 30, tokens: 3000 } }));
+    const dispatched = await dispatch(
+      store,
+      { ...incident, budget: { tokens: 5000 } },
+      { cwd: tree, env: stubEnv(scratch(), { NOSCOPE_STUB_SLEEP_MS: "500" }) },
+    );
+    // 3,000 held and 3,000 needed is over 5,000, so t-b waited; 1,542 spent and 3,000 needed is not.
+    expect(dispatched.stopped).toBeNull();
+    expect(dispatched.ran.map((r) => [r.taskId, r.status])).toEqual([
+      ["t-a", "completed"],
+      ["t-b", "completed"],
+    ]);
+    expect(dispatched.reports.map((r) => r.unitId).sort()).toEqual([
+      "u-a",
+      "u-b",
+    ]);
+    const events = store.listEvents("i1");
+    expect(events.map((e) => e.type)).not.toContain("budget.exceeded");
+    expect(sequenceOf(events, "task.started", "t-b")).toBeGreaterThan(
+      sequenceOf(events, "task.completed", "t-a"),
+    );
     store.close();
   });
 

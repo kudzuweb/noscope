@@ -142,29 +142,46 @@ function reservationFor(task: Task, capability: Capability): Reservation {
 }
 
 /**
- * Whether the incident's budget has room for this task: spend so far, plus what the tasks
- * in flight are held to, plus the task's own reservation, against the incident's bound.
+ * Whether the incident's budget has room for this task. `none` when what is spent plus the
+ * task's own reservation is over the bound: the stop, as in round 3, with its reason.
+ * `deferred` when the task fits what is spent but not what is spent plus what the tasks in
+ * flight are held to: the task waits for a landing, since a reservation is a bound, not a
+ * spend, and the room may be there once the run's usage is recorded. `fits` otherwise.
  */
-function overBudget(
+type Room =
+  | { room: "fits" }
+  | { room: "deferred" }
+  | { room: "none"; reason: string };
+
+function budgetRoom(
   incident: Incident,
   usage: Usage,
   held: Reservation,
   task: Task,
   capability: Capability,
-): string | null {
+): Room {
   const need = reservationFor(task, capability);
-  const inFlight = (n: number) => (n === 0 ? "" : ` and ${n} in flight`);
   const tokens = incident.budget.tokens;
   const spentTokens = usage.inputTokens + usage.outputTokens;
-  if (tokens !== undefined && spentTokens + held.tokens + need.tokens > tokens)
-    return `tokens: ${spentTokens} spent${inFlight(held.tokens)} of ${tokens}, ${task.id} needs ${need.tokens}`;
+  if (tokens !== undefined && spentTokens + need.tokens > tokens)
+    return {
+      room: "none",
+      reason: `tokens: ${spentTokens} spent of ${tokens}, ${task.id} needs ${need.tokens}`,
+    };
   const seconds = incident.budget.seconds;
+  if (seconds !== undefined && usage.seconds + need.seconds > seconds)
+    return {
+      room: "none",
+      reason: `seconds: ${usage.seconds.toFixed(1)} spent of ${seconds}, ${task.id} needs ${need.seconds}`,
+    };
   if (
-    seconds !== undefined &&
-    usage.seconds + held.seconds + need.seconds > seconds
+    (tokens !== undefined &&
+      spentTokens + held.tokens + need.tokens > tokens) ||
+    (seconds !== undefined &&
+      usage.seconds + held.seconds + need.seconds > seconds)
   )
-    return `seconds: ${usage.seconds.toFixed(1)} spent${inFlight(held.seconds)} of ${seconds}, ${task.id} needs ${need.seconds}`;
-  return null;
+    return { room: "deferred" };
+  return { room: "fits" };
 }
 
 /**
@@ -910,10 +927,11 @@ function relatedUnits(
  * (`pictureChanged` names the first such unit; a report with resource requests always
  * does, and so does the report the runtime writes for a unit whose seat was refused on
  * both models, R4-7), or, with `budget.exceeded`, when the incident's budget has no room
- * for the next task, what is in flight counted as spent; from that moment nothing new
- * starts, and every run in flight finishes and lands before `dispatch` returns. A leader
- * that cannot answer ends the pass the same way, and its error is thrown once the runs in
- * flight have landed.
+ * for the next task by what is spent; from that moment nothing new starts, and every run
+ * in flight finishes and lands before `dispatch` returns. A task that fits by what is spent
+ * but not with what the runs in flight are held to is deferred, not stopped: its unit's
+ * pass waits for the next landing anywhere and sweeps again. A leader that cannot answer
+ * ends the pass the same way, and its error is thrown once the runs in flight have landed.
  */
 export async function dispatch(
   store: Store,
@@ -941,6 +959,19 @@ export async function dispatch(
   };
   let failed: unknown;
   const reserved = new Map<string, Reservation>();
+  // A landing anywhere: a pass whose start was deferred on what runs in flight are held to
+  // waits for the next one, wherever it is, and sweeps again.
+  let landedAnywhere: () => void = () => undefined;
+  let anyLanding = new Promise<void>((resolve) => {
+    landedAnywhere = resolve;
+  });
+  const noteLanding = () => {
+    const notify = landedAnywhere;
+    anyLanding = new Promise<void>((resolve) => {
+      landedAnywhere = resolve;
+    });
+    notify();
+  };
   const held = (): Reservation => {
     const sum = { tokens: 0, seconds: 0 };
     for (const r of reserved.values()) {
@@ -1035,13 +1066,28 @@ export async function dispatch(
     const running = () => [...inFlight.values(), ...landed.map((e) => e.task)];
     let insideTask: string | null = null;
     let ranInUnit = false;
-    const start = (next: Task) => {
+    // A task's start: `started`; `deferred`, when it fits the budget by spend but not with
+    // what the runs in flight are held to, so it is left unattempted for the sweep after
+    // the next landing; or `stopped`, when the budget has no room for it by spend
+    // (`budget.exceeded`, and the pass halts).
+    const start = (next: Task): "started" | "deferred" | "stopped" => {
+      const capability = getCapability(next.capability);
+      const room =
+        capability === undefined
+          ? { room: "fits" as const }
+          : budgetRoom(
+              incident,
+              sumUsage(store.listEvents(incident.id)),
+              held(),
+              next,
+              capability,
+            );
+      if (room.room === "deferred") return "deferred";
       attempted.add(next.id);
       ranInUnit = true;
       inFlight.set(next.id, next);
       if (next.status === "pending")
         store.setTaskStatus(incident.id, next.id, "ready", actor, "task.ready");
-      const capability = getCapability(next.capability);
       let run: Promise<Landed>;
       if (capability === undefined) {
         const reason = `no capability named ${next.capability}`;
@@ -1064,21 +1110,14 @@ export async function dispatch(
         });
         run = Promise.resolve({ task: next, status: "failed", reason });
       } else {
-        const over = overBudget(
-          incident,
-          sumUsage(store.listEvents(incident.id)),
-          held(),
-          next,
-          capability,
-        );
-        if (over !== null) {
+        if (room.room === "none") {
           inFlight.delete(next.id);
           store.record(incident.id, "budget.exceeded", actor, {
             taskId: next.id,
-            reason: over,
+            reason: room.reason,
           });
-          stop({ stopped: over, pictureChanged: null });
-          return false;
+          stop({ stopped: room.reason, pictureChanged: null });
+          return "stopped";
         }
         reserved.set(next.id, reservationFor(next, capability));
         const inside = runsInsideLeader(capability, next, unit);
@@ -1113,17 +1152,19 @@ export async function dispatch(
             ended === undefined ? ending : { ...ending, task: ended },
           );
           wake?.();
+          noteLanding();
         },
         (error: unknown) => {
           crashed ??= error;
           reserved.delete(next.id);
           inFlight.delete(next.id);
           wake?.();
+          noteLanding();
         },
       );
       pending.add(landing);
       landing.then(() => pending.delete(landing));
-      return true;
+      return "started";
     };
     try {
       if (resumed.has(unit.id) && unit.parentId !== null) {
@@ -1137,6 +1178,7 @@ export async function dispatch(
         if (done.has(unit.id)) return;
       }
       for (;;) {
+        let deferred = false;
         if (halt === null && !done.has(unit.id))
           for (const next of runnableIn(unit.id)) {
             const capability = getCapability(next.capability);
@@ -1147,13 +1189,20 @@ export async function dispatch(
               runsInsideLeader(capability, next, unit)
             )
               continue;
-            if (!start(next)) break;
+            const started = start(next);
+            if (started === "started") continue;
+            deferred = started === "deferred";
+            break;
           }
-        if (inFlight.size === 0 && landed.length === 0) break;
+        if (inFlight.size === 0 && landed.length === 0 && !deferred) break;
+        // Nothing to hear yet: wait for a landing of this unit's, or, with a start
+        // deferred, for a landing anywhere, since that is what frees the room.
         if (landed.length === 0)
-          await new Promise<void>((resolve) => {
-            wake = resolve;
-          });
+          await (deferred
+            ? anyLanding
+            : new Promise<void>((resolve) => {
+                wake = resolve;
+              }));
         wake = null;
         if (crashed !== undefined) throw crashed;
         const ending = landed.shift();

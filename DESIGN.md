@@ -782,10 +782,13 @@ by its request's timeout alone: the provider kills the process and files its cal
 session id, so the leader's next call never finds its session still in use; the
 dispatcher's own timer bounds deterministic tasks only. A leader's turns are not counted
 against the incident's budget, as the planner's calls are not; `incident review` costs them
-under the role `leader`. The budget is checked before every task starts, with what the
-tasks in flight are held to (each task's own bound, or its capability's typical cost)
-counted beside what is spent, so concurrent starts cannot overrun it together; a stop
-prevents new starts and lets the runs in flight land.
+under the role `leader`. The budget is checked before every task starts. A task that does
+not fit what is spent stops the pass with `budget.exceeded`, as in round 3; a task that
+fits what is spent but not what is spent plus what the tasks in flight are held to (each
+task's own bound, or its capability's typical cost) is deferred: its unit's pass waits for
+the next landing anywhere and looks again, so concurrent starts cannot overrun the budget
+together, and a reservation, which is a bound and not a spend, never stops an incident. A
+stop prevents new starts and lets the runs in flight land.
 
 A task's strike team (R3-5) is provided to whichever call runs the task: the leader's
 resumed call when the task runs inside the leader, or the task's own session otherwise, as
