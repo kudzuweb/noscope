@@ -66,9 +66,9 @@ Definitions checked against the NIMS Third Edition (FEMA, October 2017) on 2026-
 | Agency Administrator: the executive above the incident who delegates authority to the Incident Commander, sets policy and priorities, and is briefed. | Mauria. Grants are her delegation of authority, `op show` is her briefing, and questions for a human go to her. |
 | Safety Officer: on the Command Staff, with independent authority to stop any unsafe act. | The validator's effect policy plus grants: nothing that writes runs without her permission, and the validator can stop an action plan on its own. |
 | Public Information Officer and Liaison Officer: what is told outside the incident, and the contact point for other agencies. | None. An incident is not charged with keeping anyone informed; providers and external MCP servers cover the liaison work without a role. |
-| Incident Commander: develops objectives, orders and releases resources. Planning Section: collects the situation picture, tracks resources, drafts the Incident Action Plan for the commander to approve. | Command, the root unit with its incident file, holds the objective and priorities as the Incident Commander does. The planner drafts the action plan as the Planning Section does. The situation the planner writes into each plan, read back to it next cycle and printed by `incident show`, is the Planning Section's situation picture. The validator, and Mauria for grants and questions, approve it, which is the commander's approval of the plan. One model call per cycle in v0; a separate commander call that revises objectives and priorities is after v0, with the cross-incident layer. |
+| Incident Commander: develops objectives, orders and releases resources. Planning Section: collects the situation picture, tracks resources, drafts the Incident Action Plan for the commander to approve. | Command, the root unit with its incident file, holds the objective and priorities as the Incident Commander does. The planner drafts the action plan as the Planning Section does. The situation the planner writes into each plan, read back to it next cycle and printed by `incident show`, is the Planning Section's situation picture. The validator, and Mauria for grants and questions, approve it, which is the commander's approval of the plan. One model call per cycle in v0; a separate commander call that revises objectives and priorities is R3-7's, which gives the IC its own turns above the planner. |
 | Section, Branch, Division, Group, Unit: the organizational levels, distinguished by depth and by functional versus geographic responsibility, each with a supervisor. | All are the one thing called a unit here. Depth is whatever the tree needs, a unit's objective says what it is responsible for, and its leader is the supervisor: a session that holds the objective, directs the unit's tasks and files a situation report (`unit.reported`: outcome `met`, `not_met` or `progress`, what changed on which claims, whether the picture changed, and for `not_met` why and a suggestion for the IC to decide on). A unit's leader is called its leader; the root's is the IC. |
-| Single Resource, Strike Team (same kind and type, one leader), Task Force (mixed kinds for one mission). | A capability is a single resource, and equipment is equipment; the word is ICS's. A capability that includes other capabilities is the strike team or task force. |
+| Single Resource, Strike Team (same kind and type, one leader), Task Force (mixed kinds for one mission). | A capability is a single resource, and equipment is equipment; the word is ICS's. A strike team is several subagents of one kind and model that a unit leader sends for one job; a task force is the mixed-kind version. Built in R3-5, with no presets and no default kind. A capability that includes other capabilities is composition in code, not a team. |
 | Resource typing: categorizing resources by capability so everyone means the same thing by a name. | The capability registry: name, description, schemas, side effects. |
 | Assignment: a task given to a person or team based on the objectives in the Incident Action Plan. | Task, ruled by Mauria as the software word for the same thing. |
 | Incident Action Plan and Operational Period: the objectives and tactics for one period, then a new plan. | Action plan, same word: the planner's proposed plan for the next cycle, approved by the validator before it is applied. One cycle is the operational period. |
@@ -406,14 +406,22 @@ rendered, or "recorded in this session", or the failure) and how many ready task
 `pictureChanged: true` on a report ends the whole pass, which `dispatch` returns as the
 unit's id, so the planner sees it before the next unit runs. With nothing left to run the
 leader is asked for its report; a leader that answers `continue` with nothing left ends the
-unit's pass without one, and a unit whose leader owes a report (a session, and a task ended
-after the last report) is asked for it at the start of the next pass even with no task.
-Every turn is one call on the leader's session, recorded as `unit.reported` (with the
-report) or `unit.continued`, each with the unit, the session id, the leader's provider and
-model and the call's usage; `leader.started` records the session on the unit at its first
-call; `unit.closed` carries the session id as the leader's demobilization. A leader that
-cannot answer (a failed session or an output that does not fit) ends the pass with an error
-naming the unit, after the task's own events were written. A leader's turns are not counted
+unit's pass without one, and a unit whose leader owes a report (a task ended after the last
+report) is asked for it at the start of the next pass even with no task, the turn creating
+the session if none exists. Every turn is one call on the leader's session, recorded as
+`unit.reported` (with the report) or `unit.continued`, each with the unit, the session id,
+the leader's provider and model and the call's usage; `leader.started` records the session
+on the unit at its first call, with the `cwd` it was launched from, whether that call was a
+task or a turn, and also when a task's first call failed with a session id; `unit.closed`
+carries the session id as the leader's demobilization. A leader session that cannot be
+resumed (the call dies before the stream's init line, as the binary does for a session it
+cannot find) is replaced: a fresh session is oriented and asked the same turn, and its
+`leader.started` names the dead session (`replaced`) and the reason. A leader that cannot
+answer otherwise (a failed session or an output that does not fit) ends the pass with an
+error naming the unit, after the task's own events were written. A session task is bounded
+by its request's timeout alone: the provider kills the process and files its calls under the
+session id, so the leader's next call never finds its session still in use; the
+dispatcher's own timer bounds deterministic tasks only. A leader's turns are not counted
 against the incident's budget, as the planner's calls are not; `incident review` costs them
 under the role `leader`.
 

@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { LEADER_ROLE } from "../src/leader.js";
+import { LEADER_ROLE, leaderRole } from "../src/leader.js";
 import { jsonSchemaFor, SessionResult } from "../src/models.js";
 import {
   SEAT_PLACES,
@@ -155,6 +155,22 @@ describe("claude code provider", () => {
       "discrepancy is for one thing only",
     ])
       expect(LEADER_ROLE).toContain(line);
+    expect(LEADER_ROLE).not.toContain("strike team");
+    expect(leaderRole("leader")).toBe(LEADER_ROLE);
+    const ic = leaderRole("ic");
+    expect(ic).toMatch(/^Your role: Incident Commander, leader of command\./);
+    expect(ic).toContain("because Mauria decides what happens next");
+    expect(ic).not.toContain("the IC, who has more perspective");
+    expect(ic.split("\n").slice(1)).toEqual(
+      LEADER_ROLE.split("\n")
+        .slice(1)
+        .map((l) =>
+          l.replace(
+            "because the IC, who has more perspective, decides what happens next",
+            "because Mauria decides what happens next",
+          ),
+        ),
+    );
     expect(claudeCodeProvider().models).toContain("claude-opus-5");
     for (const kind of [
       "retrievable_fact",

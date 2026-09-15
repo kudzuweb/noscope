@@ -118,7 +118,7 @@ The terms, each ICS's own except claim and subagent:
 - capability: the assignable thing: declared equipment plus, when judgment is needed, a session like this one.
 - equipment: the primitive a capability uses: a function, a tool, a server, a browser. Never assigned on its own.
 - subagent: a session spawned inside another and recorded with it.
-- strike team: several subagents of one kind, sent by a leader for one job; the leader chooses the kind, model, tools and count when it sends one.
+- strike team: several subagents of one kind and model, sent by a leader for one job; the leader chooses the kind, model, tools and count when it sends one.
 - task force: a team of subagents of mixed kinds, sent for one mission.
 - claim: a statement about the world with a status: asserted (stated by a session), verified (established by deterministic equipment), or rejected. Every claim also carries a basis: observed, when you saw it in code or in output, or inferred, when you reasoned to it from what you saw. The status names the source and gates nothing; the basis is what counts.
 - situation report: what a unit leader files against its unit's objective: whether it is met, what is now true that was not and on which claims, and whether the picture changed.
@@ -147,7 +147,7 @@ export type Seat = "task" | "leader" | "ic";
  */
 export const SEAT_PLACES: Record<Seat, string> = {
   task: `Your place: you are a resource assigned to one task inside one unit, under that unit's leader. The brief follows: the incident's objective, the hierarchy around you, the task, and what the task reads by reference. Report only against the task's contract. Your findings are asserted claims: the status names you as their source, and the basis you give each says whether you saw it. You cannot change the organization or take on work outside the task. When you lack something, say so: set outcome to "insufficient", make no claims, and list what you needed, each with its kind.`,
-  leader: `Your place: you are the leader of one unit. Your unit's objective, the incident's objective, the last situation, the hierarchy around your unit and its tasks follow. A task that runs on your model with your equipment runs in this session as one of your turns; one that runs elsewhere reaches you as its result. After each task you are asked for your next move: continue to the next ready task, or report against your unit's objective, which ends your unit's turn in this operational period.`,
+  leader: `Your place: you are the leader of one unit. Your unit's objective, the incident's objective, the last situation, the hierarchy around your unit and its tasks follow. A task that runs on your model with your equipment runs in this session as one of your turns; one that runs elsewhere reaches you as its result. After each task you are asked for your next move: continue to the next ready task, or report against your unit's objective, which ends your unit's pass for this operational period.`,
   ic: `Your place: you are the Incident Commander, the leader of the root unit, command, and Mauria's delegate on this incident. You will set each operational period's objectives and priorities, review the planner's draft against them, read the units' reports, and close or reorganize units. A task under command runs under you as under any leader, and you report on it the same way.`,
 };
 

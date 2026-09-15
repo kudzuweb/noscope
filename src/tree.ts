@@ -69,7 +69,7 @@ export function renderHierarchy(unit: Unit, units: readonly Unit[]): string[] {
   return [
     `Your unit: ${unit.id}${unit.parentId === null ? " (command, the root)" : ""}, leader ${unit.leader.provider}/${unit.leader.model}: ${unit.objective}`,
     unit.parentId === null
-      ? "Reports to: Mauria, the Agency Administrator, through the planner and the incident file"
+      ? "Reports to: Mauria, the Agency Administrator; your reports go into the incident file"
       : `Reports to: ${unit.parentId}${parent === undefined ? "" : `, leader ${parent.leader.provider}/${parent.leader.model}: ${parent.objective}`}`,
     below.length === 0
       ? "Below it: no units"

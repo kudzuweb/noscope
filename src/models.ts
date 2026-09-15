@@ -371,13 +371,20 @@ export const ActionPlan = z.strictObject({
 
 /** One thing that is now true that was not, and the claims it rests on. */
 export const ReportChange = z.object({
-  what: z.string().min(1),
+  what: z
+    .string()
+    .min(1)
+    .describe("One thing that is now true that was not, in one line"),
   claims: z.array(z.string()).describe("Claim ids the change rests on"),
 });
 
 export const LeaderReport = z.object({
   outcome: z.enum(["met", "not_met", "progress"]),
-  changed: z.array(ReportChange),
+  changed: z
+    .array(ReportChange)
+    .describe(
+      "What is now true that was not, each citing the claims it rests on",
+    ),
   pictureChanged: z
     .boolean()
     .describe(
