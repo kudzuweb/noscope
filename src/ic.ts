@@ -37,7 +37,7 @@ const REVIEW_TURN_SCHEMA = jsonSchemaFor(ReviewTurn);
 const FINAL_REVIEW_TURN_SCHEMA = jsonSchemaFor(FinalReviewTurn);
 const HANDOFF_SCHEMA = jsonSchemaFor(HandoffDocument);
 
-/** The context size, in tokens of a call's whole input, at which command is handed off; `NOSCOPE_IC_HANDOFF_TOKENS` overrides it. */
+/** The context size, in tokens of the last message of the IC's last call, at which command is handed off; `NOSCOPE_IC_HANDOFF_TOKENS` overrides it. */
 const DEFAULT_HANDOFF_TOKENS = 120_000;
 
 /** The handoff threshold the environment sets, or the default; refused when it is not a positive whole number. */
@@ -68,9 +68,10 @@ function lastActed(events: readonly Event[]): Event | null {
 }
 
 /**
- * The context the IC's last call ran with: the whole input of whichever of `command.turned`,
+ * The context the IC's session holds: `contextTokens` (the context of the call's last
+ * message, never the call's summed input) on whichever of `command.turned`,
  * `plan.reviewed` or `command.failed` was last, with the session it ran on; null before
- * the first, or when that call recorded no usage.
+ * the first, or when that call recorded no context, so an unknown figure never hands off.
  */
 export function lastIcContext(
   events: readonly Event[],
@@ -84,8 +85,11 @@ export function lastIcContext(
     )
       last = e;
   const usage = last?.payload.usage as Partial<Usage> | undefined;
-  if (last === null || typeof usage?.inputTokens !== "number") return null;
-  return { sessionId: str(last.payload.sessionId), tokens: usage.inputTokens };
+  if (last === null || typeof usage?.contextTokens !== "number") return null;
+  return {
+    sessionId: str(last.payload.sessionId),
+    tokens: usage.contextTokens,
+  };
 }
 
 /**

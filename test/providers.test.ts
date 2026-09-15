@@ -263,11 +263,14 @@ describe("claude code provider", () => {
       echoed: "noscope-tool-check",
       agentReply: "PONG",
     });
+    // The envelope sums the three messages (7,253 + 8,762 + 9,040 read); the context the
+    // session holds is the last message's own input, 8 + 309 + 9,040.
     expect(outcome.usage).toMatchObject({
       uncachedInputTokens: 26,
       cacheWriteTokens: 2096,
       cacheReadTokens: 25055,
       outputTokens: 537,
+      contextTokens: 9357,
       costUsd: 0.0117375,
     });
     const { activity } = outcome;
@@ -490,6 +493,7 @@ describe("claude code provider", () => {
         cacheReadTokens: 300,
         outputTokens: 42,
         seconds: 1.5,
+        contextTokens: 1500,
         costUsd: 0.0123,
       });
       expect(SessionResult.parse(outcome.output)).toMatchObject({

@@ -23,10 +23,12 @@
 // NOSCOPE_STUB_BRIEFING, or by default an investigation briefing with one objective, one
 // unit sketched, no questions and claude-opus-5 as the incoming commander. The IC's
 // handoff, recognised by the HandoffDocument schema (a `nextMove` property), gets
-// NOSCOPE_STUB_HANDOFF or by default a one-line document. The IC's calls (command, review,
-// handoff) report the context NOSCOPE_STUB_IC_CONTEXT names as input_tokens, or the next
-// entry of NOSCOPE_STUB_IC_CONTEXTS (counter file NOSCOPE_STUB_IC_CONTEXT_COUNTER, the last
-// entry repeating), or 1000 like every call. A fresh call's session id is stub-session, or
+// NOSCOPE_STUB_HANDOFF or by default a one-line document. Every call ends with one
+// assistant line whose message usage is the context of the call's last message (which
+// the provider records as contextTokens): input_tokens is NOSCOPE_STUB_IC_CONTEXT on the
+// IC's calls (command, review, handoff), or the next entry of NOSCOPE_STUB_IC_CONTEXTS
+// (counter file NOSCOPE_STUB_IC_CONTEXT_COUNTER, the last entry repeating), or 1000 like
+// every call; the envelope's usage repeats the same figures. A fresh call's session id is stub-session, or
 // stub-session-N when NOSCOPE_STUB_SESSION_COUNTER names a counter file, so a test can tell
 // one fresh session from the next. NOSCOPE_STUB_CALLS,
 // when set, gets one JSON line appended per call: its kind (planner, leader, command,
@@ -311,6 +313,24 @@ if (process.env.NOSCOPE_STUB_EXIT && !isTurn) {
   process.stdout.write(`${lines.map((l) => JSON.stringify(l)).join("\n")}\n`);
   process.exit(Number(process.env.NOSCOPE_STUB_EXIT));
 }
+// The answering message: its usage is the context the provider records for the session.
+lines.push({
+  type: "assistant",
+  session_id: sessionId,
+  parent_tool_use_id: null,
+  timestamp: new Date(1_757_900_000_000 + tools.length * 2_000).toISOString(),
+  message: {
+    role: "assistant",
+    id: "msg_stub_answer",
+    content: [{ type: "text", text: "answered" }],
+    usage: {
+      input_tokens: icContext,
+      cache_creation_input_tokens: 200,
+      cache_read_input_tokens: 300,
+      output_tokens: 42,
+    },
+  },
+});
 const sleepMs = isTurn ? 0 : Number(process.env.NOSCOPE_STUB_SLEEP_MS ?? 0);
 if (sleepMs > 0) {
   process.stdout.write(`${lines.map((l) => JSON.stringify(l)).join("\n")}\n`);

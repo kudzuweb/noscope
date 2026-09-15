@@ -94,8 +94,12 @@ export const Cost = z.object({
 });
 
 /**
- * What a run spent. `inputTokens` is the whole context (uncached plus cache write plus cache
- * read), the figure budgets count; the three parts are kept because they cost differently.
+ * What a run spent. `inputTokens` is the whole input billed (uncached plus cache write plus
+ * cache read), the figure budgets count, summed over every API turn of the call; the three
+ * parts are kept because they cost differently. `contextTokens` is the context of the
+ * call's last message (that message's uncached, cache-write and cache-read tokens), the
+ * size the session's next call resumes from; present only when the provider's stream
+ * carried per-message usage, and what the IC's handoff threshold is compared against.
  * `costUsd` is the provider's own figure at list price, present only when it reports one.
  */
 export const Usage = z.object({
@@ -105,6 +109,7 @@ export const Usage = z.object({
   cacheReadTokens: z.number().int().nonnegative(),
   outputTokens: z.number().int().nonnegative(),
   seconds: z.number().nonnegative(),
+  contextTokens: z.number().int().nonnegative().optional(),
   costUsd: z.number().nonnegative().optional(),
 });
 

@@ -467,6 +467,77 @@ describe("the IC handoff at the context threshold", () => {
     store.close();
   });
 
+  it("a handoff call that answers outside its schema is filed as command.failed, keeps the session, and the next step retries", {
+    timeout: 60_000,
+  }, async () => {
+    // Cycle 1's review runs at 6,500; the failed handoff call, resumed on that session,
+    // reports 6,500 too, so the next step is still due; the retry and everything after
+    // are small.
+    const h = harness([findIt, empty], [1000, 6000, 6000, 1000]);
+    await run(
+      ["incident", "create", "where is the delete handler", "--no-size-up"],
+      h.ctx,
+    );
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    const { nextMove: _dropped, ...unfinished } = document;
+    h.ctx.env.NOSCOPE_STUB_HANDOFF = JSON.stringify(unfinished);
+    h.out.length = 0;
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.failed);
+    expect(h.err.at(-1)).toMatch(
+      /^noscope incident step: the IC: the answer did not fit its schema: nextMove /,
+    );
+    expect(h.out).toEqual([]);
+    expect(
+      h
+        .calls()
+        .map((c) => c.kind)
+        .slice(4),
+    ).toEqual(["handoff"]);
+    let store = h.store();
+    let events = store.listEvents("001");
+    const failed = events.find((e) => e.type === "command.failed");
+    expect(failed?.payload).toMatchObject({
+      unitId: "001-command",
+      sessionId: "stub-session-1",
+      seat: "ic",
+      turn: "handoff",
+      cycle: 1,
+      usage: { inputTokens: 6500, contextTokens: 6500 },
+    });
+    expect(events.map((e) => e.type)).not.toContain("leader.released");
+    expect(events.map((e) => e.type)).not.toContain("command.transferred");
+    expect(store.listUnits("001")[0]?.sessionId).toBe("stub-session-1");
+    store.close();
+    // The next step retries the handoff on the same session, and this time it answers.
+    h.ctx.env.NOSCOPE_STUB_HANDOFF = JSON.stringify(document);
+    h.out.length = 0;
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    expect(h.out.slice(0, 3)).toEqual([
+      "IC handoff: session stub-session-1 wrote its handoff document after 6500 tokens of context (threshold 5000); command passes to a fresh session",
+      "IC command turn for period 2 (session stub-session-4): second period",
+      "  command transferred from session stub-session-1 to session stub-session-4",
+    ]);
+    expect(
+      h
+        .calls()
+        .map((c) => [c.kind, c.resume])
+        .slice(5),
+    ).toEqual([
+      ["handoff", "stub-session-1"],
+      ["command", null],
+      ["planner", null],
+      ["review", "stub-session-4"],
+    ]);
+    store = h.store();
+    events = store.listEvents("001");
+    expect(events.filter((e) => e.type === "command.failed")).toHaveLength(1);
+    expect(events.filter((e) => e.type === "command.transferred")).toHaveLength(
+      1,
+    );
+    expect(store.listUnits("001")[0]?.sessionId).toBe("stub-session-4");
+    store.close();
+  });
+
   it("a handoff whose successor never got a session is pending in the log and briefs the next call", async () => {
     const store = new Store(":memory:");
     scriptedIncident(store);
@@ -484,7 +555,12 @@ describe("the IC handoff at the context threshold", () => {
     store.record("i1", "command.turned", "runtime", {
       unitId: "i1-command",
       sessionId: "outgoing",
-      usage: { inputTokens: 10, outputTokens: 1, seconds: 1 },
+      usage: {
+        inputTokens: 40,
+        outputTokens: 1,
+        seconds: 1,
+        contextTokens: 10,
+      },
     });
     expect(await prepareHandoff(store, incident, options)).toEqual({
       kind: "none",
@@ -526,8 +602,24 @@ describe("the IC handoff at the context threshold", () => {
     store.record("i1", "command.turned", "runtime", {
       unitId: "i1-command",
       sessionId: "incoming",
-      usage: { inputTokens: 10, outputTokens: 1, seconds: 1 },
+      usage: {
+        inputTokens: 40,
+        outputTokens: 1,
+        seconds: 1,
+        contextTokens: 10,
+      },
     });
+    expect(await prepareHandoff(store, incident, options)).toEqual({
+      kind: "none",
+    });
+    // A last call that recorded no context (a stream with no per-message usage) never
+    // hands off, whatever its summed input.
+    store.record("i1", "command.turned", "runtime", {
+      unitId: "i1-command",
+      sessionId: "incoming",
+      usage: { inputTokens: 200_000, outputTokens: 1, seconds: 1 },
+    });
+    expect(lastIcContext(store.listEvents("i1"))).toBeNull();
     expect(await prepareHandoff(store, incident, options)).toEqual({
       kind: "none",
     });
@@ -535,7 +627,12 @@ describe("the IC handoff at the context threshold", () => {
     store.record("i1", "command.failed", "runtime", {
       unitId: "i1-command",
       sessionId: "someone-else",
-      usage: { inputTokens: 200_000, outputTokens: 1, seconds: 1 },
+      usage: {
+        inputTokens: 200_000,
+        outputTokens: 1,
+        seconds: 1,
+        contextTokens: 200_000,
+      },
     });
     expect(await prepareHandoff(store, incident, options)).toEqual({
       kind: "none",
