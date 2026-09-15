@@ -2723,7 +2723,7 @@ Not exactly to spec, with reasons:
   verdicts on ids it cannot know; a test that wants a particular verdict scripts it with
   `reportId: ""` and the unit id.
 
-## R4-3: Revise (#PR, merged 2026-09-15)
+## R4-3: Revise (#46, merged 2026-09-15)
 
 R4-3 of the round 4 plan, on R4-2's verdicts and R4-9's pass. Built: a `revise` verdict
 reaches the unit's leader as a revision brief, the first turn of the unit's next pass,
@@ -2845,7 +2845,7 @@ Not exactly to spec, with reasons:
   plan's rejection, the IC's close of the same unit passing, and the close freed once
   `unit.revised` follows.
 
-## R4-4: Reassign (#PR, merged 2026-09-15)
+## R4-4: Reassign (#47, merged 2026-09-15)
 
 R4-4 of the round 4 plan, on R4-2's verdicts (which already close a reassigned unit
 through `verdictCloses`) and R4-3's revise path. Built: a `reassign` verdict hands the
