@@ -703,14 +703,16 @@ with the same mutation. The next pass opens a
 resumed unit with a turn carrying the answers to the requests of its last wait, before
 running any task, so the leader reads them first. A continue turn carries no report, so a
 resource request rides only on a report. With nothing left to run and nothing running the
-leader is asked for its report; with nothing left to start but tasks still running it is
-asked to continue and wait for them or report now; a leader that answers `continue` with
-nothing left and nothing running ends the
-unit's pass without one, and a unit whose leader owes a report (a task ended after the last
-report) is asked for it at the start of the next pass even with no task, the turn creating
-the session if none exists and carrying every ending the leader has not heard (tasks that
-ended after its last turn: a pass that died, or tasks that landed after it reported), so a
-result never goes unread. Every turn is one call on the leader's session, recorded as
+leader is asked for its report; with nothing left to start but tasks still running, or
+landed and waiting for turns of their own, it is asked to continue and wait for them or
+report now, and the turn names both sets; a leader that answers `continue` with nothing
+left, nothing running and nothing left to hear ends the unit's pass without one. The
+endings a leader has not heard (tasks that ended after its last turn: a pass that died, or
+tasks that landed after it reported) ride on the first turn of its unit's next pass,
+whatever that turn is for, rendered before it as each ending renders; a unit that owes a
+report (a task ended after the last report) and has nothing to run is asked for it at the
+start of the next pass even with no task, the turn creating the session if none exists,
+so a result never goes unread. Every turn is one call on the leader's session, recorded as
 `unit.reported` (with the report) or `unit.continued`, each with the unit, the session id,
 the leader's provider and model and the call's usage; `leader.started` records the session
 on the unit at its first call, with the `cwd` it was launched from, whether that call was a
@@ -802,9 +804,10 @@ is checked and declared on the task that runs next, in the turn's transaction af
 `unit.continued` (Step 4); on a `report` turn, or with no task left, it is refused as
 asked with nothing to send it on (the reason says which). Since R4-9 the task that runs
 next is one not yet started: one still waiting on a dependency, or one the leader assigns
-on the same turn; a task with no dependency has started already. `strike_team.defined` carries the task, the unit, who
-declared it (`plan`, written by `applyPlan` beside `task.created`, or `leader`, with the
-session id and the mutation `task.strikeTeam`) and the kinds; `strike_team.rejected`
+on the same turn; a task with no dependency has started already. `strike_team.defined`
+carries the task, the unit, who declared it (`plan`, written by `applyPlan` beside
+`task.created`, or `leader`, with the session id and the mutation `task.strikeTeam`) and
+the kinds; `strike_team.rejected`
 carries the same and `reasons`, one per rule line. A member's run is the `subagent.ran`
 the provider already files under the task, its `agentType` the kind's name, so review joins
 declaration to run on task id and kind.

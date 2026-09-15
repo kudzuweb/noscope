@@ -516,14 +516,15 @@ export type TaskEnding =
 
 /**
  * Why the leader is asked for a move: a task ended, its unit resumed with the answers to its
- * requests, or the unit owes a report from an earlier pass, with the endings its leader has
- * not yet heard (tasks that ended after its last turn: a pass that died, or tasks still in
- * flight when the leader reported).
+ * requests, or the unit owes a report from an earlier pass. The endings its leader has not
+ * yet heard (tasks that ended after its last turn: a pass that died, or tasks still in
+ * flight when the leader reported) travel beside the cause on the first turn of a pass,
+ * whatever the cause is.
  */
 export type TurnCause =
   | TaskEnding
   | { status: "answered"; answers: readonly string[] }
-  | { status: "owing"; ended: readonly TaskEnding[] };
+  | { status: "owing" };
 
 /**
  * The endings a unit's leader has not heard: tasks of the unit that completed or failed
@@ -603,27 +604,34 @@ function renderEnding(ending: TaskEnding): string[] {
 }
 
 /**
- * The user message of a turn: what the last task came to (its insufficiency, when it came
- * back insufficient, with what the leader does about each kind; the endings the leader has
- * not heard when the unit owes a report from an earlier pass; the answers when the unit
- * resumed), any assignment the validator refused since the last turn, then how many ready
- * tasks remain, which runs next and the team it declares if any, which tasks of the unit
- * are still running in sessions of their own, and what the leader is asked for: its report
- * when nothing remains and nothing runs, otherwise its next move.
+ * The user message of a turn: the endings the leader has not heard from earlier passes
+ * (`unheard`, on the first turn of a pass, each rendered as an ending is), then what the
+ * turn is for (the last task's ending, with its insufficiency and what the leader does
+ * about each kind when it came back insufficient; the answers when the unit resumed; that
+ * a report is owed), any assignment the validator refused since the last turn, then how
+ * many ready tasks remain, which runs next and the team it declares if any, which tasks of
+ * the unit are still running in sessions of their own, which have ended in this pass and
+ * reach the leader on turns of their own, and what the leader is asked for: its report when
+ * nothing remains, nothing runs and nothing is left to hear, otherwise its next move.
  */
 export function renderTurnPrompt(
   cause: TurnCause,
+  unheard: readonly TaskEnding[],
   remaining: number,
   next: Task | null = null,
   rejections: readonly string[] = [],
   running: readonly Task[] = [],
+  landed: readonly Task[] = [],
 ): string {
   const came: string[] = [];
-  if (cause.status === "owing")
+  if (unheard.length > 0)
     came.push(
-      "Your unit has not reported since its last task ended.",
-      ...cause.ended.flatMap(renderEnding),
+      "Since your last turn these tasks also ended:",
+      ...unheard.flatMap(renderEnding),
+      "",
     );
+  if (cause.status === "owing")
+    came.push("Your unit has not reported since its last task ended.");
   else if (cause.status === "answered")
     came.push(
       "Your unit's resource requests were answered and it is active again:",
@@ -641,7 +649,9 @@ export function renderTurnPrompt(
       ? `${remaining} ready task(s) remain in your unit. Your next move: continue to the next, or report now if the picture changed.`
       : running.length > 0
         ? "No task of yours is ready to start. Your next move: continue and wait for the running ones, or report now if the picture changed."
-        : NO_TASKS_REMAIN;
+        : landed.length > 0
+          ? "No task of yours is ready to start and none is running. Your next move: continue to hear the tasks that ended, or report now if the picture changed."
+          : NO_TASKS_REMAIN;
   return [
     ...came,
     "",
@@ -656,6 +666,11 @@ export function renderTurnPrompt(
       ? []
       : [
           `Still running in sessions of their own: ${running.map((t) => `${t.id} (${t.capability})`).join(", ")}; each reaches you on the turn after it ends.`,
+        ]),
+    ...(landed.length === 0
+      ? []
+      : [
+          `Ended already: ${landed.map((t) => `${t.id} (${t.capability})`).join(", ")}; each reaches you on a turn of its own next.`,
         ]),
   ].join("\n");
 }

@@ -2465,16 +2465,23 @@ awaiting its turn at a time, so inside tasks keep round 3's shape (task, turn, t
 while the tasks in sessions of their own, and the deterministic ones, start the moment
 they are runnable. Every ending lands in a queue and reaches the leader on a turn of its
 own, in the order the tasks ended (`settle` per ending, as before); the turn's prompt
-(`renderTurnPrompt`, new `running` argument) lists the unit's tasks still running in
-sessions of their own, and when nothing is left to start but tasks are still running it
-asks the leader to continue and wait or report now, rather than for its report, so the
-stub's default turn keeps continuing until the last task lands. A leader that reports
-while its own tasks are in flight ends the unit's pass; the tasks land (their events are
-written), get no turn, and the unit owes a report next pass, whose turn now carries every
-ending the leader has not heard: `TurnCause` gains `{ status: "owing", ended }` in place of
-`null`, filled by `endedSinceLastTurn` in `src/leader.ts` (tasks of the unit that
-completed or failed after its last `unit.reported` or `unit.continued`; inside-ness from
-`runsInsideLeader`), and `renderEnding` renders each as a task ending renders. A report
+(`renderTurnPrompt`, new `running` and `landed` arguments) lists the unit's tasks still
+running in sessions of their own (the tasks in flight; an inside task queues on the
+leader's chain as a turn does, so at a turn it has landed or not started) and, apart from
+them, the tasks that landed while the turn waited and reach the leader on turns of their
+own ("Ended already"); when nothing is left to start but tasks are still running or still
+to be heard it asks the leader to continue and wait or report now, rather than for its
+report, so the stub's default turn keeps continuing until the last ending is heard. A
+leader that reports while its own tasks are in flight ends the unit's pass; the tasks land
+(their events are written) and get no turn. Every ending the leader has not heard
+(`endedSinceLastTurn` in `src/leader.ts`: tasks of the unit that completed or failed after
+its last `unit.reported` or `unit.continued`, a pass that died included; inside-ness from
+`runsInsideLeader`) is computed once at the top of the unit's next pass and rides on that
+pass's first turn whatever its cause (`renderTurnPrompt`'s `unheard` argument, rendered
+before the cause as "Since your last turn these tasks also ended:" with `renderEnding`),
+so a unit with a runnable task next pass hears them on the turn after that task, and a
+unit with nothing to run hears them on its owed turn: `TurnCause` gains `{ status:
+"owing" }` in place of `null`, carrying nothing itself. A report
 whose `pictureChanged` is true, or a budget stop, sets the pass's halt: no pass and no
 task starts after it, every run in flight finishes and lands, and a task that lands after
 the halt still gets its leader's turn (the leader hears the ending; nothing starts from
@@ -2524,15 +2531,20 @@ behind the first, and the turn after the fast one lists the slow one as still ru
 asks the leader to continue or report rather than for its report; two tasks inside the
 leader's session run one at a time, each followed by its turn; a leader that reports while
 its own task runs leaves the task to land without a turn, and the next pass's owed turn
-renders that ending before asking for the report; a task in flight is held against the
-budget, so a second unit's task that fits by spend but not by reservation waits for the
-landing and is then stopped on what is spent, with one `budget.exceeded` after the first
-task's `task.completed`, while the first's leader still hears it; two units whose tasks
-fit one at a time by spend but not by reservation both run, the second starting after the
-first lands, with nothing stopped; `NOSCOPE_PARALLEL=0` is refused. The round 3 dispatcher tests that read as a sequence
-now declare it: the grep, investigate and interpret test and the strike-team test chain
-their tasks with `dependsOn` (and so also pin that a chain still serializes: `task.ready`
-per dependent, the same call order as before), the two-unit picture-change and waiting
+renders that ending before asking for the report; a task that landed after its unit
+reported, whose completion made a dependent runnable, reaches the leader on the next
+pass's first turn, the one on the dependent's ending, and nothing is owed after that
+report; a task that landed while a turn was queued behind a slow inside task is listed on
+that turn as ended already, not running, and gets its own turn next; a task in flight is
+held against the budget, so a second unit's task that fits by spend but not by reservation
+waits for the landing and is then stopped on what is spent, with one `budget.exceeded`
+after the first task's `task.completed`, while the first's leader still hears it; two
+units whose tasks fit one at a time by spend but not by reservation both run, the second
+starting after the first lands, with nothing stopped; `NOSCOPE_PARALLEL=0` is refused. The
+round 3 dispatcher tests that read as a sequence now declare it: the grep, investigate
+and interpret test and the strike-team test chain their tasks with `dependsOn` (and so
+also pin that a chain still serializes: `task.ready` per dependent, the same call order as
+before), the two-unit picture-change and waiting
 tests and the IC's picture-change step test run with `NOSCOPE_PARALLEL=1`, and the root
 unit's refused-request test chains its two greps. The review test pins the wall-time line
 once per cycle that ran a task; the preamble tests pin the new sentences of `LEADER_ROLE`
@@ -2547,9 +2559,9 @@ Not exactly to spec, with reasons:
   flight"; here the leader of a task that lands after the halt is also asked its turn on
   that ending, because the owed turn is the only other way the result would reach it, and
   a turn is not a task start. A task that lands after its own unit reported gets no turn,
-  and the owed turn next pass carries it; round 3's owed turn said only that the unit had
-  not reported, and never rendered the result, which parallel dispatch would have made a
-  common way to lose one.
+  and the first turn of the unit's next pass carries it, whatever that turn is for; round
+  3's owed turn said only that the unit had not reported, and never rendered the result,
+  which parallel dispatch would have made a common way to lose one.
 - A leader's `requestStrikeTeam` targets the task that runs next, which under parallel
   dispatch is a task not yet started: one still waiting on a dependency or one the leader
   assigns on the same turn. A task with no dependency has started already by the time the

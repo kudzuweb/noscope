@@ -2569,9 +2569,107 @@ describe("dispatcher, parallel dispatch", () => {
     const calls = readCalls(join(dir, "calls"));
     expect(calls.map((c) => c.kind)).toEqual(["task", "leader", "leader"]);
     expect(calls[2]?.prompt).toContain(
-      "Your unit has not reported since its last task ended.\nTask t-slow (investigate) completed. Its result:\n  summary: a.txt",
+      "Since your last turn these tasks also ended:\nTask t-slow (investigate) completed. Its result:\n  summary: a.txt\n\nYour unit has not reported since its last task ended.",
     );
     expect(calls[2]?.prompt).toContain("No ready tasks remain in your unit.");
+    store.close();
+  }, 20_000);
+
+  it("a task that lands after its unit reported reaches the leader on the next pass's first turn even when that pass runs a task: the dependent's turn carries the unheard ending", async () => {
+    const store = new Store(":memory:");
+    const { incident, task, addUnit } = scriptedIncident(store);
+    addUnit({ id: "u-a", objective: "the first half" });
+    task({
+      id: "t-fast",
+      capability: "grep",
+      unitId: "u-a",
+      inputs: { root: ".", pattern: "delete" },
+      status: "ready",
+    });
+    task(investigate("t-slow", "u-a", { objective: "slow: run investigate" }));
+    task(
+      investigate("t-dep", "u-a", { dependsOn: ["t-slow"], status: "pending" }),
+    );
+    const dir = scratch();
+    const env = stubEnv(dir, {
+      NOSCOPE_STUB_SLEEP_MS: "1500",
+      NOSCOPE_STUB_SLEEP_IF: "slow:",
+      NOSCOPE_STUB_TURN: JSON.stringify({
+        kind: "report",
+        report: { outcome: "progress", changed: [], pictureChanged: false },
+      }),
+    });
+    const first = await dispatch(store, incident, { cwd: tree, env });
+    expect(first.ran.map((r) => r.taskId)).toEqual(["t-fast", "t-slow"]);
+    expect(store.listTasks("i1").find((t) => t.id === "t-dep")?.status).toBe(
+      "pending",
+    );
+    // Next pass: t-dep is runnable, so the unit's first turn is on t-dep's ending, and
+    // t-slow's ending, which the leader never heard, rides on it.
+    const second = await dispatch(store, incident, { cwd: tree, env });
+    expect(second.ran.map((r) => r.taskId)).toEqual(["t-dep"]);
+    expect(second.reports.map((r) => r.unitId)).toEqual(["u-a"]);
+    const calls = readCalls(join(dir, "calls"));
+    expect(calls.map((c) => c.kind)).toEqual([
+      "task",
+      "leader",
+      "task",
+      "leader",
+    ]);
+    expect(calls[3]?.prompt).toContain(
+      "Since your last turn these tasks also ended:\nTask t-slow (investigate) completed. Its result:\n  summary: a.txt\n\nTask t-dep (investigate) completed. Its result:",
+    );
+    expect(calls[3]?.prompt).not.toContain("Your unit has not reported");
+    expect(calls[1]?.prompt).not.toContain("Since your last turn");
+    // Heard: nothing is owed beyond the report the leader just filed.
+    expect(
+      unitsOwingReport(
+        store.listUnits("i1"),
+        store.listTasks("i1"),
+        store.listEvents("i1"),
+      ),
+    ).toEqual(new Set());
+    store.close();
+  }, 20_000);
+
+  it("a task that landed while a turn was queued is listed as ended, not running, and gets its own turn next", async () => {
+    const store = new Store(":memory:");
+    const { incident, led, task } = scriptedIncident(store);
+    // Under a led unit: t-in runs inside the leader's session (its model), t-out in a
+    // session of its own (another model). t-in is slow, so t-out's turn queues behind it
+    // on the chain and, by the time it is asked, t-in has landed and waits for a turn of
+    // its own.
+    const unit = led();
+    task(investigate("t-in", unit.id, { objective: "slow: run investigate" }));
+    task(investigate("t-out", unit.id, { model: "claude-opus-5" }));
+    const dir = scratch();
+    const dispatched = await dispatch(store, incident, {
+      cwd: tree,
+      env: stubEnv(dir, {
+        NOSCOPE_STUB_SLEEP_MS: "1500",
+        NOSCOPE_STUB_SLEEP_IF: "slow:",
+      }),
+    });
+    expect(dispatched.ran.map((r) => r.taskId)).toEqual(["t-out", "t-in"]);
+    expect(dispatched.reports.map((r) => r.unitId)).toEqual([unit.id]);
+    const turns = readCalls(join(dir, "calls")).filter(
+      (c) => c.kind === "leader",
+    );
+    expect(turns).toHaveLength(2);
+    expect(turns[0]?.prompt).toContain(
+      "Task t-out (investigate) completed. Its result:",
+    );
+    expect(turns[0]?.prompt).toContain(
+      "No task of yours is ready to start and none is running. Your next move: continue to hear the tasks that ended, or report now if the picture changed.",
+    );
+    expect(turns[0]?.prompt).toContain(
+      "Ended already: t-in (investigate); each reaches you on a turn of its own next.",
+    );
+    expect(turns[0]?.prompt).not.toContain("Still running");
+    expect(turns[1]?.prompt).toContain(
+      "Task t-in (investigate) completed in this session; its result is recorded.",
+    );
+    expect(turns[1]?.prompt).toContain("No ready tasks remain in your unit.");
     store.close();
   }, 20_000);
 

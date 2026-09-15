@@ -615,9 +615,10 @@ function declareRequestedTeam(
 }
 
 /**
- * Ask the unit's leader for its next move: the last task's ending, how many ready tasks
- * remain and which runs next, and which tasks of the unit are still running, under the
- * `LeaderTurn` schema. The first call creates the
+ * Ask the unit's leader for its next move: the endings it has not heard from earlier passes
+ * (`unheard`, on a pass's first turn), the last task's ending, how many ready tasks remain
+ * and which runs next, which tasks of the unit are still running and which have ended and
+ * reach it on turns of their own, under the `LeaderTurn` schema. The first call creates the
  * session and opens with the orientation; `leader.started` records its id on the unit,
  * with the cwd it was launched from. A session that cannot be resumed (the call died
  * before its init line) is replaced: a fresh session is oriented and asked the same turn,
@@ -637,9 +638,11 @@ async function leaderTurn(
   listed: Unit,
   units: readonly Unit[],
   cause: TurnCause,
+  unheard: readonly TaskEnding[],
   remaining: number,
   next: Task | null,
   running: readonly Task[],
+  landed: readonly Task[],
   options: DispatchOptions,
   actor: string,
 ): Promise<Turned> {
@@ -658,7 +661,15 @@ async function leaderTurn(
         unit,
         [
           ...orientation(store, incident, unit, units),
-          renderTurnPrompt(cause, remaining, next, refused, running),
+          renderTurnPrompt(
+            cause,
+            unheard,
+            remaining,
+            next,
+            refused,
+            running,
+            landed,
+          ),
         ].join("\n"),
         LEADER_TURN_SCHEMA,
         options.cwd,
@@ -912,11 +923,13 @@ function relatedUnits(
  * and `task.usage` in one transaction, or `task.failed` with the reason and the usage the
  * run still spent. Each ending reaches the leader on a turn of its own, in the order the
  * tasks ended, one call on the session at a time; the turn says which tasks of the unit are
- * still running, and the leader continues (the tasks its ending made runnable start, and
- * any it assigned), or reports, which ends the unit's pass while its tasks in flight finish
- * and land, their endings kept for its next turn. A unit with nothing left to run and
- * nothing running is asked for its report; a unit resumed since its last report opens with
- * a turn carrying the answers, before any task. A task whose dependencies complete during
+ * still running and which have landed and reach it next, and the leader continues (the
+ * tasks its ending made runnable start, and any it assigned), or reports, which ends the
+ * unit's pass while its tasks in flight finish and land. Their endings, and any other the
+ * leader has not heard (`endedSinceLastTurn`), ride on the first turn of the unit's next
+ * pass whatever that turn is for, so a result never goes unread. A unit with nothing left
+ * to run, nothing running and nothing left to hear is asked for its report; a unit resumed
+ * since its last report opens with a turn carrying the answers, before any task. A task whose dependencies complete during
  * the pass runs in the same pass when its unit has not yet reported; a unit that has
  * reported is done for the pass, so its dependents wait for the next one. A `waiting` unit
  * is skipped. The root is the exception (R4-6): its leader is the IC, which takes no leader
@@ -989,7 +1002,9 @@ export async function dispatch(
   const settle = async (
     unit: Unit,
     cause: TurnCause,
-    running: readonly Task[],
+    unheard: readonly TaskEnding[],
+    running: readonly Task[] = [],
+    landed: readonly Task[] = [],
   ): Promise<{ unit: Unit; stop: boolean }> => {
     const remaining = runnableIn(unit.id);
     const turned = await leaderTurn(
@@ -998,9 +1013,11 @@ export async function dispatch(
       unit,
       units,
       cause,
+      unheard,
       remaining.length,
       remaining[0] ?? null,
       running,
+      landed,
       options,
       actor,
     );
@@ -1013,9 +1030,14 @@ export async function dispatch(
       done.add(unit.id);
       return { unit: turned.unit, stop: turned.turn.report.pictureChanged };
     }
-    // Continued with nothing left, nothing running and nothing assigned: the unit's pass
-    // ends without a report, and the next pass asks again.
-    if (remaining.length === 0 && turned.assigned === 0 && running.length === 0)
+    // Continued with nothing left, nothing running, nothing to hear and nothing assigned:
+    // the unit's pass ends without a report, and the next pass asks again.
+    if (
+      remaining.length === 0 &&
+      turned.assigned === 0 &&
+      running.length === 0 &&
+      landed.length === 0
+    )
       done.add(unit.id);
     return { unit: turned.unit, stop: false };
   };
@@ -1031,14 +1053,7 @@ export async function dispatch(
       ),
     };
   };
-  const owed = (unit: Unit): TurnCause => ({
-    status: "owing",
-    ended: endedSinceLastTurn(
-      unit,
-      store.listTasks(incident.id),
-      store.listEvents(incident.id),
-    ),
-  });
+  const owed: TurnCause = { status: "owing" };
   const hasWork = (unitId: string) =>
     resumed.has(unitId) || owing.has(unitId) || runnableIn(unitId).length > 0;
 
@@ -1059,12 +1074,31 @@ export async function dispatch(
     const inFlight = new Map<string, Task>();
     const landed: Landed[] = [];
     let wake: (() => void) | null = null;
+    // The endings of earlier passes the leader has not heard (tasks that landed after it
+    // reported, or a pass that died): the pass's first turn carries them, whatever it is
+    // for, so a result never goes unread.
+    let unheard: readonly TaskEnding[] = endedSinceLastTurn(
+      unit,
+      store.listTasks(incident.id),
+      store.listEvents(incident.id),
+    );
+    const hear = (): readonly TaskEnding[] => {
+      const heard = unheard;
+      unheard = [];
+      return heard;
+    };
     const pending = new Set<Promise<void>>();
     // A run that threw past `runOne` (a store that failed in its record) ends the pass with
     // that error once the other runs have landed.
     let crashed: unknown;
-    const running = () => [...inFlight.values(), ...landed.map((e) => e.task)];
     let insideTask: string | null = null;
+    // What a turn is told beside its ending: the tasks still running in sessions of their
+    // own (an inside task queues on the leader's chain as a turn does, so at a turn it has
+    // landed or not started; the filter keeps it out either way), and the tasks that
+    // landed and wait for turns of their own.
+    const stillRunning = () =>
+      [...inFlight.values()].filter((t) => t.id !== insideTask);
+    const landedTasks = () => landed.map((e) => e.task);
     let ranInUnit = false;
     // A task's start: `started`; `deferred`, when it fits the budget by spend but not with
     // what the runs in flight are held to, so it is left unattempted for the sweep after
@@ -1172,7 +1206,9 @@ export async function dispatch(
         // root takes no turn (R4-6): a waiting root can only come from a store written
         // before this, and its answers are read at the command turn.
         resumed.delete(unit.id);
-        const settled = await onLeader(() => settle(unit, answered(unit), []));
+        const settled = await onLeader(() =>
+          settle(unit, answered(unit), hear()),
+        );
         unit = settled.unit;
         if (settled.stop) stop({ stopped: null, pictureChanged: unit.id });
         if (done.has(unit.id)) return;
@@ -1230,7 +1266,9 @@ export async function dispatch(
         }
         // The leader reported this pass: the ending is recorded, and its next turn hears it.
         if (done.has(unit.id)) continue;
-        const settled = await onLeader(() => settle(unit, ending, running()));
+        const settled = await onLeader(() =>
+          settle(unit, ending, hear(), stillRunning(), landedTasks()),
+        );
         if (ending.task.id === insideTask) insideTask = null;
         unit = settled.unit;
         if (settled.stop) stop({ stopped: null, pictureChanged: unit.id });
@@ -1241,7 +1279,7 @@ export async function dispatch(
         return;
       }
       if (!ranInUnit && owing.has(unit.id) && halt === null) {
-        const settled = await onLeader(() => settle(unit, owed(unit), []));
+        const settled = await onLeader(() => settle(unit, owed, hear()));
         done.add(unit.id);
         if (settled.stop) stop({ stopped: null, pictureChanged: unit.id });
       }
