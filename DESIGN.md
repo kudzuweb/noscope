@@ -548,8 +548,9 @@ A lack is resolved by the nearest seat that can (ruled 2026-09-15, R3-6): a task
 `insufficient` goes to its unit's leader, never to the planner, and the leader resolves a
 retrievable fact itself and sends the other three kinds up; the IC, leader of command,
 takes no leader turn (R4-6), so every kind it lacks goes through its command turn: a
-retrievable fact as a period objective for the planner to task, the other three as the
-question, capability request and grant request the turn carries; command never waits.
+retrievable fact as a deterministic task it assigns under command (`assignTasks`) or as a
+period objective for the planner to task, the other three as the question, capability
+request and grant request the turn carries; command never waits.
 
 | The lack | The IC's and the planner's channel | Who resolves it for them | At a unit's leader |
 |---|---|---|---|
