@@ -39,7 +39,7 @@ const SIZE_UP_SCHEMA = jsonSchemaFor(IncidentBriefing);
 /** The role text as the initial IC reads it: size up, brief, hand over; decide nothing that lasts. */
 export const INITIAL_IC_ROLE = `Your role: initial Incident Commander. You are the first session on this incident and you hold command only until the briefing is written. Size the incident up: read what the objective points at, check what a tool of yours can check, and write the incident briefing on ICS 201's lines: what sort of incident this is, the one problem it turns on, what is obviously needed and whether you checked it, the objectives for the first operational period, an initial organization sketched one unit per line with the model its leader should be on, the questions only Mauria can answer, the hazards, and the incoming commander: the provider and model the Incident Commander proper should run on, and why.
 
-Route the commander by the judgment the incident needs, not by habit: a narrow, well-marked read is Haiku's; a build, a subtle investigation or anything that turns on weighing evidence is Opus's; say which and why. Every model the provider serves is listed in your prompt; name one of those.
+A check is one look at whether a thing exists, answers, or is where the objective says it is; what the incident turns on is for the units to establish under the Incident Commander, not for you to read your way to. Route the commander by the judgment the incident needs, not by habit: a narrow, well-marked read is Haiku's; a build, a subtle investigation or anything that turns on weighing evidence is Opus's; say which and why. Every model the provider serves is listed in your prompt; name one of those.
 
 A question for Mauria blocks the incident until she answers, so ask only what only she knows or may decide, never what a tool could find. Say what you saw and what you think, plainly, and keep them apart: the Incident Commander who takes command evaluates every line of your briefing and may accept, rewrite or discard it. Your tools are read-only; you change nothing and you assign nothing.`;
 
@@ -187,9 +187,9 @@ export function renderSizeUpPrompt(
   ].join("\n");
 }
 
-/** What the size-up came to: the briefing, the call's provenance, and the findings it read. */
+/** What the size-up came to: the session's raw output (parsed by the caller, so a briefing that does not fit is still filed with its call), the call's provenance, and the findings it read. */
 export type SizeUp = {
-  briefing: IncidentBriefing;
+  output: unknown;
   sessionId: string;
   usage: Usage;
   activity: SessionActivity;
@@ -206,9 +206,10 @@ export type SizeUpOptions = {
 
 /**
  * Run the size-up: one session on the initial model with the read-only tool set (the four
- * built-ins, Bash under the read-only allowlist), bounded, whose output is the
- * `IncidentBriefing`. Throws the provider's `SessionError`, or the schema's error when the
- * output does not fit; the caller files either as `command.failed`.
+ * built-ins, Bash under the read-only allowlist), bounded, whose output is meant to be an
+ * `IncidentBriefing`. Throws the provider's `SessionError`; the output comes back unparsed,
+ * so the caller parses it and files a session whose answer does not fit as `command.failed`
+ * with its usage and activity, the way `icCall` files an IC turn.
  */
 export async function sizeUp(
   incident: Incident,
@@ -234,7 +235,7 @@ export async function sizeUp(
     timeoutSeconds: SIZE_UP_SECONDS,
   });
   return {
-    briefing: IncidentBriefing.parse(outcome.output),
+    output: outcome.output,
     sessionId: outcome.sessionId,
     usage: outcome.usage,
     activity: outcome.activity,

@@ -1589,7 +1589,7 @@ Not exactly to spec, with reasons:
   team on the task's own `strikeTeam` field; `requestStrikeTeam` targets the task computed
   as next before the turn, so on such a turn it is refused as R3-5 records it.
 
-## R3-8: Initial IC and transfer of command (#PR, merged 2026-09-15)
+## R3-8: Initial IC and transfer of command (#37, merged 2026-09-15)
 
 R3-8 of the round 3 plan. Built: `incident create` runs the size-up. After the incident and
 its root unit are written, the initial IC, a session on `--initial-model` (default
@@ -1611,36 +1611,51 @@ tool calls filed under the root unit and cycle 0 with the same seat. Command the
 `command.transferred` with `kind: "initial"`, the outgoing session and leader, the incoming
 leader with `incomingSessionId: null` (the IC's session starts at its first command turn;
 `leader.started` follows), the briefing as `document`, `chosenBy` and `reason`; its mutation
-is the new `unit.leader`, which sets the root unit's leader and replays. The incoming model
+is the new `unit.leader`, which sets the root unit's leader and replays. `Transfer` in
+`src/ic.ts` is the one definition for both kinds, a union on `kind` over a common core
+(`unitId`, `outgoingSessionId`, `outgoing`, `incomingSessionId`, `incoming`, `document`):
+`initial` adds `chosenBy` and `reason`, `handoff` adds `contextTokens` and `threshold`; one
+`recordTransfer` writes the `unit.leader` mutation for both, a no-op on a handoff whose
+incoming leader is the unit's own, so every transfer replays the same way. R3-9 records its
+handoff through `recordTransfer` with `outgoing` and `incoming` both the unit's leader, and
+its incoming session evaluates the handoff document through the same trigger below. The incoming model
 is the briefing's `incomingCommander` when Claude Code serves it, `--ic-model` when given
 (now an override rather than a default), and `claude-opus-5` when the briefing names a pair
 the provider does not serve. A question in the briefing becomes an incident question
 (`question.asked` with `seat: "initial_ic"`) and the incident goes `blocked` before the IC
 starts; `incident answer` reopens it as it reopens any block. `--no-size-up` creates the
 incident on `--ic-model` or the default with no briefing and prints the R3-4 line. A size-up
-that fails (the provider's error, or an output that does not fit) is filed as
+that fails (the provider's error, or an answer that does not fit the schema, which
+`sizeUp` returns unparsed so `create` parses it inside the same try and files the session
+that answered, then a failed session that returned an id, the way `icCall` does) is filed as
 `command.failed` with `seat: "initial_ic"` and `turn: "size-up"`, with the session's usage
-and activity when the provider returned an id; the incident stands, unbriefed, on
+and activity; the incident stands, unbriefed, on
 `--ic-model` or the default, and `create` exits 1 saying so. `create` prints the briefing
 line by line and the transfer; `incident show` prints the briefing's kind and dominant
 problem and the transfer after the period.
 
-The IC's first command turn on a briefed incident (its first turn, judged by no
-`command.turned` or `plan.reviewed` in the log) renders the briefing after the change report
-and before the incident file (`# Transfer of command: the initial IC's briefing`: who wrote
-it on what model, every line, and `your model: …, chosen by …`), and its ask opens with the
-evaluation instruction; the turn is taken under `FirstCommandTurn`, `CommandTurn` with the
-new `briefingEvaluation` (an array of `{ item, verdict: accepted | rewritten | discarded,
-why }`) required and non-empty, so the provider's own validation holds the IC to it. Every
-other command turn keeps the optional field and the plain ask. `IC_ROLE` gains one paragraph:
+A command turn with a transfer pending (`pendingTransfer`: the last `command.transferred`
+is later than the last accepted `command.turned`; a rejected turn does not count, matching
+`cycleOf`, so the retry of a rejected first turn evaluates again) renders the transfer's
+document after the change report and before the incident file (for the initial transfer
+`# Transfer of command: the initial IC's briefing`: who wrote it on what model, every line,
+and `your model: …, chosen by …`; for a handoff the outgoing IC's document as written), and
+its ask opens with the evaluation instruction naming what to judge (a briefing's objectives
+and units, a handoff document's period objectives, unit states and next move); the turn is
+taken under `FirstCommandTurn`, `CommandTurn` with the new `briefingEvaluation` (an array
+of `{ item, verdict: accepted | rewritten | discarded, why }`) required and non-empty, so
+the provider's own validation holds the IC to it. Every other command turn keeps the
+optional field and the plain ask. `step` prints one `briefing: <verdict> <item>: <why>` line
+per verdict after the rationale. `IC_ROLE` gains one paragraph:
 the IC takes command from a briefing, the initial IC's or an outgoing IC's handoff document,
 its first act is to evaluate it, and nothing in it binds it. `incident review` gains a
 `size-up` block before the cycles (the initial IC's call with its usage, priced under the
 role `initial_ic`; what the briefing said in numbers and the model it recommended; the
 transfer with who chose the model; the briefing's questions; a failed size-up; the initial
 IC's tool calls) and the line `briefing kept: a of n item(s) accepted, r rewritten, d
-discarded` from the first `command.turned` carrying an evaluation, or `briefing kept: not
-evaluated yet`, or `briefing: none (created without a size-up)`. The stub recognises the
+discarded` from the first accepted `command.turned` carrying an evaluation, or `briefing
+kept: not evaluated yet`, `briefing: none (the size-up failed)` or `briefing: none (no
+size-up)`; the size-up block and `incident show` list initial transfers only. The stub recognises the
 size-up by its schema (`incomingCommander`), answers `NOSCOPE_STUB_BRIEFING` or a default
 briefing naming `claude-opus-5`, logs the kind `size-up`, and adds one default verdict to a
 command turn whose schema requires `briefingEvaluation` when the scripted turn carries none.
@@ -1671,8 +1686,14 @@ the incident standing; an inline snapshot of the briefing section and the ask in
 first briefing; `gatherFindings` on a plain directory, a fresh `git init` and a refused URL,
 and `urlsIn`; the seat and role texts; a live test behind `NOSCOPE_LIVE=1` that sizes up the
 noscope checkout read-only on Haiku and asserts a `kind`, an objective, a commander and the
-git finding come back. The models test counts 41 event types and covers `IncidentBriefing`,
-`briefingEvaluation` and `FirstCommandTurn`. Every earlier test that calls `create` passes
+git finding come back; a briefing that fails the schema's refinement (a checked need with no
+finding, which the JSON schema sent to the provider does not catch) is filed as
+`command.failed` with the session's usage and tool calls; a rejected first turn is retried
+with the briefing section and the required evaluation, `step` prints the verdicts, and
+review counts the accepted turn's; a handoff-kind transfer written through `recordTransfer`
+keeps the leader, is the pending transfer, renders its document and the handoff ask, and
+stays out of the size-up block and `show`. The models test counts 41 event types and covers
+`IncidentBriefing`, `briefingEvaluation` and `FirstCommandTurn`. Every earlier test that calls `create` passes
 `--no-size-up`, so those tests keep testing what they tested.
 
 Observed in the live test (2026-09-15, Claude Code 2.1.272, the noscope checkout, objective
@@ -1721,8 +1742,10 @@ Not exactly to spec, with reasons:
   rather than the plan's "whether a tool checked it" alone, so the check's result is in the
   record; the refinement requires `finding` when `checked`.
 - The size-up prompt tells the session the runtime's findings are checked and to cite rather
-  than re-check them; the live run cited them and still spent most of its calls reading,
-  which is the seat's job.
+  than re-check them; the live run cited them and still spent 19 calls reading, so the role
+  text (from the review) says a check is one look at whether a thing exists, answers or is
+  where the objective says, and what the incident turns on is for the units to establish
+  under the IC.
 - The live test uses the noscope checkout itself, read-only, rather than a fixture repository;
   `test/fixtures/tree` is inside the checkout, so a fixture repository would need its own
   `.git`, which a checkout cannot carry.

@@ -6,14 +6,15 @@ import { describe, expect, it } from "vitest";
 import { EXIT, run } from "../src/cli.js";
 import {
   briefingOf,
+  pendingTransfer,
   recordTransfer,
   renderCommandBriefing,
 } from "../src/ic.js";
-import type {
-  ActionPlan,
-  CommandTurn,
+import {
+  type ActionPlan,
+  type CommandTurn,
   IncidentBriefing,
-  ReviewTurn,
+  type ReviewTurn,
 } from "../src/models.js";
 import { SEAT_PLACES, sessionSystemPrompt } from "../src/providers/base.js";
 import {
@@ -558,8 +559,148 @@ describe("the initial IC and the transfer of command", () => {
     expect(h.out.join("\n")).toMatch(
       /initial ic claude-haiku-4-5: .*size-up failed: /,
     );
+    expect(h.out.join("\n")).toContain("briefing: none (the size-up failed)");
+  });
+
+  it("a briefing that does not fit its schema is filed with its call: command.failed with the session, usage and activity", async () => {
+    const h = harness({
+      briefing: {
+        ...briefing,
+        obviouslyNeeded: [{ what: "the repository", checked: true }],
+      } as IncidentBriefing,
+      env: {
+        NOSCOPE_STUB_TOOLS:
+          '[{"tool":"Bash","input":{"command":"ls"},"result":"a.txt"}]',
+      },
+    });
+    expect(await run(["incident", "create", "x"], h.ctx)).toBe(EXIT.failed);
+    expect(h.err.at(-1)).toMatch(
+      /the size-up failed: the briefing did not fit its schema: obviouslyNeeded\.0\.finding a checked need says what the check showed; incident 001 stands/,
+    );
+    const store = h.store();
+    const events = store.listEvents("001");
+    expect(events.map((e) => e.type)).toEqual([
+      "incident.created",
+      "unit.created",
+      "command.failed",
+      "tool.called",
+    ]);
+    expect(events[2]?.payload).toMatchObject({
+      sessionId: "stub-session",
+      seat: "initial_ic",
+      turn: "size-up",
+      usage: { inputTokens: 1500, outputTokens: 42 },
+    });
+    expect(events[3]?.payload).toMatchObject({
+      sessionId: "stub-session",
+      unitId: "001-command",
+      cycle: 0,
+      seat: "initial_ic",
+      tool: "Bash",
+    });
+    store.close();
+  });
+
+  it("a rejected first turn is retried with the briefing and the required evaluation; step prints the verdicts; review counts the accepted turn's", async () => {
+    const h = harness({
+      commands: [
+        {
+          ...evaluated,
+          closeUnits: [{ unitId: "001-nope", reason: "no such unit" }],
+        },
+        evaluated,
+      ],
+    });
+    await run(["incident", "create", "where is the delete handler"], h.ctx);
+    h.out.length = 0;
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    expect(h.out).toContain("command turn rejected:");
+    let store = h.store();
+    let events = store.listEvents("001");
+    expect(
+      events.find((e) => e.type === "command.turned")?.payload.rejected,
+    ).toBe(true);
+    expect(pendingTransfer(events)?.type).toBe("command.transferred");
+    store.close();
+    h.out.length = 0;
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    expect(h.out.slice(0, 5)).toEqual([
+      "IC command turn for period 1 (session stub-session): first period",
+      "  briefing: accepted find the delete handler: it is the objective",
+      "  briefing: rewritten find what scrolls: into one objective with the first",
+      "  briefing: discarded one unit to read the handler: the planner shapes the units",
+      "  objective: find the handler",
+    ]);
+    const commands = h.calls().filter((c) => c.kind === "command");
+    expect(commands).toHaveLength(2);
+    for (const c of commands) {
+      expect(c.prompt).toContain(
+        "# Transfer of command: the initial IC's briefing",
+      );
+      expect(c.prompt).toContain(
+        "# Your command turn for operational period 1\nFirst, evaluate the briefing",
+      );
+      expect(schemaOf(c).required).toContain("briefingEvaluation");
+    }
+    store = h.store();
+    events = store.listEvents("001");
+    expect(pendingTransfer(events)).toBeNull();
+    store.close();
+    h.out.length = 0;
+    await run(["incident", "review", "001"], h.ctx);
     expect(h.out.join("\n")).toContain(
-      "briefing: none (created without a size-up)",
+      "briefing kept: 1 of 3 item(s) accepted, 1 rewritten, 1 discarded",
+    );
+  });
+
+  it("a handoff transfer (R3-9's kind) is recorded by the same recordTransfer, keeps the leader, renders its document for evaluation, and stays out of the size-up lines", async () => {
+    const h = harness();
+    await run(["incident", "create", "where is the delete handler"], h.ctx);
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    const store = h.store();
+    const document = {
+      periodObjectives: ["find the handler"],
+      nextMove: "task the grep",
+    };
+    recordTransfer(store, "001", {
+      kind: "handoff",
+      unitId: "001-command",
+      outgoingSessionId: "stub-session",
+      outgoing: { provider: "claude-code", model: "claude-sonnet-5" },
+      incomingSessionId: "fresh-session",
+      incoming: { provider: "claude-code", model: "claude-sonnet-5" },
+      document,
+      contextTokens: 130_000,
+      threshold: 120_000,
+    });
+    const events = store.listEvents("001");
+    const handoff = events.at(-1);
+    expect(handoff?.type).toBe("command.transferred");
+    expect(handoff?.payload.mutation).toEqual({
+      kind: "unit.leader",
+      unitId: "001-command",
+      leader: { provider: "claude-code", model: "claude-sonnet-5" },
+    });
+    expect(store.listUnits("001")[0]?.leader.model).toBe("claude-sonnet-5");
+    expect(pendingTransfer(events)?.id).toBe(handoff?.id);
+    const incident = store.getIncident("001");
+    if (incident === undefined) throw new Error("incident exists");
+    const text = renderCommandBriefing(store, incident, [fakeProvider]);
+    expect(text).toContain(
+      "# Transfer of command: the outgoing IC's handoff document\nWritten by the outgoing IC on claude-code/claude-sonnet-5 (session stub-session) before its session reached the context threshold. Nothing in it binds you.\n",
+    );
+    expect(text).toContain('"nextMove": "task the grep"');
+    expect(text).toContain(
+      "# Your command turn for operational period 2\nFirst, evaluate the handoff document you took command with: for each period objective, each unit's state and the next move it names, say in briefingEvaluation",
+    );
+    store.close();
+    h.out.length = 0;
+    await run(["incident", "review", "001"], h.ctx);
+    expect(h.out.join("\n").match(/command transferred \(/g)).toHaveLength(1);
+    h.out.length = 0;
+    await run(["incident", "show", "001"], h.ctx);
+    expect(h.out).toContain(
+      "command transferred to claude-code/claude-sonnet-5, chosen by the briefing",
     );
   });
 
@@ -690,9 +831,10 @@ describe("the initial IC and the transfer of command", () => {
           providers: [fakeProvider],
         },
       );
-      expect(sized.briefing.kind.length).toBeGreaterThan(0);
-      expect(sized.briefing.initialObjectives.length).toBeGreaterThan(0);
-      expect(sized.briefing.incomingCommander.model.length).toBeGreaterThan(0);
+      const live = IncidentBriefing.parse(sized.output);
+      expect(live.kind.length).toBeGreaterThan(0);
+      expect(live.initialObjectives.length).toBeGreaterThan(0);
+      expect(live.incomingCommander.model.length).toBeGreaterThan(0);
       expect(sized.sessionId.length).toBeGreaterThan(0);
       expect(sized.usage.inputTokens).toBeGreaterThan(0);
       expect(sized.findings.git).toMatch(/^a git repository at /);

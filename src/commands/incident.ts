@@ -12,6 +12,7 @@ import {
   Budget,
   type Event,
   type Incident,
+  IncidentBriefing,
   type IncidentStatus,
   type Leader,
   Situation,
@@ -181,7 +182,11 @@ export const create: Handler = async (args, ctx) => {
       cycle: 0,
       seat: "initial_ic" as const,
     });
-    let sized: Awaited<ReturnType<typeof sizeUp>>;
+    // The session's answer is parsed inside the same try, so a briefing that does not fit
+    // its schema is filed with its call the way `icCall` files an IC turn: the session that
+    // answered first, then a failed session that returned an id.
+    let sized: Awaited<ReturnType<typeof sizeUp>> | null = null;
+    let briefing: IncidentBriefing;
     try {
       sized = await sizeUp(incident, {
         cwd: ctx.cwd,
@@ -189,30 +194,48 @@ export const create: Handler = async (args, ctx) => {
         ...initial,
         providers: [icProvider],
       });
+      briefing = IncidentBriefing.parse(sized.output);
     } catch (error) {
       const reason = describeFailure(error);
-      if (error instanceof SessionError && error.sessionId !== null) {
-        const { sessionId, usage, activity } = error;
+      const failed =
+        sized !== null
+          ? {
+              sessionId: sized.sessionId,
+              usage: sized.usage,
+              activity: sized.activity,
+            }
+          : error instanceof SessionError && error.sessionId !== null
+            ? {
+                sessionId: error.sessionId,
+                usage: error.usage,
+                activity: error.activity,
+              }
+            : null;
+      if (failed !== null)
         store.batch(() => {
           store.record(id, "command.failed", "runtime", {
             unitId: command.id,
-            sessionId,
+            sessionId: failed.sessionId,
             ...initial,
             seat: "initial_ic",
             turn: "size-up",
             cycle: 0,
             reason,
-            ...(usage === null ? {} : { usage }),
+            ...(failed.usage === null ? {} : { usage: failed.usage }),
           });
-          recordActivity(store, id, "runtime", activity, place(sessionId));
+          recordActivity(
+            store,
+            id,
+            "runtime",
+            failed.activity,
+            place(failed.sessionId),
+          );
         });
-      }
       ctx.io.err(
         `noscope incident create: the size-up failed: ${reason}; incident ${id} stands with no briefing, and the IC on ${IC_PROVIDER}/${command.leader.model} takes command without one`,
       );
       return EXIT.failed;
     }
-    const { briefing } = sized;
     // The IC's model: `--ic-model` over the briefing's recommendation, and the default when
     // the briefing names a pair the provider does not serve.
     const recommended = briefing.incomingCommander;
@@ -379,7 +402,9 @@ function renderIncidentFile(
   }
   const briefed = briefingOf(events);
   const transfer = events
-    .filter((e) => e.type === "command.transferred")
+    .filter(
+      (e) => e.type === "command.transferred" && e.payload.kind === "initial",
+    )
     .at(-1);
   if (briefed !== null) {
     const incoming = transfer?.payload.incoming as
@@ -593,6 +618,8 @@ async function cycle(
   );
   if (turn.discrepancy !== undefined)
     ctx.io.out(`  discrepancy: ${turn.discrepancy}`);
+  for (const v of turn.briefingEvaluation ?? [])
+    ctx.io.out(`  briefing: ${v.verdict} ${v.item}: ${v.why}`);
   for (const o of turn.periodObjectives) ctx.io.out(`  objective: ${o}`);
   for (const p of turn.priorities) ctx.io.out(`  priority: ${p}`);
   for (const c of turn.closeUnits)

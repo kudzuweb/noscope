@@ -447,7 +447,7 @@ function sizeUpLines(
     );
   }
   for (const e of events)
-    if (e.type === "command.transferred")
+    if (e.type === "command.transferred" && e.payload.kind === "initial")
       lines.push(
         `  command transferred (${str(e.payload.kind)}) to ${str((e.payload.incoming as { provider?: unknown } | undefined)?.provider)}/${str((e.payload.incoming as { model?: unknown } | undefined)?.model)}, chosen by ${str(e.payload.chosenBy)}`,
       );
@@ -460,12 +460,16 @@ function sizeUpLines(
   return lines;
 }
 
-/** How much of the briefing the IC kept: the verdicts on its first command turn that evaluated one, counted by kind. */
+/** How much of the briefing the IC kept: the verdicts on its first accepted command turn that evaluated one, counted by kind. */
 function briefingKept(events: readonly Event[]): string {
   const briefed = events.some((e) => e.type === "incident.briefed");
+  const failed = events.some(
+    (e) => e.type === "command.failed" && e.payload.seat === "initial_ic",
+  );
   const evaluated = events.find(
     (e) =>
       e.type === "command.turned" &&
+      e.payload.rejected !== true &&
       Array.isArray(
         (e.payload.turn as { briefingEvaluation?: unknown } | undefined)
           ?.briefingEvaluation,
@@ -474,7 +478,9 @@ function briefingKept(events: readonly Event[]): string {
   if (evaluated === undefined)
     return briefed
       ? "briefing kept: not evaluated yet"
-      : "briefing: none (created without a size-up)";
+      : failed
+        ? "briefing: none (the size-up failed)"
+        : "briefing: none (no size-up)";
   const verdicts = list(
     (evaluated.payload.turn as { briefingEvaluation: unknown[] })
       .briefingEvaluation,
