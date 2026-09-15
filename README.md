@@ -35,6 +35,9 @@ IC's size-up at `create`, the IC's, the planner's, each unit leader's and each t
 session's (default `claude`; tests point it at `test/stub-claude`).
 `CLAUDE_CONFIG_DIR`, when set for Claude Code, is where the runtime looks for session and
 subagent transcripts (default `~/.claude`).
+`NOSCOPE_IC_HANDOFF_TOKENS` is the context size, in tokens of one call's whole input, at
+which the IC's session hands command to a fresh one (default 120000); the IC is never
+compacted, so this is what keeps it below Claude Code's limit.
 `NOSCOPE_LIVE=1` also runs the live tests, which call the real binary: a Haiku session, a
 Haiku leader sending a two-member `pinger` strike team, a Haiku initial IC sizing up this
 checkout read-only, and a

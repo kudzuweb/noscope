@@ -7,6 +7,7 @@ import {
   type Event,
   FinalReviewTurn,
   FirstCommandTurn,
+  HandoffDocument,
   type Incident,
   IncidentBriefing,
   jsonSchemaFor,
@@ -23,7 +24,9 @@ import { cycleOf, type Store } from "./store.js";
 // the full incident file at the top of every cycle, that sets the operational period and
 // reviews the planner's draft once (DESIGN.md Step 4). The runtime is the Planning
 // Section's bookkeeping around it: it renders the briefing, records every turn, and never
-// consults the IC per task.
+// consults the IC per task. The session is never compacted (every session runs with
+// `DISABLE_COMPACT=1`), so when its context reaches the handoff threshold the runtime
+// hands command to a fresh session before the next call (DESIGN.md Step 6).
 
 /** A turn is one structured call with no task of its own; it gets the planner's bound. */
 const IC_TURN_SECONDS = 300;
@@ -32,6 +35,21 @@ const COMMAND_TURN_SCHEMA = jsonSchemaFor(CommandTurn);
 const FIRST_COMMAND_TURN_SCHEMA = jsonSchemaFor(FirstCommandTurn);
 const REVIEW_TURN_SCHEMA = jsonSchemaFor(ReviewTurn);
 const FINAL_REVIEW_TURN_SCHEMA = jsonSchemaFor(FinalReviewTurn);
+const HANDOFF_SCHEMA = jsonSchemaFor(HandoffDocument);
+
+/** The context size, in tokens of a call's whole input, at which command is handed off; `NOSCOPE_IC_HANDOFF_TOKENS` overrides it. */
+const DEFAULT_HANDOFF_TOKENS = 120_000;
+
+/** The handoff threshold the environment sets, or the default; refused when it is not a positive whole number. */
+export function handoffThreshold(env: NodeJS.ProcessEnv = {}): number {
+  const raw = env.NOSCOPE_IC_HANDOFF_TOKENS;
+  if (raw === undefined || raw === "") return DEFAULT_HANDOFF_TOKENS;
+  if (!/^[1-9]\d*$/.test(raw))
+    throw new Error(
+      `NOSCOPE_IC_HANDOFF_TOKENS must be a positive whole number of tokens, not ${JSON.stringify(raw)}`,
+    );
+  return Number(raw);
+}
 
 /** The root unit, whose leader is the IC. */
 function commandUnit(store: Store, incidentId: string): Unit {
@@ -47,6 +65,58 @@ function lastActed(events: readonly Event[]): Event | null {
   for (const e of events)
     if (e.type === "command.turned" || e.type === "plan.reviewed") last = e;
   return last;
+}
+
+/**
+ * The context the IC's last call ran with: the whole input of whichever of `command.turned`,
+ * `plan.reviewed` or `command.failed` was last, with the session it ran on; null before
+ * the first, or when that call recorded no usage.
+ */
+export function lastIcContext(
+  events: readonly Event[],
+): { sessionId: string; tokens: number } | null {
+  let last: Event | null = null;
+  for (const e of events)
+    if (
+      e.type === "command.turned" ||
+      e.type === "plan.reviewed" ||
+      e.type === "command.failed"
+    )
+      last = e;
+  const usage = last?.payload.usage as Partial<Usage> | undefined;
+  if (last === null || typeof usage?.inputTokens !== "number") return null;
+  return { sessionId: str(last.payload.sessionId), tokens: usage.inputTokens };
+}
+
+/**
+ * A handoff whose document was written and whose session was released, but whose
+ * successor has not run yet: the last `leader.released` of the root unit that carries a
+ * handoff, after that unit's last `leader.started`. A cycle that ends between the release
+ * and the successor's first call, or a first call that returns no session id at all, does
+ * not lose the document: the next call is briefed with it and records the transfer.
+ */
+function pendingHandoff(events: readonly Event[], unit: Unit): Handoff | null {
+  let pending: Handoff | null = null;
+  for (const e of events) {
+    if (e.payload.unitId !== unit.id) continue;
+    if (e.type === "leader.started") pending = null;
+    if (e.type === "leader.released" && e.payload.handoff !== undefined) {
+      const h = e.payload.handoff as Pick<
+        Handoff,
+        "contextTokens" | "threshold" | "document"
+      >;
+      pending = {
+        kind: "handoff",
+        unitId: unit.id,
+        outgoingSessionId: str(e.payload.released),
+        outgoing: unit.leader,
+        incomingSessionId: null,
+        incoming: unit.leader,
+        ...h,
+      };
+    }
+  }
+  return pending;
 }
 
 /** The change report's heading names its window: the turn the IC last took, or that this is its first. */
@@ -233,7 +303,11 @@ export type Transfer =
       kind: "handoff";
       contextTokens: number;
       threshold: number;
+      document: HandoffDocument;
     });
+
+/** A handoff in flight (R3-9): the transfer as the outgoing session left it, its incoming session null until the successor's first call names it. */
+export type Handoff = Extract<Transfer, { kind: "handoff" }>;
 
 /**
  * Record a transfer of command: `command.transferred` with the transfer as its payload and
@@ -258,27 +332,63 @@ export function recordTransfer(
 }
 
 /**
- * The transfer the IC has not yet evaluated: the last `command.transferred` later than the
- * last accepted `command.turned` (a rejected turn does not count, matching `cycleOf`), so
- * the retry of a rejected first turn still evaluates, and a handoff's incoming session
- * evaluates its document on its first accepted turn.
+ * The transfer the IC has not yet evaluated. An initial transfer names no incoming session
+ * (the IC's starts at its first command turn), so it is pending while it is later than the
+ * last accepted `command.turned` (a rejected turn does not count, matching `cycleOf`), and
+ * the retry of a rejected first turn still evaluates. A handoff names its incoming session
+ * and is written with that session's `leader.started`, after the turn that recorded its
+ * first call, so it is pending until an accepted command turn or a review has run on that
+ * session: the successor evaluates the document once, on whichever call was its first.
  */
 export function pendingTransfer(events: readonly Event[]): Event | null {
   let accepted = -1;
   let transfer: Event | null = null;
+  const turnedOn = new Set<string>();
   for (const e of events) {
-    if (e.type === "command.turned" && e.payload.rejected !== true)
+    if (e.type === "command.turned" && e.payload.rejected !== true) {
       accepted = e.sequence;
+      turnedOn.add(str(e.payload.sessionId));
+    }
+    if (e.type === "plan.reviewed") turnedOn.add(str(e.payload.sessionId));
     if (e.type === "command.transferred") transfer = e;
   }
-  return transfer !== null && transfer.sequence > accepted ? transfer : null;
+  if (transfer === null) return null;
+  const incoming = transfer.payload.incomingSessionId;
+  if (typeof incoming === "string")
+    return turnedOn.has(incoming) ? null : transfer;
+  return transfer.sequence > accepted ? transfer : null;
 }
 
 /** What the transfer handed over, as the IC is asked to judge it: the items of a briefing, or the parts of a handoff document. */
-function evaluationItems(transfer: Event): string {
-  return transfer.payload.kind === "initial"
+function evaluationItems(transfer: TransferPayload): string {
+  return transfer.kind === "initial"
     ? "each initial objective and each unit sketched"
-    : "each period objective, each unit's state and the next move it names";
+    : "each period objective and priority, each unit's state, the hypothesis, each thing set aside and the next move";
+}
+
+/** A transfer as the log holds it, or as a handoff in flight is rendered before it is written: the payload's fields, read loosely. */
+type TransferPayload = Record<string, unknown>;
+
+/** The handoff document as the successor reads it, section by section (R3-9). */
+export function renderHandoffDocument(document: HandoffDocument): string[] {
+  return [
+    "period objectives:",
+    ...bullets(document.period.objectives),
+    "period priorities:",
+    ...bullets(document.period.priorities),
+    `why: ${document.period.why}`,
+    "units:",
+    ...bullets(
+      document.units.map(
+        (u) =>
+          `${u.unitId}: ${u.state}${u.waitsOn === undefined ? "" : `; waits on: ${u.waitsOn}`}`,
+      ),
+    ),
+    `hypothesis: ${document.hypothesis.statement} (claims ${document.hypothesis.claims.length === 0 ? "none" : document.hypothesis.claims.join(", ")})`,
+    "set aside:",
+    ...bullets(document.setAside.map((s) => `${s.what}: ${s.why}`)),
+    `next move: ${document.nextMove}`,
+  ];
 }
 
 /**
@@ -289,20 +399,27 @@ function evaluationItems(transfer: Event): string {
  * serve). A handoff's document is rendered as the outgoing IC wrote it (R3-9 owns its
  * shape).
  */
-function renderTransfer(transfer: Event): string[] {
-  const p = transfer.payload;
+function renderTransfer(p: TransferPayload): string[] {
   const outgoing = (p.outgoing ?? {}) as {
     provider?: unknown;
     model?: unknown;
   };
   const incoming = (p.incoming ?? {}) as { model?: unknown };
   const parsed = IncidentBriefing.safeParse(p.document);
-  if (p.kind !== "initial" || !parsed.success)
+  if (p.kind !== "initial" || !parsed.success) {
+    const handoff = HandoffDocument.safeParse(p.document);
+    const context =
+      typeof p.contextTokens === "number" && typeof p.threshold === "number"
+        ? `whose context reached ${p.contextTokens.toLocaleString("en-US")} tokens of the ${p.threshold.toLocaleString("en-US")}-token handoff threshold`
+        : "whose context reached the handoff threshold";
     return [
       "# Transfer of command: the outgoing IC's handoff document",
-      `Written by the outgoing IC on ${str(outgoing.provider)}/${str(outgoing.model)} (session ${str(p.outgoingSessionId)}) before its session reached the context threshold. Nothing in it binds you.`,
-      JSON.stringify(p.document, null, 2),
+      `You take command from the previous IC session in this seat, under the same role text, on ${str(outgoing.provider)}/${str(outgoing.model)} (session ${str(p.outgoingSessionId)}), ${context}; a session is never compacted, so command passes to you with the context emptied. That session wrote the handoff below for you, so that you act as the same IC and not as a stranger reading the file; the change report and the incident file that follow are the record it was written from. Nothing in it binds you.`,
+      ...(handoff.success
+        ? renderHandoffDocument(handoff.data)
+        : [JSON.stringify(p.document, null, 2)]),
     ];
+  }
   const b = parsed.data;
   return [
     "# Transfer of command: the initial IC's briefing",
@@ -330,15 +447,30 @@ function renderTransfer(transfer: Event): string[] {
 }
 
 /** The IC's first instruction on taking command: judge what it was handed, item by item, before setting the period. */
-function evaluateAsk(transfer: Event): string {
-  return `First, evaluate the ${transfer.payload.kind === "initial" ? "briefing" : "handoff document"} you took command with: for ${evaluationItems(transfer)}, say in briefingEvaluation whether you accept it, rewrite it or discard it, and why; you are not bound by any of it, and a rewritten or discarded item costs nothing. Then `;
+function evaluateAsk(transfer: TransferPayload): string {
+  return `First, evaluate the ${transfer.kind === "initial" ? "briefing" : "handoff document"} you took command with: for ${evaluationItems(transfer)}, say in briefingEvaluation whether you accept it, rewrite it or discard it, and why; you are not bound by any of it, and a rewritten or discarded item costs nothing. Then `;
 }
 
-/** The change report, then the incident file as the planner reads it (the same ten sections): what the IC reads before any ask. */
+/**
+ * The transfer a call is to evaluate: the one pending in the log, or a handoff in flight
+ * (its transfer is written with the successor's `leader.started`, after this call), as
+ * one payload for the rendering.
+ */
+function transferToEvaluate(
+  events: readonly Event[],
+  handoff: Handoff | null,
+): TransferPayload | null {
+  const pending = pendingTransfer(events);
+  if (pending !== null) return pending.payload;
+  return handoff === null ? null : { ...handoff };
+}
+
+/** The change report, then, after a transfer, the document handed over, then the incident file as the planner reads it (the same ten sections): what the IC reads before any ask. */
 function renderBriefingBody(
   store: Store,
   incident: Incident,
   providers: readonly Provider[],
+  transfer: TransferPayload | null = null,
 ): string[] {
   return [
     ...renderChangeReport(
@@ -347,6 +479,7 @@ function renderBriefingBody(
       store.listUnits(incident.id),
     ),
     "",
+    ...(transfer === null ? [] : [...renderTransfer(transfer), ""]),
     renderPlannerInput(store, incident, providers),
   ];
 }
@@ -354,20 +487,20 @@ function renderBriefingBody(
 /**
  * The IC's briefing for a cycle: the change report, then the incident file as the planner
  * reads it (the same ten sections), then the ask. The user message of every command turn;
- * the role text is fixed at the session's first call.
+ * the role text is fixed at the session's first call. After a transfer of command (the
+ * initial IC's briefing, or a handoff in flight or pending in the log) the document handed
+ * over comes between the change report and the file, and the ask opens with its evaluation.
  */
 export function renderCommandBriefing(
   store: Store,
   incident: Incident,
   providers: readonly Provider[],
+  handoff: Handoff | null = null,
 ): string {
   const events = store.listEvents(incident.id);
-  const transfer = pendingTransfer(events);
+  const transfer = transferToEvaluate(events, handoff);
   return [
-    ...renderChangeReport(events),
-    "",
-    ...(transfer === null ? [] : [...renderTransfer(transfer), ""]),
-    renderPlannerInput(store, incident, providers),
+    ...renderBriefingBody(store, incident, providers, transfer),
     "",
     `# Your command turn for operational period ${cycleOf(events) + 1}`,
     `${transfer === null ? "S" : `${evaluateAsk(transfer)}s`}et the period's objectives and priorities, close what is done, answer the resource requests you can, raise for Mauria what only she can supply, and say whether the incident continues.`,
@@ -408,6 +541,22 @@ function renderReviewPrompt(
   ].join("\n");
 }
 
+/**
+ * The outgoing IC's last call: the ask for its handoff document, tailored to the seat. It
+ * says why (the context reached the threshold and the session is never compacted), who
+ * reads it (a fresh session in the same seat, under the same role, briefed with the
+ * document and the full file), and what the successor needs to act as the same IC.
+ */
+export function renderHandoffAsk(
+  contextTokens: number,
+  threshold: number,
+): string {
+  return [
+    "# Handoff of command",
+    `Your context has reached ${contextTokens.toLocaleString("en-US")} tokens, at or past the ${threshold.toLocaleString("en-US")}-token threshold at which command is handed off; your session is never compacted, so this is your last call. Your successor is a fresh session in this same seat, under the same role, briefed with the document you write now and then the full incident file. Write it for that successor, so that it acts as you would with your context emptied and not as a stranger reading the file: the period objectives and priorities and why they are what they are; every unit's state and what it waits on; your hypothesis and the claims it rests on; what you set aside and why, so it is not reopened unknowingly; and the move you intended next. The file will show your successor what happened; the document is for what you concluded from it.`,
+  ].join("\n");
+}
+
 /** A reason in one sentence: a schema failure names its issues rather than dumping them. */
 function describe(error: unknown): string {
   if (error instanceof z.ZodError)
@@ -422,7 +571,7 @@ export type IcCall<T> = {
   usage: Usage;
   /** The fields every event of the IC's carries: the unit, the session, the seat's provider and model, the usage. */
   provenance: Record<string, unknown>;
-  /** Files the call: `leader.started` on the first call, its activity, and any discrepancy; run inside the caller's transaction after the event that records the turn. */
+  /** Files the call: `command.transferred` and `leader.started` on the first call, its activity, and any discrepancy; run inside the caller's transaction after the event that records the turn. */
   record: () => void;
 };
 
@@ -431,6 +580,16 @@ export type IcOptions = {
   env?: NodeJS.ProcessEnv;
   actor?: string;
 };
+
+/** The outgoing session of a handoff could not be resumed: there is nothing to hand off, and the next call starts fresh. */
+class OutgoingSessionLost extends Error {
+  constructor(
+    readonly sessionId: string,
+    reason: string,
+  ) {
+    super(reason);
+  }
+}
 
 /**
  * One call on the IC's session: the root unit's leader request with the prompt built for
@@ -443,18 +602,22 @@ export type IcOptions = {
  * records the turn, so the turn's event opens the cycle in the log. A call that failed
  * (the provider's error, or an output that does not fit) is filed at once as
  * `command.failed` with its session id and whatever usage the provider returned, the
- * session recorded on the unit when it was the first, so R3-9's context sum and review see
- * it and no paid session is orphaned; then the cycle ends with an error naming the seat.
+ * session recorded on the unit when it was the first, so the handoff's context check and
+ * review see it and no paid session is orphaned; then the cycle ends with an error naming
+ * the seat. After a handoff (`prepareHandoff`), the first call on the fresh session also
+ * files `command.transferred` before its `leader.started`, in both paths. The handoff
+ * call itself never replaces a lost session, since a fresh one has nothing to hand off.
  */
-async function icCall<T extends { discrepancy?: string | undefined }>(
+async function icCall<T extends object>(
   store: Store,
   incident: Incident,
-  turn: "command" | "review",
+  turn: "command" | "review" | "handoff",
   cycle: number,
   prompt: (unit: Unit) => string,
   schema: Record<string, unknown>,
   parse: (output: unknown) => T,
   options: IcOptions,
+  handoff: Handoff | null = null,
 ): Promise<IcCall<T>> {
   const actor = options.actor ?? "runtime";
   const listed = commandUnit(store, incident.id);
@@ -467,7 +630,16 @@ async function icCall<T extends { discrepancy?: string | undefined }>(
   let replaced: { sessionId: string; reason: string } | null = null;
   let outcome: Awaited<ReturnType<typeof provider.run>> | null = null;
   let output: T;
-  const started = (sessionId: string, extra: Record<string, unknown>) =>
+  // The session's first call: after a handoff, the transfer is recorded the moment the
+  // successor's id is known, whether or not it answered, then the session goes on the unit.
+  const started = (sessionId: string, extra: Record<string, unknown>) => {
+    if (handoff !== null)
+      recordTransfer(
+        store,
+        incident.id,
+        { ...handoff, incomingSessionId: sessionId },
+        actor,
+      );
     store.setUnitSession(incident.id, unit.id, sessionId, actor, {
       unitId: unit.id,
       sessionId,
@@ -478,6 +650,7 @@ async function icCall<T extends { discrepancy?: string | undefined }>(
         : { replaced: replaced.sessionId, reason: replaced.reason }),
       ...extra,
     });
+  };
   try {
     try {
       outcome = await ask(unit);
@@ -489,12 +662,16 @@ async function icCall<T extends { discrepancy?: string | undefined }>(
         dead === null
       )
         throw error;
+      // A handoff asks the outgoing session for what it knows; a fresh one knows nothing.
+      if (turn === "handoff")
+        throw new OutgoingSessionLost(dead, error.message);
       replaced = { sessionId: dead, reason: error.message };
       unit = { ...unit, sessionId: null };
       outcome = await ask(unit);
     }
     output = parse(outcome.output);
   } catch (error) {
+    if (error instanceof OutgoingSessionLost) throw error;
     const reason = describe(error);
     const failed =
       outcome !== null
@@ -550,7 +727,8 @@ async function icCall<T extends { discrepancy?: string | undefined }>(
       cycle,
       seat: "ic",
     });
-    if (output.discrepancy !== undefined)
+    const discrepancy = (output as { discrepancy?: unknown }).discrepancy;
+    if (typeof discrepancy === "string")
       store.record(incident.id, "picture.discrepancy", actor, {
         unitId: unit.id,
         sessionId,
@@ -558,7 +736,7 @@ async function icCall<T extends { discrepancy?: string | undefined }>(
         seat: "ic",
         taskId: null,
         cycle,
-        discrepancy: output.discrepancy,
+        discrepancy,
       });
   };
   return { output, sessionId, usage: outcome.usage, provenance, record };
@@ -568,28 +746,38 @@ async function icCall<T extends { discrepancy?: string | undefined }>(
  * The IC's command turn at the top of a cycle (step 2): the briefing is the user message,
  * the answer is a `CommandTurn`. Nothing is applied here; the caller validates the turn and
  * records `command.turned` with the period, or `command.rejected`, running `record` in the
- * same transaction.
+ * same transaction. After a handoff (`prepareHandoff`) the briefing carries the transfer
+ * and the outgoing session's document, and `command.transferred` is written with the
+ * successor's `leader.started`.
  */
 export function commandTurn(
   store: Store,
   incident: Incident,
   providers: readonly Provider[],
   options: IcOptions,
+  handoff: Handoff | null = null,
 ): Promise<IcCall<CommandTurn>> {
   const events = store.listEvents(incident.id);
   // On the IC's first accepted turn after a transfer of command the schema requires the
   // evaluation of what it was handed, so the provider's own validation holds the IC to it.
-  const evaluates = pendingTransfer(events) !== null;
+  const evaluates = transferToEvaluate(events, handoff) !== null;
   return icCall(
     store,
     incident,
     "command",
     cycleOf(events) + 1,
-    () => renderCommandBriefing(store, incident, providers),
+    (unit) =>
+      renderCommandBriefing(
+        store,
+        incident,
+        providers,
+        unit.sessionId === null ? handoff : null,
+      ),
     evaluates ? FIRST_COMMAND_TURN_SCHEMA : COMMAND_TURN_SCHEMA,
     (o): CommandTurn =>
       evaluates ? FirstCommandTurn.parse(o) : CommandTurn.parse(o),
     options,
+    handoff,
   );
 }
 
@@ -600,7 +788,9 @@ export function commandTurn(
  * approve, correct or amend; a read of the redraft may only approve or amend, and the
  * schema the provider receives says so. `plan.reviewed` records the verdict, the
  * corrections, and the amended plan when there is one, with the call's provenance, and the
- * call is filed after it.
+ * call is filed after it. A handoff before the review (the command turn's context reached
+ * the threshold) briefs the fresh session with the transfer and the document before the
+ * file and the draft, and files `command.transferred` with its `leader.started`.
  */
 export async function reviewTurn(
   store: Store,
@@ -609,8 +799,10 @@ export async function reviewTurn(
   draft: ActionPlan,
   corrections: string | null,
   options: IcOptions,
+  handoff: Handoff | null = null,
 ): Promise<IcCall<ReviewTurn>> {
-  const cycle = cycleOf(store.listEvents(incident.id));
+  const events = store.listEvents(incident.id);
+  const cycle = cycleOf(events);
   const redraft = corrections !== null;
   const call = await icCall(
     store,
@@ -623,13 +815,19 @@ export async function reviewTurn(
         cycle,
         corrections,
         unit.sessionId === null
-          ? renderBriefingBody(store, incident, providers)
+          ? renderBriefingBody(
+              store,
+              incident,
+              providers,
+              transferToEvaluate(events, handoff),
+            )
           : null,
       ),
     redraft ? FINAL_REVIEW_TURN_SCHEMA : REVIEW_TURN_SCHEMA,
     (o): ReviewTurn =>
       redraft ? FinalReviewTurn.parse(o) : ReviewTurn.parse(o),
     options,
+    handoff,
   );
   store.batch(() => {
     store.record(incident.id, "plan.reviewed", options.actor ?? "runtime", {
@@ -646,4 +844,107 @@ export async function reviewTurn(
     call.record();
   });
   return call;
+}
+
+/** What preparing a handoff came to: one is in flight, none was due, or the outgoing session was lost and simply released. */
+export type HandoffOutcome =
+  | { kind: "none" }
+  | { kind: "handoff"; handoff: Handoff; resumed: boolean }
+  | {
+      kind: "released";
+      sessionId: string;
+      contextTokens: number;
+      reason: string;
+    };
+
+/**
+ * Before an IC call: hand command off when the last call's context reached the threshold
+ * (DESIGN.md Step 6). The outgoing session is resumed once for its `HandoffDocument`,
+ * then released through the log (`leader.released` with the document, the context, the
+ * threshold and the call's usage, so the call is priced and the document survives a
+ * cycle that ends before the successor runs), and the caller's next call starts a fresh
+ * session briefed with the document; `command.transferred` is written with that session's
+ * `leader.started`, whether or not its first call answered, so a session that was paid for
+ * is recorded as the one command passed to. A handoff already pending in the log (released,
+ * no successor yet) is resumed rather than asked for again. An outgoing session that
+ * cannot be resumed is released with the reason and nothing is handed off: the next call
+ * starts fresh on the file alone. A root unit with no session has nothing to hand off.
+ */
+export async function prepareHandoff(
+  store: Store,
+  incident: Incident,
+  options: IcOptions,
+): Promise<HandoffOutcome> {
+  const unit = commandUnit(store, incident.id);
+  const events = store.listEvents(incident.id);
+  if (unit.sessionId === null) {
+    const pending = pendingHandoff(events, unit);
+    return pending === null
+      ? { kind: "none" }
+      : { kind: "handoff", handoff: pending, resumed: true };
+  }
+  const threshold = handoffThreshold(options.env);
+  const last = lastIcContext(events);
+  if (
+    last === null ||
+    last.sessionId !== unit.sessionId ||
+    last.tokens < threshold
+  )
+    return { kind: "none" };
+  const actor = options.actor ?? "runtime";
+  const cycle = cycleOf(events);
+  let call: IcCall<HandoffDocument>;
+  try {
+    call = await icCall(
+      store,
+      incident,
+      "handoff",
+      cycle,
+      () => renderHandoffAsk(last.tokens, threshold),
+      HANDOFF_SCHEMA,
+      (o) => HandoffDocument.parse(o),
+      options,
+    );
+  } catch (error) {
+    if (!(error instanceof OutgoingSessionLost)) throw error;
+    const reason = `the outgoing session could not be resumed for its handoff: ${error.message}`;
+    store.setUnitSession(incident.id, unit.id, null, actor, {
+      unitId: unit.id,
+      released: error.sessionId,
+      ...unit.leader,
+      reason,
+      contextTokens: last.tokens,
+    });
+    return {
+      kind: "released",
+      sessionId: error.sessionId,
+      contextTokens: last.tokens,
+      reason,
+    };
+  }
+  const handoff: Handoff = {
+    kind: "handoff",
+    unitId: unit.id,
+    outgoingSessionId: call.sessionId,
+    outgoing: unit.leader,
+    incomingSessionId: null,
+    incoming: unit.leader,
+    contextTokens: last.tokens,
+    threshold,
+    document: call.output,
+  };
+  store.batch(() => {
+    store.setUnitSession(incident.id, unit.id, null, actor, {
+      ...call.provenance,
+      released: call.sessionId,
+      reason: `the context reached ${last.tokens} tokens of the ${threshold}-token handoff threshold`,
+      handoff: {
+        contextTokens: last.tokens,
+        threshold,
+        document: call.output,
+      },
+    });
+    call.record();
+  });
+  return { kind: "handoff", handoff, resumed: false };
 }

@@ -799,6 +799,79 @@ export const FinalReviewTurn = reviewTurn(["approve", "amend"])
   .omit({ corrections: true })
   .superRefine(verdictFields);
 
+/**
+ * What an outgoing IC writes for its successor at a handoff (R3-9): the session is never
+ * compacted, so when its context reaches the threshold the runtime asks it for this
+ * document, releases the session, and briefs a fresh one with the document and the full
+ * file. Written for a successor that is the same IC with its context emptied, not a
+ * stranger reading the file: the period as it stands and why, every unit's state and
+ * what it waits on, the hypothesis and the claims it rests on, what was set aside and
+ * why, and the next intended move. One strict object, like every turn schema.
+ */
+export const HandoffDocument = z.strictObject({
+  period: z.strictObject({
+    objectives: z
+      .array(z.string().min(1))
+      .describe("The current period's objectives, as you set them"),
+    priorities: z
+      .array(z.string().min(1))
+      .describe("The priorities as you restated or revised them"),
+    why: z
+      .string()
+      .min(1)
+      .describe(
+        "Why the objectives and priorities are what they are: what the reports and the file told you that chose them",
+      ),
+  }),
+  units: z
+    .array(
+      z.strictObject({
+        unitId: z.string().min(1),
+        state: z
+          .string()
+          .min(1)
+          .describe(
+            "Where the unit stands against its objective, in your reading: what it has established, what it has left",
+          ),
+        waitsOn: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            "What the unit waits on, when it waits: a task in flight, an answer, a resource request",
+          ),
+      }),
+    )
+    .describe(
+      "Every active unit; a closed one only if its outcome still matters",
+    ),
+  hypothesis: z.strictObject({
+    statement: z
+      .string()
+      .min(1)
+      .describe("Your current reading of the incident"),
+    claims: z
+      .array(z.string().min(1))
+      .describe("The claim ids it rests on; empty when it rests on none yet"),
+  }),
+  setAside: z
+    .array(
+      z.strictObject({
+        what: z.string().min(1),
+        why: z.string().min(1),
+      }),
+    )
+    .describe(
+      "Lines of inquiry, reports or suggestions you chose not to pursue, each with why, so your successor does not reopen them unknowingly",
+    ),
+  nextMove: z
+    .string()
+    .min(1)
+    .describe(
+      "What you intended to do on your next turn, and what would have changed your mind",
+    ),
+});
+
 // What a session returns.
 
 export const Needed = z.object({
@@ -899,6 +972,7 @@ export type CommandTurn = z.infer<typeof CommandTurn>;
 export type BriefingVerdict = z.infer<typeof BriefingVerdict>;
 export type IncidentBriefing = z.infer<typeof IncidentBriefing>;
 export type ReviewTurn = z.infer<typeof ReviewTurn>;
+export type HandoffDocument = z.infer<typeof HandoffDocument>;
 export type Settlement = z.infer<typeof Settlement>;
 export type Needed = z.infer<typeof Needed>;
 export type ClaimProposal = z.infer<typeof ClaimProposal>;
