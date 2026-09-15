@@ -1,144 +1,145 @@
-# Handoff: noscope round 3, the overnight build
+# Handoff: noscope round 4, the build in progress
 
-Refreshed 2026-09-15 01:00 CDT by session mauriaparker-91 [cc4a8f] (transcript
-home-laptop:~/.claude/projects/-Users-mauriaparker/da050f04-42b2-4162-9421-387ea5d066a1.jsonl).
-This is a recovery point for an unattended build, not a hand-over: the session that wrote it
-is running round 3 overnight and refreshes this file at each merge. If you are reading it,
-that session died or ran out of usage.
+Refreshed 2026-09-15 11:50 CDT by session mauriaparker-91 [cc4a8f] (transcript
+home-laptop:~/.claude/projects/-Users-mauriaparker/da050f04-42b2-4162-9421-387ea5d066a1.jsonl),
+at 75 percent of its context, mid-build. The successor is named `noscope-round4` and is you.
 
-**First actions, in order:** (1) `/warp-pin title noscope-build`. (2) Read this file, then
-the "## Round 3" section of `BUILD-PLAN.md` in full, then `DESIGN.md` in full. (3) Run
-`git -C ~/Documents/Projects/noscope status --short`, `git log --oneline -8`, `git worktree
-list`, and `gh pr list --repo kudzuweb/noscope`; the State section below says what those
-should show as of this refresh, and the difference is what happened after it. (4) Resume at
-the first round 3 PR that is not merged, under the working agreements. (5) Mauria is asleep;
-nothing needs her yes tonight except a design call the plan does not settle, which stops the
-run at that PR with the question written in `docs/build-record.md`.
+**First actions, in order:** (1) `/warp-pin title noscope-round4`. (2) `SendMessage` to
+`mauriaparker-91` saying "noscope-round4 is up, send the pending results here". That session
+stays alive as the relay until the four agents below have delivered. (3) Read this file, then
+`BUILD-PLAN.md` "## Round 4" in full, then the round 4 entries at the end of
+`docs/build-record.md` (R4-8, R4-1). (4) Run `git -C ~/Documents/Projects/noscope status
+--short`, `git log --oneline -5`, `git worktree list`, `gh pr list --repo kudzuweb/noscope`.
+(5) Continue the build as section 4 says. Mauria is awake and reads this session; her
+authority to push and merge stands for the round ("go for it. authority stands", 11:10 CDT).
 
 ## 1. GOAL
 
-Build round 3 of `BUILD-PLAN.md`: eleven PRs, R3-0 to R3-10, that give noscope an Incident
-Commander session above the planner, a leader session on every unit, strike teams of
-subagents, tool and subagent events, lacks resolved at the leader, an initial IC size-up
-with transfer of command, an IC handoff below the context limit, claim status as a label,
-and a third run of the first incident. Each PR merges on its own with CI green and review
-findings applied; the run ends with R3-10's write-up.
+Build round 4 of `BUILD-PLAN.md` (ten PRs, R4-1 to R4-10): the IC reviews a unit's work and
+answers each report with accepted, revise or reassign; the IC owns the situation; session work
+leaves `command`; refusals fall back to Opus 4.8 once and then go to judgment; the size-up is
+scoped to the incident kind; parallel dispatch; then the fourth live run and its write-up.
 
 ## 2. HOW IT GOT THIS SHAPE
 
-The design was ruled by Mauria in conversation on 2026-09-14 (14:40 to 18:56 and 20:54 to
-00:48 CDT). Every ruling and her reasons are in the quipu thread
-`~/Documents/Projects/my-quipu/ics-runtime.md` (Decisions, eighteen from that day, dated by
-the put-down knot) and the plan states each at the scope it was made. The rulings that a
-builder is most likely to widen by accident:
+Round 3 (eleven PRs plus two run-forced fixes, PRs 28 to 39) was built overnight by this
+session and run as run 003 ($4.86, three IC turns, same code path as runs 001 and 002);
+write-ups in `docs/first-incident.md` "## Third run" and `docs/instructions-only-run.md`. Round
+4 came from Mauria's morning rulings on 2026-09-15 (08:22 to 11:09 CDT), recorded in the quipu
+thread `~/Documents/Projects/my-quipu/ics-runtime.md` and reviewed into the plan in Roughdraft:
 
-| Ruling | Do not turn it into |
+| Ruling, her words where they matter | Where it lands |
 |---|---|
-| Every unit has a leader; deterministic tasks belong to whichever leader assigns them. | A deterministic-only unit kind (she rejected it). |
-| The IC is the root unit's leader; the planner stays, stateless; the IC reviews the draft in one round; the planner is cut later only if `incident review` shows the IC never changes it. | The IC planning directly (rejected), or a review loop longer than one redraft. |
-| No strike-team presets and no default kind; the task declares the team and the leader says why. | A built-in read-only Haiku kind (rejected). |
-| The IC's tools are the default set minus `Edit` and `Write`, `Bash` read-only allowlisted, until grants land. | The full default set. |
-| One shared situation, written by the planner; `discrepancy` is for a different problem, not a different detail. | Per-seat situations, or seats arguing each turn. |
-| "Leader" for unit heads, "IC" for the root's; "chief" is an ICS Section Chief and is not used. | "Chief" or "commander" for a unit's session. |
-| No second incident of another kind this round. | An R3-10 second half. |
+| "the IC should definitely be reviewing a unit's work when it comes in! it needs to assess whether that unit is done, whether to send it back to that unit for revision, or whether a different unit would do a better job with instructions based on what the first unit found/didn't find" | R4-1 (the work behind the report), R4-2 (verdicts), R4-3 (revise), R4-4 (reassign) |
+| "i want the IC to own it once it starts making the updates to it" (the situation) | R4-5 |
+| "it should fallback to opus 4.8 actually"; "the retry for the fallback should be deterministic but if that also fails refusal should go back to the IC for it to apply judgment on how to proceed" | R4-7 |
+| The planner after round 4 drafts only the tactics, as a suggestion for the IC ("so now the planner just makes plans to suggest to the IC right?", yes) | R4-5's role text |
+| Deterministic tasks belong to whichever leader assigns them, command included (2026-09-14) | R4-6 keeps the IC's deterministic assignments, moved onto the command turn |
+| The repository is public since 08:33 (for her use at work); `CLAUDE.md` at the root orients any Claude | Nothing personal in fixtures or docs |
 
-## 3. STATE (as of this refresh, 2026-09-15 06:40 CDT: the round is done)
+## 3. STATE (as of this refresh)
 
-Origin main is `865dc7b`, pushed; local main equals it; clean; no worktrees; no open PRs;
-`dist/` built from it. Round 3 is built and run: eleven plan PRs (28 to 37, R3-9 as #36)
-plus two the run forced (#38 a refusal replaces the session; #39 the session's read-only
-command list). Run 003 is written up under "## Third run" in `docs/first-incident.md`; R3-10's
-build-record entry is in; Mauria's instructions-only analysis is `docs/instructions-only-run.md`.
-The overnight run is over; the heartbeat cron is deleted. Nothing is in flight.
+Origin main is `9b0b863`, pushed; local main equals it; `dist/` built from it. Merged this
+round: R4-8 (#40, the size-up scoped to the kind), R4-1 (#41, the work behind the report).
+Open, all built, all under review or fixes:
 
-What the run left for Mauria (also in the morning report in the session): the runtime's IC
-on Opus 5 is refused by the model's safeguards on resumed turns (category
-`reasoning_extraction`), so run 003 ran the IC on Sonnet 5; the revisit list gained four
-items (session tasks under `command` run inside the IC's own session; leader turns on a
-large context cost at cache-write rates; the size-up over-scopes into fixing; the refusal
-category is not captured from the stream); and the comparison argues for a review seat
-between a unit's report and the IC's acceptance.
+| PR | Branch, worktree | State |
+|---|---|---|
+| #42 R4-6 Session work leaves command | `pr-session-work-leaves-command`, `scratchpad/wt-r4-6` | Built with the correction (assignTasks on CommandTurn, deterministic only); reviewer `review42-correctness` running. Merge first. |
+| #43 R4-7 Refusals: category and Opus 4.8 fallback | `pr-refusal-fallback`, `scratchpad/wt-r4-7` | Built; reviewer `review43-correctness` running. Merge second, rebased over 42. |
+| #44 R4-9 Parallel dispatch | `pr-parallel-dispatch`, `scratchpad/wt-r4-9` | Built (dispatcher rewrite); reviewer `review44-dispatch` running. Merge third, rebased over 42 and 43; expect dispatcher conflicts. |
+| #45 R4-2 Report verdicts | `pr-report-verdicts`, `scratchpad/wt-r4-2` | Approved by `review45-correctness`; builder `build-r4-2` applying three small fixes (revise-plus-closeUnits refused; a comment on the close invariant; `report <id>` in review's line). At its rebase after 42 and 43: drop command's-own-report handling (the root files no report after R4-6), three-way union on CommandRuleName, asPlan as a function of assignTasks, IC_ROLE paragraph merged, EventType 46, rerun the stub test. Merge fourth. |
 
-Databases: `~/.noscope/third-run.sqlite` (incidents 001, refused; 002, satisfied), beside the
-first two runs'. The scratch document is as run 003 left it; `document.pristine.md` restores
-it.
+Not started: R4-3 (revise), R4-4 (reassign), R4-5 (the IC owns the situation), in that order
+after R4-2; R4-10 (the fourth run) last. The worktrees live under the scratchpad
+`/private/tmp/claude-501/-Users-mauriaparker/da050f04-42b2-4162-9421-387ea5d066a1/scratchpad/`
+and belong to the relaying session's lifetime; a successor recreates any it needs with
+`git worktree add -b <branch> <path> origin/<branch>` and `pnpm install --frozen-lockfile`.
 
-## 4. NEXT STEPS, IN ORDER (for whoever picks the thread up)
+The shared builder brief is `scratchpad/builder-brief.md` (round 3 rules plus a Round 4
+section); if the scratchpad is gone, its substance is section 5 below plus the rulings above.
 
-1. Read the morning report (the last message of session mauriaparker-91) and
-   `docs/first-incident.md` "## Third run", then `docs/instructions-only-run.md`.
-2. Mauria's calls: the IC's model while Opus 5 refuses the runtime's prompts; whether a
-   review seat goes between a unit's report and the IC; the revisit items above.
-3. Then the plan's after-round-3 list: noscope on roughdraft, the quipu, the scan.
+Heartbeat cron `2ba4d482` (hourly at :17) lives in the relaying session and dies with it;
+create your own with `CronCreate` if you run unattended.
 
-## 5. WORKING AGREEMENTS (standing; do not re-ask)
+## 4. NEXT STEPS, IN ORDER
 
-- Mauria at 2026-09-15 00:55 CDT: "push, and you have permission to push and merge as
-  needed for the rest of this build." Pushes of main and merges need no further yes this
-  round.
-- One PR per plan row on `pr-<slug>` targeting main, no stacking on GitHub; a `git
-  worktree` per branch under the scratchpad; reviewers work in the worktree and never
-  switch branches. Merge after CI green on the head SHA (`gh pr view --json headRefOid`)
-  and review findings applied; squash-merge with branch deletion; pull; `pnpm build`.
-- Every PR: commit; review by direct subagents (`general-purpose`, named
-  `review<N>-<angle>`, briefed with the design context; their reports are secondhand until
-  reconciled and often arrive truncated, so ask for the rest by `SendMessage`); push; `gh
-  pr create` with body = the plan row's scope text verbatim, "## Deviations, with reasons",
-  then "## From the review"; a `docs/build-record.md` entry on the branch.
-- Docs travel with the change: `DESIGN.md`, `docs/architecture.html`, README, build record.
-  Never `git add -A`. Never commit in the same command as an edit. Sentence-case commit
-  messages, no emoji, no attribution. Read `pnpm check`'s exit code, never grepped output.
-- A design call the plan does not settle stops that PR, not the run: write the question
-  in the build record, mark the PR draft, continue with PRs that do not depend on it.
-- Quipu: message the `quipu` keeper with thread and change; spawn one if none runs.
+1. Receive the four pending results (the relay forwards them): reviews of 42, 43, 44 and
+   build-r4-2's fix report. For each review: reconcile, send the fix list to the builder
+   (agents `build-r4-6`, `build-r4-7`, `build-r4-9` exist and hold context; message them by
+   name), push, update the PR body's "## From the review", wait for CI on the head SHA,
+   squash-merge with branch deletion, pull, `pnpm build`, remove the worktree.
+2. Merge order 42, 43, 44, 45, each rebased onto main by its builder (tell it what main
+   has), with a second short review when a rebase changed logic (as done for R3-6 and R3-9).
+3. After 45: spawn builders for R4-3, R4-4, R4-5 in order (each on main, one at a time, the
+   plan block plus the rulings as the brief), review, merge.
+4. R4-10: restore `~/.noscope/second-run/document.md` from `document.pristine.md`; from
+   `~/Documents/Projects/roughdraftplus` (at `6a996e8`) with `NOSCOPE_DB=~/.noscope/fourth-run.sqlite`,
+   `incident create` with run 003's objective, constraints and priority, the IC on Opus 5
+   with the R4-7 fallback; step by hand, detached, one cycle at a time (the runner pattern is
+   `~/.noscope/third-run/step.sh`); write "## Fourth run" in `docs/first-incident.md` with
+   the measures beside runs 001 to 003, the verdicts by kind, what each revise or reassign
+   cost and found, and the cycle wall time beside summed task seconds; a build-record entry
+   for R4-10; message the quipu keeper (`quipu`, resident) with the thread and the change.
+5. After every merge: refresh section 3 of this file, commit, push; message `quipu`.
+
+## 5. WORKING AGREEMENTS (standing)
+
+- Mauria's push and merge authority stands for round 4. Pushes of main and merges need no
+  further yes. Every PR is reviewed by a subagent before merge; findings are secondhand
+  until reconciled; two reviewers for a rewrite.
+- One PR per plan row on its branch targeting main; a worktree per branch; reviewers work
+  read-only in the worktree; builders never push or open PRs. PR body = the plan block
+  verbatim, "## Deviations, with reasons", "## From the review". Build-record entry on the
+  branch headed `## R4-N: <title> (#PR, merged 2026-09-15)`, the number filled at review.
+- Docs travel with the change (DESIGN.md, docs/architecture.html, README, CLAUDE.md, the
+  build record). Never `git add -A`. Never commit in the same command as an edit (this
+  session broke that twice tonight and committed conflict markers once; the fix was an
+  amend). Sentence-case commits, no emoji, no attribution. Read `pnpm check`'s exit code.
 - Chat with Mauria: provenance labels, answer first, tables for parallel items, no
-  em-dashes, plain full sentences; when she says something is too compressed, rewrite it
-  longer.
+  em-dashes, plain full sentences; restate in full when returning to a topic.
 
 ## 6. ANCHORS
 
-- Repo `~/Documents/Projects/noscope`; `pnpm check`; `./bin/noscope.mjs --help`;
-  `NOSCOPE_DB=<file>`, `NOSCOPE_CLAUDE_BIN=<binary>`; tests use `test/stub-claude`;
-  `NOSCOPE_LIVE=1` runs the live tests.
-- The plan: `BUILD-PLAN.md` "## Round 3" (line 393 onward at `efbbaa5`). The contract:
-  `DESIGN.md`. The record: `docs/build-record.md`, `docs/first-incident.md`.
-- Code map: `src/models.ts` (all schemas), `src/store.ts` (tables, events, migrations),
-  `src/planner.ts` (`renderPlannerInput`, `proposePlan`, rules), `src/validator.ts`,
-  `src/runtime.ts` (`applyPlan`), `src/dispatcher.ts` (`dispatch`, `runTask`,
-  `briefContext`), `src/verifier.ts` (`recordClaims`, `promoteMatching`),
-  `src/capabilities/session.ts` (briefs, `runSession`), `src/providers/base.ts`
-  (`SessionRequest`, `SESSION_PREAMBLE`), `src/providers/claude-code.ts`
-  (`renderClaudeCodeArgs`, `parseClaudeCodeResult`, `runProcess`),
-  `src/commands/incident.ts` (`cycle`, `step`, `answer`, `provide`), `src/review.ts`.
-- A live run: from `~/Documents/Projects/roughdraftplus` with `NOSCOPE_DB` set; `incident
-  step <id>` one cycle at a time, detached (`nohup sh -c '... >> log; echo "exit $?" >>
-  log' & disown`) with a Monitor on the log; a cycle with a reproduce can exceed ten
-  minutes. Reading a run: `incident review`, `tree`, `show`, `events`; `sqlite3 <db>`;
-  transcripts under `~/.claude/projects/-Users-mauriaparker-Documents-Projects-roughdraftplus/`.
-- Claude Code 2.1.272 facts verified 2026-09-15: `--resume` takes a new `--json-schema`
-  per call and reports per-call usage; `DISABLE_COMPACT` env disables compaction;
-  `--agents <json>` works on resume; the result envelope has `subagent_stats` and
-  `modelUsage`; subagent transcripts are `<project>/<session>/subagents/agent-*.jsonl` with
-  a `.meta.json` carrying `toolUseId`.
+- Repo `~/Documents/Projects/noscope`, public at https://github.com/kudzuweb/noscope;
+  `pnpm check`; `./bin/noscope.mjs --help`; `NOSCOPE_DB`, `NOSCOPE_CLAUDE_BIN`,
+  `NOSCOPE_IC_HANDOFF_TOKENS`, `NOSCOPE_REPORT_WORK_CHARS`, `NOSCOPE_PARALLEL` (R4-9),
+  `NOSCOPE_IC_FALLBACK_MODEL` (R4-7); tests use `test/stub-claude`; `NOSCOPE_LIVE=1` runs
+  the live tests.
+- The plan: `BUILD-PLAN.md` "## Round 4" (line 630 onward at `9b0b863`). The contract:
+  `DESIGN.md`. Records: `docs/build-record.md`, `docs/first-incident.md`,
+  `docs/instructions-only-run.md`.
+- Code map after round 3: `src/ic.ts` (IC seat: briefing, change report, command and review
+  turns, transfers, handoff), `src/leader.ts` (role texts, leader turns, holdsCapability),
+  `src/dispatcher.ts` (the pass), `src/runtime.ts` (applyPlan, applyCommand, answerRequest),
+  `src/validator.ts` (plan rules, command rules, leader rules), `src/planner.ts` (the ten
+  sections, rules text), `src/size-up.ts` (initial IC), `src/strike-team.ts`, `src/activity.ts`
+  (tool.called, subagent.ran), `src/providers/claude-code.ts` (stream-json, refusals,
+  contextTokens), `src/store.ts` (schema version 6, mutations, replay), `src/review.ts`.
+- Run databases: `~/.noscope/first-incident.sqlite`, `second-run.sqlite`, `third-run.sqlite`
+  (incidents 001 refused, 002 satisfied). Scratch document and pristine copy under
+  `~/.noscope/second-run/`. Roughdraft serves it at
+  `http://localhost:7373/?path=%2FUsers%2Fmauriaparker%2F.noscope%2Fsecond-run%2Fdocument.md`.
+- Quipu thread `~/Documents/Projects/my-quipu/ics-runtime.md`; keeper agent `quipu`
+  (resident in the relaying session; a successor spawns its own per the quipu instructions).
+  Papercuts: pc-7e69f7, pc-92ef05, pc-4aa4d5.
 
 ## 7. GOTCHAS
 
-- biome reflows code after `lint:fix`; exact-string edits miss; write scripts with
-  whitespace-tolerant anchors or rewrite small files whole. `exactOptionalPropertyTypes` is
-  on. knip fails on unused exports. The Write tool is blocked by a security hook when the
-  file contains the word exec followed by an opening parenthesis; a heredoc through Bash is not.
-- A script that edits several files must read, edit and write each once; two edits from
-  the on-disk original lose the first.
-- `bin/noscope.mjs` runs `dist/` with no staleness check: `pnpm build` before any live run.
-- Roughdraft's save reflows paragraphs and pads table cells: rebuild the committed file
-  from HEAD plus the intended edits (an edit script with tolerant anchors, run on both).
-- `timeout` is not on this machine; a foreground `sleep` is refused; `until` loops in a
-  background command, or a Monitor. `roughdraft open` blocks; run it in the background
-  with a long timeout and wait for the task notification.
-- Playwright's MCP server refuses `file:` URLs and runs inside its output directory;
-  reproduce sessions persist edits to the document they touch, so keep a pristine copy.
-- The permission classifier refuses `ps` listings; `pgrep -f "noscope.mjs incident step"`
-  is allowed. `claude config` is not a subcommand any more (pc-92ef05).
-- The planner snapshot (`test/planner.test.ts`) pins rendered sections; update with
-  `pnpm vitest run test/planner.test.ts -u` and read the diff.
-- Subagent reports arrive as teammate messages and truncate; ask for the rest.
+- A PR that conflicts with main after another merge reports no checks; a CI wait loop then
+  spins forever. Check `gh pr view N --json mergeable` before waiting, and rebase first.
+- Rebases between PRs that touch `docs/build-record.md` always conflict at the tail: keep
+  every entry in merge order with the PR's own last. Never let a `git add` follow a failed
+  resolution script in the same command.
+- Facts verified on Claude Code 2.1.272 (DESIGN.md Reference): the structured-output API
+  refuses a top-level oneOf (every turn schema is one strict object); systemPrompt is ignored
+  on resume; a resumed call is budgeted at the whole context at cache-write rates;
+  `Usage.contextTokens` is the last assistant message's context; Opus 5 refused the IC's
+  resumed turns (category `reasoning_extraction`) while Sonnet 5 did not; the stream spells
+  the refusal keys snake_case and the transcript camelCase (R4-7); the Bash allowlist is a
+  floor in print mode; `--strict-mcp-config` is an isolation flag.
+- biome reflows; exact-string edits miss; `exactOptionalPropertyTypes` is on; knip fails on
+  unused exports; the Write tool is blocked on files containing exec followed by a paren.
+- `timeout` is not on this machine; a foreground `sleep` is refused; poll with an `until`
+  loop in a background command. `roughdraft open` blocks; run it in the background.
+- Subagent reports arrive truncated at 16k; ask for the rest by `SendMessage`.
