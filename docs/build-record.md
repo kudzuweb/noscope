@@ -1897,3 +1897,69 @@ Not exactly to spec, with reasons:
 - The Reference row says the handoff is tested on the stub only and the threshold has not
   been reached live; no live test is added, since reaching 120,000 tokens of IC context
   would cost a long Opus session.
+
+## R3-10a: A refusal replaces the session (#PR, merged 2026-09-15)
+
+Forced by the third live run (R3-10, 2026-09-15): the IC's review turn on Opus 5, a resumed
+call over the planner's draft, came back from the API refused (`model_refusal_no_fallback`,
+category `reasoning_extraction`), and the next step's command turn on the same session was
+refused again in under a second; the runtime filed `command.failed` both times and would
+have resumed the flagged session forever, since `icCall` and the dispatcher's `leaderTurn`
+replaced a session only when a resume returned no session id. Built: the provider
+(`refusalOf` in `src/providers/claude-code.ts`) reads the `model_refusal_no_fallback`
+system line, or any line whose `stop_reason` is `refusal`, on exit 0 and on exit 1 alike,
+and throws a `SessionError` carrying the session id (from the result, else the init line),
+the refused call's usage from the result (`usageOf`, shared with the success path), its
+activity and the new `refused: { category, explanation }` (`Refusal` in
+`src/providers/base.ts`; `SessionError`'s fifth argument, null otherwise). `icCall` treats
+a refused resumed call like a dead session: it files `command.failed` with the refusal and
+the usage (`fileFailure`, now shared with the failure path), releases the session through
+`leader.released` with `reason: "refused: <category>"` and the refusal, and asks a fresh
+session the same turn (the command turn's briefing, or `reviewTurn`'s re-brief with the
+file before the draft), whose `leader.started` names the refused session as `replaced`; a
+handoff call refused becomes the lost-outgoing-session path, released with the reason and
+nothing handed off. The dispatcher's `leaderTurn` does the same with the new event
+`leader.failed` (unit, session, provider, model, seat, reason, refusal, usage). A fresh
+session refused too is filed and ends the cycle or the pass with exit 1 and a message
+naming the category, the replaced session and Claude Code's advice (rephrase the request
+in a new session or change the model); a refused fresh session is not put on the unit, so
+the next call starts fresh again. `incident review` prices a refused IC call in its cycle
+with `(refused: <category>)` on the failed-turn line, a refused leader turn as `leader of
+<unit> ...: turn failed (refused: <category>)`, and ends with `refusals: N: <seat> <category>
+(session <id>), ...` or `refusals: none`. The stub refuses the calls `NOSCOPE_STUB_REFUSE`
+names by ordinal (counted in `NOSCOPE_STUB_CALL_COUNTER`), printing the init line, the
+system refusal line (`NOSCOPE_STUB_REFUSE_CATEGORY`, default `reasoning_extraction`), a
+synthetic assistant line and a result with `stop_reason: "refusal"` and the call's usage,
+then exiting 1, on the shape the run's log recorded. DESIGN.md Step 2 (the events), Step 6
+(the rule) and the Reference table (the observed fact) follow.
+
+Tests (`test/refusal.test.ts`): the provider on a refused stub call returns a
+`SessionError` with the session, the refusal, and the usage including `contextTokens`
+and cost; the IC's review refused on its resumed session is filed with the refusal and
+usage, the session released with the category, a fresh session briefed with the file before
+the draft answers, `leader.started` names the replaced session, the unit holds the new one,
+`review` shows the refused turn and the refusals line, and the next step resumes the
+replacement; refused twice, the step exits 1 with the category and the advice, both
+refusals are filed, one release, no session on the unit, no review recorded, `review`
+lists both, and the next step starts fresh and completes; a leader's turn refused on its
+resumed session in cycle 2 is `leader.failed`, released, replaced by a fresh session whose
+turn reports, and listed by `review`. The models test counts 44 event types.
+
+Not exactly to spec, with reasons:
+
+- The leader's failure event is new (`leader.failed`), since no event recorded a failed
+  leader turn before (R3-4 recorded none and threw); it carries the refusal and the usage
+  so review prices the call. A leader turn that fails for another reason still records
+  nothing, as before.
+- A refused first call on a fresh session (no session to release) is filed and thrown
+  without the session going on the unit; before this PR a failed first IC call was
+  recorded on the unit (`leader.started` with `failed`), which for a refusal would have
+  resumed a refused session next cycle.
+- The refusal's result line in the run's log has no `type: "result"` key (its first keys
+  are `duration_api_ms`, `stop_reason`, `session_id`, `total_cost_usd`, `usage`), so the
+  provider finds it by `stop_reason` on the exit-1 path and the stub prints that shape;
+  whether the real line carries `type` is unknown (the log clips the reason at 200
+  characters).
+- A task refused inside a leader's session is not replaced at the task: it fails as a task
+  with the refusal in its reason, and the leader's next turn on that session is what gets
+  replaced.

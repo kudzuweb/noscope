@@ -7,6 +7,7 @@ import { Usage } from "../models.js";
 import {
   NO_ACTIVITY,
   type Provider,
+  type Refusal,
   type SessionActivity,
   SessionError,
   type SessionOutcome,
@@ -142,6 +143,7 @@ type ResultEnvelope = {
   subtype?: unknown;
   is_error?: unknown;
   result?: unknown;
+  stop_reason?: unknown;
   session_id?: unknown;
   structured_output?: unknown;
   duration_ms?: unknown;
@@ -437,21 +439,42 @@ export function failedSessionActivity(
  * counts spawned subagents and `where` says where transcripts live, each subagent's run
  * read from its transcript. Throws, naming why, when there is no usable outcome.
  */
-export function parseClaudeCodeResult(
-  stdout: string,
-  where?: TranscriptLocation,
-): SessionOutcome {
-  const lines = jsonLines(stdout) as StreamLine[];
-  const envelope = [...lines].reverse().find((l) => l.type === "result") as
-    | ResultEnvelope
+/**
+ * The API's refusal of the call, when the stream carries one: Claude Code writes a `system`
+ * line with `subtype: "model_refusal_no_fallback"`, the category and the explanation, then
+ * exits 1 with a result whose `stop_reason` is `refusal` (seen 2026-09-15 on 2.1.272, Opus 5,
+ * category `reasoning_extraction`). A result with that `stop_reason` and no system line is
+ * a refusal of an unstated category.
+ */
+function refusalOf(lines: readonly StreamLine[]): Refusal | null {
+  const line = lines.find(
+    (l) =>
+      l.type === "system" &&
+      (l as { subtype?: unknown }).subtype === "model_refusal_no_fallback",
+  ) as
+    | { apiRefusalCategory?: unknown; apiRefusalExplanation?: unknown }
     | undefined;
-  if (envelope === undefined) {
-    const other = lines.at(-1) as ResultEnvelope | undefined;
-    if (other !== undefined)
-      throw new Error(`claude returned a ${String(other.type)} message`);
-    throw new Error(`claude returned no JSON result: ${stdout.slice(0, 200)}`);
-  }
-  const sessionId = text(envelope.session_id);
+  if (line !== undefined)
+    return {
+      category: text(line.apiRefusalCategory) ?? "unstated",
+      explanation: text(line.apiRefusalExplanation) ?? "",
+    };
+  const refusedResult = lines.some(
+    (l) => (l as ResultEnvelope).stop_reason === "refusal",
+  );
+  return refusedResult
+    ? {
+        category: "unstated",
+        explanation: "the result's stop reason is refusal",
+      }
+    : null;
+}
+
+/** The usage a result envelope reports, with the context of the session's last message from the stream. */
+function usageOf(
+  envelope: ResultEnvelope,
+  lines: readonly StreamLine[],
+): Usage {
   const u = envelope.usage ?? {};
   const uncachedInputTokens = int(u.input_tokens);
   const cacheWriteTokens = int(u.cache_creation_input_tokens);
@@ -470,7 +493,7 @@ export function parseClaudeCodeResult(
         l.parent_tool_use_id == null,
     );
   const m = lastMessage?.message?.usage;
-  const usage = Usage.parse({
+  return Usage.parse({
     inputTokens: uncachedInputTokens + cacheWriteTokens + cacheReadTokens,
     uncachedInputTokens,
     cacheWriteTokens,
@@ -489,6 +512,40 @@ export function parseClaudeCodeResult(
       ? { costUsd: envelope.total_cost_usd }
       : {}),
   });
+}
+
+/** A refusal as a `SessionError`: the session, what it spent on the refused call, its activity and the refusal. */
+function refusedError(
+  refused: Refusal,
+  sessionId: string | null,
+  usage: Usage | null,
+  activity: SessionActivity,
+): SessionError {
+  return new SessionError(
+    `claude refused the call (${refused.category}): ${refused.explanation}`,
+    sessionId,
+    usage,
+    activity,
+    refused,
+  );
+}
+
+export function parseClaudeCodeResult(
+  stdout: string,
+  where?: TranscriptLocation,
+): SessionOutcome {
+  const lines = jsonLines(stdout) as StreamLine[];
+  const envelope = [...lines].reverse().find((l) => l.type === "result") as
+    | ResultEnvelope
+    | undefined;
+  if (envelope === undefined) {
+    const other = lines.at(-1) as ResultEnvelope | undefined;
+    if (other !== undefined)
+      throw new Error(`claude returned a ${String(other.type)} message`);
+    throw new Error(`claude returned no JSON result: ${stdout.slice(0, 200)}`);
+  }
+  const sessionId = text(envelope.session_id);
+  const usage = usageOf(envelope, lines);
   const activity: SessionActivity =
     sessionId === null || where === undefined
       ? { ...NO_ACTIVITY, toolCalls: toolCallsOf(lines) }
@@ -500,6 +557,8 @@ export function parseClaudeCodeResult(
               ? readSubagents(where, sessionId, canonicalModel(envelope))
               : [],
         };
+  const refused = refusalOf(lines);
+  if (refused !== null) throw refusedError(refused, sessionId, usage, activity);
   if (envelope.is_error === true || envelope.subtype !== "success")
     throw new SessionError(
       `claude session failed (${String(envelope.subtype)}): ${String(envelope.result)}`,
@@ -618,6 +677,26 @@ export function claudeCodeProvider(
       if (code !== 0) {
         const lastLine = stdout.trim().split("\n").at(-1) ?? "";
         const failed = failedSessionActivity(stdout, where);
+        // A refusal exits 1 with its result still written: the session id, the usage of
+        // the refused call and the refusal are all on the stream.
+        const lines = jsonLines(stdout) as StreamLine[];
+        const refused = refusalOf(lines);
+        if (refused !== null) {
+          const result = [...lines]
+            .reverse()
+            .find(
+              (l) =>
+                l.type === "result" ||
+                (l as ResultEnvelope).stop_reason === "refusal",
+            ) as ResultEnvelope | undefined;
+          throw refusedError(
+            refused,
+            (result === undefined ? null : text(result.session_id)) ??
+              failed.sessionId,
+            result === undefined ? null : usageOf(result, lines),
+            failed.activity,
+          );
+        }
         throw new SessionError(
           `claude exited ${code === null ? "on a signal" : code}: ${stderr.trim() || lastLine.slice(0, 200)}`,
           failed.sessionId,

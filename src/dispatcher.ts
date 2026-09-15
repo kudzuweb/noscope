@@ -39,6 +39,7 @@ import {
   getProvider,
   listProviders,
   type Provider,
+  type Refusal,
   type SessionActivity,
   SessionError,
 } from "./providers/index.js";
@@ -453,18 +454,56 @@ async function leaderTurn(
   let replaced: { sessionId: string; reason: string } | null = null;
   let outcome: Awaited<ReturnType<typeof provider.run>>;
   let turn: LeaderTurn;
+  // A refused turn is filed (`leader.failed` with the refusal and what the call spent) and,
+  // when it was a resumed call, the session is released with the category and replaced by
+  // a fresh one asked the same turn: a refused session stays refused on every later call
+  // (seen 2026-09-15). A fresh session that refuses too ends the pass.
+  const fileRefusal = (error: SessionError, refused: Refusal) =>
+    store.batch(() => {
+      store.record(incident.id, "leader.failed", actor, {
+        unitId: unit.id,
+        sessionId: error.sessionId,
+        ...unit.leader,
+        seat: unit.parentId === null ? "ic" : "leader",
+        reason: error.message,
+        refused,
+        ...(error.usage === null ? {} : { usage: error.usage }),
+      });
+      if (unit.sessionId !== null)
+        store.setUnitSession(incident.id, unit.id, null, actor, {
+          unitId: unit.id,
+          released: unit.sessionId,
+          ...unit.leader,
+          reason: `refused: ${refused.category}`,
+          refused,
+        });
+    });
   try {
     try {
       outcome = await ask(unit);
     } catch (error) {
-      if (!couldNotResume(error, unit) || unit.sessionId === null) throw error;
+      if (error instanceof SessionError && error.refused !== null) {
+        fileRefusal(error, error.refused);
+        if (unit.sessionId === null) throw error;
+      } else if (!couldNotResume(error, unit) || unit.sessionId === null)
+        throw error;
       replaced = { sessionId: unit.sessionId, reason: error.message };
       unit = { ...unit, sessionId: null };
-      outcome = await ask(unit);
+      try {
+        outcome = await ask(unit);
+      } catch (again) {
+        if (again instanceof SessionError && again.refused !== null)
+          fileRefusal(again, again.refused);
+        throw again;
+      }
     }
     turn = LeaderTurn.parse(outcome.output);
   } catch (error) {
-    throw new Error(`leader of unit ${unit.id}: ${describe(error)}`, {
+    const refused =
+      error instanceof SessionError && error.refused !== null
+        ? ` (${error.refused.category}${replaced === null ? "" : `, after session ${replaced.sessionId} was refused and replaced`}; Claude Code's advice is to rephrase the request in a new session or change the model)`
+        : "";
+    throw new Error(`leader of unit ${unit.id}: ${describe(error)}${refused}`, {
       cause: error,
     });
   }

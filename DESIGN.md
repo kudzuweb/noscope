@@ -173,10 +173,12 @@ turn failed), `plan.reviewed` (one per IC review of a draft, with the verdict),
 `unit.waiting` and `unit.resumed` (a unit entering `waiting` on its leader's resource
 requests and returning to `active` when they are answered, both the mutation
 `unit.status`),
-`command.failed` (an IC call that got no usable answer), `leader.released` (a unit's
+`command.failed` (an IC call that got no usable answer, with the API's refusal when that is
+what it got), `leader.failed` (a leader's turn the API refused, with the refusal and the
+call's usage; R3-10a), `leader.released` (a unit's
 session dropped through the log, the mutation `unit.session` with a null id: the version 5
-migration, and the IC's handoff, where it carries the outgoing session's document and the
-call's usage),
+migration, the IC's handoff, where it carries the outgoing session's document and the
+call's usage, and a refused session, with the category),
 `incident.briefed` (the initial IC's briefing with the size-up's session, model, usage and
 the runtime's findings; R3-8) and `command.transferred` (a transfer of command, one shape
 for both kinds: `kind`, the unit, the outgoing and incoming session ids and leaders, and
@@ -622,7 +624,22 @@ task or a turn, and also when a task's first call failed with a session id; `uni
 carries the session id as the leader's demobilization. A leader session that cannot be
 resumed (the call dies before the stream's init line, as the binary does for a session it
 cannot find) is replaced: a fresh session is oriented and asked the same turn, and its
-`leader.started` names the dead session (`replaced`) and the reason. A leader that cannot
+`leader.started` names the dead session (`replaced`) and the reason. A call the API
+refused outright is treated the same way (R3-10a; the Reference table has the observed
+fact): the provider reads Claude Code's `model_refusal_no_fallback` system line, or a
+result whose `stop_reason` is `refusal`, and throws a `SessionError` carrying the session
+id, the refused call's usage and `refused` (the category and the API's explanation); a
+refused session stays refused on every later call, so a refused resumed turn is filed
+(`leader.failed` for a leader, `command.failed` for the IC, each with the refusal and the
+usage), the session is released through `leader.released` with the reason `refused:
+<category>`, and a fresh session is asked the same turn with its full briefing (the IC's
+review re-briefs a fresh session before the draft, as after a handoff); a fresh session
+that refuses too is filed and ends the pass, or the cycle, with exit 1 and a message naming
+the category and Claude Code's advice (rephrase the request in a new session or change the
+model), and is not put on the unit, so the next call starts fresh again. A task refused
+inside a leader's session fails as a task, and the leader's next turn on that session is
+what gets replaced. `incident review` lists every refusal per seat with its category and
+session, and prices the refused call. A leader that cannot
 answer otherwise (a failed session or an output that does not fit) ends the pass with an
 error naming the unit, after the task's own events were written. A session task is bounded
 by its request's timeout alone: the provider kills the process and files its calls under the
@@ -847,6 +864,7 @@ v0 is done when all of these hold on the first incident:
 | The result envelope accounts for subagents: `total_cost_usd` includes them (the two `modelUsage` entries, the parent under `claude-haiku-4-5` and the `pinger` under its dated id `claude-haiku-4-5-20251001`, sum to it exactly: 0.0286 + 0.0010 = 0.0296); `subagent_stats` counts spawned, completed, failed and by type. Whether the top-level `usage` block includes the subagent's tokens is not settled by the run (its output tokens, 421, were below the parent's own `modelUsage` entry, 515), so R3-1 records the envelope as is and a subagent's transcript usage as a breakdown, never added. Each subagent's transcript at `~/.claude/projects/<dir>/<session id>/subagents/agent-<id>.jsonl` carries its per-message usage, and the `.meta.json` beside it carries the `toolUseId` of the `Agent` call that spawned it. | One Haiku call spawning one `pinger` subagent, 2026-09-15; `spikes/round3/agents.sh`. |
 | `--agents <json>` is honored on a `--resume` call: a session started without agent kinds and resumed with one can spawn it. | The same spike, second half, 2026-09-15. |
 | In print mode `--allowedTools` is a floor: a Haiku session under `--tools Bash --allowedTools "Bash(ls *)" "Bash(cat *)"` ran `ls .` (listed) and `grep -c . lines.txt` (unlisted, read-only), and was denied `touch touched.txt` (unlisted, writes: "File creation blocked by security restrictions", under `permission_denials`, the file not created); with paths outside the working directory every command was denied, listed or not ("access restricted to allowed working directories"). | Prompted by R3-8's live size-up transcript (session `5604665f`, 2026-09-15), where Haiku ran `grep` through Bash four times off the read-only list and every call succeeded; then a scratch-directory probe on Claude Code 2.1.272, 2026-09-15. |
+| The API can refuse a resumed call outright, and the refusal sticks to the session: Claude Code writes a `system` line with `subtype: "model_refusal_no_fallback"`, `apiRefusalCategory` and `apiRefusalExplanation`, a synthetic assistant message with `stop_reason: "refusal"` ("API Error: Opus 5's safeguards flagged this message ... Try rephrasing the request in a new session or change your model"), then exits 1 with a result whose `stop_reason` is `refusal` and whose usage is the refused call's; the next call on the same session is refused again in under a second. | The third live run (R3-10, 2026-09-15, Claude Code 2.1.272): the IC's command turn on Opus 5 succeeded at 23k of context, its review turn over the planner's draft (another model's output) came back with category `reasoning_extraction`, and the next step's command turn on the same session refused identically; IC session `cf551f26`. The cause of the category on a review turn is not known; R3-10a replaces a refused session rather than resuming it. |
 
 ### Model choices
 | Role | Model | Because |

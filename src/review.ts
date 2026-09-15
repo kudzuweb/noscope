@@ -437,7 +437,7 @@ function icLines(
     addCost(cost, turnCost);
     let move: string;
     if (e.type === "command.failed") {
-      move = `${str(e.payload.turn)} turn failed: ${clip(str(e.payload.reason))}`;
+      move = `${str(e.payload.turn)} turn failed${describeRefusal(e)}: ${clip(str(e.payload.reason))}`;
     } else if (e.type === "leader.released") {
       const handoff = e.payload.handoff as { contextTokens?: unknown };
       move = `wrote its handoff${typeof handoff.contextTokens === "number" ? ` after ${n(handoff.contextTokens)} tokens of context` : ""}`;
@@ -530,6 +530,42 @@ function sizeUpLines(
       ),
     );
   return lines;
+}
+
+/** The refusal a failed call carries, as ` (refused: <category>)`, or nothing. */
+function describeRefusal(e: Event): string {
+  const refused = e.payload.refused as { category?: unknown } | undefined;
+  return refused === undefined ? "" : ` (refused: ${str(refused.category)})`;
+}
+
+/**
+ * Every call the API refused, per seat with its category and session: the IC's and the
+ * initial IC's on `command.failed`, a leader's on `leader.failed`. A refused session is
+ * replaced, so each line is one call that was paid for and answered nothing.
+ */
+function refusalsLine(events: readonly Event[]): string {
+  const refusals = events
+    .filter(
+      (e) =>
+        (e.type === "command.failed" || e.type === "leader.failed") &&
+        e.payload.refused !== undefined,
+    )
+    .map((e) => {
+      const seat = str(e.payload.seat);
+      const who =
+        seat === "leader"
+          ? `leader of ${str(e.payload.unitId)}`
+          : seat === "initial_ic"
+            ? "initial ic"
+            : "ic";
+      const category = str(
+        (e.payload.refused as { category?: unknown }).category,
+      );
+      return `${who} ${category || "unstated"} (session ${str(e.payload.sessionId) || "none"})`;
+    });
+  return refusals.length === 0
+    ? "refusals: none"
+    : `refusals: ${refusals.length}: ${refusals.join(", ")}`;
 }
 
 /** How much of the briefing the IC kept: the verdicts on its first accepted command turn that evaluated one, counted by kind. */
@@ -779,6 +815,18 @@ export function renderReview(
     // turns; a task run inside the leader's session lists its calls under the task.
     const turnedUnits = new Map<string, string | null>();
     for (const e of cycle.events) {
+      // A leader's turn the API refused: priced like a turn, named by its category.
+      if (e.type === "leader.failed") {
+        const model = str(e.payload.model) || null;
+        const usage = (e.payload.usage ?? {}) as Partial<Usage>;
+        const turnCost = costOf(usage, model);
+        add(roleTotals("leader", model), usage, turnCost);
+        addCost(cost, turnCost);
+        lines.push(
+          `  leader of ${str(e.payload.unitId)} ${model ?? "(no model)"}: ${describeUsage(usage, turnCost)}  turn failed${describeRefusal(e)}${session(str(e.payload.sessionId))}`,
+        );
+        continue;
+      }
       if (e.type !== "unit.reported" && e.type !== "unit.continued") continue;
       leaderTurns += 1;
       const unitId = str(e.payload.unitId);
@@ -906,6 +954,7 @@ export function renderReview(
       : `ic verdicts: ${reviews} review(s): ${["approve", "correct", "amend"].map((v) => `${verdicts.get(v) ?? 0} ${v}`).join(", ")}`,
   );
   lines.push(briefingKept(events));
+  lines.push(refusalsLine(events));
   const transfers = events.filter((e) => e.type === "command.transferred");
   lines.push(
     `transfers of command: ${transfers.length}${transfers.length === 0 ? "" : ` (${transfers.map((e) => str(e.payload.kind) || "?").join(", ")})`}`,

@@ -3,6 +3,7 @@ import { claudeCodeProvider } from "./claude-code.js";
 
 export type {
   Provider,
+  Refusal,
   SessionActivity,
   SessionRequest,
   ToolCall,
