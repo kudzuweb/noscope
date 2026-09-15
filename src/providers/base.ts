@@ -165,10 +165,17 @@ export function sessionSystemPrompt(role: string, seat: Seat = "task"): string {
 }
 
 /**
+ * The API refused a call outright (Claude Code's `model_refusal_no_fallback`): the category
+ * and explanation it gave. A refused session stays refused on every later call, so the
+ * caller replaces it rather than resuming it (DESIGN.md Step 6).
+ */
+export type Refusal = { category: string; explanation: string };
+
+/**
  * A session that ran but produced no usable outcome: the provider reported an error, or the
  * output did not fit the schema. It carries what the session still spent, so a failed task's
  * usage is recorded against the incident's budget, and what it did, so the log still shows
- * the tool calls of a session that failed.
+ * the tool calls of a session that failed; and, when the API refused the call, the refusal.
  */
 export class SessionError extends Error {
   constructor(
@@ -176,6 +183,7 @@ export class SessionError extends Error {
     readonly sessionId: string | null,
     readonly usage: Usage | null,
     readonly activity: SessionActivity = NO_ACTIVITY,
+    readonly refused: Refusal | null = null,
   ) {
     super(message);
   }

@@ -212,12 +212,14 @@ export const create: Handler = async (args, ctx) => {
               sessionId: sized.sessionId,
               usage: sized.usage,
               activity: sized.activity,
+              refused: null,
             }
           : error instanceof SessionError && error.sessionId !== null
             ? {
                 sessionId: error.sessionId,
                 usage: error.usage,
                 activity: error.activity,
+                refused: error.refused,
               }
             : null;
       if (failed !== null)
@@ -230,6 +232,7 @@ export const create: Handler = async (args, ctx) => {
             turn: "size-up",
             cycle: 0,
             reason,
+            ...(failed.refused === null ? {} : { refused: failed.refused }),
             ...(failed.usage === null ? {} : { usage: failed.usage }),
           });
           recordActivity(

@@ -39,7 +39,13 @@
 // NOSCOPE_STUB_SLEEP_MS makes a task call sleep that long after its tool lines, before the
 // envelope, so a bound can kill it. A --resume call answers with the id it was given as
 // session_id, as the real binary does; NOSCOPE_STUB_RESUME_FAIL names a session id whose
-// resume exits 1 before any output, as the binary does for a session it cannot find. Each
+// resume exits 1 before any output, as the binary does for a session it cannot find.
+// NOSCOPE_STUB_REFUSE names call ordinals (1-based, comma-separated, counted in the file
+// NOSCOPE_STUB_CALL_COUNTER) the API refuses: after the init line the stub prints the
+// `model_refusal_no_fallback` system line (category NOSCOPE_STUB_REFUSE_CATEGORY, default
+// reasoning_extraction), a synthetic assistant line with stop_reason refusal, and a result
+// with stop_reason refusal and the call's usage, then exits 1, as Claude Code 2.1.272 did
+// on 2026-09-15. Each
 // NOSCOPE_STUB_CALLS line also carries `concurrent`, how many other stub processes on the same
 // log were still running when this one started.
 import {
@@ -124,6 +130,49 @@ if (calls)
 if (resumed !== -1 && process.env.NOSCOPE_STUB_RESUME_FAIL === sessionId) {
   process.stderr.write(`No conversation found with session ID: ${sessionId}\n`);
   process.exit(1);
+}
+if (process.env.NOSCOPE_STUB_REFUSE) {
+  const counter = process.env.NOSCOPE_STUB_CALL_COUNTER ?? "";
+  const ordinal = (counter && existsSync(counter) ? Number(readFileSync(counter, "utf8")) : 0) + 1;
+  if (counter) writeFileSync(counter, String(ordinal));
+  if (process.env.NOSCOPE_STUB_REFUSE.split(",").map(Number).includes(ordinal)) {
+    const category = process.env.NOSCOPE_STUB_REFUSE_CATEGORY ?? "reasoning_extraction";
+    const explanation =
+      "This request was blocked as it seems to violate Anthropic's Terms of Service restrictions on reverse engineering or duplicating model outputs.";
+    const usage = {
+      input_tokens: 2,
+      cache_creation_input_tokens: 23065,
+      cache_read_input_tokens: 0,
+      output_tokens: 0,
+    };
+    const refusal = [
+      { type: "system", subtype: "init", session_id: sessionId },
+      {
+        type: "system",
+        subtype: "model_refusal_no_fallback",
+        level: "warning",
+        originalModel: "claude-opus-5",
+        apiRefusalCategory: category,
+        apiRefusalExplanation: explanation,
+        session_id: sessionId,
+      },
+      {
+        type: "assistant",
+        session_id: sessionId,
+        parent_tool_use_id: null,
+        message: {
+          model: "<synthetic>",
+          role: "assistant",
+          content: [{ type: "text", text: `API Error: Opus 5's safeguards flagged this message. ${explanation} Try rephrasing the request in a new session or change your model.` }],
+          stop_reason: "refusal",
+          usage,
+        },
+      },
+      { duration_api_ms: 965, stop_reason: "refusal", session_id: sessionId, total_cost_usd: 0.23066, usage },
+    ];
+    process.stdout.write(`${refusal.map((l) => JSON.stringify(l)).join("\n")}\n`);
+    process.exit(1);
+  }
 }
 
 function nextOf(one, many, counterName, fallback) {

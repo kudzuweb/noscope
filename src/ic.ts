@@ -17,7 +17,13 @@ import {
   type Usage,
 } from "./models.js";
 import { renderPlannerInput } from "./planner.js";
-import { getProvider, type Provider, SessionError } from "./providers/index.js";
+import {
+  getProvider,
+  type Provider,
+  type Refusal,
+  type SessionActivity,
+  SessionError,
+} from "./providers/index.js";
 import { cycleOf, type Store } from "./store.js";
 
 // The Incident Commander is the root unit's leader: one persistent session, briefed with
@@ -664,17 +670,67 @@ async function icCall<T extends object>(
       ...extra,
     });
   };
+  // A call that got no usable answer is filed at once: `command.failed` with the reason,
+  // the refusal when the API refused it, and whatever usage the provider returned; the
+  // session goes on the unit when this was its first call.
+  const fileFailure = (
+    failed: {
+      sessionId: string;
+      usage: Usage | null;
+      activity: SessionActivity;
+      refused: Refusal | null;
+    },
+    reason: string,
+  ) =>
+    store.batch(() => {
+      store.record(incident.id, "command.failed", actor, {
+        unitId: unit.id,
+        sessionId: failed.sessionId,
+        ...unit.leader,
+        seat: "ic",
+        turn,
+        cycle,
+        reason,
+        ...(failed.refused === null ? {} : { refused: failed.refused }),
+        ...(failed.usage === null ? {} : { usage: failed.usage }),
+      });
+      // A refused fresh session is not put on the unit: there is nothing to resume in it.
+      if (unit.sessionId === null && failed.refused === null)
+        started(failed.sessionId, { failed: true });
+      recordActivity(store, incident.id, actor, failed.activity, {
+        sessionId: failed.sessionId,
+        unitId: unit.id,
+        taskId: null,
+        cycle,
+        seat: "ic",
+      });
+    });
   try {
     try {
       outcome = await ask(unit);
     } catch (error) {
       const dead = unit.sessionId;
-      if (
-        !(error instanceof SessionError) ||
-        error.sessionId !== null ||
-        dead === null
-      )
-        throw error;
+      if (!(error instanceof SessionError) || dead === null) throw error;
+      // A refused resumed call: the session stays refused on every later call (seen
+      // 2026-09-15), so it is filed, released with the category, and replaced by a fresh
+      // session asked the same turn with the full briefing. A call that died before the
+      // stream's init line found no session to resume and is replaced the same way.
+      if (error.refused !== null && error.sessionId !== null) {
+        const { sessionId, usage, activity, refused } = error;
+        // One transaction for the filing and the release (a batch inside a batch is a savepoint).
+        store.batch(() => {
+          fileFailure({ sessionId, usage, activity, refused }, describe(error));
+          // A refused handoff call is released by `prepareHandoff`, with its own reason.
+          if (turn !== "handoff")
+            store.setUnitSession(incident.id, unit.id, null, actor, {
+              unitId: unit.id,
+              released: dead,
+              ...unit.leader,
+              reason: `refused: ${refused.category}`,
+              refused,
+            });
+        });
+      } else if (error.sessionId !== null) throw error;
       // A handoff asks the outgoing session for what it knows; a fresh one knows nothing.
       if (turn === "handoff")
         throw new OutgoingSessionLost(dead, error.message);
@@ -692,37 +748,23 @@ async function icCall<T extends object>(
             sessionId: outcome.sessionId,
             usage: outcome.usage,
             activity: outcome.activity,
+            refused: null,
           }
         : error instanceof SessionError && error.sessionId !== null
           ? {
               sessionId: error.sessionId,
               usage: error.usage,
               activity: error.activity,
+              refused: error.refused,
             }
           : null;
-    if (failed !== null)
-      store.batch(() => {
-        store.record(incident.id, "command.failed", actor, {
-          unitId: unit.id,
-          sessionId: failed.sessionId,
-          ...unit.leader,
-          seat: "ic",
-          turn,
-          cycle,
-          reason,
-          ...(failed.usage === null ? {} : { usage: failed.usage }),
-        });
-        if (unit.sessionId === null)
-          started(failed.sessionId, { failed: true });
-        recordActivity(store, incident.id, actor, failed.activity, {
-          sessionId: failed.sessionId,
-          unitId: unit.id,
-          taskId: null,
-          cycle,
-          seat: "ic",
-        });
-      });
-    throw new Error(`the IC: ${reason}`, { cause: error });
+    if (failed !== null) fileFailure(failed, reason);
+    // A fresh session refused too: the message names the category and Claude Code's advice.
+    const advice =
+      failed?.refused !== null && failed?.refused !== undefined
+        ? ` (${failed.refused.category}${replaced === null ? "" : `, after session ${replaced.sessionId} was refused and replaced`}; Claude Code's advice is to rephrase the request in a new session or change the model)`
+        : "";
+    throw new Error(`the IC: ${reason}${advice}`, { cause: error });
   }
   const sessionId = outcome.sessionId;
   const provenance = {
