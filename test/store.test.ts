@@ -21,10 +21,12 @@ function scripted(store: Store): void {
     id: "u-command",
     incidentId: "i1",
     parentId: null,
+    type: "ic",
     objective: "command",
     leader: { provider: "claude-code", model: "claude-haiku-4-5" },
     equipment: [],
     bashAllowlist: [],
+    role: null,
     sessionId: null,
     status: "active",
     createdAt: at,
@@ -34,10 +36,12 @@ function scripted(store: Store): void {
     id: "u1",
     incidentId: "i1",
     parentId: "u-command",
+    type: "base",
     objective: "delete-handler investigation",
     leader: { provider: "claude-code", model: "claude-haiku-4-5" },
     equipment: [],
     bashAllowlist: [],
+    role: null,
     sessionId: null,
     status: "active",
     createdAt: at,
@@ -176,10 +180,12 @@ describe("store", () => {
       id: "u-orphan",
       incidentId: "i1",
       parentId: "no-such-unit",
+      type: "base",
       objective: "x",
       leader: { provider: "claude-code", model: "claude-haiku-4-5" },
       equipment: [],
       bashAllowlist: [],
+      role: null,
       sessionId: null,
       status: "active",
       createdAt: now(),
@@ -303,10 +309,12 @@ describe("store", () => {
           id: "u-stray",
           incidentId: "i1",
           parentId: null,
+          type: "ic",
           objective: "p",
           leader: { provider: "claude-code", model: "claude-haiku-4-5" },
           equipment: [],
           bashAllowlist: [],
+          role: null,
           sessionId: null,
           status: "active",
           createdAt: at,
@@ -503,10 +511,12 @@ describe("store", () => {
             id: "u2",
             incidentId: "i1",
             parentId: "u-command",
+            type: "base",
             objective: "a",
             leader: { provider: "claude-code", model: "claude-haiku-4-5" },
             equipment: [],
             bashAllowlist: [],
+            role: null,
             sessionId: null,
             status: "active",
             createdAt: now(),
@@ -519,10 +529,12 @@ describe("store", () => {
             id: "u3",
             incidentId: "i1",
             parentId: "missing",
+            type: "base",
             objective: "b",
             leader: { provider: "claude-code", model: "claude-haiku-4-5" },
             equipment: [],
             bashAllowlist: [],
+            role: null,
             sessionId: null,
             status: "active",
             createdAt: now(),
@@ -551,14 +563,14 @@ describe("store", () => {
     s1.db.pragma("user_version = 1");
     s1.close();
     const first = new Store(path);
-    expect(first.db.pragma("user_version", { simple: true })).toBe(6);
+    expect(first.db.pragma("user_version", { simple: true })).toBe(7);
     first.close();
     // A crash after the column was added but before the version was written: reopening finishes the job.
     const half = new Store(path);
     half.db.pragma("user_version = 1");
     half.close();
     const s2 = new Store(path);
-    expect(s2.db.pragma("user_version", { simple: true })).toBe(6);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(7);
     expect(
       s2
         .listClaims("i1")
@@ -586,7 +598,7 @@ describe("store", () => {
     s1.db.pragma("user_version = 2");
     s1.close();
     const s2 = new Store(path);
-    expect(s2.db.pragma("user_version", { simple: true })).toBe(6);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(7);
     expect(s2.listTasks("i1").map((t) => t.evidenceFrom)).toEqual([
       { claims: [], tasks: [] },
     ]);
@@ -607,7 +619,7 @@ describe("store", () => {
     s1.db.pragma("user_version = 3");
     s1.close();
     const s2 = new Store(path);
-    expect(s2.db.pragma("user_version", { simple: true })).toBe(6);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(7);
     expect(s2.listUnits("i1").map((u) => [u.id, u.objective])).toEqual([
       ["u-command", "command"],
       ["u1", "delete-handler investigation"],
@@ -624,10 +636,12 @@ describe("store", () => {
         id: "u2",
         incidentId: "i1",
         parentId: "u-command",
+        type: "base",
         objective: "new",
         leader: { provider: "claude-code", model: "claude-haiku-4-5" },
         equipment: ["Read"],
         bashAllowlist: ["ls"],
+        role: null,
         sessionId: null,
         status: "active",
         createdAt: now(),
@@ -649,7 +663,7 @@ describe("store", () => {
     s1.db.pragma("user_version = 4");
     s1.close();
     const s2 = new Store(path);
-    expect(s2.db.pragma("user_version", { simple: true })).toBe(6);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(7);
     expect(s2.listTasks("i1").map((t) => t.strikeTeam)).toEqual([[]]);
     const team = {
       kind: "pinger",
@@ -702,7 +716,7 @@ describe("store", () => {
     s1.db.pragma("user_version = 5");
     s1.close();
     const s2 = new Store(path);
-    expect(s2.db.pragma("user_version", { simple: true })).toBe(6);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(7);
     expect(s2.getIncident("i1")?.period).toBeUndefined();
     expect(s2.listUnits("i1").map((u) => [u.id, u.sessionId])).toEqual([
       ["u-command", null],
@@ -766,6 +780,69 @@ describe("store", () => {
     ]);
     rebuilt.close();
     s4.close();
+  });
+
+  it("migrates a version 6 file: the root reads as the ic type and every other unit as base, and a pre-R4-10 log replays the same", async () => {
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const path = `${mkdtempSync(`${tmpdir()}/noscope-`)}/v6.sqlite`;
+    const s1 = new Store(path);
+    scripted(s1);
+    s1.db.exec("ALTER TABLE units DROP COLUMN type");
+    s1.db.exec("ALTER TABLE units DROP COLUMN role");
+    s1.db.pragma("user_version = 6");
+    s1.close();
+    const s2 = new Store(path);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(7);
+    expect(s2.listUnits("i1").map((u) => [u.id, u.type, u.role])).toEqual([
+      ["u-command", "ic", null],
+      ["u1", "base", null],
+    ]);
+    // A unit.create recorded before units named a type replays as the migration reads it:
+    // the root is ic, the rest base, and neither carries a role of its own.
+    const events = s2.listEvents("i1").map((e) => {
+      const m = e.payload.mutation as
+        | { kind: string; unit?: Record<string, unknown> }
+        | undefined;
+      if (m === undefined || m.kind !== "unit.create" || m.unit === undefined)
+        return e;
+      const { type: _t, role: _r, ...unit } = m.unit;
+      return { ...e, payload: { ...e.payload, mutation: { ...m, unit } } };
+    });
+    const b = new Store(":memory:");
+    b.replay([...s2.listEvents(null), ...events]);
+    expect(b.snapshot()).toEqual(s2.snapshot());
+    expect(b.listUnits("i1").map((u) => [u.id, u.type])).toEqual([
+      ["u-command", "ic"],
+      ["u1", "base"],
+    ]);
+    // A unit written now round-trips its type and role through the row and the log.
+    s2.createUnit(
+      {
+        id: "u-role",
+        incidentId: "i1",
+        parentId: "u-command",
+        type: "base",
+        objective: "a unit with its own role text",
+        leader: { provider: "claude-code", model: "claude-haiku-4-5" },
+        equipment: [],
+        bashAllowlist: [],
+        role: "Your role: a reader.",
+        sessionId: null,
+        status: "active",
+        createdAt: now(),
+        closedAt: null,
+      },
+      "runtime",
+    );
+    const own = s2.listUnits("i1").find((u) => u.id === "u-role");
+    expect([own?.type, own?.role]).toEqual(["base", "Your role: a reader."]);
+    const c = new Store(":memory:");
+    c.replay([...s2.listEvents(null), ...s2.listEvents("i1")]);
+    expect(c.snapshot()).toEqual(s2.snapshot());
+    b.close();
+    c.close();
+    s2.close();
   });
 
   it("a unit waits and resumes through the unit.status mutation, and a waiting unit can still close", () => {

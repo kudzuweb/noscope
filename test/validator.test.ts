@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { defineCapability } from "../src/capabilities/registry.js";
 import { READ_ONLY_SESSION_COMMANDS } from "../src/equipment/index.js";
-import { LEADER_RULES } from "../src/leader.js";
 import type {
   ActionPlan,
   CommandTurn,
@@ -12,6 +11,7 @@ import type {
 } from "../src/models.js";
 import { PLANNER_RULES } from "../src/planner.js";
 import { Store } from "../src/store.js";
+import { LEADER_RULES } from "../src/units/index.js";
 import {
   LEADER_RULE_CHECKS,
   RULES,

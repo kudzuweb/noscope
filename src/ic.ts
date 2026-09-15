@@ -5,7 +5,6 @@ import {
   eventsSinceLastCommand,
   fallbackModel,
   latestReports,
-  leaderRequest,
   openRequests,
   type RefusedCall,
   reportsAwaitingVerdict,
@@ -38,6 +37,7 @@ import {
 } from "./providers/index.js";
 import { fallbackTransferred, newQuestions } from "./runtime.js";
 import { cycleOf, type Store } from "./store.js";
+import { commandUnitOf, leaderRequest } from "./units/index.js";
 
 // The Incident Commander is the root unit's leader: one persistent session, briefed with
 // the full incident file at the top of every cycle, that sets the operational period and
@@ -98,11 +98,11 @@ export function reportWorkChars(env: NodeJS.ProcessEnv = {}): number {
   );
 }
 
-/** The root unit, whose leader is the IC. */
+/** Command, the unit of the ic type, whose leader is the IC. */
 function commandUnit(store: Store, incidentId: string): Unit {
-  const unit = store.listUnits(incidentId).find((u) => u.parentId === null);
+  const unit = commandUnitOf(store.listUnits(incidentId));
   if (unit === undefined)
-    throw new Error(`incident ${incidentId} has no root unit`);
+    throw new Error(`incident ${incidentId} has no command unit`);
   return unit;
 }
 
@@ -558,7 +558,7 @@ export function renderChangeReport(
   const underCommand = renderTasksUnderCommand(
     events,
     eventsSinceLastCommand(events),
-    units.find((u) => u.parentId === null),
+    commandUnitOf(units),
     workChars,
   );
   const spend = spendSince(events, since);

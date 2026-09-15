@@ -9,7 +9,6 @@ import {
   holdsCapability,
   icSituation,
   LEADER_ACTOR,
-  LEADER_RULES,
   latestReports,
   openReassignments,
   openRequests,
@@ -39,6 +38,7 @@ import { PLANNER_RULES, PLANNER_WARNINGS } from "./planner.js";
 import type { Provider } from "./providers/index.js";
 import { type Store, sumUsage } from "./store.js";
 import { STRIKE_MEMBER_MIN_TOKENS } from "./strike-team.js";
+import { commandUnitOf, IC_TYPE, LEADER_RULES } from "./units/index.js";
 
 /** A rule's name is the text before the colon of the line the planner reads, so the two lists cannot drift. */
 type BeforeColon<S> = S extends `${infer Name}: ${string}` ? Name : never;
@@ -594,8 +594,8 @@ const CHECKS: Record<RuleName, Rule> = {
       if (unit === undefined) continue;
       if (unit.status === "closed")
         reasons.push(`unit ${c.unitId} is already closed`);
-      if (unit.parentId === null)
-        reasons.push(`unit ${c.unitId} is the root and is never closed`);
+      if (unit.type === IC_TYPE)
+        reasons.push(`unit ${c.unitId} is command and is never closed`);
       const running = ctx.tasks.filter(
         (t) =>
           t.unitId === c.unitId &&
@@ -704,7 +704,7 @@ export const RULES: readonly { name: RuleName; check: Rule }[] =
  */
 const WARNING_CHECKS: Record<WarningName, Rule> = {
   "Session work under a unit": (plan, ctx) => {
-    const root = ctx.units.find((u) => u.parentId === null);
+    const root = commandUnitOf(ctx.units);
     if (root === undefined) return [];
     return perRegisteredTask(plan, (t, capability) =>
       capability.kind === "session" && t.unit === root.id
@@ -1050,7 +1050,7 @@ export function validateCommand(
   turn: CommandTurn,
   ctx: ValidationContext,
 ): Rejection<RuleName | LeaderRuleName | CommandRuleName>[] {
-  const root = ctx.units.find((u) => u.parentId === null);
+  const root = commandUnitOf(ctx.units);
   const assignments: Rejection<RuleName | LeaderRuleName | CommandRuleName>[] =
     turn.assignTasks.length === 0
       ? []

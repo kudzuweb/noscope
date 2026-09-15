@@ -31,10 +31,12 @@ function cycledIncident(store: Store) {
       id: "u-scroll",
       incidentId: "i1",
       parentId: s.unit.id,
+      type: "base",
       objective: "where the scroll position is set after a delete",
       leader: { provider: "claude-code", model: "claude-haiku-4-5" },
       equipment: [],
       bashAllowlist: [],
+      role: null,
       sessionId: null,
       status: "active",
       createdAt: AT,
@@ -178,10 +180,12 @@ function cycledIncident(store: Store) {
       id: "u-wait",
       incidentId: "i1",
       parentId: s.unit.id,
+      type: "base",
       objective: "what the author expects after a delete",
       leader: { provider: "claude-code", model: "claude-haiku-4-5" },
       equipment: [],
       bashAllowlist: [],
+      role: null,
       sessionId: "s-wait",
       status: "active",
       createdAt: AT,
@@ -458,9 +462,9 @@ describe("planner", () => {
         - c-verified: /repo/src/view.ts:88 matches {"pattern":"scrollTo","text":"el.scrollTo(0, bottom)"} (verified, observed; confidence 1; evidence /repo/src/view.ts:88) [from grep task t-grep]
 
       ## 3. Unit tree
-        i1-command [active] command: where deletion moves the scroll position (leader claude-code/claude-haiku-4-5; last report: none)
-          u-scroll [active] where the scroll position is set after a delete (leader claude-code/claude-haiku-4-5; last report: not_met)
-          u-wait [waiting] what the author expects after a delete (leader claude-code/claude-haiku-4-5; last report: progress; waiting on: human_knowledge: where should the view rest after a delete? (the objective does not say) (question i1-q01))
+        i1-command [active] command: where deletion moves the scroll position (ic; leader claude-code/claude-haiku-4-5; last report: none)
+          u-scroll [active] where the scroll position is set after a delete (base; leader claude-code/claude-haiku-4-5; last report: not_met)
+          u-wait [waiting] what the author expects after a delete (base; leader claude-code/claude-haiku-4-5; last report: progress; waiting on: human_knowledge: where should the view rest after a delete? (the objective does not say) (question i1-q01))
 
       ## 4. Tasks completed since the last cycle
         - t-grep (grep, under u-scroll): objective "find scrollTo calls"; inputs {"root":"src","pattern":"scrollTo"}; expected "every call site"; criteria ["each match cited"]; result {"matches":1}; claims c-verified

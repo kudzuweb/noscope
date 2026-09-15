@@ -25,6 +25,7 @@ import type {
   UnitStatus,
 } from "./models.js";
 import { now, type Store } from "./store.js";
+import { commandUnitOf } from "./units/index.js";
 import { stable, verdictCloses } from "./validator.js";
 
 /** What applying a plan changed, by id, so the caller can print it and the dispatcher can pick up the ready tasks; `taken` pairs each new unit that took a reassignment with the reassignment's id (R4-4). */
@@ -580,10 +581,12 @@ export function applyPlan(
     id: resolveUnit(u.ref),
     incidentId: incident.id,
     parentId: resolveUnit(u.parent),
+    type: u.type,
     objective: u.objective,
     leader: u.leader,
     equipment: u.equipment,
     bashAllowlist: u.bashAllowlist,
+    role: u.role ?? null,
     sessionId: null,
     status: "active",
     createdAt: at,
@@ -758,7 +761,7 @@ export function applyCommand(
   const answered: Answered[] = [];
   const units = store.listUnits(incident.id);
   const existingTasks = store.listTasks(incident.id);
-  const root = units.find((u) => u.parentId === null);
+  const root = commandUnitOf(units);
   const tasks =
     turn.assignTasks.length === 0 || root === undefined
       ? []

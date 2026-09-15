@@ -4,7 +4,6 @@ import { recordActivity } from "../activity.js";
 import { listCapabilities } from "../capabilities/index.js";
 import { type Context, EXIT, type Handler } from "../context.js";
 import { dispatch } from "../dispatcher.js";
-import { READ_ONLY_SESSION_COMMANDS } from "../equipment/index.js";
 import {
   briefingOf,
   commandTurn,
@@ -36,7 +35,6 @@ import {
   type IncidentStatus,
   type Leader,
   type StrikeTeam,
-  type Unit,
 } from "../models.js";
 import { proposePlan, renderSituation } from "../planner.js";
 import { getProvider, SessionError } from "../providers/index.js";
@@ -56,6 +54,7 @@ import { INITIAL_MODEL, sizeUp } from "../size-up.js";
 import { cycleOf, now, resolveDbPath, Store, sumUsage } from "../store.js";
 import { describeStrikeTeam } from "../strike-team.js";
 import { renderTree } from "../tree.js";
+import { commandUnitOf, newCommandUnit } from "../units/index.js";
 import {
   validateAndRecord,
   validateCommand,
@@ -168,22 +167,14 @@ export const create: Handler = async (args, ctx) => {
       createdAt: at,
       updatedAt: at,
     };
-    // The root unit's leader is the Incident Commander: on `--ic-model` or the default until
-    // the size-up's transfer of command routes it; it holds the read-only built-ins and
-    // nothing else.
-    const command: Unit = {
-      id: `${id}-command`,
-      incidentId: id,
-      parentId: null,
-      objective: "command: holds the objective and the current plan",
-      leader: { provider: IC_PROVIDER, model: override ?? IC_MODEL },
-      equipment: ["Read", "Grep", "Glob", "Bash"],
-      bashAllowlist: [...READ_ONLY_SESSION_COMMANDS],
-      sessionId: null,
-      status: "active",
-      createdAt: at,
-      closedAt: null,
-    };
+    // The root unit is command, of the ic type (R4-10): its leader is the Incident
+    // Commander, on `--ic-model` or the default until the size-up's transfer of command
+    // routes it, and its form's defaults give it the read-only built-ins and nothing else.
+    const command = newCommandUnit(
+      id,
+      { provider: IC_PROVIDER, model: override ?? IC_MODEL },
+      at,
+    );
     store.batch(() => {
       store.createIncident(incident, ACTOR);
       store.createUnit(command, "runtime");
@@ -457,7 +448,7 @@ function renderIncidentFile(
   lines.push(
     `budget: tokens ${incident.budget.tokens ?? "unlimited"}, seconds ${incident.budget.seconds ?? "unlimited"}; spent tokens ${usage.tokens}, seconds ${usage.seconds.toFixed(1)}${spent.costUsd === undefined ? "" : `, task cost $${spent.costUsd.toFixed(2)} at list price`}`,
   );
-  const root = units.find((u) => u.parentId === null);
+  const root = commandUnitOf(units);
   const transfers = events.filter(
     (e) => e.type === "command.transferred",
   ).length;
@@ -1168,7 +1159,7 @@ export const answer: Handler = async (args, ctx) => {
     }
     const icProvider = getProvider(IC_PROVIDER, ctx.env);
     const model = hold === null ? null : modelNamed(text, icProvider.models);
-    const root = store.listUnits(incident.id).find((u) => u.parentId === null);
+    const root = commandUnitOf(store.listUnits(incident.id));
     let answered: Answered | undefined;
     store.batch(() => {
       if (hold !== null && model !== null && root !== undefined)

@@ -695,7 +695,7 @@ describe("the IC above the planner", () => {
     h.out.length = 0;
     expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
     expect(h.out).toContain(
-      "  - Closing is clean: unit 001-command is the root and is never closed",
+      "  - Closing is clean: unit 001-command is command and is never closed",
     );
     const briefing =
       h.calls().filter((c) => c.kind === "command")[1]?.prompt ?? "";
@@ -1725,7 +1725,7 @@ describe("the IC above the planner", () => {
     h.out.length = 0;
     expect(await run(["incident", "tree", "001"], h.ctx)).toBe(EXIT.ok);
     expect(h.out).toContain(
-      "  001-u02 [closed] locate the delete handler (leader claude-code/claude-haiku-4-5; last report: met, accepted)",
+      "  001-u02 [closed] locate the delete handler (base; leader claude-code/claude-haiku-4-5; last report: met, accepted)",
     );
   });
 

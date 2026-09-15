@@ -17,7 +17,6 @@ import {
   icSituation,
   LEADER_ACTOR,
   LEADER_TURN_SCHEMA,
-  leaderRequest,
   type RefusedCall,
   reassignmentTakenBy,
   renderLeaderOrientation,
@@ -53,6 +52,7 @@ import {
 import { applyLeaderTasks, raiseResourceRequests } from "./runtime.js";
 import { type Store, sumUsage } from "./store.js";
 import { unitsInTreeOrder } from "./tree.js";
+import { leaderRequest } from "./units/index.js";
 import {
   strikeTeamRejections,
   validateLeaderTasksAndRecord,

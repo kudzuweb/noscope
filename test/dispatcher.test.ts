@@ -1887,7 +1887,7 @@ describe("dispatcher, lacks at the leader", () => {
     out.length = 0;
     expect(await run(["incident", "tree", "i1"], ctx)).toBe(EXIT.ok);
     expect(out[2]).toContain(
-      "u-a [waiting] the first half (leader claude-code/claude-haiku-4-5; last report: progress; waiting on: human_knowledge: the expected position (not stated) (question i1-q01))",
+      "u-a [waiting] the first half (base; leader claude-code/claude-haiku-4-5; last report: progress; waiting on: human_knowledge: the expected position (not stated) (question i1-q01))",
     );
     expect(await run(["incident", "answer", "i1", "the top"], ctx)).toBe(
       EXIT.ok,
