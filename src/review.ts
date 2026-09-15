@@ -1,5 +1,13 @@
-import type { Claim, Event, Incident, Task, Usage } from "./models.js";
+import {
+  type Claim,
+  type Event,
+  type Incident,
+  StrikeTeam,
+  type Task,
+  type Usage,
+} from "./models.js";
 import { PLANNER_MODEL } from "./planner.js";
+import { citesMember, describeStrikeTeam } from "./strike-team.js";
 
 /**
  * List prices per million tokens, from the claude-api skill's model table as cached on
@@ -234,6 +242,60 @@ function activityLines(
     );
   }
   return lines;
+}
+
+/** The kinds a strike-team event carries, each one parsed; anything else in the list is skipped. */
+function teamsOf(e: Event): StrikeTeam[] {
+  return list(e.payload.strikeTeam).flatMap((t) => {
+    const parsed = StrikeTeam.safeParse(t);
+    return parsed.success ? [parsed.data] : [];
+  });
+}
+
+/** One declared config: a kind on a task, as last declared, with the members that ran under it. */
+type TeamConfig = {
+  taskId: string;
+  team: StrikeTeam;
+  declaredBy: string;
+  members: {
+    agentId: string;
+    eventId: string;
+    usage: Partial<Usage>;
+    model: string | null;
+  }[];
+};
+
+/**
+ * Every strike-team config the log declares, keyed by task and kind (a later declaration
+ * of the same kind on the same task replaces the earlier), each with the `subagent.ran`
+ * events filed under that task with that type, in log order.
+ */
+function teamConfigs(events: readonly Event[]): TeamConfig[] {
+  const configs = new Map<string, TeamConfig>();
+  for (const e of events) {
+    if (e.type !== "strike_team.defined") continue;
+    const taskId = str(e.payload.taskId);
+    for (const team of teamsOf(e))
+      configs.set(`${taskId} ${team.kind}`, {
+        taskId,
+        team,
+        declaredBy: str(e.payload.declaredBy) || "?",
+        members: [],
+      });
+  }
+  for (const e of events) {
+    if (e.type !== "subagent.ran") continue;
+    const config = configs.get(
+      `${str(e.payload.taskId)} ${str(e.payload.agentType)}`,
+    );
+    config?.members.push({
+      agentId: str(e.payload.agentId),
+      eventId: e.id,
+      usage: (e.payload.usage ?? {}) as Partial<Usage>,
+      model: str(e.payload.model) || null,
+    });
+  }
+  return [...configs.values()];
 }
 
 /** The log cut at every `plan.proposed`: a cycle is that event and everything up to the next one. */
@@ -480,6 +542,14 @@ export function renderReview(
         lines.push(
           `  discrepancy from ${str(e.payload.seat)}${str(e.payload.unitId) === "" ? "" : ` of ${str(e.payload.unitId)}`}: ${clip(str(e.payload.discrepancy))}`,
         );
+      if (e.type === "strike_team.defined")
+        lines.push(
+          `  strike team on ${str(e.payload.taskId)} by ${str(e.payload.declaredBy) || "?"}: ${teamsOf(e).map(describeStrikeTeam).join("; ")}`,
+        );
+      if (e.type === "strike_team.rejected")
+        lines.push(
+          `  strike team refused${str(e.payload.taskId) === "" ? "" : ` on ${str(e.payload.taskId)}`} (asked by ${str(e.payload.declaredBy) || "?"}: ${teamsOf(e).map(describeStrikeTeam).join("; ")}): ${list(e.payload.reasons).map(String).join("; ")}`,
+        );
     }
     lines.push("");
   }
@@ -516,6 +586,43 @@ export function renderReview(
   lines.push(`leader turns: ${leaderTurns} (${reported} reports)`);
   for (const [unitId, unitReports] of reportsByUnit)
     lines.push(`  ${unitId}: ${unitReports.join("; ")}`);
+  // Each declared config against what ran under it: members, their spend (a breakdown of
+  // the task's, priced on the member's model), and the claims that cite a member.
+  const configs = teamConfigs(events);
+  lines.push(
+    `strike teams: ${configs.length} declared config(s), ${events.filter((e) => e.type === "strike_team.rejected").length} refused`,
+  );
+  for (const c of configs) {
+    const usage = c.members.reduce<Usage>(
+      (acc, m) => ({
+        inputTokens: acc.inputTokens + (m.usage.inputTokens ?? 0),
+        uncachedInputTokens:
+          acc.uncachedInputTokens + (m.usage.uncachedInputTokens ?? 0),
+        cacheWriteTokens:
+          acc.cacheWriteTokens + (m.usage.cacheWriteTokens ?? 0),
+        cacheReadTokens: acc.cacheReadTokens + (m.usage.cacheReadTokens ?? 0),
+        outputTokens: acc.outputTokens + (m.usage.outputTokens ?? 0),
+        seconds: acc.seconds + (m.usage.seconds ?? 0),
+      }),
+      {
+        inputTokens: 0,
+        uncachedInputTokens: 0,
+        cacheWriteTokens: 0,
+        cacheReadTokens: 0,
+        outputTokens: 0,
+        seconds: 0,
+      },
+    );
+    const teamCost = emptyCost();
+    for (const m of c.members)
+      addCost(teamCost, costOf(m.usage, m.model ?? c.team.model));
+    const citing = claims.filter((claim) =>
+      citesMember(claim.evidence, c.members),
+    ).length;
+    lines.push(
+      `  ${c.taskId} ${c.team.kind} ${c.team.model} (by ${c.declaredBy}): declared ${c.team.count}, ran ${c.members.length}, in ${n(usage.inputTokens)}  out ${n(usage.outputTokens)}  ${usage.seconds.toFixed(1)} s  ${money(teamCost)}, ${citing} claim(s) citing a member`,
+    );
+  }
   const toolCalls = events.filter((e) => e.type === "tool.called");
   const inSubagents = toolCalls.filter(
     (e) => e.payload.agentId !== null,

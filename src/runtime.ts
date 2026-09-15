@@ -113,6 +113,7 @@ export function applyPlan(
     model: t.model,
     instructions: t.instructions,
     budget: t.budget,
+    strikeTeam: t.strikeTeam ?? [],
     status: t.dependsOn.every((d) => completed.has(resolveTask(d)))
       ? "ready"
       : "pending",
@@ -138,7 +139,18 @@ export function applyPlan(
 
   store.batch(() => {
     for (const u of units) store.createUnit(u, actor);
-    for (const t of tasks) store.createTask(t, actor);
+    for (const t of tasks) {
+      store.createTask(t, actor);
+      // The plan's declaration is on the task row already; the event is the record of who
+      // declared what, beside a leader's (DESIGN.md Step 6).
+      if (t.strikeTeam.length > 0)
+        store.record(incident.id, "strike_team.defined", actor, {
+          taskId: t.id,
+          unitId: t.unitId,
+          declaredBy: "plan",
+          strikeTeam: t.strikeTeam,
+        });
+    }
     for (const id of plan.cancelTasks)
       store.setTaskStatus(
         incident.id,

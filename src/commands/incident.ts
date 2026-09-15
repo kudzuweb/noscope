@@ -12,6 +12,7 @@ import {
   type IncidentStatus,
   type Question,
   Situation,
+  type StrikeTeam,
   type Unit,
 } from "../models.js";
 import { proposePlan } from "../planner.js";
@@ -19,6 +20,7 @@ import { getProvider } from "../providers/index.js";
 import { renderReview } from "../review.js";
 import { applyPlan } from "../runtime.js";
 import { now, resolveDbPath, Store, sumUsage } from "../store.js";
+import { describeStrikeTeam } from "../strike-team.js";
 import { renderTree } from "../tree.js";
 import { validateAndRecord } from "../validator.js";
 
@@ -355,10 +357,13 @@ async function cycle(
     );
   for (const c of plan.closeUnits)
     ctx.io.out(`  close unit ${c.unitId}: ${c.reason}`);
-  for (const t of plan.createTasks)
+  for (const t of plan.createTasks) {
     ctx.io.out(
       `  create task under ${t.unit}: ${t.capability}: ${t.objective}${t.model === null ? "" : ` (${t.provider}/${t.model})`}`,
     );
+    for (const team of t.strikeTeam ?? [])
+      ctx.io.out(`    strike team ${describeStrikeTeam(team)}`);
+  }
   for (const id of plan.cancelTasks) ctx.io.out(`  cancel task ${id}`);
   for (const q of plan.questionsForHuman) ctx.io.out(`  ask: ${q}`);
   for (const r of plan.capabilityRequests)
@@ -401,13 +406,23 @@ async function cycle(
     ctx.io.out(
       `  unit ${r.unitId} reported ${r.report.outcome}${r.report.pictureChanged ? ", picture changed" : ""}: ${r.report.changed.map((c) => c.what).join("; ") || "nothing changed"}${r.report.why === undefined ? "" : `; why: ${r.report.why}`}${r.report.suggestion === undefined ? "" : `; suggestion: ${r.report.suggestion}`}`,
     );
-  for (const d of store
-    .listEvents(incident.id)
-    .slice(before)
-    .filter((e) => e.type === "picture.discrepancy"))
-    ctx.io.out(
-      `  discrepancy from ${String(d.payload.seat)} of ${String(d.payload.unitId)}: ${String(d.payload.discrepancy)}`,
-    );
+  for (const e of store.listEvents(incident.id).slice(before)) {
+    if (e.type === "picture.discrepancy")
+      ctx.io.out(
+        `  discrepancy from ${String(e.payload.seat)} of ${String(e.payload.unitId)}: ${String(e.payload.discrepancy)}`,
+      );
+    const teams = Array.isArray(e.payload.strikeTeam)
+      ? e.payload.strikeTeam.map((t) => describeStrikeTeam(t as StrikeTeam))
+      : [];
+    if (e.type === "strike_team.defined")
+      ctx.io.out(
+        `  strike team declared by the leader of ${String(e.payload.unitId)} on ${String(e.payload.taskId)}: ${teams.join("; ")}`,
+      );
+    if (e.type === "strike_team.rejected")
+      ctx.io.out(
+        `  strike team refused for the leader of ${String(e.payload.unitId)}: ${(e.payload.reasons as string[]).join("; ")}`,
+      );
+  }
   if (stopped !== null) ctx.io.out(`  budget stopped the pass: ${stopped}`);
   else if (pictureChanged !== null)
     ctx.io.out(

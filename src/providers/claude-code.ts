@@ -61,9 +61,12 @@ const INTEGRATION_SERVERS: Record<string, string> = {
 
 /** The argument list for `claude -p`; the prompt itself goes on stdin so a long brief never meets the argv limit. */
 export function renderClaudeCodeArgs(request: SessionRequest): string[] {
+  const team = request.strikeTeam ?? [];
+  // A session with a strike team gets the Agent tool beside its own, and each kind defined
+  // for this call alone (`--agents`, honored on a resumed call too; DESIGN.md Reference).
   const tools = request.tools.includes("default")
     ? "default"
-    : request.tools.join(",");
+    : [...request.tools, ...(team.length > 0 ? [AGENT_TOOL] : [])].join(",");
   const args = [
     "-p",
     "--model",
@@ -81,11 +84,29 @@ export function renderClaudeCodeArgs(request: SessionRequest): string[] {
   // A headless session may use only allowlisted tools: the read-only Bash commands, every
   // tool of each attached MCP server (`mcp__<server>`), and Claude in Chrome's own server.
   const allowed = [
+    ...(team.length > 0 ? [AGENT_TOOL] : []),
     ...bashAllowlist(request.bashAllowlist),
     ...request.mcpServers.map((s) => `mcp__${s.name}`),
     ...request.integrations.map((i) => `mcp__${INTEGRATION_SERVERS[i] ?? i}`),
   ];
   if (allowed.length > 0) args.push("--allowedTools", allowed.join(","));
+  if (team.length > 0)
+    args.push(
+      "--agents",
+      JSON.stringify(
+        Object.fromEntries(
+          team.map((t) => [
+            t.kind,
+            {
+              description: t.why,
+              prompt: t.prompt,
+              model: t.model,
+              tools: [...t.tools],
+            },
+          ]),
+        ),
+      ),
+    );
   for (const dir of request.addDirs) args.push("--add-dir", dir);
   if (request.mcpServers.length > 0)
     args.push(
@@ -112,6 +133,9 @@ export const TOOL_RESULT_CAP = 4_000;
 
 /** The tool a session answers its schema through; the answer is the task's result, not a call. */
 const OUTPUT_TOOL = "StructuredOutput";
+
+/** The tool a session sends a subagent through; each call is filed, and its member is read from its transcript. */
+const AGENT_TOOL = "Agent";
 
 type ResultEnvelope = {
   type?: unknown;

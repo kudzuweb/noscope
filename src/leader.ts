@@ -9,10 +9,12 @@ import {
   jsonSchemaFor,
   LeaderTurn,
   type Situation,
+  type StrikeTeam,
   type Task,
   type Unit,
 } from "./models.js";
 import { type SessionRequest, sessionSystemPrompt } from "./providers/index.js";
+import { describeStrikeTeam } from "./strike-team.js";
 import { renderHierarchy } from "./tree.js";
 
 // A unit's leader is a persistent session: created when the unit first has a ready task,
@@ -33,6 +35,8 @@ export const LEADER_ROLE = `Your role: unit leader. You own your unit's objectiv
 Report what changed, not what you did: each item in changed is something now true that was not, naming the claim ids it rests on; a change with no claims behind it is a claim of its own and counts for less. Outcome met means the unit's objective is established by observed claims; not_met means it cannot be met as set, and then why and suggestion are required, because the IC, who has more perspective, decides what happens next; progress means the unit has more to run or more to say. Set pictureChanged, and report rather than continue, the moment an outcome changes the picture the incident is working from: the IC acts on it before the next unit runs.
 
 You cannot change the organization above or beside you: no new units, no tasks outside your unit, no change to the incident's objective. What you lack goes in your report.
+
+You may send a strike team: several subagents of one kind and model on one task, each a session of its own with a prompt and tools you choose. A task may declare its team already; otherwise ask for one in your turn with requestStrikeTeam, choosing the kind, its model, its tools, its prompt and how many to send, and saying why. No kind exists by default. The runtime declares the team on your next task, defines the kinds for the call that runs it, and records every member; a claim that rests on a member's finding cites the member's agentId.
 
 discrepancy is for one thing only: the update you received describes a different problem from the one you have been working, as if you believed you were fighting a fire and the update describes a hurricane. Say what differs. A different detail, a wrong line number, a claim you disagree with, is not a discrepancy; it goes in your report or your next task.`;
 
@@ -57,6 +61,10 @@ export const LEADER_TURN_SCHEMA = jsonSchemaFor(LeaderTurn);
 /** The sentence a turn prompt ends with when the unit has nothing left to run; the leader is asked for its report. */
 const NO_TASKS_REMAIN =
   "No ready tasks remain in your unit. File your report against the unit's objective.";
+
+/** What a continuing leader is told about asking for a team on the task that runs next. */
+const STRIKE_TEAM_OFFER =
+  "To send a strike team on it, set requestStrikeTeam: each kind with its model, tools, prompt, count and why; the kinds are defined for the call that runs the task.";
 
 /**
  * Whether a task runs inside its unit's leader session: a session-backed capability on the
@@ -162,11 +170,13 @@ export type TaskEnding =
 
 /**
  * The user message of a turn: what the last task came to (none when the unit owes a report
- * from an earlier pass), then how many ready tasks remain and what the leader is asked for.
+ * from an earlier pass), then how many ready tasks remain, which runs next and the team it
+ * declares if any, and what the leader is asked for.
  */
 export function renderTurnPrompt(
   ending: TaskEnding | null,
   remaining: number,
+  next: Task | null = null,
 ): string {
   const came =
     ending === null
@@ -182,13 +192,20 @@ export function renderTurnPrompt(
     remaining === 0
       ? NO_TASKS_REMAIN
       : `${remaining} ready task(s) remain in your unit. Your next move: continue to the next, or report now if the picture changed.`,
+    ...(remaining === 0 || next === null
+      ? []
+      : [
+          `Next: task ${next.id} (${next.capability}): ${next.objective}${next.strikeTeam.length === 0 ? "" : `; it declares a strike team: ${next.strikeTeam.map(describeStrikeTeam).join("; ")}`}`,
+          STRIKE_TEAM_OFFER,
+        ]),
   ].join("\n");
 }
 
 /**
  * A call on the unit's leader session: the leader's model, equipment and allowlist, the
- * seat's system prompt (kept from the first call when the session is resumed), and the
- * unit's session to resume once it has one.
+ * seat's system prompt (kept from the first call when the session is resumed), the unit's
+ * session to resume once it has one, and, when the call runs a task that declares one, the
+ * task's strike team, defined for this call alone.
  */
 export function leaderRequest(
   unit: Unit,
@@ -196,6 +213,7 @@ export function leaderRequest(
   outputSchema: Record<string, unknown>,
   cwd: string,
   timeoutSeconds = LEADER_TURN_SECONDS,
+  strikeTeam: readonly StrikeTeam[] = [],
 ): SessionRequest {
   const seat = unit.parentId === null ? "ic" : "leader";
   return {
@@ -209,5 +227,6 @@ export function leaderRequest(
     outputSchema,
     timeoutSeconds,
     ...(unit.sessionId === null ? {} : { resume: unit.sessionId }),
+    ...(strikeTeam.length === 0 ? {} : { strikeTeam }),
   };
 }

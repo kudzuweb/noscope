@@ -1,5 +1,6 @@
 import { type Capability, getCapability } from "./capabilities/index.js";
 import {
+  BUILTIN_TOOLS,
   getExternalEquipment,
   isBuiltinTool,
   READ_ONLY_COMMANDS,
@@ -9,6 +10,7 @@ import type {
   ActionPlan,
   Claim,
   Incident,
+  StrikeTeam,
   Task,
   TaskProposal,
   Unit,
@@ -18,6 +20,7 @@ import type {
 import { PLANNER_RULES } from "./planner.js";
 import type { Provider } from "./providers/index.js";
 import { type Store, sumUsage } from "./store.js";
+import { STRIKE_MEMBER_MIN_TOKENS } from "./strike-team.js";
 
 /** A rule's name is the text before the colon of the line the planner reads, so the two lists cannot drift. */
 type BeforeColon<S> = S extends `${infer Name}: ${string}` ? Name : never;
@@ -37,7 +40,7 @@ export type ValidationContext = {
   owing: ReadonlySet<string>;
 };
 
-type Rejection = { rule: RuleName; reason: string };
+export type Rejection = { rule: RuleName; reason: string };
 
 export type Verdict =
   | { ok: true; plan: ActionPlan }
@@ -62,6 +65,81 @@ function modelUnknown(
   return known.models.includes(model)
     ? null
     : `${model}, which ${provider} does not serve`;
+}
+
+/** The three rules a strike team is held to, and nothing else (ruled 2026-09-14): its model, its tools, its count. */
+const STRIKE_TEAM_RULES = [
+  "Model known",
+  "Effect policy",
+  "Budget respected",
+] as const satisfies readonly RuleName[];
+
+/**
+ * A strike team's reasons under one of its three rules: the model against the task's
+ * provider's list (Model known), the tools against the read-only built-ins (Effect policy:
+ * no Edit, Write or unallowlisted Bash until grants exist), and the count against the
+ * task's token bound (Budget respected: each member spends at least
+ * `STRIKE_MEMBER_MIN_TOKENS`). Shared by a plan's tasks and a leader's request.
+ */
+function strikeTeamReasons(
+  rule: (typeof STRIKE_TEAM_RULES)[number],
+  teams: readonly StrikeTeam[],
+  task: Pick<Task, "provider" | "budget">,
+  providers: readonly Provider[],
+  label: string,
+): string[] {
+  return teams.flatMap((team) => {
+    if (rule === "Model known") {
+      if (task.provider === null)
+        return [
+          `${label} declares strike team ${team.kind} but runs no session to send it from`,
+        ];
+      const unknown = modelUnknown(providers, task.provider, team.model);
+      return unknown === null
+        ? []
+        : [`${label} names ${unknown} for strike team ${team.kind}`];
+    }
+    if (rule === "Effect policy")
+      return team.tools
+        .filter((t) => !isBuiltinTool(t))
+        .map(
+          (t) =>
+            `${label} gives strike team ${team.kind} the tool ${t}, which is not one of the read-only built-ins (${BUILTIN_TOOLS.join(", ")})`,
+        );
+    const bound = task.budget.tokens;
+    const floor = team.count * STRIKE_MEMBER_MIN_TOKENS;
+    return bound !== undefined && floor > bound
+      ? [
+          `${label} sends ${team.count} member(s) of strike team ${team.kind}, at least ${floor} tokens, over its token bound of ${bound}`,
+        ]
+      : [];
+  });
+}
+
+/** Every rejection a strike team draws, for a request made outside a plan (a leader's turn). */
+export function strikeTeamRejections(
+  teams: readonly StrikeTeam[],
+  task: Pick<Task, "provider" | "budget">,
+  providers: readonly Provider[],
+  label: string,
+): Rejection[] {
+  return STRIKE_TEAM_RULES.flatMap((rule) =>
+    strikeTeamReasons(rule, teams, task, providers, label).map((reason) => ({
+      rule,
+      reason,
+    })),
+  );
+}
+
+/** A plan's new tasks' strike teams under one rule. */
+function plannedStrikeTeams(
+  rule: (typeof STRIKE_TEAM_RULES)[number],
+  plan: ActionPlan,
+  ctx: ValidationContext,
+): string[] {
+  return plan.createTasks.flatMap((t) =>
+    strikeTeamReasons(rule, t.strikeTeam ?? [], t, ctx.providers, label(t)),
+  );
 }
 
 /** The refs of tasks created in this plan, which other new tasks may name in dependsOn. */
@@ -294,7 +372,8 @@ const CHECKS: Record<RuleName, Rule> = {
       );
   },
 
-  "Effect policy": (plan) => [
+  "Effect policy": (plan, ctx) => [
+    ...plannedStrikeTeams("Effect policy", plan, ctx),
     ...perRegisteredTask(plan, (t, capability) =>
       capability.effect === "read_only"
         ? []
@@ -339,7 +418,13 @@ const CHECKS: Record<RuleName, Rule> = {
           : ctx.incident.budget.seconds - ctx.usage.seconds,
     };
     return plan.createTasks.flatMap((t) => {
-      const reasons: string[] = [];
+      const reasons: string[] = strikeTeamReasons(
+        "Budget respected",
+        t.strikeTeam ?? [],
+        t,
+        ctx.providers,
+        label(t),
+      );
       const session = getCapability(t.capability)?.kind === "session";
       if (session && t.budget.seconds === undefined)
         reasons.push(`${label(t)} runs a session and carries no time bound`);
@@ -463,6 +548,7 @@ const CHECKS: Record<RuleName, Rule> = {
   },
 
   "Model known": (plan, ctx) => [
+    ...plannedStrikeTeams("Model known", plan, ctx),
     ...perRegisteredTask(plan, (t, capability) => {
       const named = [
         ...(t.provider === null ? [] : [`provider ${t.provider}`]),

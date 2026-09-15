@@ -9,6 +9,7 @@ import { EXIT, run } from "../src/cli.js";
 import { dispatch } from "../src/dispatcher.js";
 import { runsInsideLeader, unitsOwingReport } from "../src/leader.js";
 import type { ActionPlan } from "../src/models.js";
+import { applyPlan } from "../src/runtime.js";
 import { Store } from "../src/store.js";
 import { scriptedIncident, unitProposal } from "./fixtures/models.js";
 
@@ -1088,6 +1089,287 @@ describe("dispatcher, unit leaders", () => {
     expect(store.listUnits("i1")[0]?.sessionId).toBe("stub-session");
     store.close();
   });
+
+  it("a leader's requested strike team is declared on the task that runs next and defined for the call that runs it, a task's own declaration reaches its own session, and a bad request is refused with reasons", async () => {
+    const store = new Store(":memory:");
+    const { incident, task } = scriptedIncident(store);
+    const pinger = {
+      kind: "pinger",
+      model: "claude-haiku-4-5",
+      tools: ["Read"],
+      prompt: "Reply with PONG.",
+      count: 2,
+      why: "two readers cover the tree",
+    };
+    const reader = { ...pinger, kind: "reader", tools: [], count: 1 };
+    task({
+      id: "t-grep",
+      capability: "grep",
+      inputs: { root: ".", pattern: "delete" },
+      status: "ready",
+    });
+    task({
+      id: "t-inv",
+      capability: "investigate",
+      inputs: { question: "what handles deletion?" },
+      provider: "claude-code",
+      model: "claude-haiku-4-5",
+      budget: { seconds: 30, tokens: 5_000 },
+      status: "ready",
+    });
+    task({
+      id: "t-read",
+      capability: "interpret",
+      inputs: {
+        question: "so what?",
+        evidence: [{ source: "x", content: "y" }],
+      },
+      provider: "claude-code",
+      model: "claude-opus-5",
+      budget: { seconds: 30 },
+      strikeTeam: [reader],
+      status: "ready",
+    });
+    const log = callsLog();
+    process.env.NOSCOPE_STUB_CALLS = log;
+    process.env.NOSCOPE_STUB_TURNS = JSON.stringify([
+      // After the grep: ask for pingers on the next task (t-inv).
+      { kind: "continue", requestStrikeTeam: [pinger] },
+      // After the investigate: a writing tool, refused on t-read.
+      {
+        kind: "continue",
+        requestStrikeTeam: [
+          { ...pinger, kind: "editor", tools: ["Edit"], count: 1 },
+        ],
+      },
+      // After the interpret: report, and a request with nothing left to send it on.
+      {
+        kind: "report",
+        report: { outcome: "progress", changed: [], pictureChanged: false },
+        requestStrikeTeam: [pinger],
+      },
+    ]);
+    process.env.NOSCOPE_STUB_TURN_COUNTER = join(log, "..", "turns");
+    let dispatched: Awaited<ReturnType<typeof dispatch>>;
+    try {
+      dispatched = await withStubOutput(
+        {
+          outcome: "answered",
+          claims: [],
+          findings: {
+            summary: "a.txt",
+            observations: [],
+            conclusion: "the handler",
+            reasoning: "the match",
+          },
+          needed: [],
+        },
+        () => dispatch(store, incident, stubbed),
+      );
+    } finally {
+      delete process.env.NOSCOPE_STUB_CALLS;
+      delete process.env.NOSCOPE_STUB_TURNS;
+      delete process.env.NOSCOPE_STUB_TURN_COUNTER;
+    }
+    expect(dispatched.ran.map((r) => [r.taskId, r.status])).toEqual([
+      ["t-grep", "completed"],
+      ["t-inv", "completed"],
+      ["t-read", "completed"],
+    ]);
+    const calls = readCalls(log);
+    expect(calls.map((c) => c.kind)).toEqual([
+      "leader",
+      "task",
+      "leader",
+      "task",
+      "leader",
+    ]);
+    const agentsOf = (c: Call) =>
+      c.args.includes("--agents")
+        ? (JSON.parse(c.args[c.args.indexOf("--agents") + 1] ?? "") as Record<
+            string,
+            unknown
+          >)
+        : null;
+    // The first turn names the next task and offers the request; no kinds are defined on a turn.
+    expect(calls[0]?.prompt).toContain(
+      "Next: task t-inv (investigate): run investigate",
+    );
+    expect(calls[0]?.prompt).toContain("set requestStrikeTeam");
+    expect(agentsOf(calls[0] as Call)).toBeNull();
+    // The investigate ran inside the leader with the pingers defined, Agent beside the leader's tools, and the brief saying what may be sent.
+    expect(calls[1]?.resume).toBe("stub-session");
+    expect(agentsOf(calls[1] as Call)).toEqual({
+      pinger: {
+        description: pinger.why,
+        prompt: pinger.prompt,
+        model: pinger.model,
+        tools: ["Read"],
+      },
+    });
+    expect(calls[1]?.args[calls[1].args.indexOf("--tools") + 1]).toBe(
+      "Read,Grep,Glob,Bash,Agent",
+    );
+    expect(calls[1]?.args[calls[1].args.indexOf("--allowedTools") + 1]).toMatch(
+      /^Agent,Bash\(ls \*\)/,
+    );
+    expect(calls[1]?.prompt).toContain(
+      "Strike team declared on this task (one kind)",
+    );
+    expect(calls[1]?.prompt).toContain(
+      "  - pinger on claude-haiku-4-5, tools Read, 2 member(s): two readers cover the tree",
+    );
+    // The second turn shows t-read's own declaration; the interpret's own session gets it.
+    expect(calls[2]?.prompt).toContain(
+      "Next: task t-read (interpret): run interpret; it declares a strike team: reader on claude-haiku-4-5, tools none, 1 member(s)",
+    );
+    expect(agentsOf(calls[2] as Call)).toBeNull();
+    expect(calls[3]?.resume).toBeNull();
+    expect(Object.keys(agentsOf(calls[3] as Call) ?? {})).toEqual(["reader"]);
+    expect(calls[3]?.args[calls[3].args.indexOf("--tools") + 1]).toBe("Agent");
+    expect(calls[3]?.prompt).toContain("Strike team declared on this task");
+    expect(agentsOf(calls[4] as Call)).toBeNull();
+    const events = store.listEvents("i1");
+    const defined = events.filter((e) => e.type === "strike_team.defined");
+    const refused = events.filter((e) => e.type === "strike_team.rejected");
+    expect(defined).toHaveLength(1);
+    expect(defined[0]?.payload).toMatchObject({
+      taskId: "t-inv",
+      unitId: "i1-command",
+      sessionId: "stub-session",
+      declaredBy: "leader",
+      strikeTeam: [pinger],
+      mutation: { kind: "task.strikeTeam", taskId: "t-inv" },
+    });
+    // The declaration is written with the turn that asked for it.
+    const types = events.map((e) => e.type);
+    expect(types.indexOf("strike_team.defined")).toBe(
+      types.indexOf("unit.continued") + 1,
+    );
+    expect(
+      store.listTasks("i1").find((t) => t.id === "t-inv")?.strikeTeam,
+    ).toEqual([pinger]);
+    expect(refused.map((e) => [e.payload.taskId, e.payload.reasons])).toEqual([
+      [
+        "t-read",
+        [
+          "Effect policy: task t-read gives strike team editor the tool Edit, which is not one of the read-only built-ins (Read, Grep, Glob, Bash)",
+        ],
+      ],
+      [null, ["no ready task remains in the unit to send it on"]],
+    ]);
+    expect(
+      store.listTasks("i1").find((t) => t.id === "t-read")?.strikeTeam,
+    ).toEqual([reader]);
+    store.close();
+  });
+
+  // A Haiku leader runs one investigate inside its session with a two-member pinger team
+  // declared by the plan; the real binary defines the kinds, the session sends both, and the
+  // log links each member to the Agent call that spawned it. One task call and one turn.
+  it.skipIf(process.env.NOSCOPE_LIVE !== "1")(
+    "live: a Haiku leader sends two pinger members, and the log holds the declaration, the Agent calls and two linked subagent.ran events",
+    async () => {
+      const store = new Store(":memory:");
+      const { incident } = scriptedIncident(store);
+      const pinger = {
+        kind: "pinger",
+        model: "claude-haiku-4-5",
+        tools: [],
+        prompt: "Reply with exactly the word PONG and nothing else.",
+        count: 2,
+        why: "two members prove the team is defined and each run is filed",
+      };
+      const plan: ActionPlan = {
+        createUnits: [],
+        closeUnits: [],
+        createTasks: [
+          {
+            unit: "i1-command",
+            capability: "investigate",
+            objective:
+              "send the strike team and report what each member replied",
+            inputs: { question: "what does each pinger reply?" },
+            expectedOutput: "each member's reply",
+            completionCriteria: ["both members were sent and replied"],
+            evidenceRequired: ["each member's agentId"],
+            dependsOn: [],
+            evidenceFrom: { claims: [], tasks: [] },
+            instructions:
+              'Send exactly two members of the pinger kind with your Agent tool (subagent_type "pinger", prompt "go"), one call each. Read no files. Put both replies in the summary, and make one observed claim per member, subject the member\'s agentId as the tool result shows it, predicate "replied", object the reply, with the agentId in its evidence.',
+            provider: "claude-code",
+            model: "claude-haiku-4-5",
+            budget: { seconds: 240 },
+            strikeTeam: [pinger],
+          },
+        ],
+        cancelTasks: [],
+        questionsForHuman: [],
+        grantRequests: [],
+        capabilityRequests: [],
+        applySops: [],
+        incidentStatus: "continue",
+        situation: {
+          changed: "nothing yet",
+          hypothesis: "a declared team can be sent",
+          proven: [],
+          inferred: [],
+          keep: [],
+        },
+        rationale: "the live strike-team check",
+      };
+      const [created] = applyPlan(store, incident, plan).tasks;
+      if (created === undefined) throw new Error("the plan creates one task");
+      // The task's events are written before the leader's turn. That turn is R3-4's, and a
+      // Haiku leader sometimes flattens the optional report onto the turn (seen 2026-09-15:
+      // `{kind: "report", outcome: ..., changed: ...}`), which ends the pass with an error
+      // after the task is filed; the check here is the task's log, so that error is let through.
+      try {
+        const { ran } = await dispatch(store, incident, { cwd: tree, env: {} });
+        expect(ran.map((r) => [r.taskId, r.status])).toEqual([
+          [created.id, "completed"],
+        ]);
+      } catch (error) {
+        if (
+          !(error instanceof Error) ||
+          !/^leader of unit .*: the result did not fit its schema/.test(
+            error.message,
+          )
+        )
+          throw error;
+      }
+      const events = store.listEvents("i1");
+      expect(
+        events.find((e) => e.type === "task.completed")?.payload,
+      ).toMatchObject({ mutation: { taskId: created.id } });
+      expect(
+        events.find((e) => e.type === "strike_team.defined")?.payload,
+      ).toMatchObject({ taskId: created.id, declaredBy: "plan" });
+      const agentCalls = events.filter(
+        (e) =>
+          e.type === "tool.called" &&
+          e.payload.tool === "Agent" &&
+          e.payload.agentId === null &&
+          e.payload.taskId === created.id,
+      );
+      expect(agentCalls.length).toBeGreaterThanOrEqual(1);
+      const members = events.filter((e) => e.type === "subagent.ran");
+      expect(members).toHaveLength(2);
+      const spawning = new Set(agentCalls.map((e) => e.payload.toolUseId));
+      for (const m of members) {
+        expect(m.payload).toMatchObject({
+          taskId: created.id,
+          agentType: "pinger",
+          model: "claude-haiku-4-5",
+        });
+        expect(spawning.has(m.payload.toolUseId)).toBe(true);
+      }
+      const claims = store.listClaims("i1");
+      expect(claims.length).toBeGreaterThanOrEqual(1);
+      store.close();
+    },
+    600_000,
+  );
 
   it("a task on a capability that picks its equipment per task never runs inside the leader, and a unit with no session still owes a report", () => {
     const reproduce = getCapability("reproduce");

@@ -10,8 +10,10 @@ import {
   jsonSchemaFor,
   LeaderTurn,
   SessionResult,
+  StrikeTeam,
   sessionResult,
   Task,
+  TaskProposal,
   Timestamp,
   Usage,
 } from "../src/models.js";
@@ -226,9 +228,11 @@ describe("contracts", () => {
       "unit.continued",
       "unit.reported",
       "picture.discrepancy",
+      "strike_team.defined",
+      "strike_team.rejected",
     ])
       expect(EventType.options).toContain(type);
-    expect(EventType.options).toHaveLength(32);
+    expect(EventType.options).toHaveLength(34);
   });
 
   it("a leader's turn is a report or a continue; a not_met report says why and what to do, and a discrepancy rides on either", () => {
@@ -285,6 +289,50 @@ describe("contracts", () => {
         createUnits: [{ ...plan.createUnits[0], leader: undefined }],
       }),
     ).toThrow(/leader/);
+  });
+
+  it("a strike team is a kind with a model, tools, prompt, count and why; a task may declare several, a leader may request one, and a task without one parses with none", () => {
+    const team = {
+      kind: "pinger",
+      model: "claude-haiku-4-5",
+      tools: ["Read", "Grep"],
+      prompt: "Reply with PONG.",
+      count: 2,
+      why: "two readers cover the tree faster",
+    };
+    expect(StrikeTeam.parse(team)).toEqual(team);
+    for (const bad of [
+      { ...team, count: 0 },
+      { ...team, count: 1.5 },
+      { ...team, kind: "-lead" },
+      { ...team, kind: "a kind" },
+      { ...team, why: "" },
+      { ...team, prompt: "" },
+    ])
+      expect(() => StrikeTeam.parse(bad)).toThrow();
+    const proposal = plan.createTasks[0];
+    expect(TaskProposal.parse(proposal).strikeTeam).toBeUndefined();
+    expect(
+      TaskProposal.parse({
+        ...proposal,
+        strikeTeam: [team, { ...team, kind: "reader" }],
+      }).strikeTeam,
+    ).toHaveLength(2);
+    expect(
+      LeaderTurn.parse({ kind: "continue", requestStrikeTeam: [team] })
+        .requestStrikeTeam,
+    ).toEqual([team]);
+    const schema = jsonSchemaFor(LeaderTurn) as {
+      properties: { requestStrikeTeam: { items: { required: string[] } } };
+    };
+    expect(schema.properties.requestStrikeTeam.items.required).toEqual([
+      "kind",
+      "model",
+      "tools",
+      "prompt",
+      "count",
+      "why",
+    ]);
   });
 
   it("exports provider-facing JSON Schema as a top-level object with no $schema key", () => {

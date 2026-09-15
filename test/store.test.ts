@@ -61,6 +61,7 @@ function scripted(store: Store): void {
     model: null,
     instructions: "",
     budget: {},
+    strikeTeam: [],
     status: "ready",
     result: null,
     createdAt: at,
@@ -550,14 +551,14 @@ describe("store", () => {
     s1.db.pragma("user_version = 1");
     s1.close();
     const first = new Store(path);
-    expect(first.db.pragma("user_version", { simple: true })).toBe(4);
+    expect(first.db.pragma("user_version", { simple: true })).toBe(5);
     first.close();
     // A crash after the column was added but before the version was written: reopening finishes the job.
     const half = new Store(path);
     half.db.pragma("user_version = 1");
     half.close();
     const s2 = new Store(path);
-    expect(s2.db.pragma("user_version", { simple: true })).toBe(4);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(5);
     expect(
       s2
         .listClaims("i1")
@@ -585,7 +586,7 @@ describe("store", () => {
     s1.db.pragma("user_version = 2");
     s1.close();
     const s2 = new Store(path);
-    expect(s2.db.pragma("user_version", { simple: true })).toBe(4);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(5);
     expect(s2.listTasks("i1").map((t) => t.evidenceFrom)).toEqual([
       { claims: [], tasks: [] },
     ]);
@@ -606,7 +607,7 @@ describe("store", () => {
     s1.db.pragma("user_version = 3");
     s1.close();
     const s2 = new Store(path);
-    expect(s2.db.pragma("user_version", { simple: true })).toBe(4);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(5);
     expect(s2.listUnits("i1").map((u) => [u.id, u.objective])).toEqual([
       ["u-command", "command"],
       ["u1", "delete-handler investigation"],
@@ -636,6 +637,57 @@ describe("store", () => {
     );
     expect(s2.listUnits("i1").at(-1)?.equipment).toEqual(["Read"]);
     s2.close();
+  });
+
+  it("migrates a version 4 file, giving every task an empty strike team, and replays a leader's declaration", async () => {
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const path = `${mkdtempSync(`${tmpdir()}/noscope-`)}/v4.sqlite`;
+    const s1 = new Store(path);
+    scripted(s1);
+    s1.db.exec("ALTER TABLE tasks DROP COLUMN strike_team_json");
+    s1.db.pragma("user_version = 4");
+    s1.close();
+    const s2 = new Store(path);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(5);
+    expect(s2.listTasks("i1").map((t) => t.strikeTeam)).toEqual([[]]);
+    const team = {
+      kind: "pinger",
+      model: "claude-haiku-4-5",
+      tools: ["Read"],
+      prompt: "Reply PONG.",
+      count: 2,
+      why: "two readers",
+    };
+    s2.setTaskStrikeTeam("i1", "t1", [team], "dispatcher", {
+      taskId: "t1",
+      unitId: "u1",
+      declaredBy: "leader",
+      strikeTeam: [team],
+    });
+    expect(s2.listTasks("i1")[0]?.strikeTeam).toEqual([team]);
+    const defined = s2.listEvents("i1").at(-1);
+    expect(defined?.type).toBe("strike_team.defined");
+    expect(defined?.payload).toMatchObject({
+      declaredBy: "leader",
+      mutation: { kind: "task.strikeTeam", taskId: "t1" },
+    });
+    // A task recorded before tasks declared teams replays with none; the declaration replays.
+    const events = s2.listEvents("i1").map((e) => {
+      const m = e.payload.mutation as
+        | { kind: string; task?: Record<string, unknown> }
+        | undefined;
+      if (m === undefined || m.kind !== "task.create" || m.task === undefined)
+        return e;
+      const { strikeTeam: _s, ...task } = m.task;
+      return { ...e, payload: { ...e.payload, mutation: { ...m, task } } };
+    });
+    const b = new Store(":memory:");
+    b.replay([...s2.listEvents(null), ...events]);
+    expect(b.snapshot()).toEqual(s2.snapshot());
+    expect(b.listTasks("i1")[0]?.strikeTeam).toEqual([team]);
+    s2.close();
+    b.close();
   });
 
   it("replays a unit recorded before units had a leader, and a unit's session and its report events", () => {

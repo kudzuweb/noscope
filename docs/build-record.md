@@ -1172,3 +1172,105 @@ Not exactly to spec, with reasons:
   `NOSCOPE_STUB_RESUME_FAIL` names a session whose resume exits before any output, and each
   `NOSCOPE_STUB_CALLS` line counts the stub processes still running when the call started,
   which is how the timeout test shows the turn waited for the killed process.
+
+## R3-5: Strike teams (#PR, merged 2026-09-15)
+
+R3-5 of the round 3 plan. Built: a task declares the subagent team its leader may send, the
+runtime provides it and logs every member. `StrikeTeam` in `src/models.ts` is `kind` (a
+name of letters, digits, `-` and `_`), `model`, `tools` (built-in tool names), `prompt`
+(the member's system prompt), `count` and `why`; `TaskProposal` gains optional
+`strikeTeam: StrikeTeam[]`, `Task` carries it with `[]` as the default (column
+`strike_team_json`, schema version 5, the migration adding the column), and a task with
+more than one kind is a task force. `LeaderTurn` gains optional `requestStrikeTeam`, the
+same shape. No preset kinds and no default kind exist. `applyPlan` copies a proposal's team
+onto the task and records `strike_team.defined` (`declaredBy: plan`) beside `task.created`.
+The dispatcher passes the task that runs next into the leader's turn, whose prompt names it
+and the team it already declares and says how to ask; a `requestStrikeTeam` on a `continue`
+turn is held to the team's three rules (`strikeTeamRejections` in `src/validator.ts`) and,
+accepted, becomes the declaration on that task (`setTaskStrikeTeam`, mutation
+`task.strikeTeam`, event `strike_team.defined` with `declaredBy: leader`, the unit and the
+session; a kind the task already declares is replaced by name), written in the turn's
+transaction after `unit.continued`; refused, or asked on a `report` turn or with no task
+left, `strike_team.rejected` keeps the request, who asked and the reasons. Whichever call
+runs the task carries the team as the request's `strikeTeam`: the leader's resumed call for
+a task inside the leader, or the task's own session (`buildSessionRequest`); a turn never
+does. The Claude Code renderer turns it into `--agents` (`{kind: {description: why,
+prompt, model, tools}}`) and adds `Agent` to `--tools` (unless `default`) and to
+`--allowedTools`, for that call alone. The brief (`renderStrikeTeamBrief` in
+`src/strike-team.ts`) lists each kind's shape, count and why, says a kind is sent by name
+through the Agent tool, and says a claim resting on a member's finding cites the member's
+`agentId`, which the Agent tool's result shows the session (the R3-1 fixture's result
+carries `agentId: af6c0f2722871e1a1`). The validator's "Model known" checks a team's model
+against the task's provider's list and refuses a team on a task that runs no session;
+"Effect policy" holds a team's tools to the four read-only built-ins; "Budget respected"
+holds `count` times `STRIKE_MEMBER_MIN_TOKENS` (600; the fixture's `pinger` with no tools
+read 672) inside the task's token bound where it sets one; the planner's rule lines say the
+same and its prompt says what a team is and that none exists by default. `incident review`
+prints each declaration and refusal in its cycle and, at the end, one line per declared
+config (task and kind, as last declared): model, who declared it, count declared, members
+run (`subagent.ran` under that task with that `agentType`), their usage and cost, and how
+many claims cite a member by its `agentId` or its `subagent.ran` event id in their evidence
+(`citesMember`). `step` prints a plan's teams under their tasks and a leader's declarations
+and refusals after the pass. The leader role text gains the paragraph R3-4 left out: a
+leader may send a team the task declares or ask for one in its turn, choosing kind, model,
+tools, prompt and count and saying why; the preamble's strike-team line says no kind exists
+by default and whoever asks chooses the shape. DESIGN.md Vocabulary (task, strike team, task
+force), the ICS mapping row, Step 2 (the column, the events, the migration), Step 3 (the
+`strike_team` session field, the brief), Step 4 (`TaskProposal`, `requestStrikeTeam`), Step
+5 (the three rules), Step 6 (provision and events) and Step 7 (`review`) follow;
+`docs/architecture.html` follows on validate, apply, dispatch and the session's inputs; the
+README names the new live test.
+
+Tests: the models test pins the schema, the field on a proposal and a turn, and the
+`LeaderTurn` JSON schema's required member fields; the validator refuses a writing tool, an
+unknown model, a count over the task's token bound and a team on a deterministic task, each
+under its rule, passes a well-formed team, and applies the same checks to a request outside
+a plan; the renderer test shows a declared team reaching `--agents` with `Agent` in the
+tools and the allowlist, on a resumed call too, and nothing on an empty team; the dispatcher
+test on the stub runs a grep, an investigate inside the leader and an interpret in its own
+session, with the leader's `requestStrikeTeam` after the grep declared on the investigate
+(`--agents` and the brief's team lines on the leader's resumed call), the interpret's own
+declaration reaching its own session, a request with `Edit` refused with its reason and a
+request on the report turn refused for having no task; `applyPlan` writes the plan's
+declaration; the store migrates a version 4 file and replays `task.strikeTeam`; `review`
+prints two configs, one refusal, members against counts and claims citing by agent id and
+by event id. The live test behind `NOSCOPE_LIVE=1` (run 2026-09-15 on Claude Code 2.1.272,
+twice) has a Haiku leader run one investigate inside its session with a two-member `pinger`
+team declared by the plan: the log held `strike_team.defined`, two `tool.called` for the
+`Agent` calls and two `subagent.ran` of type `pinger`, each `toolUseId` matching one of the
+calls.
+
+Not exactly to spec, with reasons:
+
+- "The count against the task's budget" is read as the count times a per-member floor
+  against the task's token bound, since the task's budget is the only figure a count can
+  be held to and no member cost is declared anywhere; a task with no token bound has
+  nothing for the count to exceed. The floor is a named constant with its source.
+- `strike_team.rejected` is a second event type beside `strike_team.defined`, so a
+  leader's refused request is still in the record (what leaders ask for is what presets
+  are learned from) without a "defined" event that defined nothing.
+- The leader's request goes on the task that runs next in its unit, which the turn prompt
+  now names (`Next: task ...`), since a leader cannot see task ids otherwise; on a `report`
+  turn there is no next task in this pass, so the request is refused as having nothing to
+  send it on rather than held for a later pass.
+- The live acceptance says "one `tool.called` for the `Agent` call and two `subagent.ran`
+  linked to it"; on 2.1.272 one `Agent` call spawns one member, so the session makes two
+  calls and the test links each member to one of them. In both live runs the binary launched
+  the members as background agents ("Async agent launched successfully") and the session
+  waited for their notifications; both transcripts were read as before.
+- In both live runs the Haiku leader's turn after the task did not fit `LeaderTurn`: it
+  flattened the report's fields onto the turn (`{kind: "report", outcome: ..., changed:
+  ...}`) rather than nesting them under the optional `report`. That turn is R3-4's ground
+  and the task's events were already written, so the live test lets that one failure
+  through and asserts the log; the schema shape (an optional `report` a small model skips)
+  is for R3-7, which gives the IC its own schemas, to settle.
+- The `Agent` tool's result on 2.1.272 tells the model the `agentId` is internal and not to
+  quote it; the brief tells the session to cite it in a claim's evidence, and in the live
+  runs Haiku did. A claim can also cite the member's `subagent.ran` event id, which only a
+  later call could know; nothing renders those ids to a session yet.
+- `--allowedTools` carries bare `Agent`, the form the spike verified; the documented
+  `Agent(kind, ...)` form that restricts which kinds may be spawned is not verified on
+  2.1.272 and not used.
+- A leader's declaration replaces a kind of the same name the task already declares rather
+  than being refused, since `--agents` is keyed by name and a later definition is what the
+  leader asked for; the event carries the whole resulting list.

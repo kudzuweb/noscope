@@ -67,6 +67,8 @@ export const EventType = z.enum([
   "unit.continued",
   "unit.reported",
   "picture.discrepancy",
+  "strike_team.defined",
+  "strike_team.rejected",
 ]);
 
 export const Budget = z.object({
@@ -152,6 +154,34 @@ export const EvidenceFrom = z.object({
   tasks: z.array(z.string()).default([]),
 });
 
+/**
+ * A strike team: several subagents of one kind and model a leader may send on one task
+ * (DESIGN.md Vocabulary). Whoever defines the task defines the team with it, the plan or the
+ * leader in a turn; no kind exists by default. A task that declares more than one kind
+ * declares a task force.
+ */
+export const StrikeTeam = z.object({
+  kind: z
+    .string()
+    .regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/)
+    .describe(
+      "The kind's name, as the session names it when it sends a member: letters, digits, - and _",
+    ),
+  model: z.string().min(1).describe("A model the task's provider serves"),
+  tools: z
+    .array(z.string())
+    .describe(
+      "Built-in tool names a member may use: Read, Grep, Glob, Bash (under the session's read-only allowlist); nothing that writes",
+    ),
+  prompt: z.string().min(1).describe("The member's system prompt"),
+  count: z
+    .number()
+    .int()
+    .positive()
+    .describe("How many members the leader intends to send"),
+  why: z.string().min(1).describe("Why this team, this shape and this count"),
+});
+
 export const Task = z.object({
   id: z.string().min(1),
   incidentId: z.string().min(1),
@@ -168,6 +198,8 @@ export const Task = z.object({
   model: z.string().nullable(),
   instructions: z.string(),
   budget: Budget,
+  /** The subagent kinds the leader may send on this task, declared by the plan or by the leader; empty when none. */
+  strikeTeam: z.array(StrikeTeam).default([]),
   status: TaskStatus,
   result: z.unknown().nullable(),
   createdAt: Timestamp,
@@ -288,6 +320,12 @@ export const TaskProposal = z.object({
   provider: z.string().nullable(),
   model: z.string().nullable(),
   budget: Budget,
+  strikeTeam: z
+    .array(StrikeTeam)
+    .optional()
+    .describe(
+      "The subagent kinds the unit's leader may send on this task, each with its model, tools, prompt, count and why; more than one kind is a task force. No kind exists unless declared here or requested by the leader",
+    ),
 });
 
 export const GrantRequest = z.object({
@@ -411,6 +449,12 @@ export const LeaderTurn = z
   .object({
     kind: z.enum(["report", "continue"]),
     report: LeaderReport.optional(),
+    requestStrikeTeam: z
+      .array(StrikeTeam)
+      .optional()
+      .describe(
+        "A strike team to send on your next task, each kind with its model, tools, prompt, count and why; the runtime declares it on that task and provides the kinds on your next call for it",
+      ),
     discrepancy: z
       .string()
       .min(1)
@@ -520,6 +564,7 @@ export type Incident = z.infer<typeof Incident>;
 export type Unit = z.infer<typeof Unit>;
 export type Leader = z.infer<typeof Leader>;
 export type Task = z.infer<typeof Task>;
+export type StrikeTeam = z.infer<typeof StrikeTeam>;
 export type EvidenceFrom = z.infer<typeof EvidenceFrom>;
 export type Provenance = z.infer<typeof Provenance>;
 export type Claim = z.infer<typeof Claim>;
