@@ -3103,7 +3103,10 @@ role text its session reads) and a `protocol`; `getUnitType`, `listUnitTypes`,
 config's `role`, else the type's) read it. A `Protocol` is the seat its session holds,
 the default role text, `reports` (whether the unit files reports the IC answers; false
 for command), `rules` (the assignment rules, below), `runsInside` (whether a session task
-runs inside the unit's session) and `insideRequest` (the request for one that does), and
+runs inside the unit's session), `insideRequest` (the request for one that does),
+`hasWork` (whether the unit has a turn to take this pass beyond a runnable task; the
+dispatcher starts a pass on either) and `unheard` (the endings of earlier passes its
+leader has not heard, carried on the pass's first turn), and
 three pass hooks, `open`, `ending` and `close`, each given a `PassContext` (the store, the
 incident, the active units, cwd, env, actor, providers, and the runtime's `bookkeeping`:
 `validateAssignments`, `applyAssignments`, `raiseRequests`, `strikeTeamRejections`, lent
@@ -3129,7 +3132,8 @@ protocol's `runsInside` is false instead), `holdsCapability`, `unitShare`, `resu
 null`), `renderLeaderOrientation`, `endedSinceLastTurn`, `renderTurnPrompt`, the
 orientation, `insideRequest`, `reportRefusals`, `refusedSinceLastTurn`, `couldNotResume`,
 `declareRequestedTeam`, `leaderTurn` (the root throw gone; the bookkeeping through the
-context) and `settle`. Its hooks: `open` recomputes the unit's revision brief (R4-3) and
+context) and `settle`. Its `hasWork` is a revision brief to read, a resume, or a report
+owed, read from the log per unit; its `unheard` is `endedSinceLastTurn`. Its hooks: `open` recomputes the unit's revision brief (R4-3) and
 resume (R3-6) from the log and takes that turn on the leader's chain, the brief first with
 the answers when both; `ending` files the runtime's `not_met` report for a task refused on
 both models (R4-7: done and halted), takes no turn when the leader reported already this
@@ -3150,13 +3154,18 @@ command), `src/runtime.ts` (`applyCommand`'s assignments), `src/validator.ts` (t
 warning, `validateCommand`) and `src/commands/incident.ts` (`show`'s IC line, `answer`'s
 transfer) use instead of `parentId === null`. Its protocol: seat `ic`, `IC_ROLE` (moved
 here), `reports: false`, `rules: [OWN_UNIT_RULE]`, `runsInside` false, `insideRequest`
-throws, and the root's pass from R4-6: `open` and `ending` take no turn (a root task
-refused twice ends as its `task.failed`, R4-7), `close` marks command done. Its turns are
-`src/ic.ts` as before (the command turn, the review, the change report, the handoff, the
-transfers, the fallback), which the type's header names.
+throws, and the root's pass from R4-6: `hasWork` false (a runnable task alone starts its
+pass), `unheard` empty (the change report carries the root's endings), `open` and
+`ending` take no turn (a root task refused twice ends as its `task.failed`, R4-7),
+`close` marks command done. Its turns are `src/ic.ts` as before (the command turn, the
+review, the change report, the handoff, the transfers, the fallback), which the type's
+header and a comment on the protocol name.
 
 The dispatcher (`src/dispatcher.ts`): `dispatch` builds the `PassContext` once (the
-bookkeeping closes over the validator's and runtime's functions) and each unit's pass
+bookkeeping closes over the validator's and runtime's functions), gates a pass on
+`protocolOf(unit).hasWork` or a runnable task (it no longer computes the owed, resumed
+and revised units itself; PR 49's design review), seeds the pass's unheard endings from
+`protocol.unheard`, and each unit's pass
 builds its `PassView`; the pass calls `protocol.open` before the loop, `protocol.ending`
 on each landing, `protocol.close` after it, folding each `Turned` into the pass's tally
 (`take`: the unit, the report, done, the halt); `runTask` and the inside gate ask
@@ -3201,7 +3210,9 @@ Tests: `test/units.test.ts` (new) pins the two registered types, their forms' fi
 `plannable`, seat, role and `reports`, the registration refusals (a duplicate name, a form
 without `role`), the proposal schema's field order, the `type` default and descriptions,
 `protocolOf` and `roleOf` (a unit with its own role text reads it under the type's seat),
-`leaderRequest`, the refusal of an unregistered type, and `newCommandUnit`'s filled form.
+`leaderRequest`, the refusal of an unregistered type, `hasWork` and `unheard` per type
+(command false and empty with a completed root task; a led unit owing a report true, its
+ending listed) and `newCommandUnit`'s filled form.
 `test/store.test.ts` migrates a version 6 file (the root `ic`, the rest `base`, roles
 null), replays a log whose `unit.create` mutations carry no type to the same snapshot, and
 round-trips a unit with its own role text. `test/run.test.ts` builds a store with the
@@ -3255,6 +3266,17 @@ Not exactly to spec, with reasons:
   base function on the root now pins the protocol.
 - `renderHierarchy`'s three root checks stay as position checks (above); the plan's
   acceptance names the dispatcher and `src/units/` only.
+- The form is not free-standing yet: its fields are the `units` columns, the planner
+  renders only the base form's fields (`UnitProposal` extends `BaseUnitForm`), and the ic
+  form's equipment, allowlist and role are filled by its defaults alone, since
+  `newCommandUnit` takes the leader only. DESIGN.md's Unit type row says so.
+- For the next type (PR 49's design review): a third type would still touch `Seat` and
+  `SEAT_PLACES` in `src/providers/base.ts` (a seat per type's place), the fixed `units`
+  columns and `applyPlan`'s field copy in `src/runtime.ts` (a form with other fields has
+  nowhere to land), `UnitProposal` extending `BaseUnitForm` in `src/models.ts` rather
+  than being built from the registry (a second plannable type is not offered to the
+  planner), and "Closing is clean" testing `unit.type === IC_TYPE` in `src/validator.ts`
+  (a type that is never closed would need its own flag). None is R4-11's ground.
 - Follow-up, not this PR's: `test/stub-claude`'s call ordinal (`NOSCOPE_STUB_CALL_COUNTER`)
   is a read-modify-write on a file, so two stub processes started together can take the
   same ordinal; under a loaded full-suite run the R4-9 test "a runtime report after two

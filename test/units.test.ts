@@ -143,6 +143,55 @@ describe("unit types (R4-10)", () => {
     store.close();
   });
 
+  it("command has a pass only for a runnable task and hears no earlier ending, while a led unit owing a report has work and hears its unheard endings", () => {
+    const store = new Store(":memory:");
+    const { incident, unit, addUnit, task } = scriptedIncident(store);
+    const led = addUnit({ id: "u-led", objective: "the led half" });
+    task({ id: "t-root", capability: "grep", status: "ready" });
+    task({
+      id: "t-led",
+      capability: "grep",
+      unitId: led.id,
+      status: "ready",
+    });
+    store.setTaskStatus(
+      "i1",
+      "t-root",
+      "completed",
+      "dispatcher",
+      "task.completed",
+    );
+    store.setTaskStatus(
+      "i1",
+      "t-led",
+      "completed",
+      "dispatcher",
+      "task.completed",
+    );
+    const ctx = {
+      store,
+      incident,
+      units: store.listUnits("i1"),
+      cwd: "/cwd",
+      actor: "dispatcher",
+      bookkeeping: {
+        validateAssignments: () => true,
+        applyAssignments: () => 0,
+        raiseRequests: () => undefined,
+        strikeTeamRejections: () => [],
+      },
+    };
+    expect(protocolOf(unit).hasWork(ctx, unit)).toBe(false);
+    expect(protocolOf(unit).unheard(ctx, unit)).toEqual([]);
+    expect(protocolOf(led).hasWork(ctx, led)).toBe(true);
+    expect(
+      protocolOf(led)
+        .unheard(ctx, led)
+        .map((e) => [e.task.id, e.status]),
+    ).toEqual([["t-led", "completed"]]);
+    store.close();
+  });
+
   it("incident create writes command as the ic form filled with the leader and the type's defaults", () => {
     const unit = newCommandUnit(
       "007",

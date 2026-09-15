@@ -33,17 +33,13 @@ import { type Store, sumUsage } from "./store.js";
 import { unitsInTreeOrder } from "./tree.js";
 import {
   describeError,
-  endedSinceLastTurn,
   type Landed,
   type PassContext,
   type PassView,
   protocolOf,
   type Reported,
-  resumedUnits,
-  revisedUnits,
   type TaskEnding,
   type Turned,
-  unitsOwingReport,
 } from "./units/index.js";
 import {
   strikeTeamRejections,
@@ -466,8 +462,8 @@ function relatedUnits(
 
 /**
  * Run the units to their reports (DESIGN.md Step 6), unrelated units at once. A unit's pass
- * starts when it has something to do (a resumed leader to brief, a revise to deliver, a
- * runnable task, a report owed), no unit it is related to (`relatedUnits`) is mid-pass, and fewer than
+ * starts when it has something to do (a runnable task, or a turn its type's protocol says
+ * it has to take, `hasWork`), no unit it is related to (`relatedUnits`) is mid-pass, and fewer than
  * `NOSCOPE_PARALLEL` passes are running; related units keep tree order. In a unit, every
  * runnable task not yet attempted starts at once, each in process or in a session of its
  * own, except that tasks inside the leader's session run one at a time, each followed by
@@ -524,11 +520,6 @@ export async function dispatch(
   const units = unitsInTreeOrder(store.listUnits(incident.id)).filter(
     (u) => u.status === "active",
   );
-  const tasksAtStart = store.listTasks(incident.id);
-  const eventsAtStart = store.listEvents(incident.id);
-  const owing = unitsOwingReport(units, tasksAtStart, eventsAtStart);
-  const resumed = resumedUnits(units, eventsAtStart);
-  const revised = revisedUnits(units, eventsAtStart);
   let halt: Pick<Dispatched, "stopped" | "pictureChanged"> | null = null;
   const stop = (why: Pick<Dispatched, "stopped" | "pictureChanged">) => {
     halt ??= why;
@@ -594,11 +585,8 @@ export async function dispatch(
       : { providers: options.providers }),
     bookkeeping,
   };
-  const hasWork = (unitId: string) =>
-    revised.has(unitId) ||
-    resumed.has(unitId) ||
-    owing.has(unitId) ||
-    runnableIn(unitId).length > 0;
+  const hasWork = (unit: Unit) =>
+    protocolOf(unit).hasWork(ctx, unit) || runnableIn(unit.id).length > 0;
 
   const pass = async (listed: Unit): Promise<void> => {
     let unit =
@@ -618,14 +606,9 @@ export async function dispatch(
     const inFlight = new Map<string, Task>();
     const landed: Landed[] = [];
     let wake: (() => void) | null = null;
-    // The endings of earlier passes the leader has not heard (tasks that landed after it
-    // reported, or a pass that died): the pass's first turn carries them, whatever it is
-    // for, so a result never goes unread.
-    let unheard: readonly TaskEnding[] = endedSinceLastTurn(
-      unit,
-      store.listTasks(incident.id),
-      store.listEvents(incident.id),
-    );
+    // The endings of earlier passes the unit has not heard, the protocol's to name: its
+    // first turn this pass carries them.
+    let unheard: readonly TaskEnding[] = protocol.unheard(ctx, unit);
     const pending = new Set<Promise<void>>();
     // A run that threw past `runOne` (a store that failed in its record) ends the pass with
     // that error once the other runs have landed.
@@ -816,7 +799,7 @@ export async function dispatch(
       for (const listed of units) {
         if (passes.size >= parallel) break;
         if (done.has(listed.id) || passes.has(listed.id)) continue;
-        if (!hasWork(listed.id)) continue;
+        if (!hasWork(listed)) continue;
         const busy = [...(related.get(listed.id) ?? [])].some((id) =>
           passes.has(id),
         );

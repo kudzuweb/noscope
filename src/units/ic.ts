@@ -101,6 +101,10 @@ export const icUnitType = defineUnitType({
     "Command, the root: the Incident Commander's unit, which sets each period, reviews the plan and the reports, assigns deterministic tasks under command and files no report.",
   plannable: false,
   form: IcUnitForm,
+  // The turns of this protocol, the command turn and the review turn (with the change
+  // report, the handoff, the transfers of command and the fallback), are in src/ic.ts,
+  // called by the runtime at the top of the cycle; the pass hooks here are the root's
+  // pass, which takes no turn.
   protocol: {
     seat: "ic",
     role: IC_ROLE,
@@ -116,10 +120,13 @@ export const icUnitType = defineUnitType({
         `unit ${unit.id} is command: no task runs inside the IC's session (R4-6)`,
       );
     },
-    // The root's pass (R4-6): no turn opens it, an ending gets no turn (a task refused on
-    // both models ends as its `task.failed`, R4-7, which the change report lists under the
-    // tasks under command), and the pass ends without a report once its tasks have landed.
-    // The IC judges the results at its command turn.
+    // The root's pass (R4-6): nothing but a runnable task starts it, no ending of an earlier
+    // pass rides on it (the change report carries them), no turn opens it, an ending gets
+    // no turn (a task refused on both models ends as its `task.failed`, R4-7, which the
+    // change report lists under the tasks under command), and the pass ends without a
+    // report once its tasks have landed. The IC judges the results at its command turn.
+    hasWork: () => false,
+    unheard: () => [],
     open: async () => null,
     ending: async () => null,
     close: async (_ctx, unit) => ({

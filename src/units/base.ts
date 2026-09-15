@@ -1176,6 +1176,30 @@ export const baseUnitType = defineUnitType({
     rules: BASE_RULES,
     runsInside: runsInsideLeader,
     insideRequest,
+    // A pass starts when the unit has a turn to take before or without a task: a revision
+    // brief to read (R4-3), answers to its requests (R3-6), or a report owed from an
+    // earlier pass; the dispatcher adds a runnable task.
+    hasWork: (ctx, unit) => {
+      const events = ctx.store.listEvents(ctx.incident.id);
+      return (
+        revisedUnits([unit], events).has(unit.id) ||
+        resumedUnits([unit], events).has(unit.id) ||
+        unitsOwingReport(
+          [unit],
+          ctx.store.listTasks(ctx.incident.id),
+          events,
+        ).has(unit.id)
+      );
+    },
+    // The endings of earlier passes the leader has not heard (tasks that landed after it
+    // reported, or a pass that died): the pass's first turn carries them, whatever it is
+    // for, so a result never goes unread.
+    unheard: (ctx, unit) =>
+      endedSinceLastTurn(
+        unit,
+        ctx.store.listTasks(ctx.incident.id),
+        ctx.store.listEvents(ctx.incident.id),
+      ),
     // The pass opens with the turns the unit is owed before any task runs: the IC's
     // revision brief (R4-3), on a fresh oriented session when the leader has none, with the
     // answers to the unit's requests when it resumed at the same time; else the answers

@@ -159,7 +159,11 @@ export const OWN_UNIT_RULE = assignmentRule(
  * the unit files reports the IC answers with verdicts (command does not: its tasks'
  * results are judged at the command turn, R4-6), the rules its leader's assignments are
  * held to beyond the plan's task rules, whether a session-backed task runs inside the
- * unit's own session, and the turns the unit takes around its tasks in a pass:
+ * unit's own session, whether the unit has a turn to take this pass beyond its runnable
+ * tasks (`hasWork`: a brief to read, answers, a report owed; the dispatcher starts a pass
+ * on it or on a runnable task), the endings of earlier passes its leader has not heard
+ * (`unheard`, which ride on the pass's first turn), and the turns the unit takes around
+ * its tasks in a pass:
  * `open` before any task starts (a revision brief, the answers to its requests), `ending`
  * on each task ending that lands (the leader's turn on it; the runtime's report after two
  * refusals), and `close` once every run has landed (the report owed from an earlier pass;
@@ -180,6 +184,8 @@ export type Protocol = {
     capability: Capability,
     context: BriefContext,
   ) => SessionRequest;
+  hasWork: (ctx: PassContext, unit: Unit) => boolean;
+  unheard: (ctx: PassContext, unit: Unit) => TaskEnding[];
   open: (
     ctx: PassContext,
     unit: Unit,
