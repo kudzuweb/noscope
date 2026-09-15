@@ -1,7 +1,7 @@
 # Handoff: noscope round 4, the build in progress
 
-Refreshed 2026-09-15 13:33 CDT by session noscope-round4 [f7cb98], mid-build, five of ten
-merged. Written by the successor session; the relay session mauriaparker-91 has stopped.
+Refreshed 2026-09-15 14:33 CDT by session noscope-round4 [f7cb98], mid-build, seven of
+thirteen merged. Written by the successor session; the relay session mauriaparker-91 has stopped.
 
 **First actions, in order:** (1) `/warp-pin title noscope-round4-<n>`. (2) Read this file,
 then `BUILD-PLAN.md` "## Round 4" in full (rows R4-10 to R4-12 are new; the fourth run is now R4-13), then the round 4
@@ -40,13 +40,13 @@ thread `~/Documents/Projects/my-quipu/ics-runtime.md` and reviewed into the plan
 
 ## 3. STATE (as of this refresh)
 
-Origin main is `2daa628` plus plan-only commits (`bf20736` at 13:17), pushed; local main
-equals it; `dist/` built from it. Merged this round, in order: R4-8 (#40), R4-1 (#41), R4-6
-(#42, 12:46), R4-7 (#43, 12:59), R4-9 (#44, 13:27). Open:
+Origin main is `8eb44dd` (R4-3, #46) plus plan-only commits, pushed; local main equals it;
+`dist/` built from it. Merged this round, in order: R4-8 (#40), R4-1 (#41), R4-6 (#42,
+12:46), R4-7 (#43, 12:59), R4-9 (#44, 13:27), R4-2 (#45, 13:38), R4-3 (#46, 14:10). Open:
 
 | PR | Branch, worktree | State |
 |---|---|---|
-| #45 R4-2 Report verdicts | `pr-report-verdicts`, `scratchpad/wt-r4-2` | Rebased over 42, 43 and 44 at 7f8725b, pushed, CI running; approved at its base, three fixes applied, plus 7f8725b: a verdict answers a unit's last report in the window (a unit can file two reports in one pass under R4-9). Second reviewer `review45-rebase` running. Merge on its verdict. |
+| #47 R4-4 Reassign | `pr-reassign`, `scratchpad/wt-r4-4` | Built (`unit.reassigned`/`reassignment.taken` events, section 11 of the planner's input, `takes` on a unit proposal, "Reassignments taken", tasks cancelled, orientation carries the claims), pushed at 400f933, reviewer `review47-correctness` running. Merge on its verdict, fixes through `build-r4-4`. |
 
 Rulings since the 11:50 refresh, all Mauria's, 2026-09-15:
 
@@ -59,22 +59,23 @@ Rulings since the 11:50 refresh, all Mauria's, 2026-09-15:
 | Open, asked 13:28: whether to record each session call's rendered prompt as a `call.made` event so what a seat received lives in the database rather than only in Claude Code's transcript. | Not a blocker; add a row if she says yes. |
 
 The builder brief (`scratchpad/builder-brief.md`) carries these rulings. Agents in this
-session: `build-r4-6`, `build-r4-7`, `build-r4-9`, `build-r4-2` (idle, hold context),
-`review43-rebase`, `review44-rebase` (idle), `review45-rebase` (running), `quipu` (the
-keeper; last write af3e14e). Heartbeat cron `53cbb702` hourly at :23.
+session: builders `build-r4-6`, `build-r4-7`, `build-r4-9`, `build-r4-2`, `build-r4-3`,
+`build-r4-4` and reviewers `review43-rebase`, `review44-rebase`, `review45-rebase`,
+`review46-correctness` (idle, hold context), `review47-correctness` (running), `quipu` (the
+keeper; last write a516394). Heartbeat cron `53cbb702` hourly at :23.
 
-Not started: R4-3 (revise), R4-4 (reassign), R4-5 (the IC owns the situation), R4-10,
-R4-11, R4-12, in that order after R4-2; R4-13 (the fourth run) last. The one worktree lives under
+Not started: R4-5 (the IC owns the situation), R4-10, R4-11, R4-12, in that order after
+R4-4; R4-13 (the fourth run) last. The one worktree lives under
 this session's scratchpad `/private/tmp/claude-501/-Users-mauriaparker-Documents-Projects-noscope/5c3f3ef0-a43b-4a43-b0d5-afcbc0e7673c/scratchpad/`;
 a successor recreates any it needs with `git worktree add -b <branch> <path> origin/<branch>`
 and `pnpm install --frozen-lockfile`.
 
 ## 4. NEXT STEPS, IN ORDER
 
-1. PR 45: on `review45-rebase`'s verdict, apply any fix through `build-r4-2`, fill the PR
-   body's "## From the review", wait for CI on the head SHA, `gh pr merge 45 --squash
+1. PR 47: on `review47-correctness`'s verdict, apply any fix through `build-r4-4`, fill the PR
+   body's "## From the review", wait for CI on the head SHA, `gh pr merge 47 --squash
    --delete-branch --match-head-commit <sha>`, pull, `pnpm build`.
-2. Spawn builders for R4-3, R4-4, R4-5, R4-10, R4-11, R4-12 in order, one at a time, each on a
+2. Spawn builders for R4-5, R4-10, R4-11, R4-12 in order, one at a time, each on a
    fresh worktree from main (`git worktree add -b <branch> <path> origin/main`), briefed with
    the builder brief plus its plan block; review each by a subagent; merge. Before R4-5's
    brief, confirm the brief's situation sentence (already updated). R4-10 and R4-11 get two
