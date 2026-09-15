@@ -628,7 +628,7 @@ the quipu thread `ics-runtime.md`: the IC reviews a unit's work when its report 
 and decides whether the unit is done, goes back for revision, or hands its slice to a
 different unit with instructions built on what it found and did not find. Ten PRs in
 dependency order, each mergeable on its own, the CLI working after every one; the last
-reruns the first incident. Numbered R4-1 to R4-10 here, with R4-9a added on 2026-09-15; the build record maps each to its
+reruns the first incident. Numbered R4-1 to R4-10 here, with R4-9a and R4-9b added on 2026-09-15; the build record maps each to its
 GitHub number. The conventions above apply, and the design wins where this plan disagrees
 with it.
 
@@ -651,7 +651,8 @@ independent units and tasks run at the same time.
 | R4-7 | Refusals: the category, and the fallback to Opus 4.8 | none | The provider reads `apiRefusalCategory` from the stream's system line, or from the transcript when the stream lacks it; a refused IC call is retried on `claude-opus-4-8` and the IC stays there for the incident, recorded as a transfer of command. |
 | R4-8 | The size-up scoped to the kind | none | The initial IC's role text ties objectives and questions to the incident kind: a diagnostic objective takes no fix objective, no fix unit and no intended-behavior question. |
 | R4-9 | Parallel dispatch | none | Independent units run their passes concurrently, and independent tasks in their own sessions run at once, under a concurrency cap and the existing stop conditions. |
-| R4-9a | The IC is its own seat | R4-5, R4-7, R4-9 | The command seat (model, provider, session, transfers) lives on the incident, not on a root unit's `leader`; the root stays as the container of the IC's deterministic tasks with no leader; no `parentId === null` guard remains in the leader or dispatcher code. |
+| R4-9a | Unit types: the form, the filled form, the protocol | R4-5, R4-7, R4-9 | Every unit names its type; a type is a form (the fields a kind of unit fills) and a protocol (how it uses what is in the box); `base` is today's led unit and `ic` is the root; the dispatcher runs each unit through its type's protocol, with no `parentId === null` guard left. |
+| R4-9b | Saved unit configs | R4-9a | A unit's filled base form, everything but its objective and parent, saved under a name and deployed by name in a plan; the runtime notices a repeated config and offers to save it. |
 | R4-10 | Fourth run | all | The first incident rerun with everything above, measured beside runs 001 to 003: the IC's verdicts by kind, what each revise or reassign cost and found, and the wall time parallel dispatch saved. |
 
 R4-6, R4-7, R4-8 and R4-9 can run in parallel with R4-1 to R4-5.
@@ -808,30 +809,65 @@ Acceptance: a dispatcher test on the stub with two independent units whose stub 
 sleep, asserting overlapping `task.started` and `task.completed` timestamps and the same
 events as the sequential run; a test that a picture-changing report from one unit ends the
 pass while the other's task in flight completes; a test that the cap holds.
-### R4-9a: The IC is its own seat
-Ruled by Mauria on 2026-09-15 12:38 CDT, after this round's reviews each listed code that
-exists only because the root is a unit and then has to be told it is not one: the IC's
-seat develops separately from what unit leaders do, reusing the unit construct for it is
-not a goal, and the separation lands in this round before the fourth run. Scope:
-`Incident` gains `command` (the `Leader` shape: model and provider, plus `sessionId`),
-written by `recordTransfer` at every transfer of command and by the fallback (R4-7), and
-read by every IC call in `src/ic.ts`; the root unit loses its `leader` and `sessionId`
-fields and keeps `parentId: null`, its equipment and its tasks, so the IC's `assignTasks`
-(R4-6) still hang under it and the validator's Own unit rule still holds. The dispatcher
-runs the root's tasks on a command path of its own and its unit loop never sees the root;
-`leaderTurn`, `fileRefusal`, `refusedTwice`, `runsInsideLeader`, `holdsCapability`,
-`unitShare` and `unitsOwingReport` take units with leaders only, and the `seat` argument
-derived from `parentId === null` goes, as does `leaderRole(seat)`. The tree renders
-"command" above the units from the incident's seat. `incident tree` and `show` print the
-seat there. The store's schema version rises and replay fills `command` from
-`command.transferred` and `leader.started` on the root, so an earlier round 4 database
-reads the same. DESIGN.md Vocabulary (unit, command), the ICS mapping rows for Command and
-the Incident Commander, Steps 2, 5 and 6, and `docs/architecture.html`'s IC node follow.
+### R4-9a: Unit types: the form, the filled form, the protocol
+Ruled by Mauria on 2026-09-15 (12:31 to 13:11 CDT), after this round's reviews each listed
+code that exists only because the root is a unit and then has to be told it is not one:
+a unit is defined by a type and a config. The type is the form, the empty fields a kind of
+unit fills, and the protocol, how a unit of that kind uses what is in the box; the config
+is the filled form, the values chosen for this incident. One base type is the generic unit
+run today; the IC is a second type with a different form and protocol; more types will be
+written and saved, so files, tables and code permit that. A config of a given type keeps
+the type's protocol, since it occupies the same place in the hierarchy and reports the
+same way. The IC's missteps are rectified before the fourth run. ICS calls this resource
+typing, and the DESIGN.md mapping row for it moves here from the capability registry.
 
-Acceptance: `grep -n "parentId === null" src/dispatcher.ts src/leader.ts` prints nothing;
-the R4-6 and R4-7 dispatcher and IC tests pass with the same events recorded (root tasks
-run, the fallback lands as a transfer); a replay test on a round 4 store yields the same
-command seat `show` printed before.
+Scope: `Unit` gains `type`, the name of a registered unit type; `src/units/registry.ts`
+defines a unit type as a name, a form (a zod schema for the fields its config fills, with
+descriptions the planner's schema renders) and a protocol (the role text and orientation,
+the turn schema, how the dispatcher runs the unit's pass, what a task ending does, whether
+and how it reports, what a refusal does), and `src/units/index.ts` registers the types by
+name. `src/units/base.ts` is the led unit: its form is today's `UnitProposal` less `ref`
+and `parent` (`objective`, `leader`, `equipment`, `bashAllowlist`; the budget share stays
+derived from the unit's tasks), and its protocol is what `src/leader.ts` and `leaderTurn`
+in `src/dispatcher.ts` do now, moved there. `src/units/ic.ts` is command: its form is the
+IC's model and provider, the fallback model (R4-7), the handoff threshold, its session and
+its equipment for deterministic tasks, with no objective (the incident's is its
+objective); its protocol is what `src/ic.ts` does now (the command turn, the review turn,
+the change report, handoff, transfers, the fallback) plus the root's pass from R4-6 (run
+the IC's deterministic tasks with no turn, results to the change report). The dispatcher
+runs every unit's pass through its type's protocol; the `seat` argument, `leaderRole(seat)`
+and every `parentId === null` guard in `src/dispatcher.ts` and the base protocol go. The
+planner's `UnitProposal` names a type and the planner may name only `base` until another
+type exists; a validator rule "Type exists" says so; the leader rules Capability held and
+Budget within share become the base protocol's rules. The store's schema version rises;
+replay sets `type` to `ic` for the root and `base` otherwise, so a round 4 database reads
+the same. `incident tree` prints each unit's type. DESIGN.md Vocabulary (unit type, config,
+protocol), the ICS mapping rows for the Incident Commander and resource typing, Steps 2,
+4, 5 and 6, and `docs/architecture.html`'s unit and IC nodes follow.
+
+Acceptance: `grep -n "parentId === null" src/dispatcher.ts src/units/` prints nothing; the
+R4-6 and R4-7 dispatcher and IC tests pass with the same events recorded; the planner
+snapshot shows the type on a unit proposal; a replay test on a round 4 store yields `ic`
+on the root and `base` elsewhere and the same `show` output.
+### R4-9b: Saved unit configs
+Scope: a `unit_configs` table holds a saved config: a name, the type, and the filled form
+less `objective` and `parent`, with when and from which unit it was saved. `noscope config
+save <incident> <unit-id> <name>` saves a unit's config; `config list` and `config show
+<name>` read them. A `UnitProposal` may name a `config` and leave that config's fields to
+it, filling only `objective` and `parent` (a field given beside `config` overrides it, and
+the validator's rule "Config exists" checks the name and the type). The planner's input
+gains a section listing the saved configs by name with their fields, and its rule text
+says a saved config is deployed by name when it fits. After a plan is applied, the runtime
+compares each new unit's config with every earlier unit's in the database, and when the
+same filled form has appeared three times unsaved, `step` prints an offer to save it with
+the command to run; nothing is saved without the command. `incident review` names the
+config each unit came from. DESIGN.md Step 2 (the table), Step 4 (the planner's input)
+and Step 7 (the commands), README's command list and `docs/architecture.html` follow.
+
+Acceptance: a run test on the stub where a unit is saved, the next plan names the config,
+the applied unit carries its fields, and `review` names it; a validator test rejecting an
+unknown config and a config of the wrong type; a test that the third repeat prints the
+offer and the second does not.
 ### R4-10: Fourth run
 Scope: the first incident's objective run a fourth time from the same roughdraftplus
 working directory at commit 6a996e8, with the scratch document restored, the same
@@ -846,11 +882,8 @@ answers whether the IC revised or reassigned any unit and what that changed, and
 the selection's origin (open in run 003) was settled.
 ### Round 4 open questions
 
-One, added with R4-9a. The two raised while drafting (the IC's model under refusals; who owns the
+None. The two raised while drafting (the IC's model under refusals; who owns the
 situation) were ruled in review on 2026-09-15 and are in R4-7 and R4-5. Ruled in the same
 review: the planner's job after round 4 is the tactics only, drafted as a suggestion for
-the IC.
-
-| Question | Blocks |
-|---|---|
-| Whether the root unit stays at all once the seat has left it, or the IC's deterministic tasks hang on the incident directly. The R4-9a block keeps the root as a container, the smaller change. | R4-9a's `Incident` and `Task` schema shape |
+the IC. The one raised with R4-9a (whether the root stays a unit) was ruled the same day:
+the root stays, as a unit of the `ic` type.
