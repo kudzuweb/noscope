@@ -48,13 +48,6 @@ const plan = {
   capabilityRequests: [],
   applySops: [],
   incidentStatus: "continue",
-  situation: {
-    changed: "test",
-    hypothesis: "test",
-    proven: [],
-    inferred: [],
-    keep: [],
-  },
   rationale: "Two symptoms, so two units to start.",
 };
 
@@ -299,6 +292,13 @@ describe("contracts", () => {
       periodObjectives: ["find the handler"],
       priorities: [],
       reportVerdicts: [],
+      situation: {
+        changed: "test",
+        hypothesis: "test",
+        proven: [],
+        inferred: [],
+        keep: [],
+      },
       closeUnits: [],
       questionsForHuman: [],
       capabilityRequests: [],
@@ -347,6 +347,13 @@ describe("contracts", () => {
       periodObjectives: ["find the handler"],
       priorities: [],
       reportVerdicts: [],
+      situation: {
+        changed: "test",
+        hypothesis: "test",
+        proven: [],
+        inferred: [],
+        keep: [],
+      },
       closeUnits: [],
       questionsForHuman: [],
       capabilityRequests: [],
@@ -432,6 +439,58 @@ describe("contracts", () => {
       "instructions",
       "why",
     ]);
+  });
+
+  it("the situation is the IC's: required on a command turn, refused on a plan, and an inferred link is settled by a task or deferred with a why (R4-5)", () => {
+    const turn = {
+      periodObjectives: ["find the handler"],
+      priorities: [],
+      reportVerdicts: [],
+      closeUnits: [],
+      questionsForHuman: [],
+      capabilityRequests: [],
+      grantRequests: [],
+      incidentStatus: "continue",
+      rationale: "first period",
+    };
+    expect(CommandTurn.safeParse(turn).success).toBe(false);
+    const situation = {
+      changed: "the grep landed",
+      hypothesis: "a.ts handles deletion",
+      proven: [{ claimId: "c1", line: "a.ts exists" }],
+      inferred: [
+        { claimId: "c2", settledBy: { task: "probe" } },
+        { claimId: "c3", settledBy: { reproduce: "browser" } },
+        { claimId: "c4", settledBy: { deferred: "no browser this period" } },
+      ],
+      keep: ["c1"],
+    };
+    expect(
+      CommandTurn.parse({ ...turn, situation }).situation.inferred,
+    ).toHaveLength(3);
+    expect(
+      CommandTurn.safeParse({
+        ...turn,
+        situation: {
+          ...situation,
+          inferred: [{ claimId: "c3", settledBy: { question: 1 } }],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      CommandTurn.safeParse({
+        ...turn,
+        situation: {
+          ...situation,
+          inferred: [{ claimId: "c4", settledBy: { deferred: "" } }],
+        },
+      }).success,
+    ).toBe(false);
+    expect(() => ActionPlan.parse({ ...plan, situation })).toThrow(/situation/);
+    const schema = jsonSchemaFor(CommandTurn) as { required: string[] };
+    expect(schema.required).toContain("situation");
+    const planSchema = jsonSchemaFor(ActionPlan) as { required: string[] };
+    expect(planSchema.required).not.toContain("situation");
   });
 
   it("a leader's turn is a report or a continue; a not_met report says why and what to do, and a discrepancy rides on either", () => {

@@ -20,13 +20,6 @@ const empty: ActionPlan = {
   capabilityRequests: [],
   applySops: [],
   incidentStatus: "continue",
-  situation: {
-    changed: "test",
-    hypothesis: "test",
-    proven: [],
-    inferred: [],
-    keep: [],
-  },
   rationale: "scripted",
 };
 
@@ -83,13 +76,6 @@ describe("incident run", () => {
       {
         ...empty,
         incidentStatus: "satisfied",
-        situation: {
-          changed: "test",
-          hypothesis: "test",
-          proven: [],
-          inferred: [],
-          keep: [],
-        },
         rationale: "the handler is at a.txt:2",
       },
     ]);
@@ -108,8 +94,9 @@ describe("incident run", () => {
     const shown = harness([]);
     shown.ctx.env.NOSCOPE_DB = h.ctx.env.NOSCOPE_DB as string;
     expect(await run(["incident", "show", "001"], shown.ctx)).toBe(EXIT.ok);
+    // The IC's situation prints under the period (R4-5), the stub's default one here.
     expect(shown.out.join("\n")).toContain(
-      "situation, from the last plan:\n  changed: test\n  hypothesis: test\n  proven:\n    (none)\n  inferred:\n    (none)\n  keep: (none)",
+      "period priorities:\n  (none)\nsituation, the IC's:\n  changed: stub: nothing yet\n  hypothesis: stub hypothesis\n  proven:\n    (none)\n  inferred:\n    (none)\n  keep: (none)\n  reassignments open, each taken by a new unit in the next plan naming its id in takes: (none)",
     );
     const claims = store.listClaims("001");
     expect(claims).toHaveLength(1);
@@ -228,13 +215,6 @@ describe("incident run", () => {
       {
         ...empty,
         incidentStatus: "failed",
-        situation: {
-          changed: "test",
-          hypothesis: "test",
-          proven: [],
-          inferred: [],
-          keep: [],
-        },
         rationale: "the tree has no such handler",
       },
     ]);

@@ -22,6 +22,8 @@ import {
   describeRefusedCall,
   IC_MODEL,
   IC_PROVIDER,
+  icSituation,
+  openReassignments,
   openRequestsByUnit,
   type RefusedCall,
 } from "../leader.js";
@@ -33,11 +35,10 @@ import {
   IncidentBriefing,
   type IncidentStatus,
   type Leader,
-  Situation,
   type StrikeTeam,
   type Unit,
 } from "../models.js";
-import { proposePlan } from "../planner.js";
+import { proposePlan, renderSituation } from "../planner.js";
 import { getProvider, SessionError } from "../providers/index.js";
 import { renderReview } from "../review.js";
 import {
@@ -424,6 +425,17 @@ function renderIncidentFile(
     for (const p of incident.period.priorities) lines.push(`  - ${p}`);
     if (incident.period.priorities.length === 0) lines.push("  (none)");
   }
+  // The IC's situation from its last accepted command turn (R4-5), the picture every seat
+  // works from this period, with the reassignments still open under it.
+  lines.push("situation, the IC's:");
+  const situation = icSituation(events);
+  if (situation === null) lines.push("  (none)");
+  for (const line of renderSituation(
+    situation,
+    openReassignments(events),
+    "in the next plan",
+  ))
+    lines.push(`  ${line}`);
   const briefed = briefingOf(events);
   const transfer = events
     .filter(
@@ -477,29 +489,6 @@ function renderIncidentFile(
   for (const d of decisions)
     lines.push(`  - ${String(d.payload.rationale)} (${d.createdAt})`);
   if (decisions.length === 0) lines.push("  (none yet)");
-  const last = Situation.safeParse(decisions.at(-1)?.payload.situation);
-  if (last.success) {
-    const s = last.data;
-    lines.push("situation, from the last plan:");
-    lines.push(`  changed: ${s.changed}`);
-    lines.push(`  hypothesis: ${s.hypothesis}`);
-    lines.push("  proven:");
-    for (const p of s.proven) lines.push(`    - ${p.claimId}: ${p.line}`);
-    if (s.proven.length === 0) lines.push("    (none)");
-    lines.push("  inferred:");
-    for (const i of s.inferred) {
-      const by = i.settledBy;
-      const settled =
-        "task" in by
-          ? `task ${by.task}`
-          : "question" in by
-            ? `question ${by.question} of that plan`
-            : `reproduce ${by.reproduce}`;
-      lines.push(`    - ${i.claimId}, settled by ${settled}`);
-    }
-    if (s.inferred.length === 0) lines.push("    (none)");
-    lines.push(`  keep: ${s.keep.join(", ") || "(none)"}`);
-  }
   // Each unit's last report with the work behind it, as the IC's change report showed it (R4-1).
   const lastReports = new Map<string, Event>();
   for (const e of events)
@@ -766,6 +755,8 @@ async function cycle(
     ctx.io.out(`  ${evaluating}: ${v.verdict} ${v.item}: ${v.why}`);
   for (const o of turn.periodObjectives) ctx.io.out(`  objective: ${o}`);
   for (const p of turn.priorities) ctx.io.out(`  priority: ${p}`);
+  ctx.io.out(`  situation changed: ${turn.situation.changed}`);
+  ctx.io.out(`  hypothesis: ${turn.situation.hypothesis}`);
   for (const v of turn.reportVerdicts)
     ctx.io.out(
       `  verdict on ${v.unitId}'s report ${v.reportId}: ${v.verdict}: ${v.why}${v.instructions === "" ? "" : `; instructions: ${v.instructions}`}`,

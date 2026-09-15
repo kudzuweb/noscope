@@ -227,7 +227,7 @@ describe("claude code provider", () => {
     );
     // The IC scopes, breaks down, equips and judges; its digging is assigned; a period ends
     // on reports or a change of picture; a not_met report informs; a discrepancy it cannot
-    // reconcile goes to Mauria; the situation stays the planner's; one review, one redraft.
+    // reconcile goes to Mauria; the situation is the IC's (R4-5); one review, one redraft.
     for (const line of [
       "You scope the incident, break it down, equip it and judge what comes back",
       "You do not dig",
@@ -242,7 +242,10 @@ describe("claude code provider", () => {
       "answers is for the resource requests your change report lists, and nothing else",
       "satisfied is refused while any task is still open or before any claim is observed",
       "becomes a question for Mauria",
-      "The situation in the plan is the planner's",
+      "You own the situation: you write it on every command turn, and it is the picture every seat works from",
+      "A link deferred is a decision recorded, not an omission",
+      "A reassignment updates the slice it concerns",
+      "as a suggestion of the tactics that work it",
       "After a redraft you approve or amend, never correct again",
       "names the priority that chose between plans",
     ])

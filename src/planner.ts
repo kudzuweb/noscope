@@ -4,6 +4,7 @@ import { listCapabilities } from "./capabilities/index.js";
 import { READ_ONLY_SESSION_COMMANDS } from "./equipment/index.js";
 import {
   IC_ACTOR,
+  icSituation,
   LEADER_ACTOR,
   openReassignments,
   openRequestsByUnit,
@@ -16,7 +17,7 @@ import {
   type Incident,
   jsonSchemaFor,
   type Settlement,
-  Situation,
+  type Situation,
   type Task,
   type Unit,
   type Usage,
@@ -25,10 +26,11 @@ import type { Provider } from "./providers/index.js";
 import { cycleOf, type Store, sumUsage } from "./store.js";
 import { describeLeader, lastReports, lastVerdicts } from "./tree.js";
 
-// The planner is ICS's Planning Section: a stateless provider call each cycle that drafts an
-// action plan from the incident file and the period objectives the IC set, and redrafts
-// once when the IC corrects it. It proposes structure and never runs a tool, writes to the
-// store, or marks its own conclusions true (DESIGN.md Step 4).
+// The planner is ICS's Planning Section: a stateless provider call each cycle that drafts
+// the tactics, as a suggestion for the IC, from the incident file, the period objectives
+// and the situation the IC wrote (R4-5), and redrafts once when the IC corrects it. It
+// proposes structure and never runs a tool, writes to the store, or marks its own
+// conclusions true (DESIGN.md Step 4).
 
 export const PLANNER_MODEL = "claude-opus-5";
 const PLANNER_SECONDS = 300;
@@ -40,9 +42,9 @@ An incident is any objective Mauria asks to have pursued; it does not mean somet
 
 The terms: a unit is a box in the incident's tree that owns a slice of the problem, with an objective and a leader, a session on the provider and model the unit names that directs the unit's tasks and reports against the objective; a task is one assignment, owned by one unit, bound to one capability; a capability is the assignable thing, deterministic or session-backed; a claim is a statement with a status and a basis. A task to a session-backed capability on the leader's model, needing no equipment beyond the unit's, runs inside the leader's session; any other task runs in its own session or in process and its result reaches the leader. The status names the source and gates nothing: verified means deterministic equipment produced it, asserted means a session did. The basis says whether it was seen: observed means seen in code, in output or in a browser, inferred means reasoned to from what was seen. An observed claim counts as proven whichever source produced it.
 
-You propose structure only. You do not run tools, you do not write, and you never mark your own conclusions true. Read the incident file that follows, in its eleven sections, and return one action plan. Section 10 is the situation you wrote last cycle; write this cycle's in the plan: what changed, the hypothesis, the observed claims it rests on, every inferred link with what this plan does to settle it, and the claims to keep in view. Section 11 lists the reassignments open: each is the slice of a unit the IC closed with a reassign verdict, with the IC's instructions, written from what that unit found and did not find, and the claims the unit produced. Every open reassignment is taken by exactly one new unit in this plan, of the shape the instructions call for, naming the reassignment's id in takes; its leader is oriented with the instructions and the claims, so the new unit starts from what was found.
+You propose structure only. You do not run tools, you do not write, and you never mark your own conclusions true. Read the incident file that follows, in its ten sections, and return one action plan: the tactics for this period, drafted as a suggestion for the IC, who reviews it. Section 10 is the IC's situation, the picture every seat works from: what changed, the hypothesis, the observed claims it rests on, every inferred link with what settles it, and the claims to keep in view. Your plan works it: every inferred link the IC lists is settled by a task in this plan, by the ref the IC named or an open task's id, unless the IC deferred it with a why, and your rationale says how the plan works the situation. A reassignment the IC wrote into its situation is the slice of a unit the IC closed with a reassign verdict, with what that unit found and did not find and what the unit that takes the slice is to establish; section 10 ends with the ids of the reassignments still open, and every one is taken by exactly one new unit in this plan, of the shape the situation calls for, naming the id in takes; its leader is oriented with the IC's instructions and the closed unit's claims, so the new unit starts from what was found.
 
-When you lack something, use the channel for it: a task to a capability for a fact it can retrieve; a grant request for permission; a capability request for means that do not exist yet; a question for a human only for what only a human knows. A unit's leader resolves its own lacks the same way at its level: it assigns a task under its unit for a retrievable fact, and sends the other three kinds up as resource requests on its report, which put the unit in waiting until Mauria answers; a waiting unit runs nothing and takes no new task, and the incident stays open. A link the repository cannot establish, such as what a running program does after an interaction, is settled by reproducing it (a reproduce task, when section 8 lists one), by a capability request for it when none is listed, or by a question for the human, in the same plan; never by reading more code. A brief to interpret carries the question and the evidence, named by id in evidenceFrom, and not the conclusion you expect: the runtime attaches your hypothesis to every brief, and the session's job is to test that. The rationale says why this plan, names the priority that chose between the plans you could have drafted, and says nothing the situation already says. Name a provider and model on every task to a session-backed capability, and none on a task to a deterministic one. A new unit names its objective, its leader's provider and model, its equipment (built-in tool names and external equipment names, as a capability declares them) and its Bash allowlist. A task to a session-backed capability may declare a strike team (strikeTeam): the subagent kinds its leader may send on it, each with a kind name, a model the task's provider serves, read-only built-in tools, the member's system prompt, how many to send and why; more than one kind is a task force. No kind exists unless the task declares it or the leader asks for it, so declare one only where the task's shape calls for several parallel readers, and say why. discrepancy is for one thing only: the file describes a different problem from the one you have been planning, a hurricane where you believed there was a fire; a different detail is not a discrepancy. A chain of tasks belongs in one plan: give a task a ref and name that ref in the dependsOn of the task that uses its result, and the chain runs in one cycle. Independent tasks run at once, across units and within one (only tasks inside a leader's session run one at a time), and dependsOn is what serializes them: declare one where a task needs another's result, and nowhere else. Keep every unit at five or fewer direct children. Set incidentStatus to satisfied only when the objective is established by observed claims and nothing is left open.`;
+When you lack something, use the channel for it: a task to a capability for a fact it can retrieve; a grant request for permission; a capability request for means that do not exist yet; a question for a human only for what only a human knows. A unit's leader resolves its own lacks the same way at its level: it assigns a task under its unit for a retrievable fact, and sends the other three kinds up as resource requests on its report, which put the unit in waiting until Mauria answers; a waiting unit runs nothing and takes no new task, and the incident stays open. A link the repository cannot establish, such as what a running program does after an interaction, is settled by reproducing it, never by reading more code: when the IC's link names a reproduce ref, give that ref to a reproduce task when section 8 lists a capability that serves it; when none does, raise the capability request for it, or the question for the human, in this plan and say so in your rationale, and the IC defers the link on its next turn. A brief to interpret carries the question and the evidence, named by id in evidenceFrom, and not the conclusion you expect: the runtime attaches your hypothesis to every brief, and the session's job is to test that. The rationale says why this plan, how it works the IC's situation, and the priority that chose between the plans you could have drafted; it repeats nothing the situation already says. Name a provider and model on every task to a session-backed capability, and none on a task to a deterministic one. A new unit names its objective, its leader's provider and model, its equipment (built-in tool names and external equipment names, as a capability declares them) and its Bash allowlist. A task to a session-backed capability may declare a strike team (strikeTeam): the subagent kinds its leader may send on it, each with a kind name, a model the task's provider serves, read-only built-in tools, the member's system prompt, how many to send and why; more than one kind is a task force. No kind exists unless the task declares it or the leader asks for it, so declare one only where the task's shape calls for several parallel readers, and say why. discrepancy is for one thing only: the file describes a different problem from the one you have been planning, a hurricane where you believed there was a fire; a different detail is not a discrepancy. A chain of tasks belongs in one plan: give a task a ref and name that ref in the dependsOn of the task that uses its result, and the chain runs in one cycle. Independent tasks run at once, across units and within one (only tasks inside a leader's session run one at a time), and dependsOn is what serializes them: declare one where a task needs another's result, and nowhere else. Keep every unit at five or fewer direct children. Set incidentStatus to satisfied only when the objective is established by observed claims and nothing is left open.`;
 
 /** The rules the validator applies, stated so the planner does not propose what will be rejected (DESIGN.md Step 5). */
 export const PLANNER_RULES = [
@@ -58,8 +60,8 @@ export const PLANNER_RULES = [
   "Model known: every task to a session-backed capability, and every new unit's leader, names a provider and a model that provider serves; a task to a deterministic capability names neither; a strike team's model is one the task's provider serves, on a task that runs a session.",
   "Closing is clean: a unit closed in this plan is active, has no running task after this plan's cancels, is closed once, is given no new unit or task in the same plan, its leader has reported since its last task ended or has no session, and no revise verdict on it is still to be delivered to its leader.",
   "Status is earned: satisfied requires every open task completed or cancelled, no new tasks, and at least one observed claim; satisfied or failed raises no question, capability request or grant request; blocked raises at least one.",
-  "Inferred links are worked: every inferred link in the situation names what settles it: a task in this plan by its ref, an open task by its id, a question this plan raises by its position, or a reproduce task by its ref or id; every claim id in proven, inferred and keep names a claim in the incident, and every proven claim has basis observed, whichever task observed it.",
-  "Reassignments taken: every open reassignment in section 11 is taken by exactly one new unit in this plan, naming its id in takes; a takes names an open reassignment, and no reassignment is taken twice; a reassignment the IC dropped (its instructions begin drop:) is closed already and takes nothing.",
+  "Inferred links are worked: every inferred link in the IC's situation (section 10) is settled by this plan: the task it names is a task in this plan by its ref or an open task by its id (a reproduce task by its ref or id likewise), or the IC deferred the link with a why; a link left neither worked nor deferred rejects the plan.",
+  "Reassignments taken: every open reassignment section 10 lists is taken by exactly one new unit in this plan, naming its id in takes; a takes names an open reassignment, and no reassignment is taken twice; a reassignment the IC dropped (its instructions begin drop:) is closed already and takes nothing.",
 ] as const;
 
 /**
@@ -157,16 +159,6 @@ function taskLine(t: Task): string {
   return `${t.id} [${t.status}] under ${t.unitId}: ${t.capability} — ${t.objective}; inputs ${clip(t.inputs)}${model}${deps}`;
 }
 
-/** The situation the last applied plan carried, rendered as the planner wrote it; none before the first applied plan. A leader's `plan.applied` carries none and is skipped. */
-function lastSituationOf(events: readonly Event[]): Situation | null {
-  let last: unknown;
-  for (const e of events)
-    if (e.type === "plan.applied" && e.payload.situation !== undefined)
-      last = e.payload.situation;
-  const parsed = Situation.safeParse(last);
-  return parsed.success ? parsed.data : null;
-}
-
 /** A session's findings in full for the planner; a deterministic result clipped as before. */
 function resultForPlanner(t: Task): string {
   const findings = (t.result as { findings?: unknown } | null)?.findings;
@@ -194,14 +186,29 @@ function resultForPlanner(t: Task): string {
   return clip(t.result);
 }
 
-function renderSituation(s: Situation | null): string[] {
-  if (s === null) return ["  (none)"];
-  const settled = (by: Settlement): string =>
-    "task" in by
-      ? `task ${by.task}`
-      : "question" in by
-        ? `question ${by.question} of that plan`
-        : `reproduce ${by.reproduce}`;
+/** An inferred link's settlement in one clause, as section 10 and `incident show` print it. */
+function describeSettlement(by: Settlement): string {
+  return "task" in by
+    ? `settled by task ${by.task}`
+    : "reproduce" in by
+      ? `settled by reproduce ${by.reproduce}`
+      : `deferred: ${by.deferred}`;
+}
+
+/**
+ * The IC's situation (R4-5), as the IC wrote it on its last accepted command turn, then
+ * the ids of the reassignments still open (R4-4), which the IC wrote into the slices they
+ * concern and every one of which a new unit takes by id; `taker` says which plan takes
+ * them ("in this plan" for the planner, "in the next plan" for `show`). Only the open line
+ * before the IC's first turn; the caller says "(none)" and indents as its output needs.
+ */
+export function renderSituation(
+  s: Situation | null,
+  open: readonly Reassignment[],
+  taker: string,
+): string[] {
+  const openLine = `reassignments open, each taken by a new unit ${taker} naming its id in takes: ${open.map((r) => `${r.id} from unit ${r.unitId}`).join(", ") || "(none)"}`;
+  if (s === null) return [openLine];
   return [
     `changed: ${s.changed}`,
     `hypothesis: ${s.hypothesis}`,
@@ -209,9 +216,10 @@ function renderSituation(s: Situation | null): string[] {
     ...bullets(s.proven.map((p) => `${p.claimId}: ${p.line}`)),
     "inferred:",
     ...bullets(
-      s.inferred.map((i) => `${i.claimId}, settled by ${settled(i.settledBy)}`),
+      s.inferred.map((i) => `${i.claimId}, ${describeSettlement(i.settledBy)}`),
     ),
     `keep: ${s.keep.join(", ") || "(none)"}`,
+    openLine,
   ];
 }
 
@@ -233,9 +241,9 @@ function lastCycleSequence(events: readonly Event[]): number {
 }
 
 /**
- * The incident file rendered as the eleven labeled sections in the design's order, each in
- * a stable form, so the prompt prefix caches across cycles; the situation, which changes
- * every cycle, and the reassignments open (R4-4), come last.
+ * The incident file rendered as the ten labeled sections in the design's order, each in a
+ * stable form, so the prompt prefix caches across cycles; the IC's situation, which
+ * changes every cycle, comes last.
  */
 export function renderPlannerInput(
   store: Store,
@@ -345,9 +353,9 @@ export function renderPlannerInput(
     );
 
   // A claim with a capability's summarized predicate is shown in full only in the cycle
-  // after it lands, or when the last situation names it; the rest collapse to one line per
+  // after it lands, or when the IC's situation names it; the rest collapse to one line per
   // task. Its other predicates (a verified absence, say) stay in full.
-  const situation = lastSituationOf(events);
+  const situation = icSituation(events);
   const named = new Set([
     ...(situation?.proven.map((p) => p.claimId) ?? []),
     ...(situation?.keep ?? []),
@@ -495,29 +503,11 @@ export function renderPlannerInput(
     "warned last cycle:",
     ...bullets(warnings, "(nothing warned)"),
     "",
-    "## 10. Situation from the last cycle",
-    ...renderSituation(situation),
-    "",
-    "## 11. Reassignments",
-    ...renderReassignments(openReassignments(events)),
+    "## 10. The IC's situation",
+    ...(situation === null ? ["  (none)"] : []),
+    ...renderSituation(situation, openReassignments(events), "in this plan"),
   ];
   return lines.join("\n");
-}
-
-/**
- * The reassignments open (R4-4), each with the id a new unit's `takes` names, the closed
- * unit and its objective, the IC's instructions and why, and the claims the unit produced
- * by id; the planner must give each to a new unit. "(none)" when nothing is open, which is
- * every cycle until the IC reassigns.
- */
-function renderReassignments(open: readonly Reassignment[]): string[] {
-  if (open.length === 0) return ["  (none)"];
-  return open.flatMap((r) => [
-    `  - ${r.id}: from unit ${r.unitId} (objective: ${r.objective}), closed in cycle ${r.cycle} on report ${r.reportId}`,
-    `    instructions: ${r.instructions}`,
-    `    why: ${r.why}`,
-    `    claims: ${r.claims.join(", ") || "(none)"}`,
-  ]);
 }
 
 /** A planner call's outcome: the validated action plan plus what it cost, which is its provenance. */

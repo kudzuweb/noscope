@@ -260,17 +260,21 @@ describe("planner", () => {
       },
       "verifier",
     );
-    store.record("i1", "plan.proposed", "planner", { rationale: "next" });
-    store.record("i1", "plan.applied", "runtime", {
-      rationale: "next",
-      situation: {
-        changed: "the greps landed",
-        hypothesis: "scrollTo at 88 is the one",
-        proven: [],
-        inferred: [],
-        keep: ["c-second"],
+    // The IC's situation (R4-5) keeps c-second in view; the plan moves the cycle.
+    store.record("i1", "command.turned", "runtime", {
+      cycle: 2,
+      turn: {
+        situation: {
+          changed: "the greps landed",
+          hypothesis: "scrollTo at 88 is the one",
+          proven: [],
+          inferred: [],
+          keep: ["c-second"],
+        },
       },
     });
+    store.record("i1", "plan.proposed", "planner", { rationale: "next" });
+    store.record("i1", "plan.applied", "runtime", { rationale: "next" });
     const later = renderPlannerInput(store, incident, [fakeProvider]);
     expect(later).toContain("  - c-second: /repo/src/view.ts:90 matches");
     expect(later).not.toContain("  - c-verified: /repo/src/view.ts:88 matches");
@@ -313,30 +317,38 @@ describe("planner", () => {
     store.close();
   });
 
-  it("section 10 carries the last applied plan's situation as the planner wrote it, and (none) before one", () => {
+  it("section 10 carries the IC's situation from its last accepted command turn, with the reassignments still open under it, and (none) before the IC's first turn (R4-5)", () => {
     const store = new Store(":memory:");
     scriptedIncident(store, "i1", AT);
     const incident = store.getIncident("i1");
     if (incident === undefined) throw new Error("no incident");
+    const openLine =
+      "reassignments open, each taken by a new unit in this plan naming its id in takes: (none)";
     expect(renderPlannerInput(store, incident, [fakeProvider])).toContain(
-      "## 10. Situation from the last cycle\n  (none)",
+      `## 10. The IC's situation\n  (none)\n${openLine}`,
     );
+    const situation = {
+      changed: "the greps landed",
+      hypothesis: "focus() scrolls the resting selection",
+      proven: [{ claimId: "c1", line: "PageCard.tsx:1884 calls focus()" }],
+      inferred: [
+        { claimId: "c2", settledBy: { task: "t-next" } },
+        { claimId: "c3", settledBy: { deferred: "no browser this period" } },
+        { claimId: "c4", settledBy: { reproduce: "browser" } },
+      ],
+      keep: ["c5"],
+    };
+    store.record("i1", "command.turned", "runtime", {
+      cycle: 1,
+      turn: { situation },
+    });
+    // A plan's situation, as the log carried one before R4-5, is not read.
     store.record("i1", "plan.applied", "runtime", {
       rationale: "narrow in",
-      situation: {
-        changed: "the greps landed",
-        hypothesis: "focus() scrolls the resting selection",
-        proven: [{ claimId: "c1", line: "PageCard.tsx:1884 calls focus()" }],
-        inferred: [
-          { claimId: "c2", settledBy: { task: "t-next" } },
-          { claimId: "c3", settledBy: { question: 1 } },
-          { claimId: "c4", settledBy: { reproduce: "browser" } },
-        ],
-        keep: ["c5"],
-      },
+      situation: { ...situation, hypothesis: "the planner's, ignored" },
     });
     const text = renderPlannerInput(store, incident, [fakeProvider]);
-    expect(text.split("## 10. Situation from the last cycle\n")[1]).toBe(
+    expect(text.split("## 10. The IC's situation\n")[1]).toBe(
       [
         "changed: the greps landed",
         "hypothesis: focus() scrolls the resting selection",
@@ -344,13 +356,36 @@ describe("planner", () => {
         "  - c1: PageCard.tsx:1884 calls focus()",
         "inferred:",
         "  - c2, settled by task t-next",
-        "  - c3, settled by question 1 of that plan",
+        "  - c3, deferred: no browser this period",
         "  - c4, settled by reproduce browser",
         "keep: c5",
-        "",
-        "## 11. Reassignments",
-        "  (none)",
+        openLine,
       ].join("\n"),
+    );
+    // A rejected turn's situation is skipped; the open reassignments are listed by id.
+    store.record("i1", "command.turned", "runtime", {
+      cycle: 2,
+      rejected: true,
+      turn: { situation: { ...situation, hypothesis: "rejected" } },
+    });
+    store.record("i1", "unit.reassigned", "ic", {
+      reassignmentId: "i1-r01",
+      reportId: "e-1",
+      unitId: "i1-u02",
+      objective: "the delete path",
+      instructions: "a unit with Bash",
+      why: "found the handler, not the caller",
+      claims: ["c1"],
+      cycle: 2,
+      dropped: false,
+    });
+    const again = renderPlannerInput(store, incident, [fakeProvider]);
+    expect(again).toContain(
+      "hypothesis: focus() scrolls the resting selection",
+    );
+    expect(again).not.toContain("## 11.");
+    expect(again).toContain(
+      "reassignments open, each taken by a new unit in this plan naming its id in takes: i1-r01 from unit i1-u02",
     );
     store.close();
   });
@@ -382,7 +417,7 @@ describe("planner", () => {
     store.close();
   });
 
-  it("renders the incident file as the eleven sections in the design's order", () => {
+  it("renders the incident file as the ten sections in the design's order, the IC's situation last", () => {
     const store = new Store(":memory:");
     cycledIncident(store);
     const incident = store.getIncident("i1");
@@ -472,8 +507,8 @@ describe("planner", () => {
         - Model known: every task to a session-backed capability, and every new unit's leader, names a provider and a model that provider serves; a task to a deterministic capability names neither; a strike team's model is one the task's provider serves, on a task that runs a session.
         - Closing is clean: a unit closed in this plan is active, has no running task after this plan's cancels, is closed once, is given no new unit or task in the same plan, its leader has reported since its last task ended or has no session, and no revise verdict on it is still to be delivered to its leader.
         - Status is earned: satisfied requires every open task completed or cancelled, no new tasks, and at least one observed claim; satisfied or failed raises no question, capability request or grant request; blocked raises at least one.
-        - Inferred links are worked: every inferred link in the situation names what settles it: a task in this plan by its ref, an open task by its id, a question this plan raises by its position, or a reproduce task by its ref or id; every claim id in proven, inferred and keep names a claim in the incident, and every proven claim has basis observed, whichever task observed it.
-        - Reassignments taken: every open reassignment in section 11 is taken by exactly one new unit in this plan, naming its id in takes; a takes names an open reassignment, and no reassignment is taken twice; a reassignment the IC dropped (its instructions begin drop:) is closed already and takes nothing.
+        - Inferred links are worked: every inferred link in the IC's situation (section 10) is settled by this plan: the task it names is a task in this plan by its ref or an open task by its id (a reproduce task by its ref or id likewise), or the IC deferred the link with a why; a link left neither worked nor deferred rejects the plan.
+        - Reassignments taken: every open reassignment section 10 lists is taken by exactly one new unit in this plan, naming its id in takes; a takes names an open reassignment, and no reassignment is taken twice; a reassignment the IC dropped (its instructions begin drop:) is closed already and takes nothing.
       warned on, and applied anyway:
         - Session work under a unit: a task to a session-backed capability belongs under a unit with a leader, never under command, the root; one placed under command runs in a session of its own, with no leader to judge it and no leader turn after it, and its result reaches the IC as a task result; the IC's own session runs no task. A deterministic task under command is fine.
       rejected last cycle:
@@ -481,11 +516,9 @@ describe("planner", () => {
       warned last cycle:
         (nothing warned)
 
-      ## 10. Situation from the last cycle
+      ## 10. The IC's situation
         (none)
-
-      ## 11. Reassignments
-        (none)"
+      reassignments open, each taken by a new unit in this plan naming its id in takes: (none)"
     `);
   });
 
@@ -524,13 +557,6 @@ describe("planner", () => {
       capabilityRequests: [],
       applySops: [],
       incidentStatus: "continue",
-      situation: {
-        changed: "test",
-        hypothesis: "test",
-        proven: [],
-        inferred: [],
-        keep: [],
-      },
       rationale: "start from the scroll call sites",
     };
     process.env.NOSCOPE_STUB_OUTPUT = JSON.stringify(plan);

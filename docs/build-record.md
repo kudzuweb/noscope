@@ -2961,3 +2961,124 @@ Not exactly to spec, with reasons:
   task a reassign cancelled stays pending forever, as one depending on a task a plan's
   `cancelTasks` cancelled already did; and an accepted verdict leaves the closed unit's
   pending tasks pending while a reassign cancels them. Both are noted for a later PR.
+
+## R4-5: The IC owns the situation (#48, merged 2026-09-15)
+
+R4-5 of the round 4 plan, on R4-4's reassignments, folding its section 11. Built: the IC
+writes the situation, ruled by Mauria in review on 2026-09-15 ("i want the IC to own it
+once it starts making the updates to it"), and the planner drafts the tactics against it
+as a suggestion for the IC. `CommandTurn` gains `situation`, the `Situation` schema,
+required, after `reportVerdicts`; `ActionPlan` loses it, so a plan carrying one is refused
+by the strict object. `Settlement` is now a task (an open task's id, or the ref the IC
+wants this period's plan to give the task that settles the link), a reproduce task the
+same way, or `deferred` with a why; the `question` variant goes. `icSituation` in
+`src/leader.ts` reads the situation off the last accepted `command.turned` (its `turn`
+payload), skipping a rejected turn's, and replaces the two private copies of
+`lastSituation` that read `plan.applied` in `src/planner.ts` and `src/dispatcher.ts`, so
+every leader's orientation and every task's brief now carry the IC's hypothesis and proven
+claims. The planner's section 10 is headed "The IC's situation", renders it as the IC wrote
+it (a deferred link as `<claim>, deferred: <why>`), and ends with one line naming the ids
+of the reassignments still open and the unit each came from, or "(none)"; section 11 and
+`renderReassignments` go, the system prompt reads ten sections and says the plan works
+the IC's situation and the rationale says how, and the reassignment is what the IC wrote
+into the slice it concerns. `PLANNER_RULES`' "Inferred links are worked" now reads: every
+inferred link in the IC's situation is settled by this plan, the task it names a ref in
+this plan or an open task not cancelled in it, unless the IC deferred it; `ValidationContext`
+gains `situation` (`icSituation(events)`, set in `validationContext`) and the check reads it
+instead of the plan, its reason opening "the IC's situation has inferred claim …".
+"Reassignments taken" reads "section 10 lists". The claim checks the plan's situation
+passed under "Dependencies resolve" (every claim id named exists; every proven claim has
+basis observed) move to a fifth command rule, "Situation grounded" (`CommandRuleName`),
+checked in `validateCommand` on the turn's own situation. `planDiff`'s `changed` fields
+drop `situation`, and `plan.applied` no longer carries one. `incident show` prints
+`situation, the IC's:` under the period priorities, through the planner's `renderSituation`
+(exported for it, indented two spaces), the open-reassignment ids under it; the block
+after "decisions" goes. `step` prints `situation changed: …` and `hypothesis: …` after the
+priorities, and the command turn's ask names the situation. `IC_ROLE` gains a paragraph:
+the IC owns the situation, the picture every seat works from until its next turn; a link
+is settled by a task by id or by the ref the plan is to give it, or deferred with why, and
+a link deferred is a decision recorded, not an omission; a reassignment updates the slice
+it concerns, with the ids still open listed under the situation in the file; the plan is
+the planner's suggestion of the tactics that work it, its rationale saying how. The
+sentence "The situation in the plan is the planner's; leave it as written" goes. The stub
+(`test/stub-claude`) fills a default situation (`stub: nothing yet`, `stub hypothesis`)
+on any command turn that carries none. DESIGN.md's Vocabulary gains a Situation row and
+its Action plan and Cycle rows follow; the ICS mapping's Planning Section row says the
+Situation Unit's picture is the IC's here, and the Situation Unit row and the Reference
+row on a Situation Unit say the same; Step 2 notes `command.turned` carries the
+situation; Step 4 (the `CommandTurn` sketch, the reassignment sentence, the command
+rules, section 10, the `ActionPlan` sketch, the planner's paragraph, `planDiff`), Step 5
+(the plan rule's row, the five command rules), Step 6 (the orientation) and Step 7
+(`show`) follow, with the architecture page's IC and planner nodes, cycle steps 1 to 3,
+the brief's user message and the claim-placement step, and CLAUDE.md's IC paragraph.
+
+Tests: models tests that a command turn without `situation` is refused and one with the
+three settlement kinds parses, that `question` and an empty `deferred` are refused, that
+a plan carrying `situation` is refused, and that the command schema's `required` names it
+and the plan schema's does not; validator tests that with no IC turn nothing is owed, that
+a plan settling each link (a ref, an open task, a reproduce by ref, a deferral) passes,
+that a rejected turn's situation is skipped, and that a plan leaving three links
+unsettled (an unknown task, a task the plan cancels, a completed task) is rejected with
+one reason each; a "Situation grounded" test on a grounded turn and one naming two missing
+claims and an inferred claim as proven; planner tests that section 10 is the IC's from the
+last accepted turn, a `plan.applied` situation is ignored, a rejected turn is skipped, the
+open reassignment ids render under it and no section 11 remains, that the IC's `keep`
+keeps a summarized claim in full, and the snapshot (section 10's heading, the two rule
+texts, the open-reassignments line); a dispatcher test that a session's brief carries the
+IC's situation; the R4-4 run test reads the reassignment from the IC's situation and the
+ids line; a new stub run (`test/ic.test.ts`) where cycle 2's command turn carries a
+situation with one link settled by the ref `probe` and one deferred, `step` prints the
+changed line, the planner's draft without the ref is rejected under "Inferred links are
+worked" with the reason, the planner's input carries section 10 as the IC wrote it,
+cycle 3's draft with a task of ref `probe` is applied, the three accepted turns carry
+their situations and no `plan.applied` does, and `show` prints the situation under the
+period; the `run` test's `show` check, the step-output pins in `test/dispatcher.test.ts`
+and `test/ic.test.ts`, the IC role lines in `test/providers.test.ts`, the size-up
+snapshot and the plan and command fixtures of every test follow.
+
+Not exactly to spec, with reasons:
+
+- `deferred` is a fourth `Settlement` variant, `{ deferred: <why> }`, in the link's
+  `settledBy` rather than a flag beside it: the link says either what settles it or why it
+  is not worked, one field, and the schema the provider receives says so.
+- The `question` settlement goes. It named a question by position in the plan that carried
+  the situation, and the IC writing the situation before the planner drafts cannot know
+  the planner's positions; an IC that needs Mauria's answer raises the question in its own
+  turn, which blocks the incident before any plan is drafted, and marks the link deferred
+  with the question as the why.
+- The first command turn writes a situation like any other: the field is required on every
+  turn, `FirstCommandTurn` included, and the schema's `changed` says "on the first turn,
+  what the briefing established"; the role text says the same. Nothing feeds the field from
+  the briefing in code, since the IC evaluates the briefing on that turn and its situation
+  is what it makes of it. Before the IC's first accepted turn section 10, `show` and every
+  brief carry "(none)", as they did before the first applied plan.
+- The open reassignments' ids are rendered by the runtime in one line at the end of
+  section 10, from the events, rather than left to the IC's prose: the rule "Reassignments
+  taken" is still checked from the events, and the planner must name the id in `takes`, so
+  the id reaches it whatever the IC wrote. The instructions, why, objective and claims that
+  section 11 rendered are no longer in the planner's input; the taking unit's orientation
+  still carries them, unchanged, from `unit.reassigned` and `reassignment.taken` (the R4-4
+  run test pins it).
+- The claim checks move to a command rule of their own, "Situation grounded", rather than
+  staying under "Dependencies resolve": the plan no longer carries the situation, and a
+  turn naming a claim the incident lacks is the IC's error to fix on the retry.
+- A rejected turn's situation is skipped, as its period is: `icSituation` reads the last
+  accepted `command.turned`, so a retry's briefing and the plan after it see the situation
+  the IC last had accepted.
+- A log written before R4-5 carries its situations on `plan.applied`, which nothing reads
+  now; such an incident's section 10 and `show` say "(none)" until its IC's next accepted
+  turn. No schema version rises, since no table changes.
+- The stub fills a default situation on a scripted command turn that has none, as it fills
+  default verdicts, so every existing scripted turn keeps its meaning; a test that wants a
+  particular situation scripts it.
+- `step` prints the turn's `changed` and `hypothesis` lines after the priorities, two lines
+  the block does not ask for, so the operator reads the picture the cycle runs on without
+  `show`; the tests that pin `step`'s output line by line moved their indices.
+- `renderSituation` is exported from `src/planner.ts` for `show`, which had its own copy of
+  the rendering; one rendering now, with the open-reassignments line in both places, worded
+  "in this plan" for the planner and "in the next plan" for `show`, and "(none)" said and
+  indented by the caller (PR 48's review).
+- Follow-up, from PR 48's review (finding 5, pre-existing under "Dependencies resolve"): a
+  claim with status `rejected` and basis `observed` passes "Situation grounded" in `proven`,
+  since basis is what gates and nothing sets `rejected` yet; noted for the PR that first
+  sets it.
