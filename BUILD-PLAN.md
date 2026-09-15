@@ -818,8 +818,9 @@ is the filled form, the values chosen for this incident. One base type is the ge
 run today; the IC is a second type with a different form and protocol; more types will be
 written and saved, so files, tables and code permit that. A config of a given type keeps
 the type's protocol, since it occupies the same place in the hierarchy and reports the
-same way. The IC's missteps are rectified before the fourth run. ICS calls this resource
-typing, and the DESIGN.md mapping row for it moves here from the capability registry.
+same way. The IC's missteps are rectified before the fourth run. "Type" and "config" are
+the plan's words for telling the two apart, not names the code must use; the builder picks
+names that fit the schema and records the choice.
 
 Scope: `Unit` gains `type`, the name of a registered unit type; `src/units/registry.ts`
 defines a unit type as a name, a form (a zod schema for the fields its config fills, with
@@ -842,8 +843,8 @@ type exists; a validator rule "Type exists" says so; the leader rules Capability
 Budget within share become the base protocol's rules. The store's schema version rises;
 replay sets `type` to `ic` for the root and `base` otherwise, so a round 4 database reads
 the same. `incident tree` prints each unit's type. DESIGN.md Vocabulary (unit type, config,
-protocol), the ICS mapping rows for the Incident Commander and resource typing, Steps 2,
-4, 5 and 6, and `docs/architecture.html`'s unit and IC nodes follow.
+protocol), the ICS mapping row for the Incident Commander, Steps 2, 4, 5 and 6, and
+`docs/architecture.html`'s unit and IC nodes follow.
 
 Acceptance: `grep -n "parentId === null" src/dispatcher.ts src/units/` prints nothing; the
 R4-6 and R4-7 dispatcher and IC tests pass with the same events recorded; the planner
@@ -861,8 +862,12 @@ says a saved config is deployed by name when it fits. After a plan is applied, t
 compares each new unit's config with every earlier unit's in the database, and when the
 same filled form has appeared three times unsaved, `step` prints an offer to save it with
 the command to run; nothing is saved without the command. `incident review` names the
-config each unit came from. DESIGN.md Step 2 (the table), Step 4 (the planner's input)
-and Step 7 (the commands), README's command list and `docs/architecture.html` follow.
+config each unit came from. A saved config is what ICS resource typing produces, a
+resource everyone means the same thing by when they say its name, so the DESIGN.md ICS
+mapping row for resource typing points at saved configs (the capability registry stays as
+the typing of what a task can do). DESIGN.md Step 2 (the table), Step 4 (the planner's
+input) and Step 7 (the commands), README's command list and `docs/architecture.html`
+follow.
 
 Acceptance: a run test on the stub where a unit is saved, the next plan names the config,
 the applied unit carries its fields, and `review` names it; a validator test rejecting an
