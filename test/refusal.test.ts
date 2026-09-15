@@ -869,12 +869,19 @@ describe("a refusal replaces the session", () => {
     expect(review).toContain(
       "refusals: 2: leader of 001-u02 reasoning_extraction on claude-haiku-4-5 (session stub-session-3), leader of 001-u02 reasoning_extraction on claude-opus-4-8 (session stub-session-5)",
     );
-    // The IC's next change report carries the report as any unit's.
+    // The IC's next change report carries the runtime's report as any unit's (R4-1's
+    // form), with the work behind it.
     h.out.length = 0;
     expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    const runtimeReport = h
+      .store()
+      .listEvents("001")
+      .filter((e) => e.type === "unit.reported")
+      .at(-1);
+    expect(runtimeReport?.payload.writtenBy).toBe("runtime");
     const briefing = h.calls()[9]?.prompt ?? "";
     expect(briefing).toContain(
-      "  - 001-u02: not_met, picture changed; changed: nothing; why: the unit's leader was refused by the API on claude-haiku-4-5",
+      `  - 001-u02, report ${runtimeReport?.id}: not_met, picture changed; changed: nothing; why: the unit's leader was refused by the API on claude-haiku-4-5`,
     );
   });
 
