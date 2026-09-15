@@ -695,7 +695,7 @@ export const IncidentBriefing = z
       .string()
       .min(1)
       .describe(
-        "What sort of incident this is, in a few words: a bug hunt, a build, a question about a codebase, a migration",
+        "What sort of incident this is, in a few words, read from the objective's verb: determine, identify, explain or find, or a question (where, what, why), is a diagnosis (a bug hunt, a question about a codebase); build, change, fix or add is a build (a feature, a migration)",
       ),
     dominantProblem: z
       .string()
@@ -709,16 +709,18 @@ export const IncidentBriefing = z
     initialObjectives: z
       .array(z.string().min(1))
       .min(1)
-      .describe("Objectives for the first operational period, as you see them"),
+      .describe(
+        "Objectives for the first operational period, as you see them, scoped to the objective's verb: a diagnosis (determine, identify, explain, find, or a question: where, what, why) takes no fix objective, since the answer is the cause; a build (build, change, fix, add) takes one",
+      ),
     initialOrganization: z
       .array(z.string().min(1))
       .describe(
-        "Units sketched, one line each: what the unit is for and what model its leader should be on",
+        "Units sketched, one line each: what the unit is for and what model its leader should be on; no fix unit on a diagnosis",
       ),
     questionsForHuman: z
       .array(z.string().min(1))
       .describe(
-        "What only Mauria knows or may decide; each blocks the incident until she answers",
+        "What only Mauria knows or may decide, that no tool could find and the objective does not already settle; on a diagnosis, no question about what the intended behavior should be; each blocks the incident until she answers",
       ),
     hazards: z
       .array(z.string().min(1))

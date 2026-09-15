@@ -15,6 +15,7 @@ import {
   type ActionPlan,
   type CommandTurn,
   IncidentBriefing,
+  jsonSchemaFor,
   type ReviewTurn,
 } from "../src/models.js";
 import { SEAT_PLACES, sessionSystemPrompt } from "../src/providers/base.js";
@@ -824,6 +825,66 @@ describe("the initial IC and the transfer of command", () => {
       `${SEAT_PLACES.initial_ic}\n\n${INITIAL_IC_ROLE}`,
     );
   });
+
+  it("the role scopes objectives, units and questions to the objective's verb (R4-8)", async () => {
+    expect(INITIAL_IC_ROLE).toContain(
+      "A check is one look at whether a thing exists, answers, or is where the objective says it is",
+    );
+    expect(INITIAL_IC_ROLE).toContain(
+      "An objective that asks to determine, identify, explain or find, or asks a question (where, what, why), is a diagnosis, answered by the cause or the place it names: it takes no fix objective, no fix unit and no question about what the intended behavior should be, because the answer is the cause",
+    );
+    expect(INITIAL_IC_ROLE).toContain(
+      "An objective that asks to build, change, fix or add is a build and takes those",
+    );
+    expect(INITIAL_IC_ROLE).toContain(
+      "ask only what no tool could find and the objective does not already settle",
+    );
+    const schema = JSON.stringify(jsonSchemaFor(IncidentBriefing));
+    expect(schema).toContain(
+      "takes no fix objective, since the answer is the cause",
+    );
+    expect(schema).toContain("no fix unit on a diagnosis");
+    expect(schema).toContain(
+      "on a diagnosis, no question about what the intended behavior should be",
+    );
+    const { incident } = scriptedIncident(new Store(":memory:"));
+    const findings = await gatherFindings(incident, tmpdir(), [fakeProvider]);
+    expect(renderSizeUpPrompt(incident, findings)).toContain(
+      "scoped to the objective's verb, questionsForHuman (only what no tool could find and the objective does not settle)",
+    );
+  });
+
+  it.skipIf(process.env.NOSCOPE_LIVE !== "1")(
+    "live: a Haiku initial IC sizes up a diagnostic objective on this checkout and proposes no fix (R4-8)",
+    { timeout: 400_000 },
+    async () => {
+      const { incident } = scriptedIncident(new Store(":memory:"));
+      const sized = await sizeUp(
+        {
+          ...incident,
+          objective:
+            "Determine why the Incident Commander runs on the model the briefing names rather than --initial-model, and identify the code path that sets the root unit's leader at transfer of command",
+          constraints: ["read only; the checkout is not to be changed"],
+        },
+        {
+          cwd: resolve("."),
+          model: "claude-haiku-4-5",
+          provider: "claude-code",
+          providers: [fakeProvider],
+        },
+      );
+      const live = IncidentBriefing.parse(sized.output);
+      const fix = /\bfix(es|ed|ing)?\b|\bimplement|\bremediat|\bpatch\b/i;
+      for (const objective of live.initialObjectives)
+        expect(objective).not.toMatch(fix);
+      for (const unit of live.initialOrganization)
+        expect(unit).not.toMatch(fix);
+      for (const question of live.questionsForHuman)
+        expect(question).not.toMatch(
+          /intended|should (it|the|deletion|focus)/i,
+        );
+    },
+  );
 
   it.skipIf(process.env.NOSCOPE_LIVE !== "1")(
     "live: a Haiku initial IC sizes up the noscope checkout read-only and returns a kind",
