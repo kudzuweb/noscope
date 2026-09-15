@@ -181,6 +181,56 @@ const session = (id: string): string => (id === "" ? "" : `  session ${id}`);
 
 type Cycle = { number: number; proposed: Event; events: Event[] };
 
+/** A session's tool calls in one line: the count by tool, errors, and the time spent inside tools. */
+function describeCalls(calls: readonly Event[]): string {
+  const byTool = new Map<string, number>();
+  let errors = 0;
+  let ms = 0;
+  for (const c of calls) {
+    const tool = str(c.payload.tool) || "?";
+    byTool.set(tool, (byTool.get(tool) ?? 0) + 1);
+    if (c.payload.isError === true) errors += 1;
+    if (typeof c.payload.durationMs === "number") ms += c.payload.durationMs;
+  }
+  const named = [...byTool].map(([tool, k]) => `${tool} ${k}`).join(", ");
+  return `${calls.length} tool call(s) (${named})${errors === 0 ? "" : `, ${errors} error(s)`}, ${(ms / 1000).toFixed(1)} s in tools`;
+}
+
+/**
+ * The lines for a session's activity: its own tool calls, then each subagent with its
+ * usage (a breakdown of the session's, not added) and its own calls.
+ */
+function activityLines(
+  events: readonly Event[],
+  taskId: string | null,
+  model: string | null,
+  cycle: number,
+): string[] {
+  // A task's calls by its id; the planner's by the cycle it drafted, since a leader session
+  // (R3-4) may file a call under no task and that call is not the planner's.
+  const own = (e: Event) =>
+    taskId === null
+      ? e.payload.cycle === cycle
+      : str(e.payload.taskId) === taskId;
+  const lines: string[] = [];
+  const calls = events.filter(
+    (e) => e.type === "tool.called" && own(e) && e.payload.agentId === null,
+  );
+  if (calls.length > 0) lines.push(`    ${describeCalls(calls)}`);
+  for (const run of events.filter((e) => e.type === "subagent.ran" && own(e))) {
+    const agentId = str(run.payload.agentId);
+    const usage = (run.payload.usage ?? {}) as Partial<Usage>;
+    const agentModel = str(run.payload.model) || model;
+    const nested = events.filter(
+      (e) => e.type === "tool.called" && str(e.payload.agentId) === agentId,
+    );
+    lines.push(
+      `    subagent ${agentId} ${str(run.payload.agentType) || "(untyped)"} ${agentModel ?? "(no model)"}: ${describeUsage(usage, costOf(usage, agentModel))}${nested.length === 0 ? "" : `  ${describeCalls(nested)}`}`,
+    );
+  }
+  return lines;
+}
+
 /** The log cut at every `plan.proposed`: a cycle is that event and everything up to the next one. */
 function cycles(events: readonly Event[]): Cycle[] {
   const result: Cycle[] = [];
@@ -273,6 +323,9 @@ export function renderReview(
     lines.push(
       `  planner ${plannerModel}: ${describeUsage(plannerUsage, plannerCost)}${session(str(p.sessionId))}`,
     );
+    lines.push(
+      ...activityLines(cycle.events, null, plannerModel, cycle.number),
+    );
 
     for (const r of rejections) {
       ruleLines += 1;
@@ -344,6 +397,7 @@ export function renderReview(
       lines.push(
         `  ${taskId} ${capability}${model === null ? " (deterministic)" : ` ${model}`}: ${spend}  ${outcomeText}${claimsText}${session(sessionId)}`,
       );
+      lines.push(...activityLines(cycle.events, taskId, model, cycle.number));
       if (outcome?.type === "task.failed")
         lines.push(`    failed: ${str(outcome.payload.reason)}`);
       if (outcome?.type === "task.insufficient")
@@ -406,6 +460,13 @@ export function renderReview(
   );
   lines.push(
     `tasks: ${sessionsRan + deterministicRan} ran (${deterministicRan} deterministic, ${sessionsRan} sessions) of ${tasks.length} created${failedWithoutRunning === 0 ? "" : `, ${failedWithoutRunning} failed before running`}`,
+  );
+  const toolCalls = events.filter((e) => e.type === "tool.called");
+  const inSubagents = toolCalls.filter(
+    (e) => e.payload.agentId !== null,
+  ).length;
+  lines.push(
+    `tool calls: ${toolCalls.length} (${inSubagents} by subagents), subagents: ${events.filter((e) => e.type === "subagent.ran").length}`,
   );
   lines.push(
     `claims: ${byStatus("verified")} verified, ${byStatus("asserted")} asserted, ${byStatus("rejected")} rejected`,

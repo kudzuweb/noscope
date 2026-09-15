@@ -969,3 +969,70 @@ Not exactly to spec, with reasons:
 - The Reference table gains no row here; R3-0 lands the resume rows, and this PR's finding
   is in the `resume` row of Step 3's session table instead, so the two PRs do not both
   append to one table.
+
+## R3-1: Tool and subagent events (#31, merged 2026-09-15)
+
+R3-1 of the round 3 plan. Built: the Claude Code provider runs every session with
+`--output-format stream-json --verbose` and reads the stream: each `tool_use` block and the
+`tool_result` matched to it on `tool_use_id` become one tool call with the tool name, the
+full input, the result clipped at 4,000 characters (`TOOL_RESULT_CAP`) with its full length
+beside it, `is_error`, and the duration between the two messages' timestamps; the final
+`result` line is parsed as the envelope was. When the envelope's `subagent_stats.spawned`
+is nonzero the provider reads each transcript under
+`<config dir>/projects/<cwd as dashes>/<session id>/subagents/`: agent id, type and
+`toolUseId` from the `.meta.json`, model (the envelope's canonical alias for the
+transcript's dated snapshot), usage summed from the assistant records, and the member's own
+tool calls, in spawn order. `SessionOutcome` carries this as `activity`, and so does
+`SessionError`, so a failed session's calls are filed too: a session that returned an error
+envelope, and one that died before any (killed on its timeout, or a nonzero exit), whose
+session id is read from the stream's init line. `src/activity.ts` writes the
+events: one `tool.called` per call with the session id, unit, task in flight (`taskId`,
+nullable, and `cycle` for a planner call) and the transcript path, then per subagent one
+`subagent.ran` and its calls as `tool.called` events carrying the `agentId`. The dispatcher
+writes them in the task's transaction before its claims; the planner writes them after
+`plan.proposed`. `task.usage` stays the envelope's figures. `incident review` prints each
+session's calls by tool with errors and time in tools, each subagent with its usage and
+calls, and a totals line. Fixture: `test/fixtures/stream/`, a stream captured 2026-09-15
+from a live Haiku session on Claude Code 2.1.272 with one Bash `echo` and one `pinger`
+subagent, plus that subagent's transcript and meta file, with every absolute path
+normalized to `/scratch/...`, the machine's MCP servers dropped from the init line, and the
+transcript's attachment records (environment and account details the parser never reads)
+removed. The stub emits stream-json: an init line, one assistant and one user line per
+entry of `NOSCOPE_STUB_TOOLS`, and the envelope. DESIGN.md Step 2 (event types), Step 3
+(the flags and the transcript paths) and Step 6 (what the log holds per session),
+`docs/architecture.html` and the README's environment paragraph follow.
+
+Not exactly to spec, with reasons:
+
+- `--verbose` is added beside `--output-format stream-json`: print mode refuses the stream
+  format without it (verified 2026-09-15 on 2.1.272).
+- The `StructuredOutput` call through which a session answers its schema is not filed as a
+  `tool.called`: it is the result the task already records, and counting it would add one
+  call to every session.
+- A subagent's usage is summed once per API message id, not once per assistant record: the
+  transcript writes one record per content block of a message and repeats the message's
+  usage on each, so a plain sum double-counts a message with thinking and text.
+- The subagent's tool calls are separate `tool.called` events carrying its `agentId`, and
+  `subagent.ran` carries their count, rather than the calls nested inside the
+  `subagent.ran` payload, so one fact has one home and `incident review` counts calls from
+  one event type.
+- The transcript directory is resolved from `CLAUDE_CONFIG_DIR` when the provider's
+  environment sets it (the documented way to move Claude Code's session history), and the
+  session's cwd is passed through `realpathSync` first, since Claude Code names the project
+  directory from its own resolved cwd. A missing subagents directory yields no
+  `subagent.ran` events rather than a failed task.
+- The stub's tool lines carry synthetic timestamps 1.5 s apart, so a test can assert a
+  duration.
+- `--strict-mcp-config` moves into the isolation flags, on every session with or without
+  `--mcp-config` (the plan block did not name it; the ruling behind the isolation flags is
+  that no session inherits Mauria's personal setup). While capturing the fixture, with
+  `--setting-sources ""` the session's init line still listed the claude.ai MCP servers of
+  her account (Craft, Gmail, Drive, Calendar) as connected and Craft's tools among the
+  session's tools. With the flag and no `--mcp-config`, one live Haiku call on 2.1.272
+  (2026-09-15) returned an init line whose `mcp_servers` is empty and whose tools are
+  `StructuredOutput` alone.
+- From the review: a session killed on its timeout or exiting nonzero now files the calls
+  it made under the init line's session id, and its error message quotes the stream's last
+  line rather than its first; the planner's calls in `incident review` are selected by
+  `cycle`, not by a null `taskId`, so a leader's call filed under no task (R3-4) is not
+  counted as the planner's.

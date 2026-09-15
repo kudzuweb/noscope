@@ -219,7 +219,9 @@ describe("contracts", () => {
     expect(EventType.options).toContain("capability.requested");
     expect(EventType.options).toContain("capability.answered");
     expect(EventType.options).toContain("plan.rejected");
-    expect(EventType.options).toHaveLength(26);
+    expect(EventType.options).toContain("tool.called");
+    expect(EventType.options).toContain("subagent.ran");
+    expect(EventType.options).toHaveLength(28);
   });
 
   it("exports provider-facing JSON Schema as a top-level object with no $schema key", () => {

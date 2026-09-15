@@ -61,6 +61,8 @@ export const EventType = z.enum([
   "grant.given",
   "capability.requested",
   "capability.answered",
+  "tool.called",
+  "subagent.ran",
 ]);
 
 export const Budget = z.object({

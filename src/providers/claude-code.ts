@@ -1,12 +1,18 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { bashAllowlist } from "../equipment/index.js";
 import { Usage } from "../models.js";
 import {
+  NO_ACTIVITY,
   type Provider,
+  type SessionActivity,
   SessionError,
   type SessionOutcome,
   type SessionRequest,
+  type SubagentRun,
+  type ToolCall,
 } from "./base.js";
 
 /** Every Anthropic model Claude Code serves as of 2026-09-13 (DESIGN.md Step 5). */
@@ -30,15 +36,22 @@ const KILL_GRACE_MS = 5_000;
  * about 3k and keep Mauria's settings, skills and hooks out (DESIGN.md Step 3, verified
  * 2026-09-12 on Claude Code 2.1.270). Transcripts are kept on purpose: every session's
  * record under Claude Code's project directory is the material for refining the runtime,
- * and `--no-session-persistence` is never set, so a session stays resumable.
+ * and `--no-session-persistence` is never set, so a session stays resumable. Output is the
+ * stream, one JSON line per message, so every tool call the session makes is read as it
+ * happens; the last line is the same result envelope `--output-format json` prints. Print
+ * mode refuses the stream format without `--verbose` (verified 2026-09-15 on 2.1.272).
  */
 export const CLAUDE_CODE_ISOLATION_FLAGS = [
   "--output-format",
-  "json",
+  "stream-json",
+  "--verbose",
   "--setting-sources",
   "",
   "--disable-slash-commands",
   "--exclude-dynamic-system-prompt-sections",
+  // Without it the claude.ai connectors of Mauria's account load into every session even
+  // under `--setting-sources ""` (seen 2026-09-15 on 2.1.272); with it, only `--mcp-config`.
+  "--strict-mcp-config",
 ] as const;
 
 /** The MCP server name each provider integration's tools appear under, for the allowlist. */
@@ -85,7 +98,6 @@ export function renderClaudeCodeArgs(request: SessionRequest): string[] {
           ]),
         ),
       }),
-      "--strict-mcp-config",
     );
   for (const integration of request.integrations) {
     if (integration !== "chrome")
@@ -94,6 +106,12 @@ export function renderClaudeCodeArgs(request: SessionRequest): string[] {
   }
   return args;
 }
+
+/** How much of a tool result an event keeps; the transcript holds the rest. */
+export const TOOL_RESULT_CAP = 4_000;
+
+/** The tool a session answers its schema through; the answer is the task's result, not a call. */
+const OUTPUT_TOOL = "StructuredOutput";
 
 type ResultEnvelope = {
   type?: unknown;
@@ -110,22 +128,306 @@ type ResultEnvelope = {
     cache_read_input_tokens?: unknown;
     output_tokens?: unknown;
   };
+  subagent_stats?: { spawned?: unknown };
+  modelUsage?: Record<string, { canonicalModel?: unknown }>;
+};
+
+/** A stream line, or a transcript record: a message with content blocks, stamped when it was written. */
+type StreamLine = {
+  type?: unknown;
+  parent_tool_use_id?: unknown;
+  timestamp?: unknown;
+  message?: {
+    id?: unknown;
+    model?: unknown;
+    content?: unknown;
+    usage?: ResultEnvelope["usage"];
+  };
+};
+
+type ContentBlock = {
+  type?: unknown;
+  id?: unknown;
+  name?: unknown;
+  input?: unknown;
+  tool_use_id?: unknown;
+  content?: unknown;
+  is_error?: unknown;
+  text?: unknown;
 };
 
 const int = (v: unknown): number => (typeof v === "number" ? v : 0);
+const text = (v: unknown): string | null => (typeof v === "string" ? v : null);
 
-/** The session's outcome from the `--output-format json` envelope, or an error naming why there is none. */
-export function parseClaudeCodeResult(stdout: string): SessionOutcome {
-  let envelope: ResultEnvelope;
+/** Every parseable JSON line, in order; a line that is not JSON is skipped. */
+function jsonLines(raw: string): unknown[] {
+  const out: unknown[] = [];
+  for (const line of raw.split("\n")) {
+    if (line.trim() === "") continue;
+    try {
+      out.push(JSON.parse(line));
+    } catch {
+      // Not a message: stderr noise or a partial line from a killed session.
+    }
+  }
+  return out;
+}
+
+/** A tool result's content as text: a string as is, blocks joined with their text and any other block by its type. */
+function resultText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content))
+    return content === undefined ? "" : JSON.stringify(content);
+  return content
+    .map((block: ContentBlock) =>
+      typeof block?.text === "string"
+        ? block.text
+        : `[${String(block?.type ?? "block")}]`,
+    )
+    .join("\n");
+}
+
+const blocksOf = (line: StreamLine): ContentBlock[] =>
+  Array.isArray(line.message?.content)
+    ? (line.message.content as ContentBlock[])
+    : [];
+
+/**
+ * The tool calls in a sequence of messages: each `tool_use` block opens one, and the
+ * `tool_result` block with its id closes it. Lines a subagent wrote into the parent's stream
+ * carry `parent_tool_use_id` and are skipped; the subagent's own transcript is its record.
+ * A call still open at the end (the session was killed) keeps an empty result and no end.
+ */
+function toolCallsOf(lines: readonly StreamLine[]): ToolCall[] {
+  const calls: ToolCall[] = [];
+  const open = new Map<string, ToolCall>();
+  for (const line of lines) {
+    if (line.parent_tool_use_id != null) continue;
+    const at = text(line.timestamp);
+    if (line.type === "assistant")
+      for (const block of blocksOf(line)) {
+        if (block.type !== "tool_use" || typeof block.id !== "string") continue;
+        const name = String(block.name ?? "");
+        if (name === OUTPUT_TOOL) continue;
+        const call: ToolCall = {
+          toolUseId: block.id,
+          tool: name,
+          input: block.input ?? null,
+          result: "",
+          resultChars: 0,
+          isError: false,
+          startedAt: at,
+          endedAt: null,
+          durationMs: null,
+        };
+        calls.push(call);
+        open.set(block.id, call);
+      }
+    if (line.type === "user")
+      for (const block of blocksOf(line)) {
+        if (
+          block.type !== "tool_result" ||
+          typeof block.tool_use_id !== "string"
+        )
+          continue;
+        const call = open.get(block.tool_use_id);
+        if (call === undefined) continue;
+        open.delete(block.tool_use_id);
+        const full = resultText(block.content);
+        call.result = full.slice(0, TOOL_RESULT_CAP);
+        call.resultChars = full.length;
+        call.isError = block.is_error === true;
+        call.endedAt = at;
+        call.durationMs =
+          call.startedAt === null || at === null
+            ? null
+            : Date.parse(at) - Date.parse(call.startedAt);
+      }
+  }
+  return calls;
+}
+
+/**
+ * Where Claude Code keeps a session's record: `<config dir>/projects/<cwd with every
+ * character outside [A-Za-z0-9] as a dash>/<session id>.jsonl`, with each subagent under
+ * `<session id>/subagents/` (verified 2026-09-15 on 2.1.272). The config dir is `~/.claude`
+ * unless `CLAUDE_CONFIG_DIR` moves it.
+ */
+export type TranscriptLocation = { projectsDir: string; cwd: string };
+
+export function claudeCodeProjectsDir(env: NodeJS.ProcessEnv): string {
+  const configDir = env.CLAUDE_CONFIG_DIR;
+  return join(
+    configDir === undefined || configDir === ""
+      ? join(homedir(), ".claude")
+      : configDir,
+    "projects",
+  );
+}
+
+const projectDirName = (cwd: string): string =>
+  cwd.replace(/[^A-Za-z0-9]/g, "-");
+
+function sessionDir(where: TranscriptLocation, sessionId: string): string {
+  return join(where.projectsDir, projectDirName(where.cwd), sessionId);
+}
+
+/** The model id review prices by: the envelope's canonical alias for a transcript's dated snapshot (`claude-haiku-4-5-20251001`), or the snapshot with its date stripped. */
+function canonicalModel(envelope: ResultEnvelope): (model: string) => string {
+  return (model) => {
+    const canonical = envelope.modelUsage?.[model]?.canonicalModel;
+    return typeof canonical === "string"
+      ? canonical
+      : model.replace(/-\d{8}$/, "");
+  };
+}
+
+/** A subagent's record from its transcript: usage summed once per API message (a message's blocks each repeat its usage), tool calls, its meta file's type and spawning call, and when it started. */
+function readSubagent(
+  dir: string,
+  file: string,
+  canonical: (model: string) => string,
+): SubagentRun & { startedAt: string | null } {
+  const path = join(dir, file);
+  const agentId = file.slice("agent-".length, -".jsonl".length);
+  const lines = jsonLines(readFileSync(path, "utf8")) as StreamLine[];
+  const byMessage = new Map<
+    string,
+    NonNullable<StreamLine["message"]>["usage"]
+  >();
+  let model: string | null = null;
+  let first: string | null = null;
+  let last: string | null = null;
+  for (const line of lines) {
+    const at = text(line.timestamp);
+    if (at !== null) {
+      first ??= at;
+      last = at;
+    }
+    if (line.type !== "assistant" || line.message === undefined) continue;
+    model ??= text(line.message.model);
+    if (line.message.usage !== undefined)
+      byMessage.set(
+        String(line.message.id ?? byMessage.size),
+        line.message.usage,
+      );
+  }
+  const sum = { uncached: 0, write: 0, read: 0, output: 0 };
+  for (const u of byMessage.values()) {
+    sum.uncached += int(u?.input_tokens);
+    sum.write += int(u?.cache_creation_input_tokens);
+    sum.read += int(u?.cache_read_input_tokens);
+    sum.output += int(u?.output_tokens);
+  }
+  let meta: { agentType?: unknown; toolUseId?: unknown } = {};
   try {
-    envelope = JSON.parse(stdout) as ResultEnvelope;
+    meta = JSON.parse(
+      readFileSync(join(dir, `agent-${agentId}.meta.json`), "utf8"),
+    );
   } catch {
+    // No meta file: the run is recorded without its type and spawning call.
+  }
+  return {
+    agentId,
+    agentType: text(meta.agentType),
+    model: model === null ? null : canonical(model),
+    toolUseId: text(meta.toolUseId),
+    startedAt: first,
+    usage: Usage.parse({
+      inputTokens: sum.uncached + sum.write + sum.read,
+      uncachedInputTokens: sum.uncached,
+      cacheWriteTokens: sum.write,
+      cacheReadTokens: sum.read,
+      outputTokens: sum.output,
+      seconds:
+        first === null || last === null
+          ? 0
+          : (Date.parse(last) - Date.parse(first)) / 1000,
+    }),
+    toolCalls: toolCallsOf(lines),
+    transcriptPath: path,
+  };
+}
+
+/** Every subagent transcript under the session in spawn order (the first record's timestamp), so a strike team's members read in the order the leader sent them; none when the directory is absent. */
+function readSubagents(
+  where: TranscriptLocation,
+  sessionId: string,
+  canonical: (model: string) => string,
+): SubagentRun[] {
+  const dir = join(sessionDir(where, sessionId), "subagents");
+  let files: string[];
+  try {
+    files = readdirSync(dir);
+  } catch {
+    return [];
+  }
+  return files
+    .filter((f) => f.startsWith("agent-") && f.endsWith(".jsonl"))
+    .map((f) => readSubagent(dir, f, canonical))
+    .sort(
+      (a, b) =>
+        (a.startedAt ?? "").localeCompare(b.startedAt ?? "") ||
+        a.agentId.localeCompare(b.agentId),
+    )
+    .map(({ startedAt: _, ...run }) => run);
+}
+
+/** The session id the stream's init line carries, for a session that never reached its result. */
+function initSessionId(lines: readonly StreamLine[]): string | null {
+  const init = lines.find(
+    (l) =>
+      l.type === "system" && (l as { subtype?: unknown }).subtype === "init",
+  ) as { session_id?: unknown } | undefined;
+  return text(init?.session_id);
+}
+
+/**
+ * The activity of a session that ended without a result (killed on its timeout, or exited
+ * nonzero): the calls it made before, under the session id from the init line, so the log
+ * still shows what it did. Subagents are not read, since the envelope that counts them
+ * never came.
+ */
+export function failedSessionActivity(
+  stdout: string,
+  where?: TranscriptLocation,
+): { sessionId: string | null; activity: SessionActivity } {
+  const lines = jsonLines(stdout) as StreamLine[];
+  const sessionId = initSessionId(lines);
+  return {
+    sessionId,
+    activity: {
+      transcriptPath:
+        sessionId === null || where === undefined
+          ? null
+          : `${sessionDir(where, sessionId)}.jsonl`,
+      toolCalls: toolCallsOf(lines),
+      subagents: [],
+    },
+  };
+}
+
+/**
+ * The session's outcome from its `--output-format stream-json` output: the tool calls read
+ * off the stream, the final `result` envelope parsed as before, and, when the envelope
+ * counts spawned subagents and `where` says where transcripts live, each subagent's run
+ * read from its transcript. Throws, naming why, when there is no usable outcome.
+ */
+export function parseClaudeCodeResult(
+  stdout: string,
+  where?: TranscriptLocation,
+): SessionOutcome {
+  const lines = jsonLines(stdout) as StreamLine[];
+  const envelope = [...lines].reverse().find((l) => l.type === "result") as
+    | ResultEnvelope
+    | undefined;
+  if (envelope === undefined) {
+    const other = lines.at(-1) as ResultEnvelope | undefined;
+    if (other !== undefined)
+      throw new Error(`claude returned a ${String(other.type)} message`);
     throw new Error(`claude returned no JSON result: ${stdout.slice(0, 200)}`);
   }
-  if (envelope.type !== "result")
-    throw new Error(`claude returned a ${String(envelope.type)} message`);
-  const sessionId =
-    typeof envelope.session_id === "string" ? envelope.session_id : null;
+  const sessionId = text(envelope.session_id);
   const u = envelope.usage ?? {};
   const uncachedInputTokens = int(u.input_tokens);
   const cacheWriteTokens = int(u.cache_creation_input_tokens);
@@ -141,21 +443,39 @@ export function parseClaudeCodeResult(stdout: string): SessionOutcome {
       ? { costUsd: envelope.total_cost_usd }
       : {}),
   });
+  const activity: SessionActivity =
+    sessionId === null || where === undefined
+      ? { ...NO_ACTIVITY, toolCalls: toolCallsOf(lines) }
+      : {
+          transcriptPath: `${sessionDir(where, sessionId)}.jsonl`,
+          toolCalls: toolCallsOf(lines),
+          subagents:
+            int(envelope.subagent_stats?.spawned) > 0
+              ? readSubagents(where, sessionId, canonicalModel(envelope))
+              : [],
+        };
   if (envelope.is_error === true || envelope.subtype !== "success")
     throw new SessionError(
       `claude session failed (${String(envelope.subtype)}): ${String(envelope.result)}`,
       sessionId,
       usage,
+      activity,
     );
   if (sessionId === null)
-    throw new SessionError("claude result carries no session id", null, usage);
+    throw new SessionError(
+      "claude result carries no session id",
+      null,
+      usage,
+      activity,
+    );
   if (envelope.structured_output === undefined)
     throw new SessionError(
       "claude result carries no structured output",
       sessionId,
       usage,
+      activity,
     );
-  return { sessionId, output: envelope.structured_output, usage };
+  return { sessionId, output: envelope.structured_output, usage, activity };
 }
 
 function runProcess(
@@ -244,11 +564,22 @@ export function claudeCodeProvider(
         request.timeoutSeconds * 1000,
         { ...process.env, ...env },
       );
-      if (code !== 0)
-        throw new Error(
-          `claude exited ${code === null ? "on a signal" : code}: ${stderr.trim() || stdout.slice(0, 200)}`,
+      // Claude Code names the project directory from its own cwd, which the OS reports resolved.
+      const where: TranscriptLocation = {
+        projectsDir: claudeCodeProjectsDir(env),
+        cwd: realpathSync(request.cwd),
+      };
+      if (code !== 0) {
+        const lastLine = stdout.trim().split("\n").at(-1) ?? "";
+        const failed = failedSessionActivity(stdout, where);
+        throw new SessionError(
+          `claude exited ${code === null ? "on a signal" : code}: ${stderr.trim() || lastLine.slice(0, 200)}`,
+          failed.sessionId,
+          null,
+          failed.activity,
         );
-      return parseClaudeCodeResult(stdout);
+      }
+      return parseClaudeCodeResult(stdout, where);
     },
   };
 }

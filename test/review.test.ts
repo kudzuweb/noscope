@@ -259,6 +259,44 @@ describe("incident review", () => {
         questions: [{ id: "q1", text: "does it happen every time?" }],
       }),
       event(17, "question.answered", { questionId: "q1", answer: "yes" }),
+      // t3's session made two calls and sent one subagent, which made one call of its own.
+      event(18, "tool.called", {
+        taskId: "t3",
+        agentId: null,
+        tool: "Grep",
+        isError: false,
+        durationMs: 1200,
+      }),
+      event(19, "tool.called", {
+        taskId: "t3",
+        agentId: null,
+        tool: "Agent",
+        isError: true,
+        durationMs: 800,
+      }),
+      event(20, "subagent.ran", {
+        taskId: "t3",
+        agentId: "ag1",
+        agentType: "pinger",
+        model: "claude-haiku-4-5",
+        toolUseId: "toolu_2",
+        usage: {
+          inputTokens: 1_000,
+          uncachedInputTokens: 1_000,
+          cacheWriteTokens: 0,
+          cacheReadTokens: 0,
+          outputTokens: 100,
+          seconds: 2,
+        },
+        toolCalls: 1,
+      }),
+      event(21, "tool.called", {
+        taskId: "t3",
+        agentId: "ag1",
+        tool: "Read",
+        isError: false,
+        durationMs: 300,
+      }),
     ];
     const tasks = [
       task("t1", "investigate", "claude-sonnet-5"),
@@ -270,7 +308,7 @@ describe("incident review", () => {
     const lines = renderReview(incident, events, tasks, []);
     const text = lines.join("\n");
     expect(lines[1]).toBe(
-      "2 cycle(s) from 2026-09-13T13:01:00.000Z to 2026-09-13T13:17:00.000Z (16.0 min), 17 events",
+      "2 cycle(s) from 2026-09-13T13:01:00.000Z to 2026-09-13T13:21:00.000Z (20.0 min), 21 events",
     );
     expect(text).toContain(
       "cycle 1  2026-09-13T13:01:00.000Z  rejected on 1 rule line(s)",
@@ -301,6 +339,14 @@ describe("incident review", () => {
     expect(text).toContain(
       "t3 investigate some-other-model: in 1,000,000  out 10,000  60.0 s  $1.00  completed  claims 1 asserted (1 inferred)  session s-t3",
     );
+    expect(text).toContain(
+      "    2 tool call(s) (Grep 1, Agent 1), 1 error(s), 2.0 s in tools",
+    );
+    // The subagent's usage is a breakdown, priced on its own model and never added to t3's.
+    expect(text).toContain(
+      "    subagent ag1 pinger claude-haiku-4-5: in 1,000 (uncached 1,000 / write 0 / read 0)  out 100  2.0 s  est $0.00  1 tool call(s) (Read 1), 0.3 s in tools",
+    );
+    expect(text).toContain("tool calls: 3 (1 by subagents), subagents: 1");
     expect(text).toContain(
       "  t4 grep: failed before running: left running by a pass that did not finish",
     );
