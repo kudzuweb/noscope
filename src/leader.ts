@@ -68,13 +68,14 @@ discrepancy is for one thing only: the update you received describes a different
  * a not_met report is information for its decision; a discrepancy it cannot reconcile goes
  * to Mauria; the situation stays the planner's. Fixed at the root session's first call.
  */
-export const IC_ROLE = `Your role: Incident Commander, leader of command, the root unit, and Mauria's delegate on this incident. You scope the incident, break it down, equip it and judge what comes back. You do not dig: a fact is retrieved by a task under a unit, never by you, so what you want known becomes a period objective for the planner to task. Your tools are for a task assigned under command, not for your turns: a session with tools is tempted to keep reading instead of deciding, and a turn is decided from the file in front of you.
+export const IC_ROLE = `Your role: Incident Commander, leader of command, the root unit, and Mauria's delegate on this incident. You scope the incident, break it down, equip it and judge what comes back. You do not dig: a fact is retrieved by a task under a unit, never with your own tools, so what you want known becomes a period objective for the planner to task. Your tools are for a task assigned under command, not for your turns: a session with tools is tempted to keep reading instead of deciding, and a turn is decided from the file in front of you.
 
 Each operational period opens with a change report and the incident file, and you answer with a command turn: the period's objectives (what this period must establish, from the incident objective, the constraints, the priorities and the units' reports), the priorities restated or revised, the units to close, answers, and what only Mauria can supply: a question for what only she knows or may decide, a capability request for means that do not exist yet, a grant request for permission. answers is for the resource requests your change report lists, and nothing else; a report's why or suggestion is answered through the period objectives. Set incidentStatus to satisfied only when the period objectives and the incident objective are met by the units' reports, resting on observed claims; satisfied is refused while any task is still open or before any claim is observed, so when a task is left, continue and let the planner cancel or finish it. failed when the objectives cannot be met; blocked when you have raised something for Mauria; continue otherwise. A unit's not_met report, with its why and suggestion, is information for your decision and never a decision: you decide what happens to that unit and its objective, and you may close it, re-task it through the period objectives, or ask Mauria.
 
 When the status is continue, the planner drafts an action plan against your objectives and you review it once: approve it as drafted; correct it, with text the planner redrafts against, once; or amend it, returning the whole plan as you want it applied. After a redraft you approve or amend, never correct again. The situation in the plan is the planner's; leave it as written unless you amend the plan, and then carry it over. The plan's rationale names the priority that chose between plans; hold the draft to that and to the period objectives, not to your taste.
 
-A period ends when the units have reported or when one report changes the picture; you are never consulted per task. A task under command runs under you as under any leader, and after it you continue or report the same way: report what changed, not what you did. You assign tasks under command like any leader (assignTasks, under the same rules): a retrievable fact a task under command lacked is yours to get that way, and the other three kinds of lack you raise in your command turn, not as a leader's resource requests.
+A period ends when the units have reported or when one report changes the picture; you are never consulted per task. A task under command runs under you as under any leader, and after it you continue or report the same way: report what changed, not what you did. You assign tasks under command like any leader (assignTasks): a retrievable fact a task under command lacked is yours to get that way, and the other three kinds of lack you raise in your command turn, never as a leader's resource requests, which are refused on command. Assignments are checked by the validator's rules on tasks and by these:
+${LEADER_RULES.map((r) => `- ${r}`).join("\n")}
 
 discrepancy is for one thing only: the update you received describes a different problem from the one you have been commanding, as if you believed you were fighting a fire and the update describes a hurricane. Say what differs. A discrepancy raised below you that the incident file cannot reconcile becomes a question for Mauria in your command turn. A different detail, a wrong line number, a claim you disagree with, is not a discrepancy.`;
 
@@ -221,7 +222,6 @@ export function resumedUnits(
   );
 }
 
-/** One line per request a unit's leader raised, as `incident show`, the tree and the planner read them. */
 /** One request a unit still waits on: its kind, the text the IC answers it by (`request` on a `ResourceAnswer`), why, and for a question its id. */
 export type OpenRequest = {
   unitId: string;
@@ -512,7 +512,7 @@ export function renderTurnPrompt(
   if (rejections.length > 0)
     came.push(
       "",
-      "Your last assignment was refused by the validator and nothing from it was created:",
+      "Refused on your last turn, and nothing from it was created or raised:",
       ...rejections.map((r) => `  - ${r}`),
     );
   return [

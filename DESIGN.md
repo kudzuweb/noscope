@@ -452,11 +452,12 @@ No seat is without a way to get what it lacks, and each kind of lack has its own
 A lack is resolved by the nearest seat that can (ruled 2026-09-15, R3-6): a task's
 `insufficient` goes to its unit's leader, never to the planner, and the leader resolves a
 retrievable fact itself and sends the other three kinds up; the IC, leader of command,
-assigns under command the same way and raises the other three kinds in its command turn.
+assigns under command the same way and raises the other three kinds in its command turn;
+a resource request on the IC's own leader turn is refused, so command never waits.
 
 | The lack | The IC's and the planner's channel | Who resolves it for them | At a unit's leader |
 |---|---|---|---|
-| A fact a registered capability can retrieve, from the machine or anything its equipment reaches. | A task. | The runtime, next cycle. | The leader itself: `assignTasks` on its turn, tasks under its own unit to capabilities the unit holds, inside the unit's share, checked by the validator (Step 5) and run in the same pass. |
+| A fact a registered capability can retrieve, from the machine or anything its equipment reaches. | A task. | The runtime, next cycle. | The leader itself: `assignTasks` on its turn, tasks under its own unit to capabilities the unit holds, inside the unit's share, checked by the validator (Step 5) and run in this pass on a continue, next pass on a report. |
 | Permission for a capability that writes. | A grant request. | Mauria, with `incident grant`. After v0. | A `permission` resource request on the leader's report, recorded as `grant.requested` naming the unit; the unit waits until a grant exists, which is after v0, as the planner's request holds the incident. In v0 nothing answers it, so a unit that raised one stays `waiting` after its other requests are answered, until a plan closes it. |
 | The means: equipment or a capability that does not exist yet, stated as what it would need and why. | A capability request. | Mauria, by registering it and answering the request with `incident provide`, which returns the incident to `open` once nothing else waits; after v0 the planner itself when the missing equipment is an external MCP server it can declare. A capability request is also the runtime telling her what to build next. | A `missing_means` resource request on the report, recorded as a capability request naming the unit; `incident provide` answers it and returns the unit to `active` once nothing of the unit's is open. |
 | Something only a human knows or may decide. | A question for a human. | Mauria, with `incident answer`. | A `human_knowledge` resource request on the report, recorded as a question naming the unit; `incident answer` answers it and returns the unit to `active` once nothing of the unit's is open. |
@@ -531,11 +532,15 @@ unit's id, so the IC's next change report opens with it before the next unit run
 the leader does about each kind (R3-6). Either move may carry `assignTasks`: after the turn
 is recorded the assignments are validated (Step 5) and applied under the unit as
 `plan.applied` with the actor `leader`, the unit and session named, and the task ids, and
-the ready ones run in the same pass; a refused assignment creates nothing and its reasons
-open the leader's next prompt. A report may carry `resourceRequests` (`permission`,
+the ready ones run in this pass on a continue and next pass on a report, which ends the
+unit's pass; a refused assignment creates nothing and its reasons open the leader's next
+prompt. A report may carry `resourceRequests` (`permission`,
 `missing_means`, `human_knowledge`, each with what and why): it is forced `pictureChanged`,
 each request is raised as Step 4 says, and the unit enters `waiting`; a waiting unit is
-skipped by dispatch, keeps its pending tasks, and is not asked for a report. The turn's
+skipped by dispatch, keeps its pending tasks, and is not asked for a report. The root unit
+never waits: a request on the IC's leader turn is refused (`plan.rejected` by the actor
+`leader`, rule "Resource requests"), read into its next prompt and its change report, and
+the IC raises what it lacks in the command turn that follows. The turn's
 record, its assignments (validated first, while the unit is still active) and its requests
 land in one transaction, so a crash can never leave a recorded report whose requests were
 not raised. `unit.waiting` carries the unit, its session and the `requests` as the leader

@@ -9,6 +9,7 @@ import {
   holdsCapability,
   LEADER_ACTOR,
   LEADER_RULES,
+  openRequests,
   requestTargetOf,
   unitShare,
   unitsOwingReport,
@@ -893,15 +894,31 @@ export function validateCommand(
           reason: `unit ${a.unitId} is ${unit.status}, not waiting on a request`,
         },
       ];
-    return requestTargetOf(ctx.incident, a.unitId, a.request) === null
-      ? [
-          {
-            rule: "Answers match",
-            reason: `unit ${a.unitId} raised no open request "${a.request}"`,
-          },
-        ]
-      : [];
+    if (requestTargetOf(ctx.incident, a.unitId, a.request) !== null) return [];
+    const permission = openRequests(ctx.incident, ctx.events).some(
+      (r) =>
+        r.unitId === a.unitId &&
+        r.kind === "permission" &&
+        r.request === a.request,
+    );
+    return [
+      {
+        rule: "Answers match",
+        reason: permission
+          ? `"${a.request}" of unit ${a.unitId} is a permission request, which only a grant answers`
+          : `unit ${a.unitId} raised no open request "${a.request}"`,
+      },
+    ];
   });
+  for (const key of repeated(
+    turn.answers.map((a) => `${a.unitId}\n${a.request}`),
+  )) {
+    const [unitId, request] = key.split("\n");
+    answers.push({
+      rule: "Answers match",
+      reason: `unit ${unitId}'s request "${request}" is answered twice`,
+    });
+  }
   const asPlan: ActionPlan = {
     createUnits: [],
     closeUnits: turn.closeUnits,

@@ -894,6 +894,7 @@ describe("the IC above the planner", () => {
       [
         { kind: "human_knowledge", what: "which file", why: "two match" },
         { kind: "missing_means", what: "a browser", why: "to watch it" },
+        { kind: "permission", what: "rm", why: "to clean up" },
       ],
       "dispatcher",
     );
@@ -911,6 +912,7 @@ describe("the IC above the planner", () => {
       "resource requests:",
       '  - u-a (waiting) asks human_knowledge, request "which file (two match)"',
       '  - u-a (waiting) asks missing_means, request "a browser": to watch it',
+      '  - u-a (waiting) asks permission, request "rm": to clean up; only a grant answers it',
     ]);
     const ctx = () => validationContext(store, incident(), [fakeProvider]);
     expect(
@@ -929,6 +931,21 @@ describe("the IC above the planner", () => {
       ["Answers match", 'unit u-a raised no open request "which file"'],
       ["Answers match", "no unit u-none to answer"],
     ]);
+    expect(
+      validateCommand(
+        command({
+          answers: [
+            { unitId: "u-a", request: "which file (two match)", answer: "x" },
+            { unitId: "u-a", request: "which file (two match)", answer: "y" },
+            { unitId: "u-a", request: "rm", answer: "go ahead" },
+          ],
+        }),
+        ctx(),
+      ).map((r) => r.reason),
+    ).toEqual([
+      '"rm" of unit u-a is a permission request, which only a grant answers',
+      'unit u-a\'s request "which file (two match)" is answered twice',
+    ]);
     const good = command({
       answers: [
         {
@@ -941,7 +958,12 @@ describe("the IC above the planner", () => {
     expect(validateCommand(good, ctx())).toEqual([]);
     const commanded = applyCommand(store, { id: "i1" }, good, 1, {});
     expect(commanded.answered.map((a) => [a.question?.answer, a.unit])).toEqual(
-      [["the second", { id: "u-a", resumed: false, stillOpen: 1 }]],
+      [
+        [
+          "the second",
+          { id: "u-a", status: "waiting", resumed: false, stillOpen: 2 },
+        ],
+      ],
     );
     expect(store.listUnits("i1").find((u) => u.id === "u-a")?.status).toBe(
       "waiting",
@@ -957,20 +979,18 @@ describe("the IC above the planner", () => {
       2,
       {},
     );
+    // The permission request holds the unit: nothing answers it in v0.
     expect(rest.answered[0]?.unit).toEqual({
       id: "u-a",
-      resumed: true,
-      stillOpen: 0,
+      status: "waiting",
+      resumed: false,
+      stillOpen: 1,
     });
     expect(store.listUnits("i1").find((u) => u.id === "u-a")?.status).toBe(
-      "active",
+      "waiting",
     );
     const types = store.listEvents("i1").map((e) => e.type);
-    expect(types.slice(-3)).toEqual([
-      "command.turned",
-      "capability.answered",
-      "unit.resumed",
-    ]);
+    expect(types.slice(-2)).toEqual(["command.turned", "capability.answered"]);
     expect(incident().status).toBe("open");
     store.close();
   });

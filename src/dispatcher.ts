@@ -470,9 +470,12 @@ async function leaderTurn(
   }
   // A report that asks for something the unit cannot get itself changes the picture by
   // definition: the IC must see the unit waiting before the next unit runs. The schema
-  // refuses a report on a continue turn, so a request never rides on one.
+  // refuses a report on a continue turn, so a request never rides on one. The root unit
+  // never waits: the IC raises what it lacks in the command turn that follows, so a
+  // request on its leader turn is refused and read back into its next prompt.
   const requests =
     turn.kind === "report" ? (turn.report?.resourceRequests ?? []) : [];
+  const refusedAtRoot = unit.parentId === null && requests.length > 0;
   if (turn.report !== null && requests.length > 0)
     turn = { ...turn, report: { ...turn.report, pictureChanged: true } };
   const sessionId = outcome.sessionId;
@@ -542,7 +545,13 @@ async function leaderTurn(
       if (verdict.ok)
         assigned = applyLeaderTasks(store, incident, current, proposals).length;
     }
-    if (requests.length > 0)
+    if (refusedAtRoot)
+      store.record(incident.id, "plan.rejected", LEADER_ACTOR, {
+        rule: "Resource requests",
+        reason: `command raises what it lacks in its command turn, not as a leader's resource requests; nothing was raised for: ${requests.map((r) => `${r.kind}: ${r.what}`).join("; ")}`,
+        unitId: unit.id,
+      });
+    else if (requests.length > 0)
       raiseResourceRequests(store, incident, current, requests, actor);
   });
   return { turn, sessionId, unit: current, assigned };

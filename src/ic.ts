@@ -154,6 +154,14 @@ export function renderChangeReport(
   const rejected = recent
     .filter((e) => e.type === "command.rejected")
     .map((e) => `${str(e.payload.rule)}: ${str(e.payload.reason)}`);
+  const refusedUnderCommand = recent
+    .filter(
+      (e) =>
+        e.type === "plan.rejected" &&
+        e.actor === "leader" &&
+        units.some((u) => u.parentId === null && u.id === e.payload.unitId),
+    )
+    .map((e) => `${str(e.payload.rule)}: ${str(e.payload.reason)}`);
   const spend = spendSince(events, since);
   return [
     changeReportHeading(last),
@@ -173,6 +181,12 @@ export function renderChangeReport(
     ...(rejected.length === 0
       ? []
       : ["your last command turn was rejected on:", ...bullets(rejected)]),
+    ...(refusedUnderCommand.length === 0
+      ? []
+      : [
+          "refused on your last leader turn under command:",
+          ...bullets(refusedUnderCommand),
+        ]),
     `spend since then: tokens ${spend.inputTokens + spend.outputTokens}, seconds ${spend.seconds.toFixed(1)}${spend.costUsd === undefined ? "" : `, cost $${spend.costUsd.toFixed(2)} at list price`}`,
   ];
 }

@@ -561,8 +561,13 @@ async function cycle(
     ctx.io.out(
       `  unit ${r.unitId} reported ${r.report.outcome}${r.report.pictureChanged ? ", picture changed" : ""}: ${r.report.changed.map((c) => c.what).join("; ") || "nothing changed"}${r.report.why === undefined ? "" : `; why: ${r.report.why}`}${r.report.suggestion === undefined ? "" : `; suggestion: ${r.report.suggestion}`}`,
     );
+    const root = r.unitId === `${incident.id}-command`;
     for (const q of r.report.resourceRequests ?? [])
-      ctx.io.out(`    waits on ${q.kind}: ${q.what} (${q.why})`);
+      ctx.io.out(
+        root
+          ? `    asked for ${q.kind}: ${q.what} (${q.why}); refused, command raises it in its command turn`
+          : `    waits on ${q.kind}: ${q.what} (${q.why})`,
+      );
   }
   for (const e of store.listEvents(incident.id).slice(before)) {
     if (e.type === "plan.applied" && e.actor === "leader")
@@ -708,9 +713,12 @@ export const run: Handler = async (args, ctx) => {
 };
 
 /**
- * Answer the planner's oldest open question (DESIGN.md Step 7): the answer is stored on the
- * question, where the planner's next input reads it, `question.answered` is written, and
- * the incident returns to `open` once no question is waiting.
+ * Answer the oldest open question, the IC's, the planner's or a unit leader's (DESIGN.md
+ * Step 7), through `answerRequest`: the answer is stored on the question, where the next
+ * briefing reads it; a unit's question answered returns the unit to `active` once nothing
+ * of its is open; the incident returns to `open` when a command turn or a plan had blocked
+ * it and nothing of theirs still waits. A closed unit's question is skipped: nobody reads
+ * its answer.
  */
 export const answer: Handler = async (args, ctx) => {
   const store = openStore(ctx);
@@ -730,7 +738,12 @@ export const answer: Handler = async (args, ctx) => {
       );
       return EXIT.usage;
     }
-    const open = incident.questions.find((q) => q.answer === undefined);
+    const closed = closedUnits(store, incident.id);
+    const open = incident.questions.find(
+      (q) =>
+        q.answer === undefined &&
+        (q.unitId === undefined || !closed.has(q.unitId)),
+    );
     if (open === undefined) {
       ctx.io.err(
         `noscope incident answer: incident ${incident.id} has no question waiting${incident.status === "blocked" ? "; it is blocked on a capability or grant request" : ""}`,
@@ -781,8 +794,11 @@ export const provide: Handler = async (args, ctx) => {
       );
       return EXIT.usage;
     }
+    const closed = closedUnits(store, incident.id);
     const index = incident.capabilityRequests.findIndex(
-      (r) => r.answer === undefined,
+      (r) =>
+        r.answer === undefined &&
+        (r.unitId === undefined || !closed.has(r.unitId)),
     );
     const open = incident.capabilityRequests[index];
     if (open === undefined) {
@@ -850,11 +866,23 @@ function describeAnswered(
   }
   if (answered.unit !== null)
     lines.push(
-      answered.unit.resumed
-        ? `unit ${answered.unit.id} is active again`
-        : `unit ${answered.unit.id} still waits on ${answered.unit.stillOpen} request(s)`,
+      answered.unit.status === "closed"
+        ? `unit ${answered.unit.id} is closed`
+        : answered.unit.resumed
+          ? `unit ${answered.unit.id} is active again`
+          : `unit ${answered.unit.id} still waits on ${answered.unit.stillOpen} request(s)`,
     );
   return lines;
+}
+
+/** The ids of the incident's closed units, whose open questions and requests `answer` and `provide` pass over. */
+function closedUnits(store: Store, incidentId: string): Set<string> {
+  return new Set(
+    store
+      .listUnits(incidentId)
+      .filter((u) => u.status === "closed")
+      .map((u) => u.id),
+  );
 }
 
 export const review: Handler = async (args, ctx) => {

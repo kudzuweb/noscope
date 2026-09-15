@@ -1472,7 +1472,7 @@ pending tasks stay pending and it owes no report. `incident answer` and `inciden
 answer the oldest open question or request whichever seat raised it; when it named a unit and
 nothing of that unit's is still open (`openRequestsByUnit`), the unit returns to `active`
 (`unit.resumed`); the incident returns to `open` only when a plan had blocked it and nothing
-of the planner's still waits (`holdsOn` and `pendingGrantRequests` count the planner's only).
+of the planner's still waits (`holdsOn` counts the planner's only).
 The next pass opens a resumed unit (`resumedUnits`: `unit.resumed` after the unit's last
 turn) with a turn carrying every answer to its requests (`answeredRequestsOf`) before any
 task runs. `incident show` marks each question and request with the unit that raised it and
@@ -1540,8 +1540,18 @@ Not exactly to spec, with reasons:
   unit then owes one), and the refusal is rendered into the leader's next turn, which is
   what a `plan.rejected` is for the planner.
 - `assignTasks` on a `report` turn is applied too, but the unit's pass has ended, so the
-  tasks run next pass; the description says assignments run in this pass, which is true of
-  a `continue`.
+  tasks run next pass; the description and DESIGN.md say so.
+- The root unit never enters `waiting` from a leader turn (second review): a resource
+  request on the IC's leader-turn report is refused as `plan.rejected` by the actor `leader`
+  with the rule "Resource requests", read into its next leader prompt and listed in its
+  change report under "refused on your last leader turn under command", and the report is
+  still picture-changing so the command turn that raises the lack follows at once.
+- "Answers match" also refuses an answer given twice for one unit and request, and names a
+  permission request as one only a grant answers, so an IC slip is a `command.rejected`
+  rather than a crash inside the command turn's transaction.
+- `incident answer` and `incident provide` pass over a closed unit's open questions and
+  requests, since nothing reads their answers; the command says "unit X is closed" when an
+  answer lands on one through the IC.
 - A `permission` request holds its unit until a grant exists, which is after v0, the way
   the planner's grant request holds the incident; `openRequestsByUnit` counts every
   `grant.requested` with a `unitId` as open.
@@ -1558,7 +1568,7 @@ Not exactly to spec, with reasons:
   `lastCycleSequence`, the planner's section 9, the review's cycle verdict, `incident show`'s
   decisions) skips them, since a leader's apply mid-pass is not a cycle boundary.
 - `unit.waiting` and `unit.resumed` are new event types, not named in the plan block, because
-  a status change needs an event carrying its mutation; `user_version` stays 4, since no
+  a status change needs an event carrying its mutation; `user_version` stays 6, since no
   column changes.
 - The `unit.close` mutation now closes any unit not already closed, so a plan can demobilize
   a waiting unit ("Closing is clean" only refuses an already closed one); "Units exist"

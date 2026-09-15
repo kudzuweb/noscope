@@ -478,7 +478,7 @@ const LeaderReportFields = z.object({
     .array(ResourceRequest)
     .optional()
     .describe(
-      "What you lack and cannot get inside your unit: permission, missing means, or something only a human knows; never a retrievable fact, which you assign a task for. Any request puts your unit in waiting until Mauria answers, and the report counts as picture-changing",
+      "What you lack and cannot get inside your unit: permission, missing means, or something only a human knows; never a retrievable fact, which you assign a task for. Any request puts your unit in waiting until the IC or Mauria answers, and the report counts as picture-changing; under command none is raised, since the IC raises its lacks in its command turn",
     ),
 });
 
@@ -505,7 +505,7 @@ const TurnFields = {
     .array(TaskProposal)
     .optional()
     .describe(
-      "Tasks to assign under your own unit, to capabilities your unit holds, inside your unit's budget: how you get a retrievable fact yourself, without waiting for the next plan. Each names your unit id as its unit; a strike team for one of them goes in that task's own strikeTeam field. They are checked by the validator's rules and run in this pass",
+      "Tasks to assign under your own unit, to capabilities your unit holds, inside your unit's budget: how you get a retrievable fact yourself, without waiting for the next plan. Each names your unit id as its unit; a strike team for one of them goes in that task's own strikeTeam field. They are checked by the validator's rules and run in this pass on a continue, next pass on a report",
     ),
   requestStrikeTeam: z
     .array(StrikeTeam)

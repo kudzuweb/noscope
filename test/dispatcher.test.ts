@@ -7,6 +7,7 @@ import { getCapability } from "../src/capabilities/index.js";
 import { defineCapability } from "../src/capabilities/registry.js";
 import { EXIT, run } from "../src/cli.js";
 import { dispatch } from "../src/dispatcher.js";
+import { renderChangeReport } from "../src/ic.js";
 import {
   answeredRequestsOf,
   runsInsideLeader,
@@ -1645,7 +1646,7 @@ describe("dispatcher, lacks at the leader", () => {
     const calls = readCalls(env.NOSCOPE_STUB_CALLS as string);
     expect(calls).toHaveLength(2);
     expect(calls[1]?.prompt).toContain(
-      'Your last assignment was refused by the validator and nothing from it was created:\n  - Own unit: task "elsewhere" is under u-other, not the leader\'s own unit i1-command',
+      'Refused on your last turn, and nothing from it was created or raised:\n  - Own unit: task "elsewhere" is under u-other, not the leader\'s own unit i1-command',
     );
     store.close();
   });
@@ -1784,10 +1785,12 @@ describe("dispatcher, lacks at the leader", () => {
     const dir = scratch();
     const db = join(dir, "db.sqlite");
     const store = new Store(db);
-    const { incident, task } = scriptedIncident(store);
+    const { incident, task, addUnit } = scriptedIncident(store);
+    addUnit({ id: "u-a", objective: "the first half" });
     task({
       id: "t-grep",
       capability: "grep",
+      unitId: "u-a",
       inputs: { root: ".", pattern: "delete" },
       status: "ready",
     });
@@ -1818,9 +1821,9 @@ describe("dispatcher, lacks at the leader", () => {
       env: { NOSCOPE_CLAUDE_BIN: stub, ...env },
     });
     expect(store.getIncident("i1")?.capabilityRequests).toEqual([
-      { need: "a browser", why: "to watch the scroll", unitId: "i1-command" },
+      { need: "a browser", why: "to watch the scroll", unitId: "u-a" },
     ]);
-    expect(store.listUnits("i1")[0]?.status).toBe("waiting");
+    expect(store.listUnits("i1")[1]?.status).toBe("waiting");
     const out: string[] = [];
     const ctx = {
       io: { out: (l: string) => out.push(l), err: (l: string) => out.push(l) },
@@ -1830,22 +1833,36 @@ describe("dispatcher, lacks at the leader", () => {
     expect(
       await run(["incident", "provide", "i1", "playwright is registered"], ctx),
     ).toBe(EXIT.ok);
-    expect(out.at(-1)).toBe("unit i1-command still waits on 1 request(s)");
-    expect(store.listUnits("i1")[0]?.status).toBe("waiting");
+    expect(out.at(-1)).toBe("unit u-a still waits on 1 request(s)");
+    expect(store.listUnits("i1")[1]?.status).toBe("waiting");
     out.length = 0;
     expect(await run(["incident", "show", "i1"], ctx)).toBe(EXIT.ok);
     expect(out.join("\n")).toContain(
-      "units waiting on a resource request:\n  - i1-command: command: where deletion moves the scroll position\n      human_knowledge: the expected position (not stated) (question i1-q01)",
+      "units waiting on a resource request:\n  - u-a: the first half\n      human_knowledge: the expected position (not stated) (question i1-q01)",
     );
     out.length = 0;
     expect(await run(["incident", "tree", "i1"], ctx)).toBe(EXIT.ok);
-    expect(out[1]).toContain(
-      "i1-command [waiting] command: where deletion moves the scroll position (leader claude-code/claude-haiku-4-5; last report: progress; waiting on: human_knowledge: the expected position (not stated) (question i1-q01))",
+    expect(out[2]).toContain(
+      "u-a [waiting] the first half (leader claude-code/claude-haiku-4-5; last report: progress; waiting on: human_knowledge: the expected position (not stated) (question i1-q01))",
     );
     expect(await run(["incident", "answer", "i1", "the top"], ctx)).toBe(
       EXIT.ok,
     );
-    expect(store.listUnits("i1")[0]?.status).toBe("active");
+    expect(store.listUnits("i1")[1]?.status).toBe("active");
+    // A closed unit's open question is passed over: nothing reads its answer.
+    raiseResourceRequests(
+      store,
+      { id: "i1" },
+      { id: "u-a", sessionId: "s-a" },
+      [{ kind: "human_knowledge", what: "still?", why: "asked again" }],
+      "dispatcher",
+    );
+    store.closeUnit("i1", "u-a", "demobilized while waiting", "runtime");
+    out.length = 0;
+    expect(await run(["incident", "answer", "i1", "nobody asked"], ctx)).toBe(
+      EXIT.cannotProceed,
+    );
+    expect(out.at(-1)).toMatch(/has no question waiting/);
     store.close();
   });
 
@@ -1886,10 +1903,12 @@ describe("dispatcher, lacks at the leader", () => {
 
   it("a report that both assigns and asks has its assignment applied before the unit waits, in the turn's transaction, and a crash inside it rolls the report back", async () => {
     const store = new Store(":memory:");
-    const { incident, task } = scriptedIncident(store);
+    const { incident, task, addUnit } = scriptedIncident(store);
+    addUnit({ id: "u-a", objective: "the first half" });
     task({
       id: "t-grep",
       capability: "grep",
+      unitId: "u-a",
       inputs: { root: ".", pattern: "delete" },
       status: "ready",
     });
@@ -1903,7 +1922,9 @@ describe("dispatcher, lacks at the leader", () => {
           { kind: "human_knowledge", what: "which file", why: "two match" },
         ],
       },
-      assignTasks: [grepProposal({ inputs: { root: ".", pattern: "scroll" } })],
+      assignTasks: [
+        grepProposal({ unit: "u-a", inputs: { root: ".", pattern: "scroll" } }),
+      ],
     });
     // First, the crash: the unit cannot be set waiting, so the whole turn is rolled back.
     const setUnitStatus = store.setUnitStatus.bind(store);
@@ -1927,7 +1948,7 @@ describe("dispatcher, lacks at the leader", () => {
       "leader.started",
     ])
       expect(types).not.toContain(type);
-    expect(store.listUnits("i1")[0]).toMatchObject({
+    expect(store.listUnits("i1")[1]).toMatchObject({
       status: "active",
       sessionId: null,
     });
@@ -1941,7 +1962,7 @@ describe("dispatcher, lacks at the leader", () => {
       delete process.env.NOSCOPE_STUB_TURN;
     }
     expect(dispatched.ran).toEqual([]);
-    expect(dispatched.pictureChanged).toBe("i1-command");
+    expect(dispatched.pictureChanged).toBe("u-a");
     expect(
       store.listEvents("i1").filter((e) => e.type === "plan.rejected"),
     ).toEqual([]);
@@ -1949,7 +1970,7 @@ describe("dispatcher, lacks at the leader", () => {
       ["t-grep", "completed"],
       ["i1-t02", "ready"],
     ]);
-    expect(store.listUnits("i1")[0]?.status).toBe("waiting");
+    expect(store.listUnits("i1")[1]?.status).toBe("waiting");
     expect(
       store
         .listEvents("i1")
@@ -1962,6 +1983,81 @@ describe("dispatcher, lacks at the leader", () => {
       "question.asked",
       "unit.waiting",
     ]);
+    store.close();
+  });
+
+  it("the root unit never waits from a leader turn: a request on its report is refused, read into its next prompt and the IC's change report, and the IC raises it in its command turn", async () => {
+    const store = new Store(":memory:");
+    const { incident, task } = scriptedIncident(store);
+    task({
+      id: "t-grep",
+      capability: "grep",
+      inputs: { root: ".", pattern: "delete" },
+      status: "ready",
+    });
+    task({
+      id: "t-grep2",
+      capability: "grep",
+      inputs: { root: ".", pattern: "scroll" },
+      status: "ready",
+    });
+    const dir = scratch();
+    const env = scripted(dir, {
+      NOSCOPE_STUB_TURNS: JSON.stringify([
+        {
+          kind: "report",
+          report: {
+            outcome: "progress",
+            changed: [],
+            pictureChanged: false,
+            resourceRequests: [
+              { kind: "human_knowledge", what: "which file", why: "two match" },
+            ],
+          },
+        },
+        { kind: "continue", report: null },
+        {
+          kind: "report",
+          report: { outcome: "progress", changed: [], pictureChanged: false },
+        },
+      ]),
+    });
+    const first = await dispatch(store, incident, {
+      cwd: tree,
+      env: { NOSCOPE_CLAUDE_BIN: stub, ...env },
+    });
+    expect(first.pictureChanged).toBe("i1-command");
+    expect(store.listUnits("i1")[0]?.status).toBe("active");
+    expect(store.getIncident("i1")?.questions).toEqual([]);
+    const refused = store
+      .listEvents("i1")
+      .filter((e) => e.type === "plan.rejected");
+    expect(
+      refused.map((e) => [e.actor, e.payload.rule, e.payload.unitId]),
+    ).toEqual([["leader", "Resource requests", "i1-command"]]);
+    expect(refused[0]?.payload.reason).toBe(
+      "command raises what it lacks in its command turn, not as a leader's resource requests; nothing was raised for: human_knowledge: which file",
+    );
+    expect(store.listEvents("i1").map((e) => e.type)).not.toContain(
+      "unit.waiting",
+    );
+    expect(
+      renderChangeReport(
+        store.listEvents("i1"),
+        incident,
+        store.listUnits("i1"),
+      ),
+    ).toContain("refused on your last leader turn under command:");
+    // The next pass runs the remaining task and the turn's prompt carries the refusal.
+    const second = await dispatch(store, incident, {
+      cwd: tree,
+      env: { NOSCOPE_CLAUDE_BIN: stub, ...env },
+    });
+    expect(second.ran.map((r) => r.taskId)).toEqual(["t-grep2"]);
+    const calls = readCalls(env.NOSCOPE_STUB_CALLS as string);
+    expect(calls[1]?.prompt).toContain(
+      "Refused on your last turn, and nothing from it was created or raised:\n  - Resource requests: command raises what it lacks",
+    );
     store.close();
   });
 

@@ -17,6 +17,7 @@ import type {
   Task,
   TaskProposal,
   Unit,
+  UnitStatus,
 } from "./models.js";
 import { now, type Store } from "./store.js";
 import { stable } from "./validator.js";
@@ -335,7 +336,12 @@ export type Answered = {
   question: Question | null;
   request: CapabilityRequest | null;
   reopened: boolean;
-  unit: { id: string; resumed: boolean; stillOpen: number } | null;
+  unit: {
+    id: string;
+    status: UnitStatus | "unknown";
+    resumed: boolean;
+    stillOpen: number;
+  } | null;
 };
 
 /**
@@ -483,7 +489,10 @@ export function answerRequest(
     question,
     request,
     reopened,
-    unit: unitId === undefined ? null : { id: unitId, resumed, stillOpen },
+    unit:
+      unitId === undefined
+        ? null
+        : { id: unitId, status: unit?.status ?? "unknown", resumed, stillOpen },
   };
 }
 
