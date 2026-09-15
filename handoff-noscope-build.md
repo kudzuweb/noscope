@@ -42,66 +42,34 @@ builder is most likely to widen by accident:
 | "Leader" for unit heads, "IC" for the root's; "chief" is an ICS Section Chief and is not used. | "Chief" or "commander" for a unit's session. |
 | No second incident of another kind this round. | An R3-10 second half. |
 
-## 3. STATE (as of this refresh, 2026-09-15 05:15 CDT)
+## 3. STATE (as of this refresh, 2026-09-15 06:40 CDT: the round is done)
 
-Origin main is `b1573cc`, pushed; local main equals it; clean; no worktrees; no open PRs;
-`dist/` built from it. Ten of eleven merged tonight, in this order: R3-0 (#28), R3-2 (#30),
-R3-3 (#29), R3-1 (#31), R3-4 (#32), R3-5 (#35), R3-7 (#33), R3-6 (#34), R3-8 (#37), R3-9
-(#36). Each carries its build-record entry and its reviews' findings. What remains is R3-10,
-the third live run of the first incident, and then the two write-ups (the run's, and
-Mauria's instructions-only analysis of this session).
+Origin main is `865dc7b`, pushed; local main equals it; clean; no worktrees; no open PRs;
+`dist/` built from it. Round 3 is built and run: eleven plan PRs (28 to 37, R3-9 as #36)
+plus two the run forced (#38 a refusal replaces the session; #39 the session's read-only
+command list). Run 003 is written up under "## Third run" in `docs/first-incident.md`; R3-10's
+build-record entry is in; Mauria's instructions-only analysis is `docs/instructions-only-run.md`.
+The overnight run is over; the heartbeat cron is deleted. Nothing is in flight.
 
-Facts the merged PRs established, all verified live on Claude Code 2.1.272 on 2026-09-15
-and recorded in DESIGN.md's Reference table or the Step they belong to:
-- A resumed call's cache read is intermittent, so a resumed call is budgeted at the whole
-  context at cache-write rates; `Usage.contextTokens` (the last assistant message's context)
-  is the real context of a session, and the envelope's input figure sums across API turns.
-- `systemPrompt` on a resumed call is ignored: a seat whose role text must change needs a
-  fresh session (the migration released every R3-4 root session for this reason).
-- `--strict-mcp-config` is an isolation flag on every session (Mauria's connectors loaded
-  otherwise). A killed session files its tool calls before `task.failed`.
-- The structured-output API refuses a top-level oneOf; every turn schema is one strict
-  object with a required-nullable sub-object; an unstrict schema let Haiku flatten a report.
-- In print mode the Bash allowlist is a floor: unlisted read-only commands run, writes and
-  out-of-directory paths are denied regardless, so the read-only effect policy holds.
-- Rulings this session made as IC during reviews (recorded in the quipu as the session's,
-  not Mauria's): a dead leader session is replaced by a fresh one with the dead id recorded;
-  a unit with no budget share in a bounded dimension has share zero; the IC assigns tasks
-  under command like any leader; a rejected command turn does not advance the period; the
-  root never enters waiting from a leader turn; an answer given twice is a rejected turn.
+What the run left for Mauria (also in the morning report in the session): the runtime's IC
+on Opus 5 is refused by the model's safeguards on resumed turns (category
+`reasoning_extraction`), so run 003 ran the IC on Sonnet 5; the revisit list gained four
+items (session tasks under `command` run inside the IC's own session; leader turns on a
+large context cost at cache-write rates; the size-up over-scopes into fixing; the refusal
+category is not captured from the stream); and the comparison argues for a review seat
+between a unit's report and the IC's acceptance.
 
-R3-10 setup: roughdraftplus at `6a996e8` (other sessions' uncommitted files in `.context/`
-and a handoff file are untracked there; the run is read-only and does not touch them);
-Roughdraft 0.1.10 serves `~/.noscope/second-run/document.md` at
-`http://localhost:7373/?path=%2FUsers%2Fmauriaparker%2F.noscope%2Fsecond-run%2Fdocument.md`;
-restore it from `document.pristine.md` before the run. Database for the run:
-`NOSCOPE_DB=~/.noscope/third-run.sqlite`. The `create` runs the Haiku size-up and the
-transfer; every `step` is one eight-step cycle; run each detached with a log.
+Databases: `~/.noscope/third-run.sqlite` (incidents 001, refused; 002, satisfied), beside the
+first two runs'. The scratch document is as run 003 left it; `document.pristine.md` restores
+it.
 
-Mauria's added deliverable (01:29): an `incident review`-style analysis of this session's
-own transcript as an instructions-only run, compared with runs 001 and 002, under `docs/`.
-Transcript: `~/.claude/projects/-Users-mauriaparker/da050f04-42b2-4162-9421-387ea5d066a1.jsonl`
-and its `subagents/` directory (builders `build-r3-N`, reviewers `reviewNN-*`).
+## 4. NEXT STEPS, IN ORDER (for whoever picks the thread up)
 
-Quipu: the keeper's progress commits are pushed as they land. Papercuts: pc-7e69f7,
-pc-92ef05, pc-4aa4d5.
-
-## 4. NEXT STEPS, IN ORDER
-
-1. R3-0: `spikes/round3/resume.sh` and `agents.sh` (from the scratchpad or rewritten),
-   `DISABLE_COMPACT` noted in the README of that directory, five Reference rows in
-   `DESIGN.md`. PR, review, merge.
-2. R3-1, R3-2, R3-3 in parallel, one worktree each under the scratchpad, one builder
-   subagent each briefed with the PR's scope and acceptance text verbatim plus section 2
-   above; one reviewer each; merge in whatever order they clear, rebasing the later ones.
-3. R3-4, then R3-5 and R3-6 in parallel with R3-7, then R3-8 and R3-9 in parallel, then
-   R3-10. R3-4 and R3-7 are the two rewrites; build them in this session rather than
-   delegating, or delegate with the whole plan section in the brief.
-4. After every merge: `git pull`, `pnpm build`, refresh section 3 of this file, commit it,
-   message the `quipu` keeper with the thread and the change.
-5. R3-10 is a live run from `~/Documents/Projects/roughdraftplus` at `6a996e8` with
-   Roughdraft serving a restored scratch document; the recipe is in R2-8's scope and in
-   section 7 below. Its write-up is the morning report.
+1. Read the morning report (the last message of session mauriaparker-91) and
+   `docs/first-incident.md` "## Third run", then `docs/instructions-only-run.md`.
+2. Mauria's calls: the IC's model while Opus 5 refuses the runtime's prompts; whether a
+   review seat goes between a unit's report and the IC; the revisit items above.
+3. Then the plan's after-round-3 list: noscope on roughdraft, the quipu, the scan.
 
 ## 5. WORKING AGREEMENTS (standing; do not re-ask)
 
