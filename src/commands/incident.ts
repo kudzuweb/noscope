@@ -772,6 +772,8 @@ async function cycle(
     );
   for (const c of turn.closeUnits)
     ctx.io.out(`  close unit ${c.unitId}: ${c.reason}`);
+  for (const d of turn.dropReassignments ?? [])
+    ctx.io.out(`  drop reassignment ${d.id}: ${d.why}`);
   for (const a of turn.answers)
     ctx.io.out(`  answer to ${a.unitId} (${a.request}): ${a.answer}`);
   for (const t of turn.assignTasks)

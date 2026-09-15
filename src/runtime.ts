@@ -707,6 +707,7 @@ function reassignmentsOf(
         .map((c) => c.id),
       cycle,
       dropped: dropsSlice(v.instructions),
+      droppedWhy: dropsSlice(v.instructions) ? v.instructions : null,
       takenBy: null,
     }));
 }
@@ -719,7 +720,8 @@ function reassignmentsOf(
  * verdict, the instructions and the why, with the cycle, actor `ic`; R4-2), one
  * `unit.reassigned` per reassign verdict (R4-4: the reassignment's id, the report and unit,
  * the unit's objective, the instructions and why, its claims by id, the cycle, and
- * `dropped` when the instructions begin `drop:`), the units closed, by `closeUnits` and by
+ * `dropped` when the instructions begin `drop:`), one `reassignment.dropped` per entry of
+ * `dropReassignments` (the id, the why, the cycle), the units closed, by `closeUnits` and by
  * an accepted or reassigned verdict (through the same close path, the verdict as the
  * reason; a revised unit stays active for R4-3 to brief), a reassigned unit's open tasks
  * cancelled (`task.cancelled` naming the reassignment; `unit.close` sets status only), then
@@ -821,6 +823,12 @@ export function applyCommand(
         claims: r.claims,
         cycle,
         dropped: r.dropped,
+      });
+    for (const d of turn.dropReassignments ?? [])
+      store.record(incident.id, "reassignment.dropped", IC_ACTOR, {
+        reassignmentId: d.id,
+        why: d.why,
+        cycle,
       });
     for (const c of closes)
       store.closeUnit(incident.id, c.unitId, c.reason, actor);

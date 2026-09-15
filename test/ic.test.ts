@@ -23,6 +23,7 @@ import {
   type ReviewTurn as Review,
   ReviewTurn,
 } from "../src/models.js";
+import { renderReview } from "../src/review.js";
 import {
   applyCommand,
   applyPlan,
@@ -2089,7 +2090,7 @@ describe("the IC above the planner", () => {
         `Your unit takes reassignment 001-r01: the slice of unit 001-u02 (its objective: locate the delete handler), which the IC closed after reviewing its report ${report.id}. The IC's instructions, from what that unit found and did not find:`,
         `  ${instructions}`,
         "Why: a reader would do better than another grep",
-        "Claims that unit produced, by id; each is in the incident file's claims section and may be named in evidenceFrom:",
+        "Claims that unit produced, by id; name one in evidenceFrom on a task you assign and the runtime attaches it in full:",
       ].join("\n"),
     );
     expect(brief).toMatch(
@@ -2212,6 +2213,9 @@ describe("the IC above the planner", () => {
     };
     expect(reasons(plan)).toEqual([]);
     expect(validatePlan(plan, ctx()).ok).toBe(true);
+    // A failing incident owes no taker; a satisfied one still does.
+    expect(reasons({ ...empty, incidentStatus: "failed" })).toEqual([]);
+    expect(reasons({ ...empty, incidentStatus: "satisfied" })).toHaveLength(1);
     const applied = applyPlan(store, { id: "i1" }, plan);
     expect(applied.taken).toEqual([
       { unitId: "i1-u04", reassignmentId: "i1-r01" },
@@ -2228,6 +2232,90 @@ describe("the IC above the planner", () => {
     expect(reassignmentTakenBy(after, "u-a")).toBeNull();
     // Taken, the next plan owes nothing.
     expect(reasons(empty)).toEqual([]);
+    // A later command turn drops a reassignment still open (finding 1 of PR 47's review):
+    // the drop must name an open one, once, and closes it on that turn.
+    const c = reportedUnit(s, "u-c", "the view is re-rendered");
+    applyCommand(
+      store,
+      { id: "i1" },
+      command({
+        reportVerdicts: [verdict(c, "u-c", "a browser settles the re-render")],
+      }),
+      2,
+      {},
+    );
+    expect(openReassignments(store.listEvents("i1")).map((r) => r.id)).toEqual([
+      "i1-r03",
+    ]);
+    const dropping = (drops: { id: string; why: string }[]) =>
+      validateCommand(command({ dropReassignments: drops }), ctx())
+        .filter((r) => r.rule === "Drops match")
+        .map((r) => r.reason);
+    expect(dropping([{ id: "i1-r99", why: "moot" }])).toEqual([
+      "no open reassignment i1-r99 to drop",
+    ]);
+    expect(dropping([{ id: "i1-r01", why: "moot" }])).toEqual([
+      "no open reassignment i1-r01 to drop",
+    ]);
+    expect(
+      dropping([
+        { id: "i1-r03", why: "moot" },
+        { id: "i1-r03", why: "still moot" },
+      ]),
+    ).toEqual(["reassignment i1-r03 is dropped twice"]);
+    expect(dropping([{ id: "i1-r03", why: "moot" }])).toEqual([]);
+    applyCommand(
+      store,
+      { id: "i1" },
+      command({
+        dropReassignments: [
+          { id: "i1-r03", why: "the re-render is settled by u-a's claims" },
+        ],
+      }),
+      3,
+      {},
+    );
+    const dropped = store
+      .listEvents("i1")
+      .find((e) => e.type === "reassignment.dropped");
+    expect([dropped?.actor, dropped?.payload]).toEqual([
+      "ic",
+      {
+        reassignmentId: "i1-r03",
+        why: "the re-render is settled by u-a's claims",
+        cycle: 3,
+      },
+    ]);
+    expect(openReassignments(store.listEvents("i1"))).toEqual([]);
+    expect(
+      reassignments(store.listEvents("i1")).map((r) => [
+        r.id,
+        r.dropped,
+        r.droppedWhy,
+      ]),
+    ).toEqual([
+      ["i1-r01", false, null],
+      ["i1-r02", true, "drop: the caller is settled by u-a's claims"],
+      ["i1-r03", true, "the re-render is settled by u-a's claims"],
+    ]);
+    expect(reasons(empty)).toEqual([]);
+    const review = renderReview(
+      s.incident,
+      store.listEvents("i1"),
+      store.listTasks("i1"),
+      store.listClaims("i1"),
+    ).join("\n");
+    expect(review).toContain(
+      "  reassignment i1-r03 dropped by the IC: the re-render is settled by u-a's claims",
+    );
+    expect(review).toContain(
+      [
+        "reassignments: 3",
+        "  i1-r01 from u-a in cycle 1: 2 claim(s); taken by i1-u04; instructions: a reader takes the scroll from the claims",
+        "  i1-r02 from u-b in cycle 1: 2 claim(s); dropped by the IC: drop: the caller is settled by u-a's claims; instructions: drop: the caller is settled by u-a's claims",
+        "  i1-r03 from u-c in cycle 2: 2 claim(s); dropped by the IC: the re-render is settled by u-a's claims; instructions: a browser settles the re-render",
+      ].join("\n"),
+    );
     store.close();
   });
 

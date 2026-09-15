@@ -2885,11 +2885,23 @@ instructions and the claims, that the next plan must create a unit that takes it
 the taking leader reads the instructions, and that `drop:` drops the slice instead.
 `incident review` (`src/review.ts`) lists the recording and the taking in their cycles
 and, after the revisions, `reassignments: N` with one line each: the unit, the cycle,
-the claim count, taken by which unit, dropped, or open, and the instructions. Two new
-`EventType`s (49 now). DESIGN.md Step 2 (the events), Step 4 (the verdict, the
-application order, section 11, `takes`), Step 5 (the rule), Step 6 (the orientation)
-and Step 7 (`step`, `review`), and the architecture page's IC and planner nodes and
-cycle steps 2, 3, 5, 6 and 7 follow.
+the claim count, taken by which unit, dropped by the IC with the why, or open, and the
+instructions. Ruled by the orchestrator in PR 47's review: the IC can drop a
+reassignment after the verdict, so `CommandTurn` gains `dropReassignments`, an optional
+array of `{ id, why }`, held by the command rule "Drops match" (each id an open
+reassignment, none twice), recorded by `applyCommand` as `reassignment.dropped` (the
+id, the why, the cycle; actor `ic`) in the turn's transaction after the
+`unit.reassigned`s, closed for `openReassignments` (`Reassignment.droppedWhy` carries
+the why, the instructions for a `drop:` verdict), printed by `step` as `drop
+reassignment <id>: <why>`, and listed by `review` in its cycle and on the summary line;
+and a plan whose `incidentStatus` is `failed` is exempt from "Reassignments taken",
+since a failing incident owes no taker, while `satisfied` stays held to it. `IC_ROLE`
+says that the file's section 11 lists the reassignments still open, each taken by a plan
+or dropped by the IC in `dropReassignments`. Three new `EventType`s (50 now). DESIGN.md
+Step 2 (the events), Step 4 (the verdict, the application order, section 11, `takes`,
+`dropReassignments`), Step 5 (the rules), Step 6 (the orientation) and Step 7 (`step`,
+`review`), and the architecture page's IC and planner nodes and cycle steps 2, 3, 5, 6
+and 7 follow; `src/ic.ts`'s and the DESIGN.md tree's "ten sections" read eleven.
 
 Tests: a stub run (`test/ic.test.ts`) where the leader reports `progress` with a second
 grep still pending, the IC reassigns with instructions, `step` prints the verdict, the
@@ -2906,8 +2918,11 @@ instructions and the other `drop:`, both close, both are recorded (one `dropped`
 the first is open, a plan taking nothing is refused with the reason, a `takes` on the
 dropped one is refused beside it, two units taking one is refused, a taking plan passes,
 `applyPlan` records `reassignment.taken` with `fromUnitId`, `reassignmentTakenBy` finds
-it, and the next plan owes nothing. The planner snapshot and the rule count (14) and
-event count (49) pins follow.
+it, the next plan owes nothing, a `failed` plan is exempt while a `satisfied` one is
+held, and a later turn's drop of a third unit's reassignment is refused on an unknown
+or already-taken id and on a double drop, applied with `reassignment.dropped`, closes
+it for `openReassignments`, and shows in `review`'s cycle line and summary with the why.
+The planner snapshot and the rule count (14) and event count (50) pins follow.
 
 Not exactly to spec, with reasons:
 
@@ -2932,11 +2947,17 @@ Not exactly to spec, with reasons:
   accepted verdict still leaves them pending, as R4-2 built it, for a plan to cancel.
 - The orientation renders each claim's subject, predicate, basis and confidence beside
   its id, not the id alone: the block says "by reference", the acceptance says the claim
-  ids, and one line per claim costs little and tells the leader what the id is before it
-  opens the file; the object is never rendered.
+  ids, and one line per claim costs little and tells the leader what the id is; the
+  object is never rendered, and the line tells the leader to name a claim in
+  `evidenceFrom` on a task it assigns, since a leader never reads the incident file
+  (PR 47's review, finding 2).
 - The rule is not applied to a command turn or a leader's assignments, which create no
   units; a plan that blocks or fails with a reassignment open is still held to it, since
   the IC decides what happens to the slice through the verdict and the plan carries it
   out.
 - `incident show` is unchanged: the open reassignments are in the planner's section 11,
   in `step`'s lines and in `review`, and R4-5 puts them in the situation `show` prints.
+- Follow-up, from PR 47's review (findings 4 and 5): a pending task that depends on a
+  task a reassign cancelled stays pending forever, as one depending on a task a plan's
+  `cancelTasks` cancelled already did; and an accepted verdict leaves the closed unit's
+  pending tasks pending while a reassign cancels them. Both are noted for a later PR.

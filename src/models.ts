@@ -85,6 +85,7 @@ export const EventType = z.enum([
   "unit.revised",
   "unit.reassigned",
   "reassignment.taken",
+  "reassignment.dropped",
 ]);
 
 export const Budget = z.object({
@@ -682,6 +683,22 @@ export const CommandTurn = z.strictObject({
     .array(UnitClose)
     .describe(
       "Units to close that did not report this period; a reported unit is closed by accepting or reassigning its report, never here",
+    ),
+  dropReassignments: z
+    .array(
+      z.strictObject({
+        id: z
+          .string()
+          .min(1)
+          .describe(
+            "An open reassignment's id, as the incident file's section 11 lists it",
+          ),
+        why: z.string().min(1),
+      }),
+    )
+    .optional()
+    .describe(
+      "Open reassignments to drop rather than have a plan take (R4-4): each closes on this turn and no unit takes it",
     ),
   answers: z
     .array(ResourceAnswer)

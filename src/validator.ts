@@ -687,6 +687,9 @@ const CHECKS: Record<RuleName, Rule> = {
   },
 
   "Reassignments taken": (plan, ctx) => {
+    // A failing incident owes no taker; a satisfied one still does, since the IC said
+    // the slice needed a different unit.
+    if (plan.incidentStatus === "failed") return [];
     const open = new Map(ctx.reassignments.map((r) => [r.id, r]));
     const takes = plan.createUnits.flatMap((u) =>
       u.takes === undefined ? [] : [u.takes],
@@ -944,11 +947,12 @@ const COMMAND_RULES: readonly RuleName[] = [
   "Status is earned",
 ];
 
-/** The IC's own rules: an answer names a request a waiting unit raised; every report in the change report has one verdict; an assignment under command is deterministic. */
+/** The IC's own rules: an answer names a request a waiting unit raised; every report in the change report has one verdict; an assignment under command is deterministic; a drop names an open reassignment (R4-4). */
 export type CommandRuleName =
   | "Answers match"
   | "Reports answered"
-  | "Deterministic only";
+  | "Deterministic only"
+  | "Drops match";
 
 /**
  * The units a command turn closes through its verdicts (R4-2): an accepted or reassigned
@@ -1023,11 +1027,11 @@ function reportsAnswered(
 /**
  * The IC's command turn is held to the rules that cover what it can do, closing units and
  * setting the incident's status, by checking it as a plan that creates nothing (DESIGN.md
- * Step 5), with the units its verdicts close folded into the plan's closes, and to three
+ * Step 5), with the units its verdicts close folded into the plan's closes, and to four
  * rules of its own: every answer names a waiting unit and an open request that unit
  * raised, as the change report showed it; every report the change report listed has
- * exactly one verdict (R4-2); and every task it assigns is deterministic (R4-6), since
- * session work is a unit's. Its assignments are the plan's tasks, so "Units exist" and
+ * exactly one verdict (R4-2); every task it assigns is deterministic (R4-6), since
+ * session work is a unit's; and every reassignment it drops is open (R4-4). Its assignments are the plan's tasks, so "Units exist" and
  * "Status is earned" see them (a turn that assigns work and declares `satisfied` is
  * refused as a plan would be), and they pass the other task rules as a leader's do, and
  * "Own unit" against the root. Returns the failing rules with their reasons; the caller
@@ -1103,6 +1107,19 @@ export function validateCommand(
       reason: `unit ${unitId}'s request "${request}" is answered twice`,
     });
   }
+  const open = new Set(ctx.reassignments.map((r) => r.id));
+  const drops: Rejection<CommandRuleName>[] = [
+    ...(turn.dropReassignments ?? [])
+      .filter((d) => !open.has(d.id))
+      .map((d) => ({
+        rule: "Drops match" as const,
+        reason: `no open reassignment ${d.id} to drop`,
+      })),
+    ...repeated((turn.dropReassignments ?? []).map((d) => d.id)).map((id) => ({
+      rule: "Drops match" as const,
+      reason: `reassignment ${id} is dropped twice`,
+    })),
+  ];
   const window = reportsAwaitingVerdict(ctx.events);
   const latest = latestReports(ctx.events);
   // Only a verdict that names a unit's last listed report closes anything; the rest are
@@ -1147,6 +1164,7 @@ export function validateCommand(
         })),
     ),
     ...answers,
+    ...drops,
     ...reportsAnswered(turn, window, latest).map(
       (reason): Rejection<CommandRuleName> => ({
         rule: "Reports answered",

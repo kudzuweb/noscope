@@ -712,7 +712,7 @@ function revisionLines(
 /**
  * Each reassignment the IC recorded (R4-4), beside the revisions: the closed unit and its
  * objective, the cycle, the claims it carried, and where it stands: taken by which unit,
- * dropped by the verdict, or still open for the next plan.
+ * dropped by the IC (by the verdict or a later turn) and why, or still open for the next plan.
  */
 function reassignmentLines(events: readonly Event[]): string[] {
   const all = reassignments(events);
@@ -721,7 +721,7 @@ function reassignmentLines(events: readonly Event[]): string[] {
     `reassignments: ${all.length}`,
     ...all.map(
       (r) =>
-        `  ${r.id} from ${r.unitId} in cycle ${r.cycle}: ${r.claims.length} claim(s); ${r.dropped ? "dropped by the IC" : r.takenBy === null ? "open, taken by no unit yet" : `taken by ${r.takenBy}`}; instructions: ${clip(r.instructions)}`,
+        `  ${r.id} from ${r.unitId} in cycle ${r.cycle}: ${r.claims.length} claim(s); ${r.dropped ? `dropped by the IC: ${clip(r.droppedWhy ?? "")}` : r.takenBy === null ? "open, taken by no unit yet" : `taken by ${r.takenBy}`}; instructions: ${clip(r.instructions)}`,
     ),
   ];
 }
@@ -1102,6 +1102,10 @@ export function renderReview(
       if (e.type === "reassignment.taken")
         lines.push(
           `  reassignment ${str(e.payload.reassignmentId)} taken by ${str(e.payload.unitId)}`,
+        );
+      if (e.type === "reassignment.dropped")
+        lines.push(
+          `  reassignment ${str(e.payload.reassignmentId)} dropped by the IC: ${clip(str(e.payload.why))}`,
         );
       if (e.actor !== LEADER_ACTOR) continue;
       if (e.type === "plan.applied") {
