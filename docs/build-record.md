@@ -2355,7 +2355,9 @@ already is the fallback, the runtime writes the unit's report (`reportRefusals`:
 null session, `not_met`, both refusals as the why, the IC's choices as the suggestion,
 picture-changing), and the pass ends on it. A task session (`runTask`): the refused call is
 filed on the task as `task.usage` carrying the refusal, the model and the fallback, plus its
-activity, and the task is retried once in its own session on the fallback whatever the
+activity (`unitShare` in `src/leader.ts` sums every `task.usage` of a task, so the refused
+call counts against the unit's share as it counts against the incident budget; review
+finding), and the task is retried once in its own session on the fallback whatever the
 first call ran in, and a first call refused inside the leader's resumed session releases
 that session there (`leader.released` with `refused: <category>`, as a refused leader turn
 does; review finding), so the leader's next turn starts fresh instead of paying a refusal

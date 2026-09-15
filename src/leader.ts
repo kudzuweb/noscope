@@ -226,10 +226,18 @@ export function unitShare(
   events: readonly Event[],
 ): { share: Budget; charged: { tokens: number; seconds: number } } {
   const assigned = leaderAssignedTasks(events);
-  const spent = new Map<string, Usage>();
-  for (const e of events)
-    if (e.type === "task.usage" && typeof e.payload.taskId === "string")
-      spent.set(e.payload.taskId, e.payload.usage as Usage);
+  // Every `task.usage` of a task counts: a task refused and retried on the fallback (R4-7)
+  // files one per call, and the incident budget (`sumUsage`) counts both.
+  const spent = new Map<string, { tokens: number; seconds: number }>();
+  for (const e of events) {
+    if (e.type !== "task.usage" || typeof e.payload.taskId !== "string")
+      continue;
+    const usage = e.payload.usage as Partial<Usage> | undefined;
+    const sum = spent.get(e.payload.taskId) ?? { tokens: 0, seconds: 0 };
+    sum.tokens += (usage?.inputTokens ?? 0) + (usage?.outputTokens ?? 0);
+    sum.seconds += usage?.seconds ?? 0;
+    spent.set(e.payload.taskId, sum);
+  }
   const share: Budget = {};
   const charged = { tokens: 0, seconds: 0 };
   for (const t of tasks) {
@@ -242,7 +250,7 @@ export function unitShare(
     }
     const usage = spent.get(t.id);
     if (t.status === "completed" || t.status === "failed") {
-      charged.tokens += (usage?.inputTokens ?? 0) + (usage?.outputTokens ?? 0);
+      charged.tokens += usage?.tokens ?? 0;
       charged.seconds += usage?.seconds ?? 0;
     } else {
       charged.tokens += t.budget.tokens ?? 0;

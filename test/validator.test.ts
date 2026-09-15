@@ -1106,13 +1106,14 @@ describe("validator, a leader's assignments", () => {
   /**
    * The verdict on tasks the leader of u-scroll assigns. With `settled`, the seeded
    * running investigate has completed in 5 seconds, so 55 of the 60 the plan allotted the
-   * unit remain; without it the whole 60 is still bound.
+   * unit remain; without it the whole 60 is still bound. With `retried`, its first call was
+   * refused after 3 seconds and filed as a `task.usage` of its own (R4-7), so 52 remain.
    */
   const leaderVerdict = (
     tasks: TaskProposal[],
     unitOver: Partial<Unit> = {},
     budget?: { tokens?: number; seconds?: number },
-    { settled = false } = {},
+    { settled = false, retried = false } = {},
   ) => {
     const { store, ctx } = seeded(budget);
     if (settled)
@@ -1124,6 +1125,21 @@ describe("validator, a leader's assignments", () => {
           "dispatcher",
           "task.completed",
         );
+        if (retried)
+          store.record("i1", "task.usage", "dispatcher", {
+            taskId: "t-running",
+            usage: {
+              inputTokens: 50,
+              uncachedInputTokens: 50,
+              cacheWriteTokens: 0,
+              cacheReadTokens: 0,
+              outputTokens: 0,
+              seconds: 3,
+            },
+            model: "fake-small",
+            refused: { category: "reasoning_extraction", explanation: "" },
+            fallback: "fake-large",
+          });
         store.record("i1", "task.usage", "dispatcher", {
           taskId: "t-running",
           usage: {
@@ -1294,6 +1310,20 @@ describe("validator, a leader's assignments", () => {
       [
         "Budget within share",
         "the assignments ask 56 seconds of the 55 left in unit u-scroll's share (60 allotted by the plans, 5 spent or bound)",
+      ],
+    ]);
+    // A task refused and retried on the fallback files a `task.usage` per call, and both
+    // count against the share, as both count against the incident budget: 3 + 5 spent.
+    const both = { settled: true, retried: true };
+    expect(leaderVerdict([investigate(52)], held, undefined, both).ok).toBe(
+      true,
+    );
+    expect(
+      hit(leaderVerdict([investigate(53)], held, undefined, both)),
+    ).toEqual([
+      [
+        "Budget within share",
+        "the assignments ask 53 seconds of the 52 left in unit u-scroll's share (60 allotted by the plans, 8 spent or bound)",
       ],
     ]);
     // No plan task under the unit bounds tokens, so the unit's token share is zero (ruled
