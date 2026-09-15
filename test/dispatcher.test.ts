@@ -2565,13 +2565,16 @@ describe("dispatcher, parallel dispatch", () => {
     const second = await dispatch(store, incident, { cwd: tree, env });
     expect(second.ran).toEqual([]);
     expect(second.reports.map((r) => r.unitId)).toEqual(["u-a"]);
-    // The log is in start order: t-slow's session started before the grep's turn.
+    // The log is in process-start order, and t-slow's session and the grep's turn start
+    // together, so the turns are found by kind.
     const calls = readCalls(join(dir, "calls"));
-    expect(calls.map((c) => c.kind)).toEqual(["task", "leader", "leader"]);
-    expect(calls[2]?.prompt).toContain(
+    expect(calls.filter((c) => c.kind === "task")).toHaveLength(1);
+    const turns = calls.filter((c) => c.kind === "leader");
+    expect(turns).toHaveLength(2);
+    expect(turns[1]?.prompt).toContain(
       "Since your last turn these tasks also ended:\nTask t-slow (investigate) completed. Its result:\n  summary: a.txt\n\nYour unit has not reported since its last task ended.",
     );
-    expect(calls[2]?.prompt).toContain("No ready tasks remain in your unit.");
+    expect(turns[1]?.prompt).toContain("No ready tasks remain in your unit.");
     store.close();
   }, 20_000);
 
@@ -2609,18 +2612,17 @@ describe("dispatcher, parallel dispatch", () => {
     const second = await dispatch(store, incident, { cwd: tree, env });
     expect(second.ran.map((r) => r.taskId)).toEqual(["t-dep"]);
     expect(second.reports.map((r) => r.unitId)).toEqual(["u-a"]);
+    // The log is in process-start order, and t-slow's session and the grep's turn start
+    // together, so the turns are found by kind.
     const calls = readCalls(join(dir, "calls"));
-    expect(calls.map((c) => c.kind)).toEqual([
-      "task",
-      "leader",
-      "task",
-      "leader",
-    ]);
-    expect(calls[3]?.prompt).toContain(
+    expect(calls.filter((c) => c.kind === "task")).toHaveLength(2);
+    const turns = calls.filter((c) => c.kind === "leader");
+    expect(turns).toHaveLength(2);
+    expect(turns[1]?.prompt).toContain(
       "Since your last turn these tasks also ended:\nTask t-slow (investigate) completed. Its result:\n  summary: a.txt\n\nTask t-dep (investigate) completed. Its result:",
     );
-    expect(calls[3]?.prompt).not.toContain("Your unit has not reported");
-    expect(calls[1]?.prompt).not.toContain("Since your last turn");
+    expect(turns[1]?.prompt).not.toContain("Your unit has not reported");
+    expect(turns[0]?.prompt).not.toContain("Since your last turn");
     // Heard: nothing is owed beyond the report the leader just filed.
     expect(
       unitsOwingReport(
