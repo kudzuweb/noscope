@@ -827,9 +827,12 @@ defines a unit type as a name, a form (a zod schema for the fields its config fi
 descriptions the planner's schema renders) and a protocol (the role text and orientation,
 the turn schema, how the dispatcher runs the unit's pass, what a task ending does, whether
 and how it reports, what a refusal does), and `src/units/index.ts` registers the types by
-name. `src/units/base.ts` is the led unit: its form is today's `UnitProposal` less `ref`
-and `parent` (`objective`, `leader`, `equipment`, `bashAllowlist`; the budget share stays
-derived from the unit's tasks), and its protocol is what `src/leader.ts` and `leaderTurn`
+name. Every form carries the role text its session is given, defaulting to the type's
+(`LEADER_ROLE`, `IC_ROLE`), so a config can carry its own (ruled 2026-09-15 13:34: the role
+text is part of a saved config). `src/units/base.ts` is the led unit: its form is today's
+`UnitProposal` less `ref` and `parent` (`objective`, `leader`, `equipment`,
+`bashAllowlist`, the role text; the budget share stays derived from the unit's tasks), and
+its protocol is what `src/leader.ts` and `leaderTurn`
 in `src/dispatcher.ts` do now, moved there. `src/units/ic.ts` is command: its form is the
 IC's model and provider, the fallback model (R4-7), the handoff threshold, its session and
 its equipment for deterministic tasks, with no objective (the incident's is its
@@ -852,7 +855,8 @@ snapshot shows the type on a unit proposal; a replay test on a round 4 store yie
 on the root and `base` elsewhere and the same `show` output.
 ### R4-9b: Saved unit configs
 Scope: a `unit_configs` table holds a saved config: a name, the type, and the filled form
-less `objective` and `parent`, with when and from which unit it was saved. `noscope config
+less `objective` and `parent` (so the leader's model and provider, equipment, Bash
+allowlist and role text), with when and from which unit it was saved. `noscope config
 save <incident> <unit-id> <name>` saves a unit's config; `config list` and `config show
 <name>` read them. A `UnitProposal` may name a `config` and leave that config's fields to
 it, filling only `objective` and `parent` (a field given beside `config` overrides it, and
