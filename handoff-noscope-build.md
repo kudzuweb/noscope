@@ -70,6 +70,23 @@ Results that arrived at the relay after this refresh (digests; full reports at t
   files a runtime `unit.reported` on the root for a task refused twice, which contradicts
   "command files no report": decide to list that refusal under "tasks under command" as a
   failure); PR 44 (both root insertions must be re-placed in the rewritten `pass()`).
+- PR 44 (R4-9) review, `review44-dispatch`, not mergeable as is; full report
+  `scratchpad/review44-report.md` (the message truncated at finding 3). The concurrency
+  machinery is sound (no read-modify-write across an await; every write in a synchronous
+  batch). Two high findings: (1) the budget stop now fires on reserved rather than spent
+  budget (`spent + held + need > budget`, dispatcher.ts:839-846) and `incident run` treats
+  it as terminal; fix: keep round 3's stop test on spend and use the reservation only to
+  defer a start until the next landing, with a landing notifier; test two units that fit one
+  at a time by spend but not by reservation, both run, `stopped` null. (2) A task that lands
+  after its unit reported is dropped whenever the unit has a runnable task next pass (the
+  owed-turn path is skipped and the cutoff moves past the unheard ending); fix: compute the
+  unheard endings once at the top of `pass` and render them before the cause in the first
+  turn of the pass ("Since your last turn these tasks also ended:"), dropping `owed()`'s
+  special case; test t-fast, t-slow, t-dep. (3) Rebase collisions with PRs 42 and 43 in
+  `dispatch`/`runOne`: read the report's finding 3 in full for where each root insertion and
+  the refusal early-return must land in the rewritten `pass()`.
+- `build-r4-2` applied PR 45's three fixes (commit 819d1de, pushed); it waits for the word
+  to rebase after 42 and 43.
 - PR 45 (R4-2) review: approved, seven non-blocking; the fix list already went to
   `build-r4-2` (see the table above).
 
