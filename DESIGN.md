@@ -733,14 +733,23 @@ unit has something to do (a resumed leader to brief, a runnable task, a report o
 unit related to it is mid-pass, and fewer than `NOSCOPE_PARALLEL` passes are running (a
 positive whole number read from the command's environment, 3 when unset, refused
 otherwise); the cap bounds unit passes, and the tasks inside a unit are bounded by the plan.
-The root is the exception (R4-6): its leader is the IC, which takes no leader turn, so the
-root's runnable tasks run with no turn between, a deterministic one in process and a
-session-backed one in a session of its own, never inside the IC's session, whatever its
-model and equipment (`runsInsideLeader` is false for the root), and so every runnable root
-task starts at once; its pass ends without a report once its ready tasks have run, and the
-IC judges their results at its command turn, where the change report lists them (Step 4).
-Run 003 is the reason: with every task under `command`, the IC's own session took the
-investigate as an assignment and five leader turns at 60k to 115k context cost $0.94. A
+The turns a unit takes in its pass are its type's protocol's (round 4, R4-10): the
+dispatcher owns the scheduling, the starts, the landings, the budget and the halt, and
+asks each unit's protocol at three points, `open` before any task starts, `ending` on each
+landing, and `close` once every run has landed, each answering with the unit as it now
+stands, the report it filed if any, whether the unit is done for the pass and whether the
+picture changed; the dispatcher also asks the protocol whether a task runs inside the
+unit's session and, when it does, for the request to run it with. What follows in this
+step is the base protocol (`src/units/base.ts`), the led unit's. Under the ic protocol
+(`src/units/ic.ts`, R4-6) command takes no turn at all: its runnable tasks run with no
+turn between, a deterministic one in process and a session-backed one in a session of its
+own, never inside the IC's session, whatever its model and equipment (its `runsInside` is
+false), and so every runnable root task starts at once; its pass ends without a report
+once its ready tasks have run, and the IC judges their results at its command turn, where
+the change report lists them (Step 4). Run 003 is the reason: with every task under
+`command`, the IC's own session took the investigate as an assignment and five leader
+turns at 60k to 115k context cost $0.94. No `parentId === null` guard remains in the
+dispatcher or the protocols: what the root does differently, it does as the `ic` type. A
 unit's leader session is created when the unit first has a ready task:
 its system prompt is the preamble, the seat's place and the leader role text, fixed for the
 unit's life (a resumed call keeps the first call's system prompt), and its first user message
@@ -780,9 +789,9 @@ unit's pass; a refused assignment creates nothing and its reasons open the leade
 prompt. A report may carry `resourceRequests` (`permission`,
 `missing_means`, `human_knowledge`, each with what and why): it is forced `pictureChanged`,
 each request is raised as Step 4 says, and the unit enters `waiting`; a waiting unit is
-skipped by dispatch, keeps its pending tasks, and is not asked for a report. The root unit
-never waits and never owes a report, since it takes no leader turn; the IC raises what it
-lacks in its command turn. The turn's
+skipped by dispatch, keeps its pending tasks, and is not asked for a report. Command
+never waits and never owes a report (its protocol files none), since it takes no leader
+turn; the IC raises what it lacks in its command turn. The turn's
 record, its assignments (validated first, while the unit is still active) and its requests
 land in one transaction, so a crash can never leave a recorded report whose requests were
 not raised. `unit.waiting` carries the unit, its session and the `requests` as the leader

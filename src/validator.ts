@@ -6,7 +6,6 @@ import {
   READ_ONLY_SESSION_COMMANDS,
 } from "./equipment/index.js";
 import {
-  holdsCapability,
   icSituation,
   LEADER_ACTOR,
   latestReports,
@@ -15,9 +14,6 @@ import {
   type Reassignment,
   reportsAwaitingVerdict,
   requestTargetOf,
-  revisedUnits,
-  unitShare,
-  unitsOwingReport,
 } from "./leader.js";
 import type {
   ActionPlan,
@@ -38,7 +34,15 @@ import { PLANNER_RULES, PLANNER_WARNINGS } from "./planner.js";
 import type { Provider } from "./providers/index.js";
 import { type Store, sumUsage } from "./store.js";
 import { STRIKE_MEMBER_MIN_TOKENS } from "./strike-team.js";
-import { commandUnitOf, IC_TYPE, LEADER_RULES } from "./units/index.js";
+import {
+  commandUnitOf,
+  holdsCapability,
+  IC_TYPE,
+  LEADER_RULES,
+  revisedUnits,
+  unitShare,
+  unitsOwingReport,
+} from "./units/index.js";
 
 /** A rule's name is the text before the colon of the line the planner reads, so the two lists cannot drift. */
 type BeforeColon<S> = S extends `${infer Name}: ${string}` ? Name : never;

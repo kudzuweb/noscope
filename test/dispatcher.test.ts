@@ -8,13 +8,7 @@ import { defineCapability } from "../src/capabilities/registry.js";
 import { EXIT, run } from "../src/cli.js";
 import { dispatch } from "../src/dispatcher.js";
 import { renderChangeReport } from "../src/ic.js";
-import {
-  answeredRequestsOf,
-  endedSinceLastTurn,
-  renderTurnPrompt,
-  runsInsideLeader,
-  unitsOwingReport,
-} from "../src/leader.js";
+import { answeredRequestsOf } from "../src/leader.js";
 import type {
   ActionPlan,
   Event,
@@ -26,6 +20,13 @@ import { applyPlan, raiseResourceRequests } from "../src/runtime.js";
 import { Store } from "../src/store.js";
 import { citesMember } from "../src/strike-team.js";
 import { renderHierarchy } from "../src/tree.js";
+import {
+  endedSinceLastTurn,
+  protocolOf,
+  renderTurnPrompt,
+  runsInsideLeader,
+  unitsOwingReport,
+} from "../src/units/index.js";
 import { scriptedIncident, unitProposal } from "./fixtures/models.js";
 
 const tree = resolve("test/fixtures/tree");
@@ -1432,7 +1433,8 @@ describe("dispatcher, unit leaders", () => {
         equipment: ["playwright_browser", "claude_in_chrome"],
       }),
     ).toBe(false);
-    // R4-6: the same investigate runs inside a unit's leader and never inside the IC.
+    // R4-6: the same investigate runs inside a unit's leader and never inside the IC,
+    // which is the ic type's protocol saying so (R4-10), not the base function's.
     const inv = task({
       id: "t-inv",
       capability: "investigate",
@@ -1441,7 +1443,8 @@ describe("dispatcher, unit leaders", () => {
       model: "claude-haiku-4-5",
     });
     expect(runsInsideLeader(investigate, inv, child)).toBe(true);
-    expect(runsInsideLeader(investigate, inv, unit)).toBe(false);
+    expect(protocolOf(child).runsInside(investigate, inv, child)).toBe(true);
+    expect(protocolOf(unit).runsInside(investigate, inv, unit)).toBe(false);
     store.setTaskStatus("i1", "t-see", "failed", "dispatcher", "task.failed");
     store.setTaskStatus("i1", "t-inv", "failed", "dispatcher", "task.failed");
     expect(

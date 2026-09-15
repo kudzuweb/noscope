@@ -105,5 +105,25 @@ export const icUnitType = defineUnitType({
     seat: "ic",
     role: IC_ROLE,
     reports: false,
+    // Nothing runs inside the IC's session (R4-6): a session-backed task under command
+    // runs in a session of its own.
+    runsInside: () => false,
+    insideRequest: (_ctx, unit) => {
+      throw new Error(
+        `unit ${unit.id} is command: no task runs inside the IC's session (R4-6)`,
+      );
+    },
+    // The root's pass (R4-6): no turn opens it, an ending gets no turn (a task refused on
+    // both models ends as its `task.failed`, R4-7, which the change report lists under the
+    // tasks under command), and the pass ends without a report once its tasks have landed.
+    // The IC judges the results at its command turn.
+    open: async () => null,
+    ending: async () => null,
+    close: async (_ctx, unit) => ({
+      unit,
+      report: null,
+      done: true,
+      stop: false,
+    }),
   },
 });

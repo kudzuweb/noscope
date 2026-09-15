@@ -1,41 +1,21 @@
-import { z } from "zod";
 import { recordActivity } from "./activity.js";
 import {
   type BriefContext,
   buildSessionRequest,
   type Capability,
   getCapability,
-  renderTaskBrief,
   runDeterministic,
   runSession,
 } from "./capabilities/index.js";
 import {
-  answeredRequestsOf,
   describeRefusedCall,
-  endedSinceLastTurn,
   fallbackModel,
   icSituation,
-  LEADER_ACTOR,
-  LEADER_TURN_SCHEMA,
   type RefusedCall,
-  reassignmentTakenBy,
-  renderLeaderOrientation,
-  renderTurnPrompt,
-  resumedUnits,
-  revisedUnits,
-  revisionOf,
-  runsInsideLeader,
-  type TaskEnding,
-  type TurnCause,
-  unitsOwingReport,
 } from "./leader.js";
 import {
   type Claim,
-  type Event,
   type Incident,
-  jsonSchemaFor,
-  type LeaderReport,
-  LeaderTurn,
   SessionResult,
   type Task,
   type Unit,
@@ -45,22 +25,31 @@ import {
   getProvider,
   listProviders,
   type Provider,
-  type Refusal,
   type SessionActivity,
   SessionError,
 } from "./providers/index.js";
 import { applyLeaderTasks, raiseResourceRequests } from "./runtime.js";
 import { type Store, sumUsage } from "./store.js";
 import { unitsInTreeOrder } from "./tree.js";
-import { leaderRequest } from "./units/index.js";
+import {
+  describeError,
+  endedSinceLastTurn,
+  type Landed,
+  type PassContext,
+  type PassView,
+  protocolOf,
+  type Reported,
+  resumedUnits,
+  revisedUnits,
+  type TaskEnding,
+  type Turned,
+  unitsOwingReport,
+} from "./units/index.js";
 import {
   strikeTeamRejections,
   validateLeaderTasksAndRecord,
 } from "./validator.js";
 import { recordClaims, recordSessionResult } from "./verifier.js";
-
-/** A session with no time bound of its own still gets one, since a hung process must end; the validator normally requires the task to carry one. */
-const SESSION_SECONDS = 600;
 
 /** What one task's run came to, for the step's printout. */
 type Ran = {
@@ -69,14 +58,6 @@ type Ran = {
   status: "completed" | "failed";
   claims: number;
   reason?: string;
-};
-
-/** A report a unit's leader filed during the pass; the session is null when the runtime wrote it on the leader's behalf after two refusals (R4-7); `revision` is set when the report answers a revise verdict (R4-3). */
-type Reported = {
-  unitId: string;
-  sessionId: string | null;
-  report: LeaderReport;
-  revision?: number;
 };
 
 /**
@@ -204,13 +185,6 @@ function failInterrupted(store: Store, incident: Incident, actor: string) {
       });
 }
 
-/** A reason in one sentence: a schema failure names its issues rather than dumping them. */
-function describe(error: unknown): string {
-  if (error instanceof z.ZodError)
-    return `the result did not fit its schema: ${error.issues.map((i) => `${i.path.join(".") || "value"} ${i.message}`).join("; ")}`;
-  return error instanceof Error ? error.message : String(error);
-}
-
 /**
  * A finished run; `sessionId` and `activity` are present for a session, so its transcript
  * can be found from `task.completed` and its tool calls are filed under the task. `inside`
@@ -281,39 +255,6 @@ function briefContext(
   };
 }
 
-/** The leader's orientation, sent once at the top of its first call, before the first brief or result; a unit that took a reassignment (R4-4) reads its instructions and the predecessor's claims here. */
-function orientation(
-  store: Store,
-  incident: Incident,
-  unit: Unit,
-  units: readonly Unit[],
-  beforeBrief = false,
-): string[] {
-  if (unit.sessionId !== null) return [];
-  const events = store.listEvents(incident.id);
-  const reassignment = reassignmentTakenBy(events, unit.id);
-  const taken =
-    reassignment === null
-      ? null
-      : {
-          reassignment,
-          claims: store
-            .listClaims(incident.id)
-            .filter((c) => reassignment.claims.includes(c.id)),
-        };
-  return [
-    ...renderLeaderOrientation(
-      incident,
-      icSituation(events),
-      unit,
-      units,
-      beforeBrief,
-      taken,
-    ),
-    "",
-  ];
-}
-
 /**
  * Run one task: a deterministic capability in process; a session-backed one inside its
  * unit's leader session when the task's model and equipment match the leader's (the
@@ -328,15 +269,13 @@ function orientation(
  * `TaskRefused` carries both.
  */
 async function runTask(
-  store: Store,
-  incident: Incident,
+  ctx: PassContext,
   task: Task,
   capability: Capability,
   unit: Unit,
-  units: readonly Unit[],
-  options: DispatchOptions,
-  actor: string,
 ): Promise<Outcome> {
+  const { store, incident, units, actor } = ctx;
+  const options = { cwd: ctx.cwd, env: ctx.env };
   const started = Date.now();
   if (capability.kind === "deterministic") {
     const run = await runDeterministic(capability.name, task.inputs, {
@@ -366,21 +305,10 @@ async function runTask(
     throw new Error(`task ${task.id} names no provider`);
   const provider = getProvider(task.provider, options.env);
   const context = briefContext(store, incident, task, units);
-  const inside = runsInsideLeader(capability, task, unit);
+  const protocol = protocolOf(unit);
+  const inside = protocol.runsInside(capability, task, unit);
   const request = inside
-    ? leaderRequest(
-        unit,
-        [
-          ...orientation(store, incident, unit, units, true),
-          `${unit.sessionId === null ? "Your first" : "Your next"} task follows; run it and answer against its schema.`,
-          "",
-          renderTaskBrief(task, unit, context),
-        ].join("\n"),
-        jsonSchemaFor(capability.output),
-        options.cwd,
-        task.budget.seconds ?? SESSION_SECONDS,
-        task.strikeTeam,
-      )
+    ? protocol.insideRequest(ctx, unit, task, capability, context)
     : buildSessionRequest(capability, task, unit, options.cwd, context);
   let session: Awaited<ReturnType<typeof runSession>>;
   let fallback: Outcome["fallback"];
@@ -493,406 +421,6 @@ async function runTask(
   };
 }
 
-/** An ending as it lands in a pass: the task's ending, and the refusals when its session was refused on both models (R4-7), for the unit's report. */
-type Landed = TaskEnding & { refusals?: readonly RefusedCall[] };
-
-/** What a turn came to: the leader's move, the session it ran on (null for a report the runtime wrote after two refusals), the unit as it now stands (the session recorded on the first call), and how many tasks the leader assigned and the validator let through. */
-type Turned = {
-  turn: LeaderTurn;
-  sessionId: string | null;
-  unit: Unit;
-  assigned: number;
-  /** Which revision the report is, when it answers a revise verdict (R4-3). */
-  revision: number;
-};
-
-/**
- * The report the runtime files on a unit's behalf when its seat was refused on both models
- * (R4-7): `not_met`, picture-changing, the refusals as its why, and the IC's choices as its
- * suggestion. Written as `unit.reported` by the actor `runtime` with `writtenBy: "runtime"`
- * and the refusals, so the change report and review say who wrote it.
- */
-function reportRefusals(
-  store: Store,
-  incident: Incident,
-  unit: Unit,
-  seat: "leader" | "task",
-  refusals: readonly RefusedCall[],
-  actor: string,
-): { report: LeaderReport; revision: number } {
-  const who =
-    seat === "leader" ? "the unit's leader" : "a task session under the unit";
-  const report: LeaderReport = {
-    outcome: "not_met",
-    changed: [],
-    pictureChanged: true,
-    why: `${who} was refused by the API on ${refusals.map(describeRefusedCall).join(" and then on the fallback ")}${refusals.at(-1)?.refused.explanation ? `: ${refusals.at(-1)?.refused.explanation}` : ""}; no seat retries beyond the one fallback`,
-    suggestion:
-      "the IC decides: another model for the seat, a different unit for the slice, or drop the slice",
-  };
-  const revision = revisionOf(store.listEvents(incident.id), unit.id);
-  store.record(incident.id, "unit.reported", actor, {
-    unitId: unit.id,
-    sessionId: null,
-    ...unit.leader,
-    report,
-    writtenBy: "runtime",
-    refusals,
-    ...(revision === 0 ? {} : { revision }),
-  });
-  return { report, revision };
-}
-
-/** The reasons the validator refused this unit's leader's last assignment, since the leader's last turn, for its next prompt; a report the runtime wrote after two refusals is not a turn of the leader's. */
-function refusedSinceLastTurn(
-  events: readonly Event[],
-  unitId: string,
-): string[] {
-  const reasons: string[] = [];
-  for (const e of events) {
-    if (e.payload.unitId !== unitId) continue;
-    if (
-      (e.type === "unit.continued" || e.type === "unit.reported") &&
-      e.payload.writtenBy !== "runtime"
-    )
-      reasons.length = 0;
-    if (e.type === "plan.rejected" && e.actor === LEADER_ACTOR)
-      reasons.push(`${String(e.payload.rule)}: ${String(e.payload.reason)}`);
-  }
-  return reasons;
-}
-
-/** A resumed call that died before the stream's init line: the provider found no session to resume. */
-function couldNotResume(error: unknown, unit: Unit): error is SessionError {
-  return (
-    error instanceof SessionError &&
-    error.sessionId === null &&
-    unit.sessionId !== null
-  );
-}
-
-/**
- * A leader's `requestStrikeTeam`, held to the team's three rules against the task that runs
- * next: accepted, it becomes that task's declaration (`strike_team.defined`, the mutation
- * `task.strikeTeam`, a kind the task already declares replaced by name); refused, or asked
- * with no task left to send it on, `strike_team.rejected` keeps what the leader asked for
- * and why it was not provided.
- */
-function declareRequestedTeam(
-  store: Store,
-  incident: Incident,
-  turn: LeaderTurn,
-  next: Task | null,
-  seat: Record<string, unknown>,
-  options: DispatchOptions,
-  actor: string,
-): void {
-  const requested = turn.requestStrikeTeam;
-  if (requested === undefined || requested.length === 0) return;
-  const asked = { ...seat, declaredBy: "leader", strikeTeam: requested };
-  if (next === null) {
-    store.record(incident.id, "strike_team.rejected", actor, {
-      ...asked,
-      taskId: null,
-      reasons: [
-        turn.kind === "report"
-          ? "the unit reported, so no task runs next in this pass to send it on"
-          : "no ready task remains in the unit to send it on",
-      ],
-    });
-    return;
-  }
-  const rejections = strikeTeamRejections(
-    requested,
-    next,
-    listProviders().map((name) => getProvider(name, options.env)),
-    `task ${next.id}`,
-  );
-  if (rejections.length > 0) {
-    store.record(incident.id, "strike_team.rejected", actor, {
-      ...asked,
-      taskId: next.id,
-      reasons: rejections.map((r) => `${r.rule}: ${r.reason}`),
-    });
-    return;
-  }
-  const kinds = new Set(requested.map((t) => t.kind));
-  store.setTaskStrikeTeam(
-    incident.id,
-    next.id,
-    [...next.strikeTeam.filter((t) => !kinds.has(t.kind)), ...requested],
-    actor,
-    { ...asked, taskId: next.id },
-  );
-}
-
-/**
- * Ask the unit's leader for its next move: the endings it has not heard from earlier passes
- * (`unheard`, on a pass's first turn), the last task's ending or the IC's revision brief
- * (R4-3; delivered on this turn, recorded as `unit.revised` with the turn), how many ready tasks remain
- * and which runs next, which tasks of the unit are still running and which have ended and
- * reach it on turns of their own, under the `LeaderTurn` schema. The first call creates the
- * session and opens with the orientation; `leader.started` records its id on the unit,
- * with the cwd it was launched from. A session that cannot be resumed (the call died
- * before its init line) is replaced: a fresh session is oriented and asked the same turn,
- * and its `leader.started` names the dead session and the reason; a session the API
- * refused is replaced the same way on the fallback model, once (R4-7). Every turn is recorded,
- * `unit.reported` with the report (and `revision`, the count of revise verdicts on the
- * unit, when the report answers one) or `unit.continued`, each with the call's usage, a
- * `discrepancy` becomes `picture.discrepancy`, and a `requestStrikeTeam` is declared on
- * the next task or refused. A leader that cannot answer otherwise ends the pass. In the
- * same transaction: tasks the leader assigns are validated and applied under its unit
- * (`plan.applied` with the leader as actor) or refused (`plan.rejected`, read back into
- * its next prompt), then a report carrying resource requests, forced `pictureChanged`, is
- * raised (`raiseResourceRequests`: the unit waits).
- */
-async function leaderTurn(
-  store: Store,
-  incident: Incident,
-  listed: Unit,
-  units: readonly Unit[],
-  cause: TurnCause,
-  unheard: readonly TaskEnding[],
-  remaining: number,
-  next: Task | null,
-  running: readonly Task[],
-  landed: readonly Task[],
-  options: DispatchOptions,
-  actor: string,
-): Promise<Turned> {
-  if (listed.parentId === null)
-    throw new Error(
-      `unit ${listed.id} is the root: the IC takes no leader turn (R4-6)`,
-    );
-  const provider = getProvider(listed.leader.provider, options.env);
-  const events = store.listEvents(incident.id);
-  const refused = refusedSinceLastTurn(events, listed.id);
-  const revision = revisionOf(events, listed.id);
-  const ask = (unit: Unit) =>
-    provider.run(
-      leaderRequest(
-        unit,
-        [
-          ...orientation(store, incident, unit, units),
-          renderTurnPrompt(
-            cause,
-            unheard,
-            remaining,
-            next,
-            refused,
-            running,
-            landed,
-          ),
-        ].join("\n"),
-        LEADER_TURN_SCHEMA,
-        options.cwd,
-      ),
-    );
-  let unit = listed;
-  let replaced: { sessionId: string; reason: string } | null = null;
-  let fallbackFrom: string | null = null;
-  let outcome: Awaited<ReturnType<typeof provider.run>>;
-  let turn: LeaderTurn;
-  // A refused turn is filed (`leader.failed` with the refusal and what the call spent) and,
-  // when it was a resumed call, the session is released with the category: a refused
-  // session stays refused on every later call (seen 2026-09-15). On the unit's model the
-  // filing also moves the leader to the fallback (the mutation `unit.leader` on
-  // `leader.failed`; R4-7), and a fresh session on it is asked the same turn; refused on
-  // the fallback too, the runtime reports `not_met` for the unit with both refusals. The
-  // IC's own refusals are `icCall`'s (src/ic.ts): the root takes no leader turn (R4-6).
-  const fileRefusal = (
-    error: SessionError,
-    refused: Refusal,
-    fallback: string | null,
-  ): RefusedCall => {
-    const call: RefusedCall = {
-      model: unit.leader.model,
-      sessionId: error.sessionId,
-      refused,
-    };
-    store.batch(() => {
-      const payload = {
-        unitId: unit.id,
-        sessionId: error.sessionId,
-        ...unit.leader,
-        seat: "leader",
-        reason: error.message,
-        refused,
-        ...(error.usage === null ? {} : { usage: error.usage }),
-        ...(fallback === null ? {} : { fallback }),
-      };
-      if (fallback === null)
-        store.record(incident.id, "leader.failed", actor, payload);
-      else
-        store.setUnitLeader(
-          incident.id,
-          unit.id,
-          { ...unit.leader, model: fallback },
-          actor,
-          "leader.failed",
-          payload,
-        );
-      if (unit.sessionId !== null)
-        store.setUnitSession(incident.id, unit.id, null, actor, {
-          unitId: unit.id,
-          released: unit.sessionId,
-          ...unit.leader,
-          reason: `refused: ${refused.category}`,
-          refused,
-        });
-    });
-    return call;
-  };
-  const refusedTwice = (refusals: RefusedCall[]): Turned => {
-    const current = { ...unit, sessionId: null };
-    const { report } = reportRefusals(
-      store,
-      incident,
-      current,
-      "leader",
-      refusals,
-      actor,
-    );
-    return {
-      turn: { kind: "report", report },
-      sessionId: null,
-      unit: current,
-      assigned: 0,
-      revision,
-    };
-  };
-  try {
-    try {
-      outcome = await ask(unit);
-    } catch (error) {
-      if (error instanceof SessionError && error.refused !== null) {
-        const fallback = fallbackModel(options.env, provider);
-        if (unit.leader.model === fallback)
-          return refusedTwice([fileRefusal(error, error.refused, null)]);
-        const first = fileRefusal(error, error.refused, fallback);
-        if (error.sessionId !== null)
-          replaced = { sessionId: error.sessionId, reason: error.message };
-        fallbackFrom = unit.leader.model;
-        unit = {
-          ...unit,
-          sessionId: null,
-          leader: { ...unit.leader, model: fallback },
-        };
-        try {
-          outcome = await ask(unit);
-        } catch (again) {
-          if (again instanceof SessionError && again.refused !== null)
-            return refusedTwice([
-              first,
-              fileRefusal(again, again.refused, null),
-            ]);
-          throw again;
-        }
-      } else {
-        if (!couldNotResume(error, unit) || unit.sessionId === null)
-          throw error;
-        replaced = { sessionId: unit.sessionId, reason: error.message };
-        unit = { ...unit, sessionId: null };
-        outcome = await ask(unit);
-      }
-    }
-    turn = LeaderTurn.parse(outcome.output);
-  } catch (error) {
-    throw new Error(`leader of unit ${unit.id}: ${describe(error)}`, {
-      cause: error,
-    });
-  }
-  // A report that asks for something the unit cannot get itself changes the picture by
-  // definition: the IC must see the unit waiting before anything new starts. The schema
-  // refuses a report on a continue turn, so a request never rides on one.
-  const requests =
-    turn.kind === "report" ? (turn.report?.resourceRequests ?? []) : [];
-  if (turn.report !== null && requests.length > 0)
-    turn = { ...turn, report: { ...turn.report, pictureChanged: true } };
-  const sessionId = outcome.sessionId;
-  const place = {
-    sessionId,
-    unitId: unit.id,
-    taskId: null,
-    cycle: null,
-  };
-  const seat = { unitId: unit.id, sessionId, ...unit.leader };
-  const current = { ...unit, sessionId };
-  let assigned = 0;
-  // One transaction for the turn and what it changes: the record of the turn, the tasks it
-  // assigned (validated first, while the unit is still active), then the requests it
-  // raised, so a crash can never leave a recorded report whose requests were not raised.
-  // better-sqlite3 runs a transaction function called inside another as a savepoint.
-  store.batch(() => {
-    if (unit.sessionId === null)
-      store.setUnitSession(incident.id, unit.id, sessionId, actor, {
-        ...seat,
-        cwd: options.cwd,
-        ...(replaced === null
-          ? {}
-          : { replaced: replaced.sessionId, reason: replaced.reason }),
-        ...(fallbackFrom === null ? {} : { fallbackFrom }),
-      });
-    recordActivity(store, incident.id, actor, outcome.activity, place);
-    // The brief reached the leader on this call: the verdict is delivered (R4-3).
-    if (cause.status === "revise")
-      store.record(incident.id, "unit.revised", actor, {
-        ...seat,
-        reviewedId: cause.brief.reviewedId,
-        reportId: cause.brief.reportId,
-        instructions: cause.brief.instructions,
-        revision: cause.brief.revision,
-      });
-    if (turn.discrepancy !== undefined)
-      store.record(incident.id, "picture.discrepancy", actor, {
-        ...seat,
-        seat: "leader",
-        taskId: "task" in cause ? cause.task.id : null,
-        discrepancy: turn.discrepancy,
-      });
-    if (turn.kind === "report")
-      store.record(incident.id, "unit.reported", actor, {
-        ...seat,
-        report: turn.report,
-        usage: outcome.usage,
-        ...(revision === 0 ? {} : { revision }),
-      });
-    else
-      store.record(incident.id, "unit.continued", actor, {
-        ...seat,
-        remaining,
-        usage: outcome.usage,
-      });
-    declareRequestedTeam(
-      store,
-      incident,
-      turn,
-      turn.kind === "report" ? null : next,
-      seat,
-      options,
-      actor,
-    );
-    const proposals = turn.assignTasks ?? [];
-    if (proposals.length > 0) {
-      const providers = options.providers ?? [
-        getProvider("claude-code", options.env),
-      ];
-      const verdict = validateLeaderTasksAndRecord(
-        store,
-        incident,
-        current,
-        proposals,
-        providers,
-      );
-      if (verdict.ok)
-        assigned = applyLeaderTasks(store, incident, current, proposals).length;
-    }
-    if (requests.length > 0)
-      raiseResourceRequests(store, incident, current, requests, actor);
-  });
-  return { turn, sessionId, unit: current, assigned, revision };
-}
-
 /** Unit passes run at once: `NOSCOPE_PARALLEL`, a positive whole number, 3 when unset. */
 const DEFAULT_PARALLEL = 3;
 
@@ -962,10 +490,15 @@ function relatedUnits(
  * report carries `revision`. A task whose dependencies complete during
  * the pass runs in the same pass when its unit has not yet reported; a unit that has
  * reported is done for the pass, so its dependents wait for the next one. A `waiting` unit
- * is skipped. The root is the exception (R4-6): its leader is the IC, which takes no leader
- * turn, so its runnable tasks all start at once with no turn between, none inside the IC's
- * session, and its pass ends without a report once its ready tasks have landed; the IC
- * judges their results at its command turn, where the change report lists them. The pass
+ * is skipped. The turns are the unit's type's (R4-10): the dispatcher owns the scheduling,
+ * the starts, the landings, the budget and the halt, and asks each unit's protocol at
+ * three points, `open` before any task, `ending` on each landing, `close` once every run
+ * has landed; what is written above about turns is the base protocol's
+ * (`src/units/base.ts`), and under the ic protocol (`src/units/ic.ts`, R4-6) command
+ * takes no turn at all: its runnable tasks all start at once with no turn between, none
+ * inside the IC's session, and its pass ends without a report once its ready tasks have
+ * landed; the IC judges their results at its command turn, where the change report lists
+ * them. The pass
  * ends when every unit that ran has reported, when a report says the picture changed
  * (`pictureChanged` names the first such unit; a report with resource requests always
  * does, and so does the report the runtime writes for a unit whose seat was refused on
@@ -1029,62 +562,38 @@ export async function dispatch(
       (t) => t.unitId === unitId && !attempted.has(t.id) && runnable(t, tasks),
     );
   };
-  const settle = async (
-    unit: Unit,
-    cause: TurnCause,
-    unheard: readonly TaskEnding[],
-    running: readonly Task[] = [],
-    landed: readonly Task[] = [],
-  ): Promise<{ unit: Unit; stop: boolean }> => {
-    const remaining = runnableIn(unit.id);
-    const turned = await leaderTurn(
-      store,
-      incident,
-      unit,
-      units,
-      cause,
-      unheard,
-      remaining.length,
-      remaining[0] ?? null,
-      running,
-      landed,
-      options,
-      actor,
-    );
-    if (turned.turn.kind === "report" && turned.turn.report !== null) {
-      reports.push({
-        unitId: unit.id,
-        sessionId: turned.sessionId,
-        report: turned.turn.report,
-        ...(turned.revision === 0 ? {} : { revision: turned.revision }),
-      });
-      done.add(unit.id);
-      return { unit: turned.unit, stop: turned.turn.report.pictureChanged };
-    }
-    // Continued with nothing left, nothing running, nothing to hear and nothing assigned:
-    // the unit's pass ends without a report, and the next pass asks again.
-    if (
-      remaining.length === 0 &&
-      turned.assigned === 0 &&
-      running.length === 0 &&
-      landed.length === 0
-    )
-      done.add(unit.id);
-    return { unit: turned.unit, stop: false };
-  };
-  const answered = (unit: Unit): Extract<TurnCause, { status: "answered" }> => {
-    const current = store.getIncident(incident.id);
-    return {
-      status: "answered",
-      answers: answeredRequestsOf(
-        unit.id,
-        current?.questions ?? [],
-        current?.capabilityRequests ?? [],
-        store.listEvents(incident.id),
+  const providers = options.providers ?? [
+    getProvider("claude-code", options.env),
+  ];
+  // What a protocol's turn needs of the runtime, lent so the protocol modules import
+  // neither the validator nor the runtime.
+  const bookkeeping: PassContext["bookkeeping"] = {
+    validateAssignments: (unit, tasks) =>
+      validateLeaderTasksAndRecord(store, incident, unit, tasks, providers).ok,
+    applyAssignments: (unit, tasks) =>
+      applyLeaderTasks(store, incident, unit, tasks).length,
+    raiseRequests: (unit, requests) =>
+      raiseResourceRequests(store, incident, unit, requests, actor),
+    strikeTeamRejections: (team, task, label) =>
+      strikeTeamRejections(
+        team,
+        task,
+        listProviders().map((name) => getProvider(name, options.env)),
+        label,
       ),
-    };
   };
-  const owed: TurnCause = { status: "owing" };
+  const ctx: PassContext = {
+    store,
+    incident,
+    units,
+    cwd: options.cwd,
+    ...(options.env === undefined ? {} : { env: options.env }),
+    actor,
+    ...(options.providers === undefined
+      ? {}
+      : { providers: options.providers }),
+    bookkeeping,
+  };
   const hasWork = (unitId: string) =>
     revised.has(unitId) ||
     resumed.has(unitId) ||
@@ -1094,6 +603,7 @@ export async function dispatch(
   const pass = async (listed: Unit): Promise<void> => {
     let unit =
       store.listUnits(incident.id).find((u) => u.id === listed.id) ?? listed;
+    const protocol = protocolOf(unit);
     // The leader's session takes one call at a time: a task that runs inside it and every
     // turn queue here, in the order they are asked for.
     let leader: Promise<unknown> = Promise.resolve();
@@ -1116,24 +626,40 @@ export async function dispatch(
       store.listTasks(incident.id),
       store.listEvents(incident.id),
     );
-    const hear = (): readonly TaskEnding[] => {
-      const heard = unheard;
-      unheard = [];
-      return heard;
-    };
     const pending = new Set<Promise<void>>();
     // A run that threw past `runOne` (a store that failed in its record) ends the pass with
     // that error once the other runs have landed.
     let crashed: unknown;
     let insideTask: string | null = null;
-    // What a turn is told beside its ending: the tasks still running in sessions of their
-    // own (an inside task queues on the leader's chain as a turn does, so at a turn it has
-    // landed or not started; the filter keeps it out either way), and the tasks that
-    // landed and wait for turns of their own.
-    const stillRunning = () =>
-      [...inFlight.values()].filter((t) => t.id !== insideTask);
-    const landedTasks = () => landed.map((e) => e.task);
     let ranInUnit = false;
+    // What the protocol sees of the pass at a turn: the runnable tasks not yet attempted,
+    // the endings of earlier passes (given once), the tasks still running in sessions of
+    // their own (an inside task queues on the leader's chain as a turn does, so at a turn
+    // it has landed or not started; the filter keeps it out either way), the tasks that
+    // landed and wait for turns of their own, and the pass's state.
+    const view: PassView = {
+      remaining: () => runnableIn(unit.id),
+      hear: () => {
+        const heard = unheard;
+        unheard = [];
+        return heard;
+      },
+      running: () => [...inFlight.values()].filter((t) => t.id !== insideTask),
+      landed: () => landed.map((e) => e.task),
+      ran: () => ranInUnit,
+      done: () => done.has(unit.id),
+      halted: () => halt !== null,
+      onLeader,
+    };
+    // What a protocol's turn came to lands in the pass's tally: the unit as it now stands,
+    // the report filed, the unit done for the pass, the halt when the picture changed.
+    const take = (turned: Turned | null) => {
+      if (turned === null) return;
+      unit = turned.unit;
+      if (turned.report !== null) reports.push(turned.report);
+      if (turned.done) done.add(unit.id);
+      if (turned.stop) stop({ stopped: null, pictureChanged: unit.id });
+    };
     // A task's start: `started`; `deferred`, when it fits the budget by spend but not with
     // what the runs in flight are held to, so it is left unattempted for the sweep after
     // the next landing; or `stopped`, when the budget has no room for it by spend
@@ -1188,19 +714,9 @@ export async function dispatch(
           return "stopped";
         }
         reserved.set(next.id, reservationFor(next, capability));
-        const inside = runsInsideLeader(capability, next, unit);
+        const inside = protocol.runsInside(capability, next, unit);
         const runIt = async () => {
-          const one = await runOne(
-            store,
-            incident,
-            next,
-            capability,
-            unit,
-            units,
-            options,
-            actor,
-            ran,
-          );
+          const one = await runOne(ctx, next, capability, unit, ran);
           if (inside) unit = one.unit;
           return one.refusals === undefined
             ? one.ending
@@ -1237,37 +753,10 @@ export async function dispatch(
       return "started";
     };
     try {
-      const brief = revised.get(unit.id);
-      if (brief !== undefined) {
-        // The IC sent the unit's report back (R4-3): the leader reads the brief before its
-        // unit runs anything, on a fresh session when it has none; a unit that resumed at
-        // the same time reads its answers on the same turn. A revise never targets the
-        // root, since command files no report (R4-6).
-        revised.delete(unit.id);
-        const answers = resumed.has(unit.id) ? answered(unit).answers : [];
-        resumed.delete(unit.id);
-        const settled = await onLeader(() =>
-          settle(
-            unit,
-            { status: "revise", brief, period: incident.period, answers },
-            hear(),
-          ),
-        );
-        unit = settled.unit;
-        if (settled.stop) stop({ stopped: null, pictureChanged: unit.id });
-        if (done.has(unit.id)) return;
-      } else if (resumed.has(unit.id) && unit.parentId !== null) {
-        // The leader reads the answers to its requests before its unit runs anything. The
-        // root takes no turn (R4-6): a waiting root can only come from a store written
-        // before this, and its answers are read at the command turn.
-        resumed.delete(unit.id);
-        const settled = await onLeader(() =>
-          settle(unit, answered(unit), hear()),
-        );
-        unit = settled.unit;
-        if (settled.stop) stop({ stopped: null, pictureChanged: unit.id });
-        if (done.has(unit.id)) return;
-      }
+      // The turns the unit is owed before anything runs: the protocol's (a revision brief,
+      // the answers to its requests, under the base protocol; nothing under the ic's).
+      take(await protocol.open(ctx, unit, view));
+      if (done.has(unit.id)) return;
       for (;;) {
         let deferred = false;
         if (halt === null && !done.has(unit.id))
@@ -1277,7 +766,7 @@ export async function dispatch(
             if (
               insideTask !== null &&
               capability !== undefined &&
-              runsInsideLeader(capability, next, unit)
+              protocol.runsInside(capability, next, unit)
             )
               continue;
             const started = start(next);
@@ -1298,51 +787,15 @@ export async function dispatch(
         if (crashed !== undefined) throw crashed;
         const ending = landed.shift();
         if (ending === undefined) continue;
-        // A root task refused on both models ends as its `task.failed` (R4-7, the
-        // refusals on it), which the change report lists under the tasks under command:
-        // command files no report, and the IC judges it at its command turn (R4-6).
-        if (unit.parentId === null) continue;
-        // A unit's task refused on both models: the runtime reports `not_met` for the unit
-        // with both refusals, picture-changing, and the pass ends for the IC to decide,
-        // whether or not the leader has reported this pass.
-        if (ending.refusals !== undefined) {
-          const { report, revision } = reportRefusals(
-            store,
-            incident,
-            unit,
-            "task",
-            ending.refusals,
-            actor,
-          );
-          reports.push({
-            unitId: unit.id,
-            sessionId: null,
-            report,
-            ...(revision === 0 ? {} : { revision }),
-          });
-          done.add(unit.id);
-          stop({ stopped: null, pictureChanged: unit.id });
-          continue;
-        }
-        // The leader reported this pass: the ending is recorded, and its next turn hears it.
-        if (done.has(unit.id)) continue;
-        const settled = await onLeader(() =>
-          settle(unit, ending, hear(), stillRunning(), landedTasks()),
-        );
+        // The ending's turn is the protocol's: the leader hears it, or the runtime reports
+        // a task refused on both models, under the base protocol; under the ic's it stays
+        // recorded for the change report.
+        take(await protocol.ending(ctx, unit, ending, view));
         if (ending.task.id === insideTask) insideTask = null;
-        unit = settled.unit;
-        if (settled.stop) stop({ stopped: null, pictureChanged: unit.id });
       }
-      // The root files no report (R4-6): its pass ends once its tasks have landed.
-      if (unit.parentId === null) {
-        done.add(unit.id);
-        return;
-      }
-      if (!ranInUnit && owing.has(unit.id) && halt === null) {
-        const settled = await onLeader(() => settle(unit, owed, hear()));
-        done.add(unit.id);
-        if (settled.stop) stop({ stopped: null, pictureChanged: unit.id });
-      }
+      // Once every run has landed: the protocol's closing turn (the report owed from an
+      // earlier pass under the base protocol; command is simply done for the pass).
+      take(await protocol.close(ctx, unit, view));
     } catch (error) {
       // A leader that cannot answer, or a run that crashed: nothing new starts anywhere,
       // and the error is thrown once every pass has landed its runs.
@@ -1388,14 +841,10 @@ export async function dispatch(
  * the same transaction, and the unit returned carries it.
  */
 async function runOne(
-  store: Store,
-  incident: Incident,
+  ctx: PassContext,
   next: Task,
   capability: Capability,
   unit: Unit,
-  units: readonly Unit[],
-  options: DispatchOptions,
-  actor: string,
   ran: Ran[],
 ): Promise<{
   ending: TaskEnding;
@@ -1406,25 +855,18 @@ async function runOne(
   // A session is bounded by its request's timeout, which kills the process and files its
   // calls under the session id; a dispatcher-side timer would fail the task while that
   // process still ran and the leader's next call would find its session in use.
+  const { store, incident, actor } = ctx;
+  const options = { cwd: ctx.cwd };
   const bound =
     capability.kind === "deterministic" ? next.budget.seconds : undefined;
-  const inside = runsInsideLeader(capability, next, unit);
+  const inside = protocolOf(unit).runsInside(capability, next, unit);
   store.setTaskStatus(incident.id, next.id, "running", actor, "task.started");
   const running: Task = { ...next, status: "running" };
   const started = Date.now();
   try {
     const outcome = await withinSeconds(
       bound,
-      runTask(
-        store,
-        incident,
-        running,
-        capability,
-        unit,
-        units,
-        options,
-        actor,
-      ),
+      runTask(ctx, running, capability, unit),
     );
     let claims: Claim[] = [];
     const started =
@@ -1494,7 +936,7 @@ async function runOne(
             : unit,
     };
   } catch (error) {
-    const reason = describe(error);
+    const reason = describeError(error);
     const usage: Usage =
       error instanceof SessionError && error.usage !== null
         ? error.usage
