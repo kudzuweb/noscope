@@ -7,6 +7,8 @@ as the durable layer and the organization tree as derived state.
 Named after FIRESCOPE, the effort that produced ICS, and for the pun: it is built so you never
 have to zoom in, not even to one-shot. `DESIGN.md` is the design. `BUILD-PLAN.md` breaks it into fifteen PR-sized steps; `docs/build-record.md` says which are built.
 
+`CLAUDE.md` orients a Claude pointed at the repository: the framework in a paragraph, install, use, what to read next.
+
 Layout: `src/` is the runtime, `test/` its vitest tests, `bin/noscope.mjs` the launcher that
 loads the built `dist/`; `biome.json`, `knip.json`, `tsconfig.json` and `tsconfig.typecheck.json`
 configure lint, unused-code detection, the build and the typecheck that includes tests.
