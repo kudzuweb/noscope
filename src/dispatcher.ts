@@ -11,9 +11,12 @@ import {
 } from "./capabilities/index.js";
 import {
   answeredRequestsOf,
+  describeRefusedCall,
+  fallbackModel,
   LEADER_ACTOR,
   LEADER_TURN_SCHEMA,
   leaderRequest,
+  type RefusedCall,
   renderLeaderOrientation,
   renderTurnPrompt,
   resumedUnits,
@@ -64,10 +67,10 @@ type Ran = {
   reason?: string;
 };
 
-/** A report a unit's leader filed during the pass. */
+/** A report a unit's leader filed during the pass; the session is null when the runtime wrote it on the leader's behalf after two refusals (R4-7). */
 type Reported = {
   unitId: string;
-  sessionId: string;
+  sessionId: string | null;
   report: LeaderReport;
 };
 
@@ -184,7 +187,44 @@ type Outcome = {
   sessionId?: string;
   activity?: SessionActivity;
   inside: boolean;
+  /** The task's model, and the one it was retried on after a refusal (R4-7), when the run fell back. */
+  fallback?: { from: string; to: string };
+  /** The leader's session the refused first call ran in, released so the leader's next turn starts fresh (R4-7). */
+  released?: string;
   record: () => Claim[];
+};
+
+/**
+ * A task's session refused on the fallback too, or refused on the fallback outright
+ * (R4-7): the refusals, in order, with the last call's session, usage and activity as a
+ * `SessionError` carries them, so `runOne` files the task and `dispatch` reports for the
+ * unit.
+ */
+class TaskRefused extends SessionError {
+  constructor(
+    readonly refusals: readonly RefusedCall[],
+    readonly fallbackFrom: string | null,
+    /** The leader's session the first call ran in, released for its refusal (R4-7). */
+    readonly released: string | null,
+    last: SessionError,
+  ) {
+    super(
+      `refused on ${refusals.map(describeRefusedCall).join(" and then on the fallback ")}`,
+      last.sessionId,
+      last.usage,
+      last.activity,
+      last.refused,
+    );
+  }
+}
+
+const NO_USAGE: Usage = {
+  inputTokens: 0,
+  uncachedInputTokens: 0,
+  cacheWriteTokens: 0,
+  cacheReadTokens: 0,
+  outputTokens: 0,
+  seconds: 0,
 };
 
 /** The last applied plan's situation, if a plan has been applied and carried one; a leader's `plan.applied` carries none and is skipped. */
@@ -242,7 +282,14 @@ function orientation(
  * Run one task: a deterministic capability in process; a session-backed one inside its
  * unit's leader session when the task's model and equipment match the leader's (the
  * leader's request with the task's brief and the capability's schema, resumed once the
- * session exists), otherwise in a session of its own.
+ * session exists), otherwise in a session of its own. A session call the API refused is
+ * retried once, in the task's own session on the fallback model (R4-7): the refused call
+ * is filed on the task (`task.usage` with the refusal, the model and the fallback, so the
+ * budget counts what it spent, plus its activity), and the retry's outcome carries the
+ * models; a first call refused inside the leader's resumed session releases that session
+ * (`leader.released`, the outcome's `released`), since it is refused on every later call.
+ * Refused on the fallback too, or refused when the task's own model is the fallback,
+ * `TaskRefused` carries both.
  */
 async function runTask(
   store: Store,
@@ -252,6 +299,7 @@ async function runTask(
   unit: Unit,
   units: readonly Unit[],
   options: DispatchOptions,
+  actor: string,
 ): Promise<Outcome> {
   const started = Date.now();
   if (capability.kind === "deterministic") {
@@ -298,34 +346,159 @@ async function runTask(
         task.strikeTeam,
       )
     : buildSessionRequest(capability, task, unit, options.cwd, context);
-  const session = await runSession(
-    capability,
-    task,
-    unit,
-    provider,
-    options.cwd,
-    context,
-    request,
-  );
+  let session: Awaited<ReturnType<typeof runSession>>;
+  let fallback: Outcome["fallback"];
+  let releasedLeader: string | undefined;
+  try {
+    session = await runSession(
+      capability,
+      task,
+      unit,
+      provider,
+      options.cwd,
+      context,
+      request,
+    );
+  } catch (error) {
+    if (
+      !(error instanceof SessionError) ||
+      error.refused === null ||
+      task.model === null
+    )
+      throw error;
+    const model = task.model;
+    const refused = error.refused;
+    const first: RefusedCall = {
+      model,
+      sessionId: error.sessionId,
+      refused,
+    };
+    const to = fallbackModel(options.env, provider);
+    // A refusal inside the leader's resumed session flags that session (a refused session
+    // stays refused on every later call), so it is released here with the category, as a
+    // refused leader turn releases it, and the leader's next turn starts fresh rather than
+    // paying a refusal the runtime already knows is coming.
+    const released =
+      inside && unit.sessionId !== null && error.sessionId === unit.sessionId
+        ? unit.sessionId
+        : null;
+    const releaseLeader = () => {
+      if (released !== null)
+        store.setUnitSession(incident.id, unit.id, null, actor, {
+          unitId: unit.id,
+          released,
+          ...unit.leader,
+          reason: `refused: ${refused.category}`,
+          refused,
+        });
+    };
+    if (model === to) {
+      releaseLeader();
+      throw new TaskRefused([first], null, released, error);
+    }
+    store.batch(() => {
+      releaseLeader();
+      if (error.sessionId !== null)
+        recordActivity(store, incident.id, actor, error.activity, {
+          sessionId: error.sessionId,
+          unitId: task.unitId,
+          taskId: task.id,
+          cycle: null,
+        });
+      store.record(incident.id, "task.usage", actor, {
+        taskId: task.id,
+        usage: error.usage ?? NO_USAGE,
+        sessionId: error.sessionId,
+        model,
+        refused,
+        fallback: to,
+      });
+    });
+    const retry: Task = { ...task, model: to };
+    try {
+      session = await runSession(
+        capability,
+        retry,
+        unit,
+        provider,
+        options.cwd,
+        context,
+        buildSessionRequest(capability, retry, unit, options.cwd, context),
+      );
+    } catch (again) {
+      if (again instanceof SessionError && again.refused !== null)
+        throw new TaskRefused(
+          [
+            first,
+            { model: to, sessionId: again.sessionId, refused: again.refused },
+          ],
+          model,
+          released,
+          again,
+        );
+      throw again;
+    }
+    fallback = { from: model, to };
+    if (released !== null) releasedLeader = released;
+  }
   const result = SessionResult.parse(session.result);
+  const sessionId = session.sessionId;
   return {
     result,
     usage: session.usage,
-    sessionId: session.sessionId,
+    sessionId,
     activity: session.activity,
-    inside,
+    // A retry runs in its own session, whatever the first call ran in.
+    inside: fallback === undefined && inside,
+    ...(fallback === undefined ? {} : { fallback }),
+    ...(releasedLeader === undefined ? {} : { released: releasedLeader }),
     record: () =>
-      recordSessionResult(store, task, capability, result, session.sessionId),
+      recordSessionResult(store, task, capability, result, sessionId),
   };
 }
 
-/** What a turn came to: the leader's move, the session it ran on, the unit as it now stands (the session recorded on the first call), and how many tasks the leader assigned and the validator let through. */
+/** What a turn came to: the leader's move, the session it ran on (null for a report the runtime wrote after two refusals), the unit as it now stands (the session recorded on the first call), and how many tasks the leader assigned and the validator let through. */
 type Turned = {
   turn: LeaderTurn;
-  sessionId: string;
+  sessionId: string | null;
   unit: Unit;
   assigned: number;
 };
+
+/**
+ * The report the runtime files on a unit's behalf when its seat was refused on both models
+ * (R4-7): `not_met`, picture-changing, the refusals as its why, and the IC's choices as its
+ * suggestion. Written as `unit.reported` by the actor `runtime` with `writtenBy: "runtime"`
+ * and the refusals, so the change report and review say who wrote it.
+ */
+function reportRefusals(
+  store: Store,
+  incident: Incident,
+  unit: Unit,
+  seat: "leader" | "task",
+  refusals: readonly RefusedCall[],
+  actor: string,
+): LeaderReport {
+  const who =
+    seat === "leader" ? "the unit's leader" : "a task session under the unit";
+  const report: LeaderReport = {
+    outcome: "not_met",
+    changed: [],
+    pictureChanged: true,
+    why: `${who} was refused by the API on ${refusals.map(describeRefusedCall).join(" and then on the fallback ")}${refusals.at(-1)?.refused.explanation ? `: ${refusals.at(-1)?.refused.explanation}` : ""}; no seat retries beyond the one fallback`,
+    suggestion:
+      "the IC decides: another model for the seat, a different unit for the slice, or drop the slice",
+  };
+  store.record(incident.id, "unit.reported", actor, {
+    unitId: unit.id,
+    sessionId: null,
+    ...unit.leader,
+    report,
+    writtenBy: "runtime",
+    refusals,
+  });
+  return report;
+}
 
 /** The reasons the validator refused this unit's leader's last assignment, since the leader's last turn, for its next prompt. */
 function refusedSinceLastTurn(
@@ -413,7 +586,8 @@ function declareRequestedTeam(
  * session and opens with the orientation; `leader.started` records its id on the unit,
  * with the cwd it was launched from. A session that cannot be resumed (the call died
  * before its init line) is replaced: a fresh session is oriented and asked the same turn,
- * and its `leader.started` names the dead session and the reason. Every turn is recorded,
+ * and its `leader.started` names the dead session and the reason; a session the API
+ * refused is replaced the same way on the fallback model, once (R4-7). Every turn is recorded,
  * `unit.reported` with the report or `unit.continued`, each with the call's usage, a
  * `discrepancy` becomes `picture.discrepancy`, and a `requestStrikeTeam` is declared on
  * the next task or refused. A leader that cannot answer otherwise ends the pass. In the
@@ -456,15 +630,28 @@ async function leaderTurn(
     );
   let unit = listed;
   let replaced: { sessionId: string; reason: string } | null = null;
+  let fallbackFrom: string | null = null;
   let outcome: Awaited<ReturnType<typeof provider.run>>;
   let turn: LeaderTurn;
   // A refused turn is filed (`leader.failed` with the refusal and what the call spent) and,
-  // when it was a resumed call, the session is released with the category and replaced by
-  // a fresh one asked the same turn: a refused session stays refused on every later call
-  // (seen 2026-09-15). A fresh session that refuses too ends the pass.
-  const fileRefusal = (error: SessionError, refused: Refusal) =>
+  // when it was a resumed call, the session is released with the category: a refused
+  // session stays refused on every later call (seen 2026-09-15). On the unit's model the
+  // filing also moves the leader to the fallback (the mutation `unit.leader` on
+  // `leader.failed`; R4-7), and a fresh session on it is asked the same turn; refused on
+  // the fallback too, the runtime reports `not_met` for the unit with both refusals. The
+  // IC's own refusals are `icCall`'s (src/ic.ts): the root takes no leader turn (R4-6).
+  const fileRefusal = (
+    error: SessionError,
+    refused: Refusal,
+    fallback: string | null,
+  ): RefusedCall => {
+    const call: RefusedCall = {
+      model: unit.leader.model,
+      sessionId: error.sessionId,
+      refused,
+    };
     store.batch(() => {
-      store.record(incident.id, "leader.failed", actor, {
+      const payload = {
         unitId: unit.id,
         sessionId: error.sessionId,
         ...unit.leader,
@@ -472,7 +659,19 @@ async function leaderTurn(
         reason: error.message,
         refused,
         ...(error.usage === null ? {} : { usage: error.usage }),
-      });
+        ...(fallback === null ? {} : { fallback }),
+      };
+      if (fallback === null)
+        store.record(incident.id, "leader.failed", actor, payload);
+      else
+        store.setUnitLeader(
+          incident.id,
+          unit.id,
+          { ...unit.leader, model: fallback },
+          actor,
+          "leader.failed",
+          payload,
+        );
       if (unit.sessionId !== null)
         store.setUnitSession(incident.id, unit.id, null, actor, {
           unitId: unit.id,
@@ -482,32 +681,63 @@ async function leaderTurn(
           refused,
         });
     });
+    return call;
+  };
+  const refusedTwice = (refusals: RefusedCall[]): Turned => {
+    const current = { ...unit, sessionId: null };
+    const report = reportRefusals(
+      store,
+      incident,
+      current,
+      "leader",
+      refusals,
+      actor,
+    );
+    return {
+      turn: { kind: "report", report },
+      sessionId: null,
+      unit: current,
+      assigned: 0,
+    };
+  };
   try {
     try {
       outcome = await ask(unit);
     } catch (error) {
       if (error instanceof SessionError && error.refused !== null) {
-        fileRefusal(error, error.refused);
-        if (unit.sessionId === null) throw error;
-      } else if (!couldNotResume(error, unit) || unit.sessionId === null)
-        throw error;
-      replaced = { sessionId: unit.sessionId, reason: error.message };
-      unit = { ...unit, sessionId: null };
-      try {
+        const fallback = fallbackModel(options.env, provider);
+        if (unit.leader.model === fallback)
+          return refusedTwice([fileRefusal(error, error.refused, null)]);
+        const first = fileRefusal(error, error.refused, fallback);
+        if (error.sessionId !== null)
+          replaced = { sessionId: error.sessionId, reason: error.message };
+        fallbackFrom = unit.leader.model;
+        unit = {
+          ...unit,
+          sessionId: null,
+          leader: { ...unit.leader, model: fallback },
+        };
+        try {
+          outcome = await ask(unit);
+        } catch (again) {
+          if (again instanceof SessionError && again.refused !== null)
+            return refusedTwice([
+              first,
+              fileRefusal(again, again.refused, null),
+            ]);
+          throw again;
+        }
+      } else {
+        if (!couldNotResume(error, unit) || unit.sessionId === null)
+          throw error;
+        replaced = { sessionId: unit.sessionId, reason: error.message };
+        unit = { ...unit, sessionId: null };
         outcome = await ask(unit);
-      } catch (again) {
-        if (again instanceof SessionError && again.refused !== null)
-          fileRefusal(again, again.refused);
-        throw again;
       }
     }
     turn = LeaderTurn.parse(outcome.output);
   } catch (error) {
-    const refused =
-      error instanceof SessionError && error.refused !== null
-        ? ` (${error.refused.category}${replaced === null ? "" : `, after session ${replaced.sessionId} was refused and replaced`}; Claude Code's advice is to rephrase the request in a new session or change the model)`
-        : "";
-    throw new Error(`leader of unit ${unit.id}: ${describe(error)}${refused}`, {
+    throw new Error(`leader of unit ${unit.id}: ${describe(error)}`, {
       cause: error,
     });
   }
@@ -540,6 +770,7 @@ async function leaderTurn(
         ...(replaced === null
           ? {}
           : { replaced: replaced.sessionId, reason: replaced.reason }),
+        ...(fallbackFrom === null ? {} : { fallbackFrom }),
       });
     recordActivity(store, incident.id, actor, outcome.activity, place);
     if (turn.discrepancy !== undefined)
@@ -608,8 +839,9 @@ async function leaderTurn(
  * report once its ready tasks have run; the IC judges their results at its command turn,
  * where the change report lists them. The pass ends when every unit that ran has
  * reported, when a report says the picture changed (`pictureChanged` names the unit; a
- * report with resource requests always does), or, with `budget.exceeded`, when the
- * incident's budget has no room for the next task.
+ * report with resource requests always does, and so does the report the runtime writes
+ * for a unit whose seat was refused on both models, R4-7), or, with `budget.exceeded`,
+ * when the incident's budget has no room for the next task.
  */
 export async function dispatch(
   store: Store,
@@ -720,6 +952,7 @@ export async function dispatch(
           );
         const capability = getCapability(next.capability);
         let ending: TaskEnding;
+        let refusals: readonly RefusedCall[] | undefined;
         if (capability === undefined) {
           const reason = `no capability named ${next.capability}`;
           store.setTaskStatus(
@@ -765,8 +998,27 @@ export async function dispatch(
           );
           ending = run.ending;
           unit = run.unit;
+          refusals = run.refusals;
         }
+        // A root task refused on both models ends as its `task.failed` (R4-7, the
+        // refusals on it), which the change report lists under the tasks under command:
+        // command files no report, and the IC judges it at its command turn (R4-6).
         if (unit.parentId === null) continue;
+        // A unit's task refused on both models: the runtime reports `not_met` for the unit
+        // with both refusals, picture-changing, and the pass ends for the IC to decide.
+        if (refusals !== undefined) {
+          const report = reportRefusals(
+            store,
+            incident,
+            unit,
+            "task",
+            refusals,
+            actor,
+          );
+          reports.push({ unitId: unit.id, sessionId: null, report });
+          done.add(unit.id);
+          return { ran, reports, stopped: null, pictureChanged: unit.id };
+        }
         const ended = store
           .listTasks(incident.id)
           .find((t) => t.id === next.id);
@@ -813,7 +1065,12 @@ async function runOne(
   options: DispatchOptions,
   actor: string,
   ran: Ran[],
-): Promise<{ ending: TaskEnding; unit: Unit }> {
+): Promise<{
+  ending: TaskEnding;
+  unit: Unit;
+  /** The task's session was refused on both models (R4-7): the unit reports, not its leader. */
+  refusals?: readonly RefusedCall[];
+}> {
   // A session is bounded by its request's timeout, which kills the process and files its
   // calls under the session id; a dispatcher-side timer would fail the task while that
   // process still ran and the leader's next call would find its session in use.
@@ -826,7 +1083,16 @@ async function runOne(
   try {
     const outcome = await withinSeconds(
       bound,
-      runTask(store, incident, running, capability, unit, units, options),
+      runTask(
+        store,
+        incident,
+        running,
+        capability,
+        unit,
+        units,
+        options,
+        actor,
+      ),
     );
     let claims: Claim[] = [];
     const started =
@@ -859,15 +1125,25 @@ async function runOne(
         "task.completed",
         {
           result: outcome.result,
-          extra:
-            outcome.sessionId === undefined
+          extra: {
+            ...(outcome.sessionId === undefined
               ? {}
-              : { sessionId: outcome.sessionId },
+              : { sessionId: outcome.sessionId }),
+            ...(outcome.fallback === undefined
+              ? {}
+              : {
+                  model: outcome.fallback.to,
+                  fallbackFrom: outcome.fallback.from,
+                }),
+          },
         },
       );
       store.record(incident.id, "task.usage", actor, {
         taskId: next.id,
         usage: outcome.usage,
+        ...(outcome.fallback === undefined
+          ? {}
+          : { model: outcome.fallback.to }),
       });
     });
     ran.push({
@@ -878,7 +1154,12 @@ async function runOne(
     });
     return {
       ending: { task: next, status: "completed", inside: outcome.inside },
-      unit: started === null ? unit : { ...unit, sessionId: started },
+      unit:
+        started !== null
+          ? { ...unit, sessionId: started }
+          : outcome.released !== undefined
+            ? { ...unit, sessionId: null }
+            : unit,
     };
   } catch (error) {
     const reason = describe(error);
@@ -934,12 +1215,30 @@ async function runOne(
             ...(error instanceof SessionError && error.sessionId !== null
               ? { sessionId: error.sessionId }
               : {}),
+            // Refused on both models (R4-7): the refusals (the same key as `unit.reported`
+            // and `command.transferred` use for a list), and the models the task ran on.
+            ...(error instanceof TaskRefused
+              ? {
+                  refusals: error.refusals,
+                  model: error.refusals.at(-1)?.model,
+                  ...(error.fallbackFrom === null
+                    ? {}
+                    : { fallbackFrom: error.fallbackFrom }),
+                }
+              : {}),
           },
         },
       );
       store.record(incident.id, "task.usage", actor, {
         taskId: next.id,
         usage,
+        ...(error instanceof TaskRefused
+          ? {
+              sessionId: error.sessionId,
+              model: error.refusals.at(-1)?.model,
+              refused: error.refused,
+            }
+          : {}),
       });
     });
     ran.push({
@@ -951,7 +1250,13 @@ async function runOne(
     });
     return {
       ending: { task: next, status: "failed", reason },
-      unit: orphaned === null ? unit : { ...unit, sessionId: orphaned },
+      unit:
+        orphaned !== null
+          ? { ...unit, sessionId: orphaned }
+          : error instanceof TaskRefused && error.released !== null
+            ? { ...unit, sessionId: null }
+            : unit,
+      ...(error instanceof TaskRefused ? { refusals: error.refusals } : {}),
     };
   }
 }

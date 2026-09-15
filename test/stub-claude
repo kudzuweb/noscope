@@ -42,10 +42,12 @@
 // resume exits 1 before any output, as the binary does for a session it cannot find.
 // NOSCOPE_STUB_REFUSE names call ordinals (1-based, comma-separated, counted in the file
 // NOSCOPE_STUB_CALL_COUNTER) the API refuses: after the init line the stub prints the
-// `model_refusal_no_fallback` system line (category NOSCOPE_STUB_REFUSE_CATEGORY, default
-// reasoning_extraction), a synthetic assistant line with stop_reason refusal, and a result
-// with stop_reason refusal and the call's usage, then exits 1, as Claude Code 2.1.272 did
-// on 2026-09-15. Each
+// `model_refusal_no_fallback` system line with the stream's snake_case keys
+// (`api_refusal_category`, NOSCOPE_STUB_REFUSE_CATEGORY, default reasoning_extraction; the
+// transcript spells them apiRefusalCategory), a synthetic assistant line with stop_reason
+// refusal and the stop_details the transcript records on it, and a result with stop_reason
+// refusal and the call's usage, then exits 1, on the shape Claude Code 2.1.272 logged on
+// 2026-09-15 (the system line's keys from the binary's serializer, not seen live). Each
 // NOSCOPE_STUB_CALLS line also carries `concurrent`, how many other stub processes on the same
 // log were still running when this one started.
 import {
@@ -151,9 +153,11 @@ if (process.env.NOSCOPE_STUB_REFUSE) {
         type: "system",
         subtype: "model_refusal_no_fallback",
         level: "warning",
-        originalModel: "claude-opus-5",
-        apiRefusalCategory: category,
-        apiRefusalExplanation: explanation,
+        original_model: "claude-opus-5",
+        request_id: "req_stub",
+        api_refusal_category: category,
+        api_refusal_explanation: explanation,
+        content: "",
         session_id: sessionId,
       },
       {
@@ -165,6 +169,7 @@ if (process.env.NOSCOPE_STUB_REFUSE) {
           role: "assistant",
           content: [{ type: "text", text: `API Error: Opus 5's safeguards flagged this message. ${explanation} Try rephrasing the request in a new session or change your model.` }],
           stop_reason: "refusal",
+          stop_details: { type: "refusal", category, explanation },
           usage,
         },
       },

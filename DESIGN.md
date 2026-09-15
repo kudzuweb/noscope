@@ -175,17 +175,31 @@ requests and returning to `active` when they are answered, both the mutation
 `unit.status`),
 `command.failed` (an IC call that got no usable answer, with the API's refusal when that is
 what it got), `leader.failed` (a leader's turn the API refused, with the refusal and the
-call's usage; R3-10a), `leader.released` (a unit's
+call's usage; R3-10a; when the refusal moves the unit's leader to the fallback model it
+carries `fallback` and the mutation `unit.leader`; R4-7), `leader.released` (a unit's
 session dropped through the log, the mutation `unit.session` with a null id: the version 5
 migration, the IC's handoff, where it carries the outgoing session's document and the
 call's usage, and a refused session, with the category),
 `incident.briefed` (the initial IC's briefing with the size-up's session, model, usage and
 the runtime's findings; R3-8) and `command.transferred` (a transfer of command, one shape
-for both kinds: `kind`, the unit, the outgoing and incoming session ids and leaders, and
+for every kind: `kind`, the unit, the outgoing and incoming session ids and leaders, and
 the `document` handed over; `initial` adds who chose the incoming model and why, `handoff`
-(R3-9) adds the context size that triggered it and the threshold; the mutation is always
-`unit.leader`, which routes the root unit's leader on the initial transfer and is a no-op on
-a handoff, so every transfer replays the same way); Step 6 says what each carries. A
+(R3-9) adds the context size that triggered it and the threshold, `fallback` (R4-7) hands
+over no document and adds the refused calls (`refusals`: model, session, category and
+explanation) and who chose the model, `runtime` for the fallback model or `answer` for the
+one Mauria named; the mutation is always `unit.leader`, which routes the root unit's leader
+on the initial transfer and a fallback and is a no-op on a handoff, so every transfer
+replays the same way); Step 6 says what each carries. A `task.usage` written for a task
+session the API refused carries the refusal, the model and the fallback it was retried on
+(R4-7), so the refused call still counts against the budget; `task.completed` and
+`task.failed` carry `model` and `fallbackFrom` when the task fell back, and a task refused
+on both models fails with `refusals` listing both (`refused` is one refusal, on
+`command.failed`, `leader.failed` and `task.usage`; `refusals` is a list, on `task.failed`,
+`unit.reported` and `command.transferred`). `unit.reported` written by the runtime on
+a leader's behalf, after two refusals, carries `writtenBy: "runtime"` and the `refusals`,
+with a null session. `question.asked` and `incident.blocked` written for the IC's own
+double refusal carry `icRefusals`, which holds the incident blocked until a transfer of
+command follows. A
 size-up that fails, or whose answer does not fit the schema, is `command.failed` with
 `seat: "initial_ic"` and `turn: "size-up"`, with the session's usage and activity. A leader's assignment lands as
 `plan.applied`, and a refused one as `plan.rejected`, with the actor `leader` and the unit
@@ -681,21 +695,63 @@ carries the session id as the leader's demobilization. A leader session that can
 resumed (the call dies before the stream's init line, as the binary does for a session it
 cannot find) is replaced: a fresh session is oriented and asked the same turn, and its
 `leader.started` names the dead session (`replaced`) and the reason. A call the API
-refused outright is treated the same way (R3-10a; the Reference table has the observed
-fact): the provider reads Claude Code's `model_refusal_no_fallback` system line, or a
-result whose `stop_reason` is `refusal`, and throws a `SessionError` carrying the session
-id, the refused call's usage and `refused` (the category and the API's explanation); a
-refused session stays refused on every later call, so a refused resumed turn is filed
-(`leader.failed` for a leader, `command.failed` for the IC, each with the refusal and the
-usage), the session is released through `leader.released` with the reason `refused:
-<category>`, and a fresh session is asked the same turn with its full briefing (the IC's
-review re-briefs a fresh session before the draft, as after a handoff); a fresh session
-that refuses too is filed and ends the pass, or the cycle, with exit 1 and a message naming
-the category and Claude Code's advice (rephrase the request in a new session or change the
-model), and is not put on the unit, so the next call starts fresh again. A task refused
-inside a leader's session fails as a task, and the leader's next turn on that session is
-what gets replaced. `incident review` lists every refusal per seat with its category and
-session, and prices the refused call. A leader that cannot
+refused outright is treated the same way, with a change of model (R3-10a, R4-7; the
+Reference table has the observed fact): the provider takes a call as refused when the
+stream carries Claude Code's `model_refusal_no_fallback` system line or a result whose
+`stop_reason` is `refusal` (never from the synthetic assistant frame alone, which the
+binary's own `model_refusal_fallback` routing delivers ahead of a successful result on its
+fallback), reads the category from the system line under either spelling of its key, the
+assistant frame's `stop_details`, or, when the stream names none, the session's transcript
+under Claude Code's project directory, and throws a `SessionError` carrying the session id,
+the refused call's usage and `refused` (the category and the API's explanation, `unstated`
+only when no record names one); a refused
+session stays refused on every later call, so a refused turn is filed (`leader.failed` for
+a leader, `command.failed` for the IC, each with the refusal and the usage) and, when it
+was resumed, the session is released through `leader.released` with the reason `refused:
+<category>`. The retry is deterministic and happens once per seat, ruled by Mauria in
+review on 2026-09-15: the replacement session runs on the fallback model,
+`NOSCOPE_IC_FALLBACK_MODEL` (default `claude-opus-4-8`, read from the command's
+environment, refused when the provider does not serve it), asked the same turn with its
+full briefing (the IC's review re-briefs a fresh session before the draft, as after a
+handoff). For the IC the change is a transfer of command, `command.transferred` of kind
+`fallback` with the refusal as its reason and the outgoing and incoming models, and the
+root unit's leader changes, so every later IC call stays on the fallback (the root takes
+no leader turn, R4-6, so the IC's calls are the only ones command's seat makes). For a
+unit leader the unit's leader
+changes on the `leader.failed` that filed the refusal (`fallback`, the mutation
+`unit.leader`), and the fresh session's `leader.started` names the refused session
+(`replaced`) and `fallbackFrom`. For a task session the task itself is retried once, in its
+own session on the fallback whatever the first call ran in, the refused call filed on the
+task (`task.usage` with the refusal, its activity) and the retry's outcome carrying both
+models; a first call refused inside the leader's resumed session releases that session
+(`leader.released` with the reason `refused: <category>`), since a refused session is
+refused on every later call, and the leader's next turn starts fresh on the unit's own
+model. A refusal on the fallback, or a refusal after the fallback has been tried for that
+seat (the IC's model was already changed once, a leader already moved, a task whose own
+model is the fallback), goes to judgment and no seat retries beyond the one fallback; a
+seat that already runs on the fallback model (`--ic-model claude-opus-4-8`, or a plan
+naming Opus 4.8 as a unit's leader) has nothing to fall back to, so its first refusal
+blocks or reports the same way: for a unit leader's or a unit's task session's refusals
+the runtime writes the unit's report on the leader's behalf, `unit.reported` with the
+actor `runtime` and `writtenBy: "runtime"`, `not_met` with both refusals as its why, the
+IC's choices (another model, a different unit, drop the slice) as its suggestion, and
+picture-changing, so the pass ends and the IC decides on it in its next command turn; a
+task under command has no leader to report for it, so its refusals end as its
+`task.failed` with the `refusals`, the pass goes on to command's next task, and the change
+report lists the failure under the tasks under command for the IC to judge (R4-6); for
+the IC's own refusals on both models the
+incident is blocked on a question naming them (`question.asked` and `incident.blocked`
+with `icRefusals`), `step` and `run` print the question and exit 0 as they do when a plan's
+question blocks, and `incident answer` with a model name transfers command to that model
+(`command.transferred` of kind `fallback`, chosen by `answer`) and reopens the incident,
+while an answer naming no model the provider serves is stored, the question is asked again
+and the incident stays blocked with a hint. A refused handoff call is released with the
+reason and nothing handed off, as a lost outgoing session is, since a fresh session has
+nothing to hand off; the fallback applies to the fresh session's first call if that is
+refused. `incident show` lists every model change (each transfer of command with its
+kind and reason, each leader moved to the fallback, each task retried on it), `incident
+review` names them where they happened, lists every refusal per seat with its category,
+model and session, and prices the refused call. A leader that cannot
 answer otherwise (a failed session or an output that does not fit) ends the pass with an
 error naming the unit, after the task's own events were written. A session task is bounded
 by its request's timeout alone: the provider kills the process and files its calls under the
@@ -844,14 +900,14 @@ to verified, and the validator gates `proven` and `satisfied` on basis `observed
 | Command | Does |
 |---|---|
 | `noscope incident create "<objective>" [--constraint ...] [--priority ...] [--budget-tokens N] [--budget-seconds N] [--initial-model <model>] [--ic-model <model>] [--no-size-up]` | Creates the incident and its root unit, `command`, with the read-only built-ins as its equipment, then runs the size-up (R3-8): the initial IC on `--initial-model` (default `claude-haiku-4-5`) reads the objective, the constraints, the priorities and the runtime's own findings with the read-only tool set and writes the incident briefing, recorded as `incident.briefed` with its tool calls; command then transfers to the IC proper on the model the briefing names, `--ic-model` overriding it (and the default, `claude-opus-5`, standing in when the briefing names a model Claude Code does not serve), recorded as `command.transferred` with the briefing as its document. Prints the briefing and the transfer. A question in the briefing blocks the incident before the IC starts, the way a plan's does; `incident answer` reopens it. `--no-size-up` creates the incident on `--ic-model` or the default with no briefing, for tests and for incidents that need none. A size-up that fails is filed as `command.failed`, the incident stands unbriefed on `--ic-model` or the default, and the command exits 1. `--priority`, like `--constraint`, may repeat; the priorities are an input the IC restates or revises each period and the planner's rationale names when one chose between plans. |
-| `noscope incident show <id>` | The incident file: objective, constraints, priorities, the current operational period's objectives and priorities, budget and spend, the IC's provider, model and current session with the number of transfers of command, claims by status, open tasks, decisions with reasons, the situation from the last plan, each unit's last report with the work behind it as the IC's change report showed it (R4-1; clipped per task at `NOSCOPE_REPORT_WORK_CHARS`), questions waiting on Mauria and capability requests (each naming the unit that raised it, when a leader did), the units waiting on a resource request with what each waits on, grants, registered capabilities. |
+| `noscope incident show <id>` | The incident file: objective, constraints, priorities, the current operational period's objectives and priorities, budget and spend, the IC's provider, model and current session with the number of transfers of command and every model change the log records (R4-7: each transfer of command with its kind, models and reason, each unit leader moved to the fallback after a refusal, each task retried on it), claims by status, open tasks, decisions with reasons, the situation from the last plan, each unit's last report with the work behind it as the IC's change report showed it (R4-1; clipped per task at `NOSCOPE_REPORT_WORK_CHARS`), questions waiting on Mauria and capability requests (each naming the unit that raised it, when a leader did), the units waiting on a resource request with what each waits on, grants, registered capabilities. |
 | `noscope incident tree <id>` | The unit tree with each unit's leader model, last report outcome and, for a waiting unit, what it waits on, and task marks: done, running, ready, pending. |
-| `noscope incident step <id>` | One cycle, then stop. Prints a handoff when one runs (the outgoing session, the context that triggered it, the threshold, and the transfer once the successor has answered), the IC's command turn (its verdicts on a briefing it took command with, objectives, priorities, closes, answers, what it raised, status), the planner's draft, the IC's verdict with its corrections or amended plan and the redraft when there is one, the validator's verdict, what ran, each unit's report with any resource request it sent up, the tasks each leader assigned, any discrepancy raised, and whether a report stopped the pass. |
-| `noscope incident run <id> [--max-cycles N]` | Repeats `step` until the incident leaves `open` or the cap is hit. |
+| `noscope incident step <id>` | One cycle, then stop. Prints a handoff when one runs (the outgoing session, the context that triggered it, the threshold, and the transfer once the successor has answered), the IC's command turn (its verdicts on a briefing it took command with, objectives, priorities, closes, answers, what it raised, status), a transfer of command to the fallback model when a refusal forced one during the turn or a review (R4-7), the planner's draft, the IC's verdict with its corrections or amended plan and the redraft when there is one, the validator's verdict, what ran, each unit's report with any resource request it sent up, the tasks each leader assigned, any discrepancy raised, and whether a report stopped the pass. When the IC is refused on its model and on the fallback, prints that the incident is blocked, the question, and the `answer` command that resumes it, and exits 0 (R4-7). |
+| `noscope incident run <id> [--max-cycles N]` | Repeats `step` until the incident leaves `open` or the cap is hit; the IC's double refusal stops it the same way. |
 | `noscope incident events <id>` | The event log with timestamps and actors. |
-| `noscope incident review <id>` | The After Action Review computed from the event log: the size-up when there was one (the initial IC's call with its usage and tool calls, what the briefing said in numbers, whom command transferred to and who chose the model, or the size-up's failure; its questions), then each cycle (cut at the IC's command turn; at `plan.proposed` in a log from before the IC) with its verdict, the IC's command turn, reviews and handoff call with their usage, each transfer of command with the context size that triggered it, the document's length and its evaluation (and their count at the end), each draft's planner call, rejections, tasks run (capability, model, tokens with the cache split, seconds, cost, claims), each leader's turns with their usage and outcome, the resource requests it sent up and the tasks it assigned or was refused, discrepancies, strike teams declared or refused, questions and answers; totals by role and model (the IC under `ic`, the initial IC under `initial_ic`, leaders under `leader`); plan, IC-verdict (by kind: approve, correct, amend), briefing-kept (the verdicts on the IC's first accepted command turn that evaluated one: accepted, rewritten, discarded, of how many items; or that none was evaluated yet, that there was no size-up, or that it failed), task, leader-turn and claim counts, each unit's reports by cycle, each declared strike-team config against what ran under it (members, usage, cost, claims citing a member), and lacks resolved at a leader against those sent up; the cost, recorded where the provider priced it and bounded at list rates where it did not. Deterministic; the judged review is the session-backed `review` capability, after v0. |
+| `noscope incident review <id>` | The After Action Review computed from the event log: the size-up when there was one (the initial IC's call with its usage and tool calls, what the briefing said in numbers, whom command transferred to and who chose the model, or the size-up's failure; its questions), then each cycle (cut at the IC's command turn; at `plan.proposed` in a log from before the IC) with its verdict, the IC's command turn, reviews and handoff call with their usage, each transfer of command with the context size that triggered it, the document's length and its evaluation, or, for a fallback, the models, who chose the new one and the refusals (and their count at the end), each draft's planner call, rejections, tasks run (capability, model, tokens with the cache split, seconds, cost, claims), each leader's turns with their usage and outcome (a refused turn priced and named by its category, with the leader's move to the fallback; a report the runtime wrote after two refusals listed as such), a task's refused call priced and named with the model it was retried on, the resource requests it sent up and the tasks it assigned or was refused, discrepancies, strike teams declared or refused, questions and answers; totals by role and model (the IC under `ic`, the initial IC under `initial_ic`, leaders under `leader`); plan, IC-verdict (by kind: approve, correct, amend), briefing-kept (the verdicts on the IC's first accepted command turn that evaluated one: accepted, rewritten, discarded, of how many items; or that none was evaluated yet, that there was no size-up, or that it failed), task, leader-turn and claim counts, each unit's reports by cycle, each declared strike-team config against what ran under it (members, usage, cost, claims citing a member), and lacks resolved at a leader against those sent up; every refusal per seat with its category, model and session; the cost, recorded where the provider priced it and bounded at list rates where it did not. Deterministic; the judged review is the session-backed `review` capability, after v0. |
 | `noscope incident sop <id> <name>` | Adds an SOP's unit and its tasks to the incident in one action plan. After v0. |
-| `noscope incident answer <id> "<text>"` | Answers the oldest open question, the IC's, the planner's or a unit leader's; the IC's next change report carries the answer. A unit's question answered returns that unit to `active` once nothing of the unit's is open; the incident returns to `open` only when a command turn or a plan had blocked it and nothing of theirs still waits. |
+| `noscope incident answer <id> "<text>"` | Answers the oldest open question, the IC's, the planner's or a unit leader's; the IC's next change report carries the answer. A unit's question answered returns that unit to `active` once nothing of the unit's is open; the incident returns to `open` only when a command turn or a plan had blocked it and nothing of theirs still waits. While the incident is blocked on the IC's refusals (R4-7), the answer goes to the question the refusals raised, whatever older questions of the units are open, and one naming a model Claude Code serves, as a whole word anywhere in the text, transfers command to it and reopens the incident; any other answer is stored, the question is asked again and the incident stays blocked, with a hint listing the models. |
 | `noscope incident provide <id> "<text>"` | Answers the oldest unanswered capability request, the IC's, the planner's or a unit leader's, with what was provided, or why not. A unit's request answered returns that unit to `active` once nothing of the unit's is open; the incident returns to `open` only when a command turn or a plan had blocked it and nothing of theirs still waits. |
 | `noscope incident grant <id> <capability> [--per-task]` | Gives a grant for one capability on this incident, recording the planner's reason; `--per-task` makes each task under it ask again. After v0. |
 | `noscope grant standing <capability>` | Whitelists a capability everywhere. After v0. |
@@ -920,7 +976,7 @@ v0 is done when all of these hold on the first incident:
 | The result envelope accounts for subagents: `total_cost_usd` includes them (the two `modelUsage` entries, the parent under `claude-haiku-4-5` and the `pinger` under its dated id `claude-haiku-4-5-20251001`, sum to it exactly: 0.0286 + 0.0010 = 0.0296); `subagent_stats` counts spawned, completed, failed and by type. Whether the top-level `usage` block includes the subagent's tokens is not settled by the run (its output tokens, 421, were below the parent's own `modelUsage` entry, 515), so R3-1 records the envelope as is and a subagent's transcript usage as a breakdown, never added. Each subagent's transcript at `~/.claude/projects/<dir>/<session id>/subagents/agent-<id>.jsonl` carries its per-message usage, and the `.meta.json` beside it carries the `toolUseId` of the `Agent` call that spawned it. | One Haiku call spawning one `pinger` subagent, 2026-09-15; `spikes/round3/agents.sh`. |
 | `--agents <json>` is honored on a `--resume` call: a session started without agent kinds and resumed with one can spawn it. | The same spike, second half, 2026-09-15. |
 | In print mode `--allowedTools` is a floor: a Haiku session under `--tools Bash --allowedTools "Bash(ls *)" "Bash(cat *)"` ran `ls .` (listed) and `grep -c . lines.txt` (unlisted, read-only), and was denied `touch touched.txt` (unlisted, writes: "File creation blocked by security restrictions", under `permission_denials`, the file not created); with paths outside the working directory every command was denied, listed or not ("access restricted to allowed working directories"). | Prompted by R3-8's live size-up transcript (session `5604665f`, 2026-09-15), where Haiku ran `grep` through Bash four times off the read-only list and every call succeeded; then a scratch-directory probe on Claude Code 2.1.272, 2026-09-15. |
-| The API can refuse a resumed call outright, and the refusal sticks to the session: Claude Code writes a `system` line with `subtype: "model_refusal_no_fallback"`, `apiRefusalCategory` and `apiRefusalExplanation`, a synthetic assistant message with `stop_reason: "refusal"` ("API Error: Opus 5's safeguards flagged this message ... Try rephrasing the request in a new session or change your model"), then exits 1 with a result whose `stop_reason` is `refusal` and whose usage is the refused call's; the next call on the same session is refused again in under a second. | The third live run (R3-10, 2026-09-15, Claude Code 2.1.272): the IC's command turn on Opus 5 succeeded at 23k of context, its review turn over the planner's draft (another model's output) came back with category `reasoning_extraction`, and the next step's command turn on the same session refused identically; IC session `cf551f26`. The cause of the category on a review turn is not known; R3-10a replaces a refused session rather than resuming it. |
+| The API can refuse a resumed call outright, and the refusal sticks to the session: Claude Code writes a `system` line with `subtype: "model_refusal_no_fallback"`, the category and the explanation, a synthetic assistant message with `stop_reason: "refusal"` and `stop_details` repeating them ("API Error: Opus 5's safeguards flagged this message ... Try rephrasing the request in a new session or change your model"), then exits 1 with a result whose `stop_reason` is `refusal` and whose usage is the refused call's; the next call on the same session is refused again in under a second. The category's key is spelled by the record: the stream's system line carries `api_refusal_category` and `api_refusal_explanation` (the SDK message shape), the session's transcript under the project directory carries `apiRefusalCategory` and `apiRefusalExplanation` on the same line. | The third live run (R3-10, 2026-09-15, Claude Code 2.1.272): the IC's command turn on Opus 5 succeeded at 23k of context, its review turn over the planner's draft (another model's output) came back with category `reasoning_extraction`, and the next step's command turn on the same session refused identically; IC session `cf551f26`. The cause of the category on a review turn is not known; R3-10a replaces a refused session rather than resuming it. The spelling: R3-10a read `apiRefusalCategory` off the stream and the run's `command.failed` events recorded `unstated` with an empty explanation, while the transcripts of sessions `cf551f26` and `a30d1d7f` carry `apiRefusalCategory: "reasoning_extraction"`; the stream's `api_refusal_category` is the binary's own serializer for the SDK system message, read from 2.1.272's code on 2026-09-15 (R4-7), not seen live, so R4-7 reads both spellings, the assistant's `stop_details`, and the transcript when the stream names no category. Claude Code has a refusal fallback of its own (`model_refusal_fallback`, per-category routing; its `no_fallback` line is what a call gets when none is configured), which the third run's sessions did not have; the runtime's fallback (Step 6) is its own. |
 
 ### Model choices
 | Role | Model | Because |
@@ -928,6 +984,7 @@ v0 is done when all of these hold on the first incident:
 | Planner | `claude-opus-5` | The action plan is the judgment in the system; Opus 5 is the default for anything nontrivial, and it ran the test action plan well. |
 | Initial Incident Commander, the size-up | `claude-haiku-4-5` by default, `--initial-model` at `create` overrides | The size-up is a read of what the objective points at and a sketch, cheap by design; whatever it thinks is evaluated by the IC proper, so a wrong guess costs one turn's worth of judgment and no authority (ruled by Mauria, 2026-09-15). Its briefing is scoped to the objective's verb (round 4, R4-8): an objective that asks to determine, identify, explain or find, or asks a question (where, what, why), is a diagnosis and takes no fix objective, no fix unit and no question about intended behavior, since the answer is the cause; one that asks to build, change, fix or add is a build and takes them; and a question for Mauria is only what no tool could find and the objective does not settle. Both size-ups of run 003 proposed a fix and asked what the intended behavior should be on a diagnostic objective, and the IC discarded them at the cost of a question round each time. |
 | Incident Commander, the root unit's leader | Routed per incident by the briefing's `incomingCommander` (R3-8); `--ic-model` at `create` overrides; `claude-opus-5` when nothing routes it (`--no-size-up`, a failed size-up, or a briefing naming a model Claude Code does not serve) | The judgment an incident needs is what the size-up is for: a narrow, well-marked read can run under a cheaper commander, a build or a subtle investigation under Opus. The IC's first act is to evaluate the briefing, so the model it runs on never inherits a cheaper model's conclusions. |
+| The fallback for a refused seat: the IC, a unit leader, or a task session | `claude-opus-4-8`; `NOSCOPE_IC_FALLBACK_MODEL` overrides it for every seat | Ruled by Mauria in review, 2026-09-15: a refused call is retried once, deterministically, on Opus 4.8, and a second refusal goes to judgment (the IC's for a unit, a question to Mauria for the IC). The retry is a change of model rather than of wording because the refusal sticks to the session and the cause of the category on a review turn is not known (Reference table); whether Opus 4.8 refuses the same prompts is not known until a run tries it (R4-10). |
 | Unit leaders | Named per unit by the planner, any model the provider serves | The same routing as tasks: a unit whose tasks are narrow reads gets a Haiku leader, and its tasks on Haiku run inside that one session. |
 | `investigate`, `interpret` | Named per task by the planner, any model the provider serves | No defaults, ruled 2026-09-12. Haiku for a narrow read with little equipment; Opus when the read is subtle. |
 | Anthropic models Claude Code accepts by full name, as of 2026-09-12 | Current generation: `claude-fable-5-1`, `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5`. Still served: `claude-fable-5`, `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6`, `claude-sonnet-4-6`. | All are known to the validator. The older ones cost the same or more for less, so the planner is told to prefer the current generation unless a task says otherwise. |

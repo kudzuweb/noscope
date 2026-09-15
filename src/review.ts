@@ -1,4 +1,9 @@
-import { IC_ACTOR, LEADER_ACTOR } from "./leader.js";
+import {
+  describeRefusedCall,
+  IC_ACTOR,
+  LEADER_ACTOR,
+  type RefusedCall,
+} from "./leader.js";
 import {
   type Claim,
   type Event,
@@ -346,8 +351,15 @@ function cycles(events: readonly Event[]): Cycle[] {
 const isHandoffRelease = (e: Event): boolean =>
   e.type === "leader.released" && e.payload.handoff !== undefined;
 
-/** A transfer of command as review lists it: its kind, the sessions, the context that triggered it and the document's length. */
+const modelOf = (leader: unknown): string =>
+  str((leader as { model?: unknown } | undefined)?.model) || "(no model)";
+
+/** A transfer of command as review lists it: its kind, the sessions, the context that triggered it and the document's length; a fallback (R4-7) names the models, who chose the new one and the refusals instead. */
 function describeTransfer(e: Event): string {
+  if (e.payload.kind === "fallback") {
+    const refusals = (e.payload.refusals ?? []) as RefusedCall[];
+    return `command transferred (fallback): ${modelOf(e.payload.outgoing)} to ${modelOf(e.payload.incoming)}, ${e.payload.chosenBy === "answer" ? "named by the answer" : "the fallback"} after refusal on ${refusals.map(describeRefusedCall).join(" and on ") || "(unrecorded)"}`;
+  }
   const contextTokens = e.payload.contextTokens;
   const document = e.payload.document;
   const length = document === undefined ? 0 : JSON.stringify(document).length;
@@ -427,7 +439,11 @@ function icLines(
   let model: string | null = null;
   for (const e of turns) {
     if (e.type === "command.transferred") {
-      lines.push(`  ${describeTransfer(e)}`, ...describeEvaluation(e, events));
+      // A fallback hands over no document, so there is nothing evaluated.
+      lines.push(
+        `  ${describeTransfer(e)}`,
+        ...(e.payload.kind === "fallback" ? [] : describeEvaluation(e, events)),
+      );
       continue;
     }
     model = str(e.payload.model) || null;
@@ -539,29 +555,35 @@ function describeRefusal(e: Event): string {
 }
 
 /**
- * Every call the API refused, per seat with its category and session: the IC's and the
- * initial IC's on `command.failed`, a leader's on `leader.failed`. A refused session is
- * replaced, so each line is one call that was paid for and answered nothing.
+ * Every call the API refused, per seat with its category, model and session: the IC's and
+ * the initial IC's on `command.failed`, a leader's on `leader.failed`, a task session's on
+ * `task.usage` (R4-7). A refused session is replaced, so each line is one call that was
+ * paid for and answered nothing.
  */
 function refusalsLine(events: readonly Event[]): string {
   const refusals = events
     .filter(
       (e) =>
-        (e.type === "command.failed" || e.type === "leader.failed") &&
+        (e.type === "command.failed" ||
+          e.type === "leader.failed" ||
+          e.type === "task.usage") &&
         e.payload.refused !== undefined,
     )
     .map((e) => {
       const seat = str(e.payload.seat);
       const who =
-        seat === "leader"
-          ? `leader of ${str(e.payload.unitId)}`
-          : seat === "initial_ic"
-            ? "initial ic"
-            : "ic";
+        e.type === "task.usage"
+          ? `task ${str(e.payload.taskId)}`
+          : seat === "leader"
+            ? `leader of ${str(e.payload.unitId)}`
+            : seat === "initial_ic"
+              ? "initial ic"
+              : "ic";
       const category = str(
         (e.payload.refused as { category?: unknown }).category,
       );
-      return `${who} ${category || "unstated"} (session ${str(e.payload.sessionId) || "none"})`;
+      const model = str(e.payload.model);
+      return `${who} ${category || "unstated"}${model === "" ? "" : ` on ${model}`} (session ${str(e.payload.sessionId) || "none"})`;
     });
   return refusals.length === 0
     ? "refusals: none"
@@ -771,11 +793,20 @@ export function renderReview(
       ranInCycle.add(taskId);
       const task = taskById.get(taskId);
       const usage = (e.payload.usage ?? {}) as Partial<Usage>;
-      const model = task?.model ?? null;
+      // A retry on the fallback (R4-7) records its model on the usage; the task's own is the plan's.
+      const model = str(e.payload.model) || task?.model || null;
       const capability = task?.capability ?? "unknown";
       const taskCost = costOf(usage, model);
       add(roleTotals(capability, model), usage, taskCost);
       addCost(cost, taskCost);
+      // A call the API refused: priced, named by its category, and what followed it.
+      if (e.payload.refused !== undefined) {
+        const fallback = str(e.payload.fallback);
+        lines.push(
+          `  ${taskId} ${capability} ${model ?? "(no model)"}: ${describeUsage(usage, taskCost)}  refused${describeRefusal(e)}${fallback === "" ? "; no retry beyond the fallback" : `, retried on ${fallback}`}${session(str(e.payload.sessionId))}`,
+        );
+        continue;
+      }
       if (model === null) deterministicRan += 1;
       else sessionsRan += 1;
       const outcome = cycle.events.find(
@@ -801,8 +832,9 @@ export function renderReview(
           : `  claims ${created}${inferred === undefined ? "" : ` (${inferred} inferred)`}`;
       const sessionId =
         str(outcome?.payload.sessionId) || (sessionByTask.get(taskId) ?? "");
+      const fellBack = str(outcome?.payload.fallbackFrom);
       lines.push(
-        `  ${taskId} ${capability}${model === null ? " (deterministic)" : ` ${model}`}: ${spend}  ${outcomeText}${claimsText}${session(sessionId)}`,
+        `  ${taskId} ${capability}${model === null ? " (deterministic)" : ` ${model}`}: ${spend}  ${outcomeText}${fellBack === "" ? "" : ` (fallback from ${fellBack})`}${claimsText}${session(sessionId)}`,
       );
       lines.push(...activityLines(cycle.events, taskId, model, cycle.number));
       if (outcome?.type === "task.failed")
@@ -825,12 +857,25 @@ export function renderReview(
         const turnCost = costOf(usage, model);
         add(roleTotals("leader", model), usage, turnCost);
         addCost(cost, turnCost);
+        const fallback = str(e.payload.fallback);
         lines.push(
-          `  leader of ${str(e.payload.unitId)} ${model ?? "(no model)"}: ${describeUsage(usage, turnCost)}  turn failed${describeRefusal(e)}${session(str(e.payload.sessionId))}`,
+          `  leader of ${str(e.payload.unitId)} ${model ?? "(no model)"}: ${describeUsage(usage, turnCost)}  turn failed${describeRefusal(e)}${fallback === "" ? "" : `, leader moved to ${fallback}`}${session(str(e.payload.sessionId))}`,
         );
         continue;
       }
       if (e.type !== "unit.reported" && e.type !== "unit.continued") continue;
+      // A report the runtime wrote on the leader's behalf after two refusals (R4-7) is no
+      // turn and spent nothing; it is listed by who wrote it and why.
+      if (e.payload.writtenBy === "runtime") {
+        const unitId = str(e.payload.unitId);
+        const refusals = (e.payload.refusals ?? []) as RefusedCall[];
+        const move = `reported not_met on the leader's behalf, picture changed, after refusal on ${refusals.map(describeRefusedCall).join(" and on ")}`;
+        const lines2 = reportsByUnit.get(unitId) ?? [];
+        lines2.push(`cycle ${cycle.number}: ${move} (written by the runtime)`);
+        reportsByUnit.set(unitId, lines2);
+        lines.push(`  runtime for ${unitId}: ${move}`);
+        continue;
+      }
       leaderTurns += 1;
       const unitId = str(e.payload.unitId);
       const model = str(e.payload.model) || null;

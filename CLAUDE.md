@@ -58,13 +58,16 @@ the runtime starts inherits that directory, read-only.
 Environment: `NOSCOPE_DB` names the SQLite file (default `~/.noscope/noscope.sqlite`; use one
 file per investigation); `NOSCOPE_CLAUDE_BIN` names the Claude Code binary (default `claude`);
 `NOSCOPE_IC_HANDOFF_TOKENS` is the IC context size at which command is handed to a fresh
-session (default 120000). The README's "Install and run" section has the rest.
+session (default 120000); `NOSCOPE_IC_FALLBACK_MODEL` is the model a refused seat is retried
+on once (default `claude-opus-4-8`). The README's "Install and run" section has the rest.
 
 Everything is read-only in this version: sessions get `Read`, `Grep`, `Glob` and `Bash` under a
 read-only allowlist, and nothing that writes runs without a grant, which is not built yet.
-The IC runs on Sonnet 5 by default in practice: Opus 5's safeguards refused the IC's resumed
-turns on 2026-09-15 (`DESIGN.md` Reference table), so pass `--ic-model claude-sonnet-5` at
-`create` unless that has changed.
+Opus 5's safeguards refused the IC's resumed turns on 2026-09-15 (`DESIGN.md` Reference
+table); since R4-7 a refused IC call falls back to Opus 4.8 for the rest of the incident, and
+a refusal there too blocks the incident on a question you answer with a model name
+(`noscope incident answer <id> "claude-sonnet-5"`). Sonnet 5 ran every turn in the third run,
+so `--ic-model claude-sonnet-5` at `create` still avoids the refusal outright.
 
 ## What to read next
 

@@ -19,7 +19,11 @@ import {
   type Unit,
   type Usage,
 } from "./models.js";
-import { type SessionRequest, sessionSystemPrompt } from "./providers/index.js";
+import {
+  type Refusal,
+  type SessionRequest,
+  sessionSystemPrompt,
+} from "./providers/index.js";
 import { describeStrikeTeam } from "./strike-team.js";
 import { renderHierarchy, renderPeriod } from "./tree.js";
 
@@ -32,6 +36,39 @@ import { renderHierarchy, renderPeriod } from "./tree.js";
 /** The root unit's leader when nothing routes it: an incident created with `--no-size-up`, or a briefing that names a model the provider does not serve; `incident create --ic-model` overrides both the default and the briefing. */
 export const IC_MODEL = "claude-opus-5";
 export const IC_PROVIDER = "claude-code";
+
+/**
+ * The model a refused seat is retried on, once (R4-7; DESIGN.md Step 6): the IC's
+ * replacement session, a unit leader's, or a task's own retry. `NOSCOPE_IC_FALLBACK_MODEL`
+ * overrides the default, `claude-opus-4-8`; refused when it names a model the provider
+ * does not serve, so a misspelt override fails the retry loudly rather than the API.
+ */
+const IC_FALLBACK_MODEL = "claude-opus-4-8";
+
+export function fallbackModel(
+  env: NodeJS.ProcessEnv = {},
+  provider: { name: string; models: readonly string[] },
+): string {
+  const raw = env.NOSCOPE_IC_FALLBACK_MODEL;
+  const model = raw === undefined || raw === "" ? IC_FALLBACK_MODEL : raw;
+  if (!provider.models.includes(model))
+    throw new Error(
+      `NOSCOPE_IC_FALLBACK_MODEL ${model} is not a model ${provider.name} serves (${provider.models.join(", ")})`,
+    );
+  return model;
+}
+
+/** One call the API refused, as a transfer, a report or a question names it: the seat's model, its session and the refusal. */
+export type RefusedCall = {
+  model: string;
+  sessionId: string | null;
+  refused: Refusal;
+};
+
+/** A refused call in one clause: the model, the category, the session. */
+export function describeRefusedCall(call: RefusedCall): string {
+  return `${call.model} (${call.refused.category}${call.sessionId === null ? "" : `, session ${call.sessionId}`})`;
+}
 
 /** A turn is one structured call with no task of its own; it gets the planner's bound. */
 const LEADER_TURN_SECONDS = 300;
@@ -189,10 +226,18 @@ export function unitShare(
   events: readonly Event[],
 ): { share: Budget; charged: { tokens: number; seconds: number } } {
   const assigned = leaderAssignedTasks(events);
-  const spent = new Map<string, Usage>();
-  for (const e of events)
-    if (e.type === "task.usage" && typeof e.payload.taskId === "string")
-      spent.set(e.payload.taskId, e.payload.usage as Usage);
+  // Every `task.usage` of a task counts: a task refused and retried on the fallback (R4-7)
+  // files one per call, and the incident budget (`sumUsage`) counts both.
+  const spent = new Map<string, { tokens: number; seconds: number }>();
+  for (const e of events) {
+    if (e.type !== "task.usage" || typeof e.payload.taskId !== "string")
+      continue;
+    const usage = e.payload.usage as Partial<Usage> | undefined;
+    const sum = spent.get(e.payload.taskId) ?? { tokens: 0, seconds: 0 };
+    sum.tokens += (usage?.inputTokens ?? 0) + (usage?.outputTokens ?? 0);
+    sum.seconds += usage?.seconds ?? 0;
+    spent.set(e.payload.taskId, sum);
+  }
   const share: Budget = {};
   const charged = { tokens: 0, seconds: 0 };
   for (const t of tasks) {
@@ -205,7 +250,7 @@ export function unitShare(
     }
     const usage = spent.get(t.id);
     if (t.status === "completed" || t.status === "failed") {
-      charged.tokens += (usage?.inputTokens ?? 0) + (usage?.outputTokens ?? 0);
+      charged.tokens += usage?.tokens ?? 0;
       charged.seconds += usage?.seconds ?? 0;
     } else {
       charged.tokens += t.budget.tokens ?? 0;

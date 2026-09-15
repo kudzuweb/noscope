@@ -10,6 +10,7 @@ import {
   commandTurn,
   type Handoff,
   type HandoffOutcome,
+  IcRefused,
   pendingTransfer,
   prepareHandoff,
   recordTransfer,
@@ -17,7 +18,13 @@ import {
   reportWorkChars,
   reviewTurn,
 } from "../ic.js";
-import { IC_MODEL, IC_PROVIDER, openRequestsByUnit } from "../leader.js";
+import {
+  describeRefusedCall,
+  IC_MODEL,
+  IC_PROVIDER,
+  openRequestsByUnit,
+  type RefusedCall,
+} from "../leader.js";
 import {
   type ActionPlan,
   Budget,
@@ -39,6 +46,8 @@ import {
   applyCommand,
   applyPlan,
   holdsOn,
+  icModelHold,
+  icRefusalQuestionId,
   newQuestions,
   planDiff,
 } from "../runtime.js";
@@ -444,6 +453,11 @@ function renderIncidentFile(
     lines.push(
       `IC: ${root.leader.provider}/${root.leader.model}, session ${root.sessionId ?? "none yet"}; ${transfers} transfer(s) of command`,
     );
+  const modelChanges = describeModelChanges(events);
+  if (modelChanges.length > 0) {
+    lines.push("model changes:");
+    for (const change of modelChanges) lines.push(`  - ${change}`);
+  }
   lines.push("");
   lines.push(
     `units: ${units.filter((u) => u.status === "active").length} active, ${units.filter((u) => u.status === "waiting").length} waiting, ${units.filter((u) => u.status === "closed").length} closed`,
@@ -534,6 +548,45 @@ function renderIncidentFile(
   lines.push("capabilities registered:");
   for (const c of capabilities) lines.push(`  - ${c}`);
   if (capabilities.length === 0) lines.push("  (none yet)");
+  return lines;
+}
+
+/**
+ * Every change of a seat's model the log records (R4-7): each transfer of command that
+ * changed the IC's model (the initial routing, a fallback by the runtime, or the model
+ * Mauria's answer named), each unit leader that fell back after a refusal (`leader.failed`
+ * carrying `fallback`), and each task retried on the fallback (`task.completed` or
+ * `task.failed` carrying `fallbackFrom`).
+ */
+function describeModelChanges(events: readonly Event[]): string[] {
+  const lines: string[] = [];
+  const modelOf = (leader: unknown): string =>
+    String((leader as { model?: unknown } | undefined)?.model ?? "?");
+  for (const e of events) {
+    if (e.type === "command.transferred") {
+      const from = modelOf(e.payload.outgoing);
+      const to = modelOf(e.payload.incoming);
+      if (e.payload.kind === "initial")
+        lines.push(
+          `IC on ${to}, chosen by ${String(e.payload.chosenBy)} (initial transfer from the size-up on ${from})`,
+        );
+      else if (e.payload.kind === "fallback")
+        lines.push(
+          `IC ${from} → ${to}, ${e.payload.chosenBy === "answer" ? "named by your answer" : "the fallback"} after ${(e.payload.refusals as RefusedCall[] | undefined)?.map((r) => `refusal on ${describeRefusedCall(r)}`).join(" and ") ?? String(e.payload.reason)}`,
+        );
+    }
+    if (e.type === "leader.failed" && typeof e.payload.fallback === "string")
+      lines.push(
+        `leader of ${String(e.payload.unitId)} ${String(e.payload.model)} → ${e.payload.fallback}, the fallback after refusal (${String((e.payload.refused as { category?: unknown } | undefined)?.category)}, session ${String(e.payload.sessionId)})`,
+      );
+    if (
+      (e.type === "task.completed" || e.type === "task.failed") &&
+      typeof e.payload.fallbackFrom === "string"
+    )
+      lines.push(
+        `task ${String(e.payload.taskId)} ${e.payload.fallbackFrom} → ${String(e.payload.model)}, the fallback after a refusal; ${e.type === "task.completed" ? "completed there" : "refused there too"}`,
+      );
+  }
   return lines;
 }
 
@@ -646,6 +699,20 @@ function printHandoff(ctx: Context, outcome: HandoffOutcome): Handoff | null {
   return null;
 }
 
+/** A fallback of the IC's model during the call just made (R4-7), as `step` prints it: the models and the refusal. */
+function printFallbacks(
+  ctx: Context,
+  store: Store,
+  incidentId: string,
+  since: number,
+): void {
+  for (const e of store.listEvents(incidentId).slice(since))
+    if (e.type === "command.transferred" && e.payload.kind === "fallback")
+      ctx.io.out(
+        `  command transferred to ${String((e.payload.incoming as { model?: unknown }).model)} (fallback): ${String(e.payload.reason)}`,
+      );
+}
+
 /**
  * One cycle, the eight steps of DESIGN.md's cycle: (1) the IC's briefing is rendered, (2)
  * the IC's command turn sets the period or ends the incident, (3) the planner drafts, (4)
@@ -676,6 +743,7 @@ async function cycle(
     pendingTransfer(store.listEvents(incident.id))?.payload.kind === "handoff"
       ? "handoff"
       : "briefing";
+  const sinceCommand = store.listEvents(incident.id).length;
   const command = await commandTurn(
     store,
     incident,
@@ -687,6 +755,7 @@ async function cycle(
   ctx.io.out(
     `IC command turn for period ${number} (session ${command.sessionId}): ${turn.rationale}`,
   );
+  printFallbacks(ctx, store, incident.id, sinceCommand);
   if (handoff !== null)
     ctx.io.out(
       `  command transferred from session ${handoff.outgoingSessionId} to session ${command.sessionId}`,
@@ -773,6 +842,7 @@ async function cycle(
       ctx,
       await prepareHandoff(store, current, icOptions),
     );
+    const sinceReview = store.listEvents(incident.id).length;
     const read = await reviewTurn(
       store,
       current,
@@ -783,6 +853,7 @@ async function cycle(
       before,
     );
     ctx.io.out(`IC review: ${read.output.verdict}: ${read.output.rationale}`);
+    printFallbacks(ctx, store, incident.id, sinceReview);
     if (before !== null)
       ctx.io.out(
         `  command transferred from session ${before.outgoingSessionId} to session ${read.sessionId}`,
@@ -918,6 +989,26 @@ function reportFailure(ctx: Context, command: string, error: unknown): number {
 }
 
 /**
+ * The IC refused on its model and on the fallback (R4-7): the incident is blocked on the
+ * question naming both, which is in the record, so the command prints it and exits 0 as
+ * it does when a plan's question blocks the incident.
+ */
+function reportIcRefused(
+  ctx: Context,
+  incidentId: string,
+  error: IcRefused,
+): number {
+  ctx.io.out(
+    `incident ${incidentId} is now blocked: the IC was refused on ${error.refusals.map(describeRefusedCall).join(" and on ")}`,
+  );
+  ctx.io.out(`  question ${error.question.id}: ${error.question.text}`);
+  ctx.io.out(
+    `  answer with the model to resume the IC on: noscope incident answer ${incidentId} "<model>"`,
+  );
+  return EXIT.ok;
+}
+
+/**
  * One cycle, then stop. Exit 5 when the incident is not open, since only Mauria can move it
  * (`incident answer`); exit 1 when the provider could not run at all.
  */
@@ -930,6 +1021,8 @@ export const step: Handler = async (args, ctx) => {
     try {
       await cycle(store, incident, ctx);
     } catch (error) {
+      if (error instanceof IcRefused)
+        return reportIcRefused(ctx, incident.id, error);
       return reportFailure(ctx, "step", error);
     }
     return EXIT.ok;
@@ -985,6 +1078,10 @@ export const run: Handler = async (args, ctx) => {
       try {
         stopped = (await cycle(store, incident, ctx)).stopped;
       } catch (error) {
+        if (error instanceof IcRefused) {
+          ctx.io.out(`stopped after ${cycles} cycle(s): the IC was refused`);
+          return reportIcRefused(ctx, incident.id, error);
+        }
         ctx.io.out(`stopped after ${cycles} cycle(s): the cycle could not run`);
         return reportFailure(ctx, "run", error);
       }
@@ -1006,13 +1103,24 @@ export const run: Handler = async (args, ctx) => {
   }
 };
 
+/** The model the answer names, when one of the provider's appears in it as a whole word; null otherwise. */
+function modelNamed(text: string, models: readonly string[]): string | null {
+  const words = text.split(/[^A-Za-z0-9.-]+/);
+  return models.find((m) => words.includes(m)) ?? null;
+}
+
 /**
  * Answer the oldest open question, the IC's, the planner's or a unit leader's (DESIGN.md
  * Step 7), through `answerRequest`: the answer is stored on the question, where the next
  * briefing reads it; a unit's question answered returns the unit to `active` once nothing
  * of its is open; the incident returns to `open` when a command turn or a plan had blocked
  * it and nothing of theirs still waits. A closed unit's question is skipped: nobody reads
- * its answer.
+ * its answer. While the IC is blocked on its refusals (R4-7), the answer goes to the
+ * question those refusals raised, not to an older open question of a unit's, and one
+ * naming a model the provider serves transfers command to it (`command.transferred` of
+ * kind `fallback`, chosen by the answer) before the question is answered, so the incident
+ * reopens on that model; an answer naming none is stored, the question is asked again,
+ * and the incident stays blocked with a hint.
  */
 export const answer: Handler = async (args, ctx) => {
   const store = openStore(ctx);
@@ -1033,10 +1141,15 @@ export const answer: Handler = async (args, ctx) => {
       return EXIT.usage;
     }
     const closed = closedUnits(store, incident.id);
+    const events = store.listEvents(incident.id);
+    const hold = icModelHold(events);
+    const heldId = hold === null ? null : icRefusalQuestionId(events);
     const open = incident.questions.find(
       (q) =>
         q.answer === undefined &&
-        (q.unitId === undefined || !closed.has(q.unitId)),
+        (heldId === null
+          ? q.unitId === undefined || !closed.has(q.unitId)
+          : q.id === heldId),
     );
     if (open === undefined) {
       ctx.io.err(
@@ -1044,20 +1157,65 @@ export const answer: Handler = async (args, ctx) => {
       );
       return EXIT.cannotProceed;
     }
-    const answered = answerRequest(
-      store,
-      incident,
-      { kind: "question", id: open.id },
-      text,
-      ACTOR,
-    );
+    const icProvider = getProvider(IC_PROVIDER, ctx.env);
+    const model = hold === null ? null : modelNamed(text, icProvider.models);
+    const root = store.listUnits(incident.id).find((u) => u.parentId === null);
+    let answered: Answered | undefined;
+    store.batch(() => {
+      if (hold !== null && model !== null && root !== undefined)
+        recordTransfer(
+          store,
+          incident.id,
+          {
+            kind: "fallback",
+            unitId: root.id,
+            outgoingSessionId: hold.at(-1)?.sessionId ?? root.sessionId ?? "",
+            outgoing: root.leader,
+            incomingSessionId: null,
+            incoming: { ...root.leader, model },
+            document: null,
+            chosenBy: "answer",
+            reason: `answer ${open.id} named ${model} after refusals on ${hold.map(describeRefusedCall).join(" and on ")}`,
+            refusals: [...hold],
+          },
+          ACTOR,
+        );
+      answered = answerRequest(
+        store,
+        incident,
+        { kind: "question", id: open.id },
+        text,
+        ACTOR,
+      );
+      // No model named: the question stands, asked again, so the next answer can name one.
+      if (hold !== null && model === null) {
+        const current = store.getIncident(incident.id) ?? incident;
+        const again = newQuestions(current, [open.text]);
+        store.setIncidentQuestions(
+          incident.id,
+          [...current.questions, ...again],
+          ACTOR,
+          "question.asked",
+          { questions: again, icRefusals: hold },
+        );
+      }
+    });
     ctx.io.out(`answered ${open.id}: ${open.text}`);
-    for (const line of describeAnswered(
-      answered,
-      incident,
-      store.listEvents(incident.id),
-    ))
-      ctx.io.out(line);
+    if (hold !== null && model !== null)
+      ctx.io.out(
+        `command transferred to ${IC_PROVIDER}/${model}, named by your answer`,
+      );
+    if (answered !== undefined)
+      for (const line of describeAnswered(
+        answered,
+        store.getIncident(incident.id) ?? incident,
+        store.listEvents(incident.id),
+      ))
+        ctx.io.out(line);
+    if (hold !== null && model === null)
+      ctx.io.out(
+        `  the answer names no model ${IC_PROVIDER} serves; the question is asked again: answer with one of ${icProvider.models.join(", ")}`,
+      );
     return EXIT.ok;
   } finally {
     store.close();
