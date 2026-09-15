@@ -53,6 +53,12 @@ function cycledIncident(store: Store) {
     { rationale: "first period" },
   );
   store.record("i1", "plan.proposed", "planner", { rationale: "first look" });
+  // A warning is recorded before its plan is applied (R4-6); the last plan's are shown.
+  store.record("i1", "plan.warned", "validator", {
+    rule: "Session work under a unit",
+    reason:
+      'task "read at command" is session work (investigate) under i1-command, the root',
+  });
   store.record("i1", "plan.applied", "runtime", { rationale: "first look" });
   const done = s.task({
     id: "t-grep",
@@ -436,8 +442,12 @@ describe("planner", () => {
         - Closing is clean: a unit closed in this plan is active, has no running task after this plan's cancels, is closed once, is given no new unit or task in the same plan, and its leader has reported since its last task ended or has no session.
         - Status is earned: satisfied requires every open task completed or cancelled, no new tasks, and at least one observed claim; satisfied or failed raises no question, capability request or grant request; blocked raises at least one.
         - Inferred links are worked: every inferred link in the situation names what settles it: a task in this plan by its ref, an open task by its id, a question this plan raises by its position, or a reproduce task by its ref or id; every claim id in proven, inferred and keep names a claim in the incident, and every proven claim has basis observed, whichever task observed it.
+      warned on, and applied anyway:
+        - Session work under a unit: a task to a session-backed capability belongs under a unit with a leader, never under command, the root; one placed under command runs in a session of its own, with no leader to judge it and no leader turn after it, and its result reaches the IC as a task result; the IC's own session runs no task. A deterministic task under command is fine.
       rejected last cycle:
         - Span of control: u-scroll would have 8 children
+      warned last cycle:
+        - Session work under a unit: task "read at command" is session work (investigate) under i1-command, the root
 
       ## 10. Situation from the last cycle
         (none)"

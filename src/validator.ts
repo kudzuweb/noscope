@@ -27,7 +27,7 @@ import type {
   UnitProposal,
   Usage,
 } from "./models.js";
-import { PLANNER_RULES } from "./planner.js";
+import { PLANNER_RULES, PLANNER_WARNINGS } from "./planner.js";
 import type { Provider } from "./providers/index.js";
 import { type Store, sumUsage } from "./store.js";
 import { STRIKE_MEMBER_MIN_TOKENS } from "./strike-team.js";
@@ -36,6 +36,7 @@ import { STRIKE_MEMBER_MIN_TOKENS } from "./strike-team.js";
 type BeforeColon<S> = S extends `${infer Name}: ${string}` ? Name : never;
 export type RuleName = BeforeColon<(typeof PLANNER_RULES)[number]>;
 export type LeaderRuleName = BeforeColon<(typeof LEADER_RULES)[number]>;
+type WarningName = BeforeColon<(typeof PLANNER_WARNINGS)[number]>;
 
 export const SPAN_OF_CONTROL = 7;
 
@@ -55,8 +56,11 @@ export type ValidationContext = {
 
 export type Rejection<R = RuleName> = { rule: R; reason: string };
 
+/** What the validator noticed and let through (R4-6): recorded as `plan.warned`, printed by `step`, read by the planner in section 9. */
+type Warning = { rule: WarningName; reason: string };
+
 export type Verdict<R = RuleName> =
-  | { ok: true; plan: ActionPlan }
+  | { ok: true; plan: ActionPlan; warnings: Warning[] }
   | { ok: false; rejections: Rejection<R>[] };
 
 type Rule = (plan: ActionPlan, ctx: ValidationContext) => string[];
@@ -677,6 +681,39 @@ export const RULES: readonly { name: RuleName; check: Rule }[] =
   });
 
 /**
+ * What a plan is warned on and applied with anyway (R4-6): session work under the root,
+ * which runs in a session of its own with no leader turn after it, against the rule that
+ * the IC's digging is assigned to a unit. The planner is told, not refused, since the
+ * work still runs and a rejection cost run 003 its unit.
+ */
+const WARNING_CHECKS: Record<WarningName, Rule> = {
+  "Session work under a unit": (plan, ctx) => {
+    const root = ctx.units.find((u) => u.parentId === null);
+    if (root === undefined) return [];
+    return perRegisteredTask(plan, (t, capability) =>
+      capability.kind === "session" && t.unit === root.id
+        ? [
+            `${label(t)} is session work (${t.capability}) under ${root.id}, the root; it will run in a session of its own with no leader to judge it, so it belongs under a unit`,
+          ]
+        : [],
+    );
+  },
+};
+
+const WARNINGS: readonly { name: WarningName; check: Rule }[] =
+  PLANNER_WARNINGS.map((line) => {
+    const name = line.slice(0, line.indexOf(":")) as WarningName;
+    return { name, check: WARNING_CHECKS[name] };
+  });
+
+/** The warnings a plan draws, none when it is rejected, since only an applied plan's are recorded. */
+function warningsOf(plan: ActionPlan, ctx: ValidationContext): Warning[] {
+  return WARNINGS.flatMap(({ name, check }) =>
+    check(plan, ctx).map((reason) => ({ rule: name, reason })),
+  );
+}
+
+/**
  * The plan rules that read tasks, applied to a leader's assignments as to a plan's; the
  * rest read the situation, the closes or the status, which a leader's turn has none of.
  */
@@ -796,7 +833,7 @@ export function validateLeaderTasks(
     ),
   ];
   return rejections.length === 0
-    ? { ok: true, plan }
+    ? { ok: true, plan, warnings: [] }
     : { ok: false, rejections };
 }
 
@@ -829,7 +866,7 @@ export function validateLeaderTasksAndRecord(
   return verdict;
 }
 
-/** The whole plan passes every rule or is rejected whole, with every failing rule and its reason. */
+/** The whole plan passes every rule or is rejected whole, with every failing rule and its reason; a passing plan carries its warnings. */
 export function validatePlan(
   plan: ActionPlan,
   ctx: ValidationContext,
@@ -838,7 +875,7 @@ export function validatePlan(
     check(plan, ctx).map((reason) => ({ rule: name, reason })),
   );
   return rejections.length === 0
-    ? { ok: true, plan }
+    ? { ok: true, plan, warnings: warningsOf(plan, ctx) }
     : { ok: false, rejections };
 }
 
@@ -951,8 +988,9 @@ export function validateCommand(
 
 /**
  * Validate a proposed plan against the store and record the verdict: one `plan.rejected`
- * event per failing rule, with `rule` and `reason` as the planner's next input reads them
- * (DESIGN.md Step 5). Applying a passing plan is PR 11's.
+ * event per failing rule, or one `plan.warned` per warning on a passing plan, each with
+ * `rule` and `reason` as the planner's next input reads them (DESIGN.md Step 5). Applying
+ * a passing plan is PR 11's.
  */
 export function validateAndRecord(
   store: Store,
@@ -965,15 +1003,21 @@ export function validateAndRecord(
     plan,
     validationContext(store, incident, providers),
   );
-  if (!verdict.ok) {
-    store.batch(() => {
+  store.batch(() => {
+    if (verdict.ok)
+      for (const w of verdict.warnings)
+        store.record(incident.id, "plan.warned", actor, {
+          rule: w.rule,
+          reason: w.reason,
+          rationale: plan.rationale,
+        });
+    else
       for (const r of verdict.rejections)
         store.record(incident.id, "plan.rejected", actor, {
           rule: r.rule,
           reason: r.reason,
           rationale: plan.rationale,
         });
-    });
-  }
+  });
   return verdict;
 }

@@ -55,6 +55,14 @@ export const PLANNER_RULES = [
   "Inferred links are worked: every inferred link in the situation names what settles it: a task in this plan by its ref, an open task by its id, a question this plan raises by its position, or a reproduce task by its ref or id; every claim id in proven, inferred and keep names a claim in the incident, and every proven claim has basis observed, whichever task observed it.",
 ] as const;
 
+/**
+ * What the validator warns on and applies anyway (R4-6), stated beside the rules so the
+ * planner drafts around it; the name before the colon keys the check as a rule's does.
+ */
+export const PLANNER_WARNINGS = [
+  "Session work under a unit: a task to a session-backed capability belongs under a unit with a leader, never under command, the root; one placed under command runs in a session of its own, with no leader to judge it and no leader turn after it, and its result reaches the IC as a task result; the IC's own session runs no task. A deterministic task under command is fine.",
+] as const;
+
 function clip(value: unknown): string {
   const text = JSON.stringify(value) ?? "null";
   return text.length <= CLIP
@@ -306,6 +314,16 @@ export function renderPlannerInput(
   const rejections = recent
     .filter((e) => e.type === "plan.rejected" && e.actor !== LEADER_ACTOR)
     .map((e) => `${String(e.payload.rule)}: ${String(e.payload.reason)}`);
+  // A plan's warnings are recorded before it is applied, so the last plan's sit before
+  // `since`: the window opens at the plan applied before it.
+  const warnings = events
+    .filter(
+      (e) =>
+        e.type === "plan.warned" &&
+        e.sequence >
+          lastCycleSequence(events.filter((p) => p.sequence < since)),
+    )
+    .map((e) => `${String(e.payload.rule)}: ${String(e.payload.reason)}`);
   const budgetStops = recent
     .filter((e) => e.type === "budget.exceeded")
     .map(
@@ -457,8 +475,12 @@ export function renderPlannerInput(
     "",
     "## 9. Rules the validator applies",
     ...bullets(PLANNER_RULES),
+    "warned on, and applied anyway:",
+    ...bullets(PLANNER_WARNINGS),
     "rejected last cycle:",
     ...bullets(rejections, "(nothing rejected)"),
+    "warned last cycle:",
+    ...bullets(warnings, "(nothing warned)"),
     "",
     "## 10. Situation from the last cycle",
     ...renderSituation(situation),

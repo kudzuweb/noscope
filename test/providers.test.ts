@@ -164,7 +164,7 @@ describe("claude code provider", () => {
     );
     expect(sessionSystemPrompt("ROLE", "ic")).toContain(SEAT_PLACES.ic);
     // The seat paragraphs: a task session answers insufficient; a leader runs its tasks and
-    // reports; the IC leads command and, until R3-7, reports on its tasks like any leader.
+    // reports; the IC leads command and runs no task in its session (R4-6).
     expect(SEAT_PLACES.task).toMatch(
       /^Your place: you are a resource assigned to one task inside one unit, under that unit's leader\./,
     );
@@ -179,8 +179,9 @@ describe("claude code provider", () => {
       /^Your place: you are the Incident Commander, the leader of the root unit, command/,
     );
     expect(SEAT_PLACES.ic).toContain(
-      "A task under command runs under you as under any leader",
+      "No task runs in your session and you take no leader turn",
     );
+    expect(SEAT_PLACES.ic).not.toContain("as under any leader");
     for (const term of [
       "Incident Commander (IC)",
       "initial IC",
@@ -227,17 +228,27 @@ describe("claude code provider", () => {
       "You do not dig",
       "A period ends when the units have reported or when one report changes the picture; you are never consulted per task",
       "is information for your decision and never a decision",
-      "Your tools are for a task assigned under command, not for your turns",
+      "No task runs in your session: a task under command is deterministic and runs in process, and a session-backed task placed under command runs in a session of its own",
+      "Your tools serve no turn",
+      "command files no report",
+      "Command has no leader turn to assign on and no resource requests to raise",
       "answers is for the resource requests your change report lists, and nothing else",
       "satisfied is refused while any task is still open or before any claim is observed",
       "becomes a question for Mauria",
       "The situation in the plan is the planner's",
       "After a redraft you approve or amend, never correct again",
       "names the priority that chose between plans",
-      "A task under command runs under you as under any leader",
     ])
       expect(ic).toContain(line);
     expect(ic).not.toContain("the IC, who has more perspective");
+    // R4-6: nothing runs under the IC as under a leader, and it assigns nothing on a turn.
+    for (const gone of [
+      "as under any leader",
+      "assignTasks",
+      "- Own unit:",
+      "resource requests, which are refused on command",
+    ])
+      expect(ic).not.toContain(gone);
     expect(claudeCodeProvider().models).toContain("claude-opus-5");
     for (const kind of [
       "retrievable_fact",

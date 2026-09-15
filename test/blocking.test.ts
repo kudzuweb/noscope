@@ -88,11 +88,24 @@ describe("blocking channels", () => {
     timeout: 60_000,
   }, async () => {
     const h = harness();
+    // The interpret goes under a unit with a leader: a task under command has no leader
+    // turn to carry its lack to (R4-6), so the lack would reach nobody.
     const first: ActionPlan = {
       ...empty,
+      createUnits: [
+        {
+          ref: "u-read",
+          objective: "read the handler",
+          parent: "001-command",
+          leader: { provider: "claude-code", model: "claude-haiku-4-5" },
+          equipment: [],
+          bashAllowlist: [],
+        },
+      ],
       createTasks: [
         {
           ...taskBase,
+          unit: "u-read",
           capability: "interpret",
           objective: "say why it scrolls",
           inputs: {
@@ -147,7 +160,7 @@ describe("blocking channels", () => {
     // The lack went to the unit's leader, whose turn says what to do with it; the planner's
     // section 5 no longer lists a retrievable fact, since it is the leader's to get.
     expect(h.leaderPrompt()).toContain(
-      "Task 001-t01 (interpret) came back insufficient. It needed:\n  - retrievable_fact: the scroll handler's source\nA retrievable fact is yours to get",
+      "Task 001-t01 (interpret) came back insufficient in this session. It needed:\n  - retrievable_fact: the scroll handler's source\nA retrievable fact is yours to get",
     );
     h.out.length = 0;
     expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);

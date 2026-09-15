@@ -312,6 +312,69 @@ function clipBlock(lines: readonly string[], taskId: string, cap: number) {
   ];
 }
 
+/** The claims the log created under the given tasks, by task id, as their `claim.create` mutations carried them. */
+function claimsUnder(
+  events: readonly Event[],
+  taskIds: ReadonlySet<string>,
+): Map<string, Claim[]> {
+  const claimsByTask = new Map<string, Claim[]>();
+  for (const e of events) {
+    const m = mutationOf(e);
+    if (m?.kind !== "claim.create") continue;
+    const parsed = Claim.safeParse(m.claim);
+    if (!parsed.success || !taskIds.has(parsed.data.provenance.taskId))
+      continue;
+    const list = claimsByTask.get(parsed.data.provenance.taskId) ?? [];
+    list.push(parsed.data);
+    claimsByTask.set(parsed.data.provenance.taskId, list);
+  }
+  return claimsByTask;
+}
+
+/**
+ * The root's tasks that ended since the IC last acted (R4-6), one block each in the form
+ * of a report's work: capability, objective, claims, then how it ended, clipped at `cap`
+ * with the task id as the pointer. No leader reports on these, so this block is the IC's
+ * only view of them; a deterministic result's text is therefore rendered whole under the
+ * cap rather than pointed at, and a session result reads as under a report (its summary,
+ * or `insufficient` with what it needed, or the failure's reason).
+ */
+function renderTasksUnderCommand(
+  events: readonly Event[],
+  recent: readonly Event[],
+  root: Unit | undefined,
+  cap: number,
+): string[] {
+  if (root === undefined) return [];
+  const tasks = tasksCreated(events);
+  const ended: { task: Task; event: Event }[] = [];
+  for (const e of recent) {
+    if (e.type !== "task.completed" && e.type !== "task.failed") continue;
+    const task = tasks.get(str(mutationOf(e)?.taskId));
+    if (task !== undefined && task.unitId === root.id)
+      ended.push({ task, event: e });
+  }
+  const claimsByTask = claimsUnder(
+    events,
+    new Set(ended.map((t) => t.task.id)),
+  );
+  return ended.flatMap(({ task, event }) => {
+    const ending =
+      event.type === "task.completed" && task.model === null
+        ? `completed; result: ${JSON.stringify(mutationOf(event)?.result ?? null)}`
+        : describeEnding(task, event);
+    return clipBlock(
+      [
+        `  - task ${task.id} (${task.capability}${task.model === null ? "" : `, ${task.model}`}): ${task.objective}`,
+        `      claims: ${describeClaims(task, claimsByTask.get(task.id) ?? [])}`,
+        `      ${ending}`,
+      ],
+      task.id,
+      cap,
+    );
+  });
+}
+
 /**
  * The work behind one report (R4-1), for the IC to judge the leader's account against:
  * the unit's tasks that ended since its previous report (or since the incident began), in
@@ -352,17 +415,7 @@ function renderReportWork(
       ended.push({ task, event: e });
   }
   const taskIds = new Set(ended.map((t) => t.task.id));
-  const claimsByTask = new Map<string, Claim[]>();
-  for (const e of events) {
-    const m = mutationOf(e);
-    if (m?.kind !== "claim.create") continue;
-    const parsed = Claim.safeParse(m.claim);
-    if (!parsed.success || !taskIds.has(parsed.data.provenance.taskId))
-      continue;
-    const list = claimsByTask.get(parsed.data.provenance.taskId) ?? [];
-    list.push(parsed.data);
-    claimsByTask.set(parsed.data.provenance.taskId, list);
-  }
+  const claimsByTask = claimsUnder(events, taskIds);
   const byTool = new Map<string, number>();
   for (const e of window) {
     if (e.type !== "tool.called" || str(e.payload.unitId) !== unitId) continue;
@@ -431,11 +484,13 @@ export function renderReport(
  * What changed since the IC last acted, rendered first in its briefing under a heading that
  * names the window: discrepancies raised below the IC (first, so the IC reconciles them or
  * sends them up), every unit report with its why and suggestion and whether the picture
- * changed, the resource requests the waiting units still wait on (each with the text an
- * `answers` entry names it by, so the IC can answer what it can; a permission request only
- * a grant answers), every question answered and capability provided, the rules its last
- * turn failed, and the spend since then. Each report carries the work behind it, each
- * task's block clipped at `workChars` (R4-1).
+ * changed, every task under command that ended, with its claims and result (no leader
+ * reports on the root's tasks, so this is where the IC judges them; R4-6), the resource
+ * requests the waiting units still wait on (each with the text an `answers` entry names it
+ * by, so the IC can answer what it can; a permission request only a grant answers), every
+ * question answered and capability provided, the rules its last turn failed, and the spend
+ * since then. Each report carries the work behind it, and each task's block, under a
+ * report or under command, is clipped at `workChars` (R4-1).
  */
 export function renderChangeReport(
   events: readonly Event[],
@@ -476,14 +531,12 @@ export function renderChangeReport(
   const rejected = recent
     .filter((e) => e.type === "command.rejected")
     .map((e) => `${str(e.payload.rule)}: ${str(e.payload.reason)}`);
-  const refusedUnderCommand = recent
-    .filter(
-      (e) =>
-        e.type === "plan.rejected" &&
-        e.actor === "leader" &&
-        units.some((u) => u.parentId === null && u.id === e.payload.unitId),
-    )
-    .map((e) => `${str(e.payload.rule)}: ${str(e.payload.reason)}`);
+  const underCommand = renderTasksUnderCommand(
+    events,
+    recent,
+    units.find((u) => u.parentId === null),
+    workChars,
+  );
   const spend = spendSince(events, since);
   return [
     changeReportHeading(last),
@@ -494,6 +547,12 @@ export function renderChangeReport(
     ...bullets(discrepancies),
     "unit reports:",
     ...(reports.length === 0 ? ["  (none)"] : reports),
+    ...(underCommand.length === 0
+      ? []
+      : [
+          "tasks under command, ended with no leader to report them:",
+          ...underCommand,
+        ]),
     "resource requests:",
     ...bullets(requests),
     "questions answered:",
@@ -503,12 +562,6 @@ export function renderChangeReport(
     ...(rejected.length === 0
       ? []
       : ["your last command turn was rejected on:", ...bullets(rejected)]),
-    ...(refusedUnderCommand.length === 0
-      ? []
-      : [
-          "refused on your last leader turn under command:",
-          ...bullets(refusedUnderCommand),
-        ]),
     `spend since then: tokens ${spend.inputTokens + spend.outputTokens}, seconds ${spend.seconds.toFixed(1)}${spend.costUsd === undefined ? "" : `, cost $${spend.costUsd.toFixed(2)} at list price`}`,
   ];
 }

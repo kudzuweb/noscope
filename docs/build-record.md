@@ -2144,3 +2144,89 @@ Not exactly to spec, with reasons:
   past the first three are ids only, neither in the plan block: the per-task cap is for
   the claims the IC judges by, and run 003's interpret summary and grep match lists would
   otherwise take the whole block.
+
+## R4-6: Session work leaves command (#PR, merged 2026-09-15)
+
+Forced by run 003 (R3-10, "Third run" in `docs/first-incident.md`): the planner put the
+reproduce, the read, the grep, the investigate and the interpret directly under `command`,
+so the built rule that a leader runs matching tasks inside its own session had the IC's
+session take the investigate as an assignment, against the ruling that the IC's digging is
+assigned, and the root's leader turn after each task ran five times at 60k to 115k context
+for $0.94, more than the planner's two calls. Built: `runsInsideLeader` in `src/leader.ts`
+returns false when the unit is the root, so a session-backed task under `command` runs in a
+session of its own through `buildSessionRequest`, whatever its model and equipment, and the
+IC's session runs no task. The root takes no leader turn at all: `dispatch` runs the root's
+runnable tasks one after another with no `settle` between them (a deterministic one in
+process, a session-backed one alone), and `leaderTurn` throws if it is ever asked for the
+root. The root's pass ends without a report the way a unit's ends on a `continue` with
+nothing left: once `nextIn` finds no runnable task under it, the root is marked done for
+the pass and the loop moves to the next unit; `unitsOwingReport` excludes the root, so no
+later pass asks it for a report either, and a pass with only the root's tasks makes no
+provider call beyond the tasks' own. The IC judges the results at its command turn: the
+change report (`renderChangeReport`, which now takes the tasks) lists, after the unit
+reports, every task under command that ended since the IC last acted, a completed one with
+its result as `renderTaskResult` gives a leader it (a session's summary, conclusion and
+observations; a deterministic result as JSON) and a failed one with its reason, under
+"tasks under command, ended with no leader to report them:"; the section is absent when
+none ended. The root's refused-resource-request path is gone with the turn: `leaderTurn`
+no longer records `plan.rejected` under "Resource requests", the change report no longer
+has "refused on your last leader turn under command", `step` no longer prints the root's
+requests as refused, and the `resourceRequests` schema description drops its clause about
+command. `IC_ROLE` and the IC's seat paragraph say that no task runs in its session, that a
+task under command is deterministic and runs in process while a session-backed one placed
+there runs alone, that either's result reaches it in its change report with no leader turn
+between, that its tools serve no turn, that command files no report, and that every lack it
+has goes through the command turn (a retrievable fact as a period objective); the sentences
+that it runs a task under command as any leader, assigns with `assignTasks` and is held to
+the leader rules are dropped, since it never sees a `LeaderTurn`. The planner's section 9
+gains, after the rules, "warned on, and applied anyway:" with `PLANNER_WARNINGS` (one line,
+"Session work under a unit": session work belongs under a unit with a leader, never under
+command; one placed there runs alone with no leader to judge it, and a deterministic task
+under command is fine) and, after "rejected last cycle:", "warned last cycle:" with the
+`plan.warned` events of the last applied plan (recorded before `plan.applied`, so the
+window opens at the plan applied before it). The validator's `Verdict` on a passing plan
+carries `warnings`; `WARNING_CHECKS` in `src/validator.ts`, keyed by the warning's name
+before the colon as the rules are, flags each new session-backed task whose unit is the
+root; `validateAndRecord` records one `plan.warned` per warning (rule, reason, rationale)
+in the transaction that would have recorded rejections, and `step` prints each after "plan
+approved" as "warned, applied anyway: <rule>: <reason>". A leader's assignments carry no
+warnings. `plan.warned` is the 45th event type. DESIGN.md Step 2 (the event), Step 3 (the
+seat paragraph and role text row), Step 4 (the change report), Step 5 (the IC's lacks and
+the warning table), Step 6 (the root's dispatch) and `docs/architecture.html` follow.
+
+Tests: a dispatcher test where a grep and an investigate on the root's leader's model, with
+the root's equipment, run under the root: the investigate runs in its own session under the
+capability's role text with no leader prefix, the stub is called once, no `leader.started`,
+`unit.continued` or `unit.reported` is written, the root keeps no session, the pass ends
+with both tasks completed and no report, the change report lists both results under
+command after the unit reports, and a second pass runs nothing and calls nobody; a unit
+test that the same investigate runs inside a led unit's leader and never inside the root,
+and that a failed task leaves the led unit owing a report and the root not; a validator
+test that a plan with a grep and an investigate under the root and an investigate under a
+unit passes with one warning naming the investigate under the root, records one
+`plan.warned` with the rationale and no `plan.rejected`; the planner snapshot shows the
+warning text and a warning recorded before the last applied plan under "warned last cycle";
+the providers test pins the new IC sentences and that "as under any leader", `assignTasks`
+and the leader rules are gone from `IC_ROLE`. The dispatcher tests of a leader's turns
+(inside-the-leader runs, the replaced session, strike-team requests, the failed leader, the
+retrievable-fact assignment, the refused assignment, the malformed continue) moved from the
+root to a unit under it (`led()` in `test/fixtures/models.ts`, the root's equipment and
+allowlist), since the root no longer has the behaviour they test; the blocking test of an
+insufficient interpret likewise creates a unit in its first plan, and its lack now reaches
+that unit's leader in its session.
+
+Not exactly to spec, with reasons:
+
+- The IC takes no leader turn at all, not only after session tasks. The block says the
+  IC's own assignments under command stay deterministic, which reads as the root keeping
+  a turn for deterministic tasks; the orchestrator's brief for this PR says the root has no
+  leader turns and the IC judges at its command turn, and that is what was built. A
+  deterministic task under command still runs, placed by the planner; the IC assigns
+  nothing on a turn, since `CommandTurn` has no `assignTasks`.
+- The role text drops more than the one sentence the block names: with no leader turn, the
+  paragraph telling the IC to assign with `assignTasks` under the leader rules and that its
+  resource requests are refused described calls that never happen, so it went too.
+- The warning is recorded as an event (`plan.warned`) rather than held only on the verdict,
+  because the planner reads the log and nothing else; "warned last cycle" needs the record.
+- The root's refused-request rule ("Resource requests" under `plan.rejected` by the actor
+  `leader`) is removed rather than kept dormant: no code path can reach it.

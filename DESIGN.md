@@ -189,7 +189,9 @@ a handoff, so every transfer replays the same way); Step 6 says what each carrie
 size-up that fails, or whose answer does not fit the schema, is `command.failed` with
 `seat: "initial_ic"` and `turn: "size-up"`, with the session's usage and activity. A leader's assignment lands as
 `plan.applied`, and a refused one as `plan.rejected`, with the actor `leader` and the unit
-named, beside the planner's.
+named, beside the planner's. Round 4 adds `plan.warned` (R4-6): one per warning the
+validator raised on a plan it let through, with the rule, the reason and the plan's
+rationale, written before the plan is applied.
 
 The file records its schema version in `user_version`. A file at an earlier version is
 migrated in place when opened, one step at a time: version 1 (before `basis`) gives
@@ -274,7 +276,7 @@ provider, and the provider renders the fields onto its own command from them:
 | Field | Claude Code renders it to | Codex renders it to |
 |---|---|---|
 | `provider` | The choice of column. | The choice of column. |
-| session preamble, fixed in `providers/base.ts` | The first part of `--system-prompt`, identical for every session on every provider and every seat; the planner's call carries its own system prompt in place of it, since it is the Planning Section and not a seat in the organization. It orients the session: this is an agentic runtime modeled on the Incident Command System; an incident is any objective Mauria asks to have pursued, not necessarily something gone wrong; a temporary organization of units is built around it and torn down when it is done; the IC sets objectives and priorities, the planner drafts an action plan each operational period, the IC approves it, a validator checks its shape, and the units run their tasks under their leaders and report. Then the mapping of terms, one line each: incident, Incident Commander, initial IC, unit, unit leader, task, capability, equipment, subagent, strike team, task force, claim with its statuses and bases, situation report, action plan, operational period, planner, transfer of command, grant, budget, SOP. Then the confidence scale and the four kinds of lack. Then the seat's place, one paragraph chosen per seat (`Seat`: `task`, `leader`, `ic`, `initial_ic`): a task session is a resource assigned to one task inside one unit under its leader, reports only against the task's contract, cannot change the organization, and answers `insufficient` naming the kind of lack; a leader owns one unit's objective, runs a task on its own model and equipment as one of its turns, receives any other task's result, and after each task continues or reports; the IC is the root unit's leader and Mauria's delegate, sets each period's objectives and priorities, reviews the planner's draft, reads the reports and closes or reorganizes units, and runs a task under command as any leader does; the initial IC is the first session on the incident, sizes it up with read-only tools, hands command over with a briefing and decides nothing that lasts. Then the role text: a capability's for a task session, `LEADER_ROLE` for a unit leader, `INITIAL_IC_ROLE` for the initial IC (in `src/size-up.ts`: size up, write the briefing on ICS 201's lines; a check is one look at whether a thing exists, answers or is where the objective says, and what the incident turns on is for the units to establish under the IC; route the commander by the judgment the incident needs; the objectives, units and questions follow from the objective's verb, so a diagnostic objective takes no fix objective, no fix unit and no intended-behavior question; ask Mauria only what no tool could find and the objective does not settle), `IC_ROLE` for the IC (it scopes, breaks down, equips and judges; its digging is assigned; its first act on taking command from a briefing is to evaluate it, and nothing in a briefing binds it; a period ends when units report or the picture changes; it declares `satisfied` when the period objectives and the incident objective are met by the reports; a `not_met` report's why and suggestion are information for its decision and never a decision; a discrepancy it cannot reconcile from the file becomes a question for Mauria; the situation stays the planner's; one review, one redraft). The hierarchy around the session (its unit and leader, who it reports to, what is below it) is rendered from the tree into the brief at call time, not fixed in the prompt. | Prepended to the prompt, since `codex exec` has no system-prompt flag in its help. |
+| session preamble, fixed in `providers/base.ts` | The first part of `--system-prompt`, identical for every session on every provider and every seat; the planner's call carries its own system prompt in place of it, since it is the Planning Section and not a seat in the organization. It orients the session: this is an agentic runtime modeled on the Incident Command System; an incident is any objective Mauria asks to have pursued, not necessarily something gone wrong; a temporary organization of units is built around it and torn down when it is done; the IC sets objectives and priorities, the planner drafts an action plan each operational period, the IC approves it, a validator checks its shape, and the units run their tasks under their leaders and report. Then the mapping of terms, one line each: incident, Incident Commander, initial IC, unit, unit leader, task, capability, equipment, subagent, strike team, task force, claim with its statuses and bases, situation report, action plan, operational period, planner, transfer of command, grant, budget, SOP. Then the confidence scale and the four kinds of lack. Then the seat's place, one paragraph chosen per seat (`Seat`: `task`, `leader`, `ic`, `initial_ic`): a task session is a resource assigned to one task inside one unit under its leader, reports only against the task's contract, cannot change the organization, and answers `insufficient` naming the kind of lack; a leader owns one unit's objective, runs a task on its own model and equipment as one of its turns, receives any other task's result, and after each task continues or reports; the IC is the root unit's leader and Mauria's delegate, sets each period's objectives and priorities, reviews the planner's draft, reads the reports and closes or reorganizes units, and runs no task in its session and takes no leader turn, a task under command reaching it as a result in its change report (R4-6); the initial IC is the first session on the incident, sizes it up with read-only tools, hands command over with a briefing and decides nothing that lasts. Then the role text: a capability's for a task session, `LEADER_ROLE` for a unit leader, `INITIAL_IC_ROLE` for the initial IC (in `src/size-up.ts`: size up, write the briefing on ICS 201's lines; a check is one look at whether a thing exists, answers or is where the objective says, and what the incident turns on is for the units to establish under the IC; route the commander by the judgment the incident needs; the objectives, units and questions follow from the objective's verb, so a diagnostic objective takes no fix objective, no fix unit and no intended-behavior question; ask Mauria only what no tool could find and the objective does not settle), `IC_ROLE` for the IC (it scopes, breaks down, equips and judges; its digging is assigned, and no task runs in its session; command files no report and its lacks go through the command turn; its first act on taking command from a briefing is to evaluate it, and nothing in a briefing binds it; a period ends when units report or the picture changes; it declares `satisfied` when the period objectives and the incident objective are met by the reports; a `not_met` report's why and suggestion are information for its decision and never a decision; a discrepancy it cannot reconcile from the file becomes a question for Mauria; the situation stays the planner's; one review, one redraft). The hierarchy around the session (its unit and leader, who it reports to, what is below it) is rendered from the tree into the brief at call time, not fixed in the prompt. | Prepended to the prompt, since `codex exec` has no system-prompt flag in its help. |
 | `system_prompt` | The rest of `--system-prompt`: the capability's own role text, after the preamble. | Prepended to the prompt after the preamble. |
 | `model` | `--model <id>`, always explicit, taken from the task. A capability declares no default. | `-m <model>`, same rule. |
 | `equipment` | `--tools "<list>"` naming the Claude Code built-in tools in the capability's equipment, or `--tools default` when the capability declares `default`. | `-s read-only` bounds what the built-in shell can do; per-tool selection is not in the help and is an open item for this provider. |
@@ -354,7 +356,13 @@ fixed at its first call, so everything that changes goes in the user message. Th
 is the change report since the IC last acted, then the incident file rendered as the
 planner reads it, then the ask. The change report opens with every `picture.discrepancy`
 raised since the IC's last turn, then every `unit.reported` (outcome, whether the picture
-changed, what changed on which claims, and for `not_met` the why and suggestion), every
+changed, what changed on which claims, and for `not_met` the why and suggestion), then,
+when any task under command ended since, one block per task in the form of a report's
+work (capability, objective, claims, then how it ended: a deterministic result's text
+whole under the cap, since no leader reads the root's results and this block is the IC's
+only view of them; a session result's summary, or what an insufficient result needed; a
+failure's reason), because no leader reports on the root's tasks and the IC judges them
+here (R4-6), then every
 question answered and capability provided, the rules the IC's last turn failed if it was
 rejected, and the spend since then (every usage any seat recorded after the IC's last
 turn, summed). Each report is headed by its unit's id and the report's event id, the id a
@@ -368,7 +376,8 @@ conclusion or observation count when the findings carry no summary, cut at 300 c
 since the file carries the findings, or what an insufficient result needed; a
 deterministic result's size in lines of JSON; a failure's reason), and the unit's tool
 calls in that window by tool name with counts, the tasks' and the leader's own turns'.
-Each task's block is clipped at `NOSCOPE_REPORT_WORK_CHARS` characters (default 1,500)
+Each task's block, under a report or under command, is clipped at
+`NOSCOPE_REPORT_WORK_CHARS` characters (default 1,500)
 with the task id as the pointer to the full record, the claims placed before the ending
 so the cap falls on a summary's tail and never on the claims, so a report adds a bounded
 amount to the IC's context and the handoff threshold stays meaningful. The IC's first
@@ -529,8 +538,9 @@ No seat is without a way to get what it lacks, and each kind of lack has its own
 A lack is resolved by the nearest seat that can (ruled 2026-09-15, R3-6): a task's
 `insufficient` goes to its unit's leader, never to the planner, and the leader resolves a
 retrievable fact itself and sends the other three kinds up; the IC, leader of command,
-assigns under command the same way and raises the other three kinds in its command turn;
-a resource request on the IC's own leader turn is refused, so command never waits.
+takes no leader turn (R4-6), so every kind it lacks goes through its command turn: a
+retrievable fact as a period objective for the planner to task, the other three as the
+question, capability request and grant request the turn carries; command never waits.
 
 | The lack | The IC's and the planner's channel | Who resolves it for them | At a unit's leader |
 |---|---|---|---|
@@ -571,6 +581,17 @@ reason recorded as a `plan.rejected` event and fed back as input 9 on the next c
 | Status is earned | `satisfied` requires every open task completed or cancelled, no new tasks in the plan, and at least one claim with basis `observed`, whichever source produced it. `satisfied` or `failed` raises no question, capability request or grant request, since a closed incident answers none. `blocked` raises at least one, since nothing else could unblock it. |
 | Inferred links are worked | Every inferred link in the plan's situation names what settles it: a task in this plan by its ref, an open task by its id, a question this plan raises by its position, or a reproduce task by its ref or id. Every claim id the situation names, in `proven`, `inferred` and `keep`, is a claim in the incident, and every `proven` claim has basis `observed`, whichever task observed it: a session's observation counts, an inference from either source does not (both checked under Dependencies resolve). |
 
+A plan the rules pass may still draw a warning (R4-6): the validator's verdict carries
+`warnings`, each recorded as `plan.warned` with its rule, reason and the plan's rationale
+in the transaction that would have recorded a rejection, printed by `step` after "plan
+approved", and read by the planner in section 9 under "warned last cycle" beside the
+warning's text under "warned on, and applied anyway". A warning never rejects: the plan is
+applied as it stands. One warning exists:
+
+| Warning | Check |
+|---|---|
+| Session work under a unit | A task to a session-backed capability placed under the root, `command`. It runs in a session of its own with no leader turn after it (Step 6), so the IC judges its result from the change report instead of a leader's report; session work belongs under a unit with a leader. A deterministic task under command draws nothing. Told, not refused, because the work still runs and run 003 showed a rejection reshaping the organization (the planner traded its unit for a plan that could not be rejected). |
+
 The IC's command turn is checked by the same code as a plan that creates nothing, under
 Units exist, Closing is clean and Status is earned, since closing units and setting the
 status is all it does to the tree; a failing rule is recorded as `command.rejected` and
@@ -592,7 +613,14 @@ the leader's next turn reads:
 ### Step 6: dispatch, record, verify
 Ready means every dependency is completed. Dispatch runs the units one at a time in tree
 order (parents before children, siblings as created), each until its leader reports
-(round 3, R3-4). A unit's leader session is created when the unit first has a ready task:
+(round 3, R3-4), except the root (R4-6): its leader is the IC, which takes no leader turn,
+so the root's runnable tasks run one after another with no turn between, a deterministic
+one in process and a session-backed one in a session of its own, never inside the IC's
+session, whatever its model and equipment (`runsInsideLeader` is false for the root); its
+pass ends without a report once its ready tasks have run, and the IC judges their results
+at its command turn, where the change report lists them (Step 4). Run 003 is the reason:
+with every task under `command`, the IC's own session took the investigate as an
+assignment and five leader turns at 60k to 115k context cost $0.94. A unit's leader session is created when the unit first has a ready task:
 its system prompt is the preamble, the seat's place and the leader role text, fixed for the
 unit's life (a resumed call keeps the first call's system prompt), and its first user message
 opens with the orientation. Each runnable task in the unit runs in turn: a task on the
@@ -615,9 +643,8 @@ prompt. A report may carry `resourceRequests` (`permission`,
 `missing_means`, `human_knowledge`, each with what and why): it is forced `pictureChanged`,
 each request is raised as Step 4 says, and the unit enters `waiting`; a waiting unit is
 skipped by dispatch, keeps its pending tasks, and is not asked for a report. The root unit
-never waits: a request on the IC's leader turn is refused (`plan.rejected` by the actor
-`leader`, rule "Resource requests"), read into its next prompt and its change report, and
-the IC raises what it lacks in the command turn that follows. The turn's
+never waits and never owes a report, since it takes no leader turn; the IC raises what it
+lacks in its command turn. The turn's
 record, its assignments (validated first, while the unit is still active) and its requests
 land in one transaction, so a crash can never leave a recorded report whose requests were
 not raised. `unit.waiting` carries the unit, its session and the `requests` as the leader

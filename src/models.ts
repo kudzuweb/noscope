@@ -54,6 +54,7 @@ export const EventType = z.enum([
   "claim.rejected",
   "plan.proposed",
   "plan.rejected",
+  "plan.warned",
   "plan.applied",
   "budget.exceeded",
   "question.asked",
@@ -486,7 +487,7 @@ const LeaderReportFields = z.object({
     .array(ResourceRequest)
     .optional()
     .describe(
-      "What you lack and cannot get inside your unit: permission, missing means, or something only a human knows; never a retrievable fact, which you assign a task for. Any request puts your unit in waiting until the IC or Mauria answers, and the report counts as picture-changing; under command none is raised, since the IC raises its lacks in its command turn",
+      "What you lack and cannot get inside your unit: permission, missing means, or something only a human knows; never a retrievable fact, which you assign a task for. Any request puts your unit in waiting until the IC or Mauria answers, and the report counts as picture-changing",
     ),
 });
 

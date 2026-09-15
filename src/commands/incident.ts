@@ -819,6 +819,8 @@ async function cycle(
     return { status: incident.status, stopped: null };
   }
   ctx.io.out("plan approved");
+  for (const w of verdict.warnings)
+    ctx.io.out(`  warned, applied anyway: ${w.rule}: ${w.reason}`);
   const applied = applyPlan(store, current, plan, "runtime", {
     verdict: review.output.verdict,
     corrections,
@@ -852,13 +854,8 @@ async function cycle(
     ctx.io.out(
       `  unit ${r.unitId} reported ${r.report.outcome}${r.report.pictureChanged ? ", picture changed" : ""}: ${r.report.changed.map((c) => c.what).join("; ") || "nothing changed"}${r.report.why === undefined ? "" : `; why: ${r.report.why}`}${r.report.suggestion === undefined ? "" : `; suggestion: ${r.report.suggestion}`}`,
     );
-    const root = r.unitId === `${incident.id}-command`;
     for (const q of r.report.resourceRequests ?? [])
-      ctx.io.out(
-        root
-          ? `    asked for ${q.kind}: ${q.what} (${q.why}); refused, command raises it in its command turn`
-          : `    waits on ${q.kind}: ${q.what} (${q.why})`,
-      );
+      ctx.io.out(`    waits on ${q.kind}: ${q.what} (${q.why})`);
   }
   for (const e of store.listEvents(incident.id).slice(before)) {
     if (e.type === "plan.applied" && e.actor === "leader")
