@@ -90,6 +90,7 @@ describe("blocking channels", () => {
           ref: "u-read",
           objective: "read the handler",
           parent: "001-command",
+          type: "base",
           leader: { provider: "claude-code", model: "claude-haiku-4-5" },
           equipment: [],
           bashAllowlist: [],

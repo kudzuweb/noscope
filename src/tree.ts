@@ -75,7 +75,7 @@ export function lastVerdicts(events: readonly Event[]): Map<string, string> {
 }
 
 /**
- * A unit's leader, last report and the IC's last verdict on one line, `(leader
+ * A unit's type, leader, last report and the IC's last verdict on one line, `(base; leader
  * claude-code/claude-opus-5; last report: met, accepted)`, and for a unit that waits,
  * what it waits on.
  */
@@ -92,7 +92,7 @@ export function describeLeader(
     unit.status === "waiting"
       ? `; waiting on: ${requests.join("; ") || "(nothing recorded)"}`
       : "";
-  return `(leader ${unit.leader.provider}/${unit.leader.model}; last report: ${report === undefined ? "none" : report.outcome}${verdict === undefined ? "" : `, ${verdict}`}${waits})`;
+  return `(${unit.type}; leader ${unit.leader.provider}/${unit.leader.model}; last report: ${report === undefined ? "none" : report.outcome}${verdict === undefined ? "" : `, ${verdict}`}${waits})`;
 }
 
 /**
@@ -118,7 +118,7 @@ export function renderHierarchy(unit: Unit, units: readonly Unit[]): string[] {
   ];
 }
 
-/** The unit tree with each unit's status, objective, leader, last report and the IC's last verdict on it, and what it waits on, and under each unit its tasks with their marks. */
+/** The unit tree with each unit's status, objective, type, leader, last report and the IC's last verdict on it, and what it waits on, and under each unit its tasks with their marks. */
 export function renderTree(
   units: readonly Unit[],
   tasks: readonly Task[],

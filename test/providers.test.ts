@@ -3,7 +3,6 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { IC_ROLE, LEADER_ROLE, leaderRole } from "../src/leader.js";
 import { jsonSchemaFor, SessionResult } from "../src/models.js";
 import {
   SEAT_PLACES,
@@ -21,6 +20,7 @@ import {
   renderClaudeCodeArgs,
   TOOL_RESULT_CAP,
 } from "../src/providers/claude-code.js";
+import { IC_ROLE, LEADER_ROLE } from "../src/units/index.js";
 
 const stub = resolve("test/stub-claude");
 /** A stream captured 2026-09-15 from a Haiku session on Claude Code 2.1.272 that ran one Bash echo and one `pinger` subagent, paths normalized to /scratch. */
@@ -219,9 +219,7 @@ describe("claude code provider", () => {
     expect(SESSION_PREAMBLE).toContain(
       "whoever asks chooses the kind, model, tools and count and says why",
     );
-    expect(leaderRole("leader")).toBe(LEADER_ROLE);
-    const ic = leaderRole("ic");
-    expect(ic).toBe(IC_ROLE);
+    const ic = IC_ROLE;
     expect(ic).toMatch(
       /^Your role: Incident Commander, leader of command, the root unit/,
     );

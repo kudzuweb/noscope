@@ -130,8 +130,8 @@ describe("apply and tree", () => {
     });
     expect(applied2?.payload).not.toHaveProperty("situation");
     expect(renderTree(store.listUnits("i1"), store.listTasks("i1"))).toEqual([
-      "i1-command [active] command: where deletion moves the scroll position (leader claude-code/claude-haiku-4-5; last report: none)",
-      "  i1-u02 [active] where the scroll moves (leader fake/fake-small; last report: none)",
+      "i1-command [active] command: where deletion moves the scroll position (ic; leader claude-code/claude-haiku-4-5; last report: none)",
+      "  i1-u02 [active] where the scroll moves (base; leader fake/fake-small; last report: none)",
       "    [done] i1-t01 grep: find scrollTo",
       "    [pending] i1-t02 grep: find deleteComment",
       "    [ready] i1-t03 grep: find removeComment",
@@ -299,8 +299,8 @@ describe("apply and tree", () => {
     expect(await run(["incident", "tree", "001"], ctx)).toBe(EXIT.ok);
     expect(out).toEqual([
       "incident 001 [open]  why does it scroll",
-      "001-command [active] command: holds the objective and the current plan (leader claude-code/claude-opus-5; last report: none)",
-      "  001-u02 [closed] the scroll path (leader fake/fake-small; last report: met)",
+      "001-command [active] command: holds the objective and the current plan (ic; leader claude-code/claude-opus-5; last report: none)",
+      "  001-u02 [closed] the scroll path (base; leader fake/fake-small; last report: met)",
       "    [done] 001-t01 grep: find scrollTo",
     ]);
     out.length = 0;

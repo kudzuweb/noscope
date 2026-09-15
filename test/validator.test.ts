@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { defineCapability } from "../src/capabilities/registry.js";
 import { READ_ONLY_SESSION_COMMANDS } from "../src/equipment/index.js";
-import { LEADER_RULES } from "../src/leader.js";
 import type {
   ActionPlan,
   CommandTurn,
@@ -13,7 +12,13 @@ import type {
 import { PLANNER_RULES } from "../src/planner.js";
 import { Store } from "../src/store.js";
 import {
-  LEADER_RULE_CHECKS,
+  BASE_RULES,
+  baseUnitType,
+  icUnitType,
+  LEADER_RULES,
+  OWN_UNIT_RULE,
+} from "../src/units/index.js";
+import {
   RULES,
   type RuleName,
   SPAN_OF_CONTROL,
@@ -242,7 +247,7 @@ function reasonsOf(
 }
 
 describe("validator", () => {
-  it("names the thirteen rules the planner reads, in the same order", () => {
+  it("names the rules the planner reads, in the same order", () => {
     expect(RULES.map((r) => r.name)).toEqual(
       PLANNER_RULES.map((line) => line.split(":")[0]),
     );
@@ -272,6 +277,18 @@ describe("validator", () => {
     [
       "Units exist",
       { ...empty, createTasks: [grepTask({ unit: "u-nowhere" })] },
+    ],
+    [
+      "Type exists",
+      {
+        ...empty,
+        createUnits: [
+          unitProposal("a", "a", "i1-command", {
+            leader: FAKE_LEADER,
+            type: "strike",
+          }),
+        ],
+      },
     ],
     [
       "No cycles",
@@ -339,6 +356,26 @@ describe("validator", () => {
       expect(rulesHit(plan)).toEqual([rule]);
     });
   }
+
+  it("Type exists: a new unit names a registered type a plan may create, so base passes, an unknown type and the ic type are refused, and the default is base (R4-10)", () => {
+    const plan = (type?: string): ActionPlan => ({
+      ...empty,
+      createUnits: [
+        unitProposal("a", "a", "i1-command", {
+          leader: FAKE_LEADER,
+          ...(type === undefined ? {} : { type }),
+        }),
+      ],
+    });
+    expect(rulesHit(plan("base"))).toEqual([]);
+    expect(reasonsOf(plan("strike"))).toEqual([
+      "Type exists: new unit a names no registered unit type strike",
+    ]);
+    expect(reasonsOf(plan("ic"))).toEqual([
+      "Type exists: new unit a names type ic, which a plan may not create; a plan may create base",
+    ]);
+    expect(plan().createUnits[0]?.type).toBe("base");
+  });
 
   it("Units exist: a closed unit takes no new task or unit, and a ref that is its own parent is one No cycles fault", () => {
     expect(
@@ -1300,10 +1337,17 @@ describe("validator, a leader's assignments", () => {
   const hit = (verdict: ReturnType<typeof leaderVerdict>) =>
     verdict.ok ? [] : verdict.rejections.map((r) => [r.rule, r.reason]);
 
-  it("names its rules after the leader's own list, the way the planner's are keyed", () => {
-    expect(LEADER_RULE_CHECKS.map((r) => r.name)).toEqual(
+  it("the base protocol's rules are named after the leader's own list, the way the planner's are keyed, and command holds Own unit alone (R4-10)", () => {
+    expect(baseUnitType.protocol.rules).toBe(BASE_RULES);
+    expect(BASE_RULES.map((r) => r.name)).toEqual([
+      "Own unit",
+      "Capability held",
+      "Budget within share",
+    ]);
+    expect(BASE_RULES.map((r) => r.name)).toEqual(
       LEADER_RULES.map((line) => line.slice(0, line.indexOf(":"))),
     );
+    expect(icUnitType.protocol.rules).toEqual([OWN_UNIT_RULE]);
   });
 
   it("accepts a grep under the leader's own unit and an investigate the unit's equipment covers", () => {

@@ -171,15 +171,23 @@ export const Leader = z.object({
   model: z.string().min(1),
 });
 
+/**
+ * A unit is a type plus a config (R4-10): `type` names a registered unit type
+ * (`src/units/`), whose form the unit's other fields fill and whose protocol runs it;
+ * `base` is the led unit and `ic` is command, the root. `role` is the config's own role
+ * text, null for the type's.
+ */
 export const Unit = z.object({
   id: z.string().min(1),
   incidentId: z.string().min(1),
   parentId: z.string().nullable(),
+  type: z.string().min(1),
   objective: z.string().min(1),
   leader: Leader,
   /** Built-in tool names and external equipment names the leader's session may use, declared as a capability declares them. */
   equipment: z.array(z.string()),
   bashAllowlist: z.array(z.string()),
+  role: z.string().min(1).nullable(),
   /** The leader's session, once it has run; null until the unit first has a ready task. */
   sessionId: z.string().nullable(),
   status: UnitStatus,
@@ -303,16 +311,19 @@ export const Grant = z
 
 // What the planner returns, one per cycle.
 
-export const UnitProposal = z.object({
-  ref: z
+/**
+ * The base type's form (R4-10): the fields a led unit's config fills, as the planner
+ * proposes them and as `src/units/base.ts` binds them. Declared here rather than beside
+ * the type because `UnitProposal`, and so `ActionPlan`, extends it and this module imports
+ * nothing. A saved config (R4-11) is this less the objective.
+ */
+export const BaseUnitForm = z.object({
+  objective: z
     .string()
     .min(1)
-    .describe("A label the plan uses to refer to this new unit elsewhere"),
-  objective: z.string().min(1),
-  parent: z
-    .string()
-    .min(1)
-    .describe("An existing unit id, or the ref of a unit created in this plan"),
+    .describe(
+      "What the unit is to establish; its leader reports against it, and the IC judges the report",
+    ),
   leader: Leader.describe(
     "The provider and model of the unit's leader session, which runs the unit's tasks and reports against its objective",
   ),
@@ -324,6 +335,31 @@ export const UnitProposal = z.object({
   bashAllowlist: z
     .array(z.string())
     .describe("Commands the leader's read-only Bash may run"),
+  role: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "The role text the leader's session reads in place of the type's own; omit it for the type's",
+    ),
+});
+
+export const UnitProposal = BaseUnitForm.extend({
+  ref: z
+    .string()
+    .min(1)
+    .describe("A label the plan uses to refer to this new unit elsewhere"),
+  parent: z
+    .string()
+    .min(1)
+    .describe("An existing unit id, or the ref of a unit created in this plan"),
+  type: z
+    .string()
+    .min(1)
+    .default("base")
+    .describe(
+      "The unit's type, whose form these fields fill and whose protocol runs it: base, the led unit, is the only type a plan may create",
+    ),
   takes: z
     .string()
     .min(1)
@@ -1092,6 +1128,7 @@ export type Provenance = z.infer<typeof Provenance>;
 export type Claim = z.infer<typeof Claim>;
 export type Event = z.infer<typeof Event>;
 export type Grant = z.infer<typeof Grant>;
+export type BaseUnitForm = z.infer<typeof BaseUnitForm>;
 export type UnitProposal = z.infer<typeof UnitProposal>;
 export type UnitClose = z.infer<typeof UnitClose>;
 export type TaskProposal = z.infer<typeof TaskProposal>;

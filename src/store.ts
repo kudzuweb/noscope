@@ -39,10 +39,10 @@ export function now(): string {
  * Bumped whenever a table changes shape. A file at an earlier version is migrated in place,
  * one step at a time (1: claims gain `basis`; 2: tasks gain `evidence_from_json`; 3: units
  * gain a leader and `purpose` becomes `objective`; 4: tasks gain `strike_team_json`; 5:
- * incidents gain `period_json` and every root unit's session is dropped); a file at a
- * later version is refused.
+ * incidents gain `period_json` and every root unit's session is dropped; 6: units gain a
+ * type and a role); a file at a later version is refused.
  */
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 
 /**
  * The leader a unit recorded before units had one is read as: the planner's provider and
@@ -77,10 +77,12 @@ CREATE TABLE IF NOT EXISTS units (
   id TEXT PRIMARY KEY,
   incident_id TEXT NOT NULL REFERENCES incidents(id),
   parent_id TEXT REFERENCES units(id),
+  type TEXT NOT NULL DEFAULT 'base',
   objective TEXT NOT NULL,
   leader_json TEXT NOT NULL,
   equipment_json TEXT NOT NULL DEFAULT '[]',
   bash_allowlist_json TEXT NOT NULL DEFAULT '[]',
+  role TEXT,
   session_id TEXT,
   status TEXT NOT NULL,
   created_at TEXT NOT NULL,
@@ -180,6 +182,18 @@ function withLeader(value: unknown): unknown {
 }
 
 /**
+ * A unit recorded before units named a type (schema version 6, R4-10) is read the way the
+ * migration reads it: the root, the unit with no parent, was the IC's, so it is `ic`, and
+ * every other unit was a led unit, `base`; neither carried a role text of its own.
+ */
+function withType(value: unknown): unknown {
+  const unit = withLeader(value);
+  if (unit === null || typeof unit !== "object" || "type" in unit) return unit;
+  const { parentId } = unit as { parentId?: unknown };
+  return { type: parentId === null ? "ic" : "base", role: null, ...unit };
+}
+
+/**
  * The state change an event records. Every write names one; replay applies exactly that
  * and nothing else, so the tables are always rebuildable from the events (acceptance 7).
  */
@@ -211,7 +225,7 @@ export const Mutation = z.discriminatedUnion("kind", [
   }),
   z.object({
     kind: z.literal("unit.create"),
-    unit: z.preprocess(withLeader, Unit),
+    unit: z.preprocess(withType, Unit),
   }),
   z.object({
     kind: z.literal("unit.session"),
@@ -363,6 +377,17 @@ export class Store {
               },
               { kind: "unit.session", unitId: root.id, sessionId: null },
             );
+        },
+        // Version 6 units named no type (R4-10): the root was the IC's unit and every other
+        // a led one, and no unit carried a role text of its own.
+        6: () => {
+          if (!hasColumn("units", "type"))
+            this.db.exec(
+              "ALTER TABLE units ADD COLUMN type TEXT NOT NULL DEFAULT 'base'",
+            );
+          if (!hasColumn("units", "role"))
+            this.db.exec("ALTER TABLE units ADD COLUMN role TEXT");
+          this.db.exec("UPDATE units SET type = 'ic' WHERE parent_id IS NULL");
         },
       };
       const missing = [...Array(SCHEMA_VERSION - version).keys()]
@@ -891,16 +916,18 @@ export class Store {
         owned(u.incidentId, `unit ${u.id}`);
         this.db
           .prepare(
-            "INSERT INTO units (id, incident_id, parent_id, objective, leader_json, equipment_json, bash_allowlist_json, session_id, status, created_at, closed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO units (id, incident_id, parent_id, type, objective, leader_json, equipment_json, bash_allowlist_json, role, session_id, status, created_at, closed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           )
           .run(
             u.id,
             u.incidentId,
             u.parentId,
+            u.type,
             u.objective,
             j(u.leader),
             j(u.equipment),
             j(u.bashAllowlist),
+            u.role,
             u.sessionId,
             u.status,
             u.createdAt,
@@ -1086,10 +1113,12 @@ function rowToUnit(r: Row): Unit {
     id: r.id,
     incidentId: r.incident_id,
     parentId: nullable(r.parent_id),
+    type: r.type,
     objective: r.objective,
     leader: p(r.leader_json),
     equipment: p(r.equipment_json),
     bashAllowlist: p(r.bash_allowlist_json),
+    role: nullable(r.role),
     sessionId: nullable(r.session_id),
     status: r.status,
     createdAt: r.created_at,

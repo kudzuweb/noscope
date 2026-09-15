@@ -8,13 +8,7 @@ import { defineCapability } from "../src/capabilities/registry.js";
 import { EXIT, run } from "../src/cli.js";
 import { dispatch } from "../src/dispatcher.js";
 import { renderChangeReport } from "../src/ic.js";
-import {
-  answeredRequestsOf,
-  endedSinceLastTurn,
-  renderTurnPrompt,
-  runsInsideLeader,
-  unitsOwingReport,
-} from "../src/leader.js";
+import { answeredRequestsOf } from "../src/leader.js";
 import type {
   ActionPlan,
   Event,
@@ -26,6 +20,13 @@ import { applyPlan, raiseResourceRequests } from "../src/runtime.js";
 import { Store } from "../src/store.js";
 import { citesMember } from "../src/strike-team.js";
 import { renderHierarchy } from "../src/tree.js";
+import {
+  endedSinceLastTurn,
+  protocolOf,
+  renderTurnPrompt,
+  runsInsideLeader,
+  unitsOwingReport,
+} from "../src/units/index.js";
 import { scriptedIncident, unitProposal } from "./fixtures/models.js";
 
 const tree = resolve("test/fixtures/tree");
@@ -1432,7 +1433,8 @@ describe("dispatcher, unit leaders", () => {
         equipment: ["playwright_browser", "claude_in_chrome"],
       }),
     ).toBe(false);
-    // R4-6: the same investigate runs inside a unit's leader and never inside the IC.
+    // R4-6: the same investigate runs inside a unit's leader and never inside the IC,
+    // which is the ic type's protocol saying so (R4-10), not the base function's.
     const inv = task({
       id: "t-inv",
       capability: "investigate",
@@ -1441,7 +1443,8 @@ describe("dispatcher, unit leaders", () => {
       model: "claude-haiku-4-5",
     });
     expect(runsInsideLeader(investigate, inv, child)).toBe(true);
-    expect(runsInsideLeader(investigate, inv, unit)).toBe(false);
+    expect(protocolOf(child).runsInside(investigate, inv, child)).toBe(true);
+    expect(protocolOf(unit).runsInside(investigate, inv, unit)).toBe(false);
     store.setTaskStatus("i1", "t-see", "failed", "dispatcher", "task.failed");
     store.setTaskStatus("i1", "t-inv", "failed", "dispatcher", "task.failed");
     expect(
@@ -1887,7 +1890,7 @@ describe("dispatcher, lacks at the leader", () => {
     out.length = 0;
     expect(await run(["incident", "tree", "i1"], ctx)).toBe(EXIT.ok);
     expect(out[2]).toContain(
-      "u-a [waiting] the first half (leader claude-code/claude-haiku-4-5; last report: progress; waiting on: human_knowledge: the expected position (not stated) (question i1-q01))",
+      "u-a [waiting] the first half (base; leader claude-code/claude-haiku-4-5; last report: progress; waiting on: human_knowledge: the expected position (not stated) (question i1-q01))",
     );
     expect(await run(["incident", "answer", "i1", "the top"], ctx)).toBe(
       EXIT.ok,
@@ -2497,6 +2500,8 @@ describe("dispatcher, parallel dispatch", () => {
     expect(calls[5]?.prompt).toContain("No ready tasks remain in your unit.");
     expect(events.filter((e) => e.type === "unit.continued")).toHaveLength(2);
     expect(events.filter((e) => e.type === "unit.reported")).toHaveLength(1);
+    // One leader session for the three turns (the stub's id is constant, so the count says it).
+    expect(events.filter((e) => e.type === "leader.started")).toHaveLength(1);
     store.close();
   }, 20_000);
 
@@ -2520,6 +2525,11 @@ describe("dispatcher, parallel dispatch", () => {
       ["task", "stub-session", 0],
       ["leader", "stub-session", 0],
     ]);
+    // The stub's session id is constant, so the count of leader.started is what says one
+    // session was opened.
+    expect(
+      store.listEvents("i1").filter((e) => e.type === "leader.started"),
+    ).toHaveLength(1);
     expect(calls[1]?.prompt).toContain(
       "Task t-inv1 (investigate) completed in this session; its result is recorded.",
     );
@@ -2739,6 +2749,15 @@ describe("dispatcher, parallel dispatch", () => {
       (c) => c.kind === "leader",
     );
     expect(turns).toHaveLength(2);
+    // t-out's turn was queued before t-in's first call recorded the session on the unit,
+    // and is asked after it: the turn resumes that session rather than opening a second
+    // (PR 49's correctness review), so the unit has one leader.started.
+    expect(turns[0]?.resume).toBe("stub-session");
+    expect(turns[1]?.resume).toBe("stub-session");
+    expect(
+      store.listEvents("i1").filter((e) => e.type === "leader.started"),
+    ).toHaveLength(1);
+    expect(turns[0]?.prompt).not.toContain("You lead unit");
     expect(turns[0]?.prompt).toContain(
       "Task t-out (investigate) completed. Its result:",
     );

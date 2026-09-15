@@ -31,10 +31,12 @@ function cycledIncident(store: Store) {
       id: "u-scroll",
       incidentId: "i1",
       parentId: s.unit.id,
+      type: "base",
       objective: "where the scroll position is set after a delete",
       leader: { provider: "claude-code", model: "claude-haiku-4-5" },
       equipment: [],
       bashAllowlist: [],
+      role: null,
       sessionId: null,
       status: "active",
       createdAt: AT,
@@ -178,10 +180,12 @@ function cycledIncident(store: Store) {
       id: "u-wait",
       incidentId: "i1",
       parentId: s.unit.id,
+      type: "base",
       objective: "what the author expects after a delete",
       leader: { provider: "claude-code", model: "claude-haiku-4-5" },
       equipment: [],
       bashAllowlist: [],
+      role: null,
       sessionId: "s-wait",
       status: "active",
       createdAt: AT,
@@ -458,9 +462,9 @@ describe("planner", () => {
         - c-verified: /repo/src/view.ts:88 matches {"pattern":"scrollTo","text":"el.scrollTo(0, bottom)"} (verified, observed; confidence 1; evidence /repo/src/view.ts:88) [from grep task t-grep]
 
       ## 3. Unit tree
-        i1-command [active] command: where deletion moves the scroll position (leader claude-code/claude-haiku-4-5; last report: none)
-          u-scroll [active] where the scroll position is set after a delete (leader claude-code/claude-haiku-4-5; last report: not_met)
-          u-wait [waiting] what the author expects after a delete (leader claude-code/claude-haiku-4-5; last report: progress; waiting on: human_knowledge: where should the view rest after a delete? (the objective does not say) (question i1-q01))
+        i1-command [active] command: where deletion moves the scroll position (ic; leader claude-code/claude-haiku-4-5; last report: none)
+          u-scroll [active] where the scroll position is set after a delete (base; leader claude-code/claude-haiku-4-5; last report: not_met)
+          u-wait [waiting] what the author expects after a delete (base; leader claude-code/claude-haiku-4-5; last report: progress; waiting on: human_knowledge: where should the view rest after a delete? (the objective does not say) (question i1-q01))
 
       ## 4. Tasks completed since the last cycle
         - t-grep (grep, under u-scroll): objective "find scrollTo calls"; inputs {"root":"src","pattern":"scrollTo"}; expected "every call site"; criteria ["each match cited"]; result {"matches":1}; claims c-verified
@@ -497,6 +501,7 @@ describe("planner", () => {
       ## 9. Rules the validator applies
         - Capabilities exist: every task names a registered capability.
         - Units exist: every task's unit and every new unit's parent is an active unit id or the ref of a unit created in this plan; a closed unit takes no new work.
+        - Type exists: every new unit names a registered unit type a plan may create; base, the led unit, is the only one, so name base or leave type to its default.
         - No cycles: the tree stays a tree; a unit ref is used once, is not an existing unit id, and does not start with the incident id; a task ref likewise against task ids, and new tasks' dependsOn form no cycle.
         - No duplicates: no new task repeats an open or completed one, or another new task, with the same capability and effective inputs under the same unit; a task this plan cancels does not count.
         - Inputs validate: task inputs parse against the capability's input schema; a task that takes evidence names it by id in evidenceFrom (claims, and tasks whose results it needs) rather than copying it into inputs, or carries it inline.
@@ -597,6 +602,10 @@ describe("planner", () => {
       expect(PLANNER_SYSTEM_PROMPT).toContain(
         "Independent tasks run at once, across units and within one (only tasks inside a leader's session run one at a time), and dependsOn is what serializes them",
       );
+      // R4-10: a new unit is a type plus a config, and base is the one type a plan may create.
+      expect(PLANNER_SYSTEM_PROMPT).toContain(
+        "A new unit is a type plus a config: it names its type (base, the led unit, is the only type a plan may create, and the default) and fills the type's form",
+      );
       expect(sent.args).not.toContain("--allowedTools");
       expect(
         sent.prompt.startsWith("# Incident file\n\n## 1. Command picture"),
@@ -633,6 +642,6 @@ describe("planner", () => {
       delete process.env.NOSCOPE_STUB_OUTPUT;
     }
     store.close();
-    expect(PLANNER_RULES).toHaveLength(14);
+    expect(PLANNER_RULES).toHaveLength(15);
   });
 });
