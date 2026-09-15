@@ -286,6 +286,8 @@ export const Event = z
     actor: z.string().min(1),
     payload: z.record(z.string(), z.unknown()),
     createdAt: Timestamp,
+    /** The noscope commit the writing process was built from (R4-12); null on an event from before the tag. */
+    runtime: z.string().min(1).nullable(),
   })
   .refine((e) => (e.scope === "system") === (e.incidentId === null), {
     message:

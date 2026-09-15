@@ -146,7 +146,7 @@ describe("incident run", () => {
     s1.db.pragma("user_version = 6");
     s1.close();
     const migrated = h.store();
-    expect(migrated.db.pragma("user_version", { simple: true })).toBe(7);
+    expect(migrated.db.pragma("user_version", { simple: true })).toBe(8);
     expect(
       migrated.listUnits("001").map((u) => [u.id, u.type, u.role]),
     ).toEqual([

@@ -23,6 +23,7 @@ import {
   UnitStatus,
   type Usage,
 } from "./models.js";
+import { RUNTIME } from "./runtime-version.js";
 
 /** `$NOSCOPE_DB` when set, otherwise `~/.noscope/noscope.sqlite` (DESIGN.md Step 2). */
 export function resolveDbPath(env: NodeJS.ProcessEnv): string {
@@ -40,9 +41,9 @@ export function now(): string {
  * one step at a time (1: claims gain `basis`; 2: tasks gain `evidence_from_json`; 3: units
  * gain a leader and `purpose` becomes `objective`; 4: tasks gain `strike_team_json`; 5:
  * incidents gain `period_json` and every root unit's session is dropped; 6: units gain a
- * type and a role); a file at a later version is refused.
+ * type and a role; 7: events gain a `runtime` tag); a file at a later version is refused.
  */
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 
 /**
  * The leader a unit recorded before units had one is read as: the planner's provider and
@@ -132,6 +133,7 @@ CREATE TABLE IF NOT EXISTS events (
   actor TEXT NOT NULL,
   payload_json TEXT NOT NULL,
   created_at TEXT NOT NULL,
+  runtime TEXT,
   CHECK ((scope = 'incident' AND incident_id IS NOT NULL) OR (scope = 'system' AND incident_id IS NULL))
 );
 CREATE UNIQUE INDEX IF NOT EXISTS events_sequence ON events (COALESCE(incident_id, ''), sequence);
@@ -301,6 +303,12 @@ export class Store {
             name: string;
           }[]
         ).some((c) => c.name === column);
+      // Version 7 events carried no runtime tag (R4-12). The column is added before any
+      // step that writes an event (step 5), since every write stamps it.
+      const addRuntime = () => {
+        if (!hasColumn("events", "runtime"))
+          this.db.exec("ALTER TABLE events ADD COLUMN runtime TEXT");
+      };
       const steps: Record<number, () => void> = {
         // Version 1 claims had no basis. Verified claims came from deterministic
         // equipment, so they were observed; a session's claim with no recorded basis is
@@ -359,6 +367,7 @@ export class Store {
         5: () => {
           if (!hasColumn("incidents", "period_json"))
             this.db.exec("ALTER TABLE incidents ADD COLUMN period_json TEXT");
+          addRuntime();
           const roots = this.db
             .prepare(
               "SELECT id, incident_id, session_id FROM units WHERE parent_id IS NULL AND session_id IS NOT NULL",
@@ -389,6 +398,9 @@ export class Store {
             this.db.exec("ALTER TABLE units ADD COLUMN role TEXT");
           this.db.exec("UPDATE units SET type = 'ic' WHERE parent_id IS NULL");
         },
+        // Version 7 events carried no runtime tag; they read null, since what wrote them
+        // is not recorded.
+        7: addRuntime,
       };
       const missing = [...Array(SCHEMA_VERSION - version).keys()]
         .map((i) => version + i)
@@ -803,6 +815,7 @@ export class Store {
             payload:
               checked === undefined ? extra : { ...extra, mutation: checked },
             createdAt: now(),
+            runtime: RUNTIME,
           }),
         );
       })
@@ -812,7 +825,7 @@ export class Store {
   private insertEvent(e: Event): void {
     this.db
       .prepare(
-        "INSERT INTO events (id, scope, incident_id, sequence, type, actor, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO events (id, scope, incident_id, sequence, type, actor, payload_json, created_at, runtime) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .run(
         e.id,
@@ -823,6 +836,7 @@ export class Store {
         e.actor,
         j(e.payload),
         e.createdAt,
+        e.runtime,
       );
   }
 
@@ -1174,6 +1188,7 @@ function rowToEvent(r: Row): Event {
     actor: r.actor,
     payload: p(r.payload_json),
     createdAt: r.created_at,
+    runtime: nullable(r.runtime),
   });
 }
 function rowToGrant(r: Row): Grant {

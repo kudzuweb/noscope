@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { EXIT, run } from "../src/cli.js";
 import type { ActionPlan, Event, Incident, Task } from "../src/models.js";
 import { renderReview } from "../src/review.js";
+import { RUNTIME } from "../src/runtime-version.js";
 import { cycleOf } from "../src/store.js";
 import { unitProposal } from "./fixtures/models.js";
 
@@ -121,6 +122,7 @@ function event(
     actor: "test",
     payload,
     createdAt: `2026-09-13T13:${String(sequence).padStart(2, "0")}:00.000Z`,
+    runtime: null,
   };
 }
 
@@ -157,6 +159,10 @@ describe("incident review", () => {
     );
     expect(text).toContain(
       "report verdicts: 1: 0 accepted, 1 revise, 0 reassign\n  001-u02: 0 accepted, 1 revise, 0 reassign",
+    );
+    // One build wrote the whole log, so review names one runtime spanning every event (R4-12).
+    expect(text).toMatch(
+      new RegExp(`^runtimes: 1: ${RUNTIME} \\(events 0 to \\d+\\)$`, "m"),
     );
     expect(text).toContain(
       "  ic claude-opus-5: in 1,500 (uncached 1,000 / write 200 / read 300)  out 42  1.5 s  $0.01  reviewed the draft: approve  session stub-session",
@@ -557,6 +563,29 @@ describe("incident review", () => {
     const none = renderReview({ ...incident, status: "open" }, [], [], []);
     expect(none[1]).toBe("no cycle has run");
     expect(none.at(-1)).toBe("cost: $0.00");
+    expect(none).toContain("runtimes: none");
+  });
+
+  it("names the runtimes a log was written under, in order, with each one's event range and the untagged events named (R4-12)", () => {
+    const tagged = (sequence: number, runtime: string | null): Event => ({
+      ...event(sequence, "plan.proposed", { rationale: "r" }),
+      runtime,
+    });
+    const lines = renderReview(
+      { ...incident, status: "open" },
+      [
+        tagged(0, null),
+        tagged(1, "aaaa"),
+        tagged(2, "aaaa"),
+        tagged(3, "bbbb-dirty"),
+        tagged(4, "aaaa"),
+      ],
+      [],
+      [],
+    );
+    expect(lines).toContain(
+      "runtimes: 4: none recorded (written before the tag) (events 0 to 0), aaaa (events 1 to 2), bbbb-dirty (events 3 to 3), aaaa (events 4 to 4)",
+    );
   });
 
   it("numbers the cycles of an incident migrated under the IC the way cycleOf does: drafts before the first command turn, then command turns, a rejected or failed turn as the period it attempted", () => {

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import { EXIT, run } from "../src/cli.js";
 import type { Context } from "../src/context.js";
+import { RUNTIME } from "../src/runtime-version.js";
 import { Store } from "../src/store.js";
 import { reportedUnit, scriptedIncident } from "./fixtures/models.js";
 
@@ -45,7 +46,9 @@ describe("incident commands", () => {
     );
     const e = ctx(db);
     expect(await run(["incident", "events", "001"], e.context)).toBe(EXIT.ok);
-    expect(e.out.map((l) => l.trim().split(/\s+/)[2])).toEqual([
+    // The runtime tag heads the log once, since one build wrote it all (R4-12).
+    expect(e.out[0]).toBe(`runtime: ${RUNTIME}`);
+    expect(e.out.slice(1).map((l) => l.trim().split(/\s+/)[2])).toEqual([
       "incident.created",
       "unit.created",
     ]);

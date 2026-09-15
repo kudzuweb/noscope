@@ -38,7 +38,7 @@ import {
 } from "../models.js";
 import { proposePlan, renderSituation } from "../planner.js";
 import { getProvider, SessionError } from "../providers/index.js";
-import { renderReview } from "../review.js";
+import { describeRuntimeTag, renderReview } from "../review.js";
 import {
   type Answered,
   answerRequest,
@@ -605,7 +605,16 @@ export const events: Handler = async (args, ctx) => {
   try {
     const incident = requireIncident(store, args, ctx, "events");
     if (typeof incident === "number") return incident;
-    for (const e of store.listEvents(incident.id)) ctx.io.out(renderEvent(e));
+    // The runtime tag (R4-12) is printed where it changes, so a log written by one build
+    // shows it once and a log spanning builds shows each switch.
+    let runtime: string | null | undefined;
+    for (const e of store.listEvents(incident.id)) {
+      if (e.runtime !== runtime) {
+        runtime = e.runtime;
+        ctx.io.out(`runtime: ${describeRuntimeTag(runtime)}`);
+      }
+      ctx.io.out(renderEvent(e));
+    }
     return EXIT.ok;
   } finally {
     store.close();
