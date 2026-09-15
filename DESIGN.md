@@ -727,7 +727,10 @@ models; a first call refused inside the leader's resumed session releases that s
 refused on every later call, and the leader's next turn starts fresh on the unit's own
 model. A refusal on the fallback, or a refusal after the fallback has been tried for that
 seat (the IC's model was already changed once, a leader already moved, a task whose own
-model is the fallback), goes to judgment and no seat retries beyond the one fallback: for
+model is the fallback), goes to judgment and no seat retries beyond the one fallback; a
+seat that already runs on the fallback model (`--ic-model claude-opus-4-8`, or a plan
+naming Opus 4.8 as a unit's leader) has nothing to fall back to, so its first refusal
+blocks or reports the same way: for
 a unit leader's or a task session's refusals the runtime writes the unit's report on the
 leader's behalf, `unit.reported` with the actor `runtime` and `writtenBy: "runtime"`,
 `not_met` with both refusals as its why, the IC's choices (another model, a different unit,

@@ -2292,7 +2292,7 @@ the previous applied plan's warnings after a rejected plan (narrowed); DESIGN.md
 sent a fact the IC lacks only through a period objective where `IC_ROLE` also offers a
 deterministic task under command (aligned).
 
-## R4-7: Refusals: the category, and the fallback to Opus 4.8 (#PR, merged 2026-09-15)
+## R4-7: Refusals: the category, and the fallback to Opus 4.8 (#43, merged 2026-09-15)
 
 R4-7 of the round 4 plan. Two things the third run left open. The category: run 003's
 `command.failed` events recorded `refused: { category: "unstated", explanation: "" }`
@@ -2383,9 +2383,10 @@ transcript); the IC's review refused on its resumed session is filed, released, 
 (kind `fallback`, the refusal as reason), reviewed by a fresh session on `claude-opus-4-8`
 whose `leader.started` carries `fallbackFrom`, the unit's leader changed, `show` and
 `review` naming the change, and the next command turn resumes it on the fallback; refused
-on the fallback too, the incident blocks with the question carrying both refusals, `step`
-exits 5 on it, an answer naming no model is stored and re-asked with the hint, an answer
-naming Sonnet 5 transfers command (chosen by `answer`) and reopens, a refusal on Sonnet
+on the fallback too, the incident blocks with the question carrying both refusals, that
+`step` exits 0 and the next exits 5 on the blocked incident, an answer naming no model is
+stored and re-asked with the hint, an answer naming Sonnet 5 transfers command (chosen by
+`answer`) and reopens, a refusal on Sonnet
 blocks again on one refusal (the fallback already tried), an answer naming Haiku runs the
 cycle through, and `show` lists the three changes; a leader refused on its resumed session
 moves to the fallback on `leader.failed` (the mutation checked), its fresh session reports
