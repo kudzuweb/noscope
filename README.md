@@ -30,8 +30,9 @@ pnpm build
 ```
 
 Environment: `NOSCOPE_DB` is the SQLite file (default `~/.noscope/noscope.sqlite`);
-`NOSCOPE_CLAUDE_BIN` is the Claude Code binary every provider call runs on, the planner's
-as well as each task session's (default `claude`; tests point it at `test/stub-claude`).
+`NOSCOPE_CLAUDE_BIN` is the Claude Code binary every provider call runs on, the planner's,
+each unit leader's and each task session's (default `claude`; tests point it at
+`test/stub-claude`).
 `CLAUDE_CONFIG_DIR`, when set for Claude Code, is where the runtime looks for session and
 subagent transcripts (default `~/.claude`).
 `NOSCOPE_LIVE=1` also runs the live tests, which call the real binary: a Haiku session, and a
