@@ -57,13 +57,19 @@ function harness() {
     cwd: tree,
     env,
   };
-  // The last planner call's prompt; a step's last call is a leader's turn, not the planner's.
-  const plannerPrompt = () =>
+  const calls = () =>
     readFileSync(env.NOSCOPE_STUB_CALLS as string, "utf8")
       .trim()
       .split("\n")
-      .map((l) => JSON.parse(l) as { kind: string; prompt: string })
+      .map((l) => JSON.parse(l) as { kind: string; prompt: string });
+  // The last planner call's prompt; a step's last call is a leader's turn, not the planner's.
+  const plannerPrompt = () =>
+    calls()
       .filter((c) => c.kind === "planner")
+      .at(-1)?.prompt ?? "";
+  const leaderPrompt = () =>
+    calls()
+      .filter((c) => c.kind === "leader")
       .at(-1)?.prompt ?? "";
   return {
     ctx,
@@ -71,13 +77,14 @@ function harness() {
     err,
     env,
     plannerPrompt,
+    leaderPrompt,
     store: () => new Store(env.NOSCOPE_DB as string),
   };
 }
 
 // Each test drives several stub sessions through the CLI; slow on a CI runner.
 describe("blocking channels", () => {
-  it("an interpret task answering insufficient leads the next step to a plan that supplies what was needed", {
+  it("an interpret task answering insufficient for a retrievable fact reaches its leader, not the planner, and the next plan can still supply it", {
     timeout: 60_000,
   }, async () => {
     const h = harness();
@@ -134,10 +141,16 @@ describe("blocking channels", () => {
       ],
     });
     store.close();
+    // The lack went to the unit's leader, whose turn says what to do with it; the planner's
+    // section 5 no longer lists a retrievable fact, since it is the leader's to get.
+    expect(h.leaderPrompt()).toContain(
+      "Task 001-t01 (interpret) came back insufficient. It needed:\n  - retrievable_fact: the scroll handler's source\nA retrievable fact is yours to get",
+    );
     h.out.length = 0;
     expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    expect(h.plannerPrompt()).not.toContain("needed retrievable_fact");
     expect(h.plannerPrompt()).toContain(
-      '001-t01 (interpret): "say why it scrolls" needed retrievable_fact: the scroll handler\'s source',
+      "## 5. Tasks that came back insufficient since the last cycle\n  (none)",
     );
     expect(h.out).toContain(
       "  task 001-t02 [ready] under 001-command: grep: find the scroll handler's source",

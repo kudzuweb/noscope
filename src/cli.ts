@@ -63,7 +63,8 @@ export const COMMANDS: readonly Command[] = [
     group: "incident",
     name: "answer",
     usage: 'incident answer <id> "<text>"',
-    summary: "Answer the planner's open question and reopen the incident",
+    summary:
+      "Answer the oldest open question, the planner's or a unit leader's; a unit's question answered returns the unit to active, the planner's reopens the incident",
     arrives: "PR 13",
     handler: incident.answer,
   },
@@ -72,7 +73,7 @@ export const COMMANDS: readonly Command[] = [
     name: "provide",
     usage: 'incident provide <id> "<text>"',
     summary:
-      "Answer the planner's open capability request with what was provided, or why not, and reopen the incident",
+      "Answer the oldest open capability request, the planner's or a unit leader's, with what was provided, or why not; a unit's answered returns the unit to active, the planner's reopens the incident",
     arrives: "PR 27",
     handler: incident.provide,
   },

@@ -639,4 +639,85 @@ describe("incident review", () => {
       ),
     ).toBe(true);
   });
+
+  it("lists what a leader assigned or was refused beside its turns, counts lacks resolved at a leader against those sent up, and keeps a leader's verdicts out of the cycle's", () => {
+    const usage = {
+      inputTokens: 100,
+      outputTokens: 10,
+      seconds: 1,
+      costUsd: 0.01,
+    };
+    const byLeader = (e: Event): Event => ({ ...e, actor: "leader" });
+    const lines = renderReview(
+      { ...incident, status: "open" },
+      [
+        event(1, "plan.proposed", { usage, model: "claude-opus-5" }),
+        event(2, "plan.applied", {
+          units: [],
+          closedUnits: [],
+          tasks: ["t1"],
+          cancelledTasks: [],
+          incidentStatus: "open",
+        }),
+        event(3, "unit.continued", {
+          unitId: "u1",
+          sessionId: "s-u1",
+          model: "claude-haiku-4-5",
+          usage,
+          remaining: 0,
+        }),
+        byLeader(
+          event(4, "plan.rejected", {
+            unitId: "u1",
+            rule: "Own unit",
+            reason: "elsewhere",
+          }),
+        ),
+        event(5, "unit.continued", {
+          unitId: "u1",
+          sessionId: "s-u1",
+          model: "claude-haiku-4-5",
+          usage,
+          remaining: 0,
+        }),
+        byLeader(
+          event(6, "plan.applied", {
+            unitId: "u1",
+            sessionId: "s-u1",
+            tasks: ["t2", "t3"],
+          }),
+        ),
+        event(7, "unit.reported", {
+          unitId: "u1",
+          sessionId: "s-u1",
+          model: "claude-haiku-4-5",
+          usage,
+          report: {
+            outcome: "progress",
+            changed: [],
+            pictureChanged: true,
+            resourceRequests: [
+              { kind: "human_knowledge", what: "which file", why: "two match" },
+            ],
+          },
+        }),
+      ],
+      [],
+      [],
+    );
+    const text = lines.join("\n");
+    expect(text).toContain(
+      "cycle 1  2026-09-13T13:01:00.000Z  applied open  units +0 -0  tasks +1 cancelled 0",
+    );
+    expect(text).toContain("    sent up human_knowledge: which file");
+    expect(text).toContain("  leader of u1 assigned 2 task(s): t2, t3");
+    expect(text).toContain("  leader of u1 refused Own unit: elsewhere");
+    expect(text).toContain(
+      "plans: 1 drafted in 1 cycle(s), 1 applied, 0 rejected (0 rule lines)",
+    );
+    expect(text).toContain("leader turns: 3 (1 reports)");
+    expect(text).toContain(
+      "lacks: 2 task(s) assigned by a leader, 1 resource request(s) sent up",
+    );
+  });
 });

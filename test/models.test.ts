@@ -235,12 +235,69 @@ describe("contracts", () => {
       "command.failed",
       "plan.reviewed",
       "leader.released",
+      "unit.waiting",
+      "unit.resumed",
     ])
       expect(EventType.options).toContain(type);
-    expect(EventType.options).toHaveLength(39);
+    expect(EventType.options).toHaveLength(41);
   });
 
   it("a leader's turn is a report or a continue; a not_met report says why and what to do, and a discrepancy rides on either", () => {
+    const assigning = LeaderTurn.parse({
+      kind: "continue",
+      report: null,
+      assignTasks: [
+        {
+          unit: "i1-u02",
+          capability: "grep",
+          objective: "find it",
+          inputs: { root: ".", pattern: "x" },
+          expectedOutput: "",
+          completionCriteria: [],
+          evidenceRequired: [],
+          dependsOn: [],
+          instructions: "",
+          provider: null,
+          model: null,
+          budget: {},
+        },
+      ],
+    });
+    expect(assigning.assignTasks?.[0]).toMatchObject({
+      unit: "i1-u02",
+      evidenceFrom: { claims: [], tasks: [] },
+    });
+    const waiting = LeaderTurn.parse({
+      kind: "report",
+      report: {
+        outcome: "progress",
+        changed: [],
+        pictureChanged: false,
+        resourceRequests: [
+          { kind: "human_knowledge", what: "which file", why: "two match" },
+        ],
+      },
+    });
+    expect(waiting.report?.resourceRequests).toHaveLength(1);
+    expect(() =>
+      LeaderTurn.parse({
+        kind: "report",
+        report: {
+          outcome: "progress",
+          changed: [],
+          pictureChanged: false,
+          resourceRequests: [
+            { kind: "retrievable_fact", what: "a line", why: "to read" },
+          ],
+        },
+      }),
+    ).toThrow(/kind/);
+    expect(() =>
+      LeaderTurn.parse({
+        kind: "continue",
+        report: { outcome: "progress", changed: [], pictureChanged: false },
+      }),
+    ).toThrow(/a continue turn carries no report/);
     expect(LeaderTurn.parse({ kind: "continue", report: null })).toEqual({
       kind: "continue",
       report: null,
@@ -299,7 +356,13 @@ describe("contracts", () => {
     // the API refuses oneOf, anyOf and allOf at the top level of a tool's input schema.
     const schema = jsonSchemaFor(LeaderTurn) as {
       type: string;
-      properties: { kind: { enum: string[] }; report: { anyOf?: unknown[] } };
+      properties: {
+        kind: { enum: string[] };
+        assignTasks: { description: string };
+        report: {
+          anyOf?: { properties?: Record<string, { description: string }> }[];
+        };
+      };
       required: string[];
       additionalProperties: boolean;
     };
@@ -308,6 +371,15 @@ describe("contracts", () => {
     expect(schema.required).toEqual(["kind", "report"]);
     expect(schema.additionalProperties).toBe(false);
     expect(schema.properties.report.anyOf).toHaveLength(2);
+    // The turn schema itself says what a leader does with each kind of lack.
+    expect(schema.properties.assignTasks.description).toContain(
+      "how you get a retrievable fact yourself",
+    );
+    expect(
+      schema.properties.report.anyOf
+        ?.map((o) => o.properties?.resourceRequests?.description)
+        .find((d) => d !== undefined),
+    ).toContain("puts your unit in waiting");
     expect(() =>
       jsonSchemaFor(
         z.discriminatedUnion("kind", [

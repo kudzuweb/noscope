@@ -5,11 +5,20 @@ import {
   isBuiltinTool,
   READ_ONLY_COMMANDS,
 } from "./equipment/index.js";
-import { unitsOwingReport } from "./leader.js";
+import {
+  holdsCapability,
+  LEADER_ACTOR,
+  LEADER_RULES,
+  openRequests,
+  requestTargetOf,
+  unitShare,
+  unitsOwingReport,
+} from "./leader.js";
 import type {
   ActionPlan,
   Claim,
   CommandTurn,
+  Event,
   Incident,
   StrikeTeam,
   Task,
@@ -26,6 +35,7 @@ import { STRIKE_MEMBER_MIN_TOKENS } from "./strike-team.js";
 /** A rule's name is the text before the colon of the line the planner reads, so the two lists cannot drift. */
 type BeforeColon<S> = S extends `${infer Name}: ${string}` ? Name : never;
 export type RuleName = BeforeColon<(typeof PLANNER_RULES)[number]>;
+export type LeaderRuleName = BeforeColon<(typeof LEADER_RULES)[number]>;
 
 export const SPAN_OF_CONTROL = 7;
 
@@ -39,13 +49,15 @@ export type ValidationContext = {
   usage: Usage;
   /** Units whose leader has a session and has not reported since one of the unit's tasks ended; such a unit cannot close yet. */
   owing: ReadonlySet<string>;
+  /** The incident's log, from which a unit's share of the budget is computed. */
+  events: readonly Event[];
 };
 
-export type Rejection = { rule: RuleName; reason: string };
+export type Rejection<R = RuleName> = { rule: R; reason: string };
 
-export type Verdict =
+export type Verdict<R = RuleName> =
   | { ok: true; plan: ActionPlan }
-  | { ok: false; rejections: Rejection[] };
+  | { ok: false; rejections: Rejection<R>[] };
 
 type Rule = (plan: ActionPlan, ctx: ValidationContext) => string[];
 
@@ -200,9 +212,9 @@ const CHECKS: Record<RuleName, Rule> = {
 
   "Units exist": (plan, ctx) => {
     const active = activeUnits(plan, ctx);
-    const known = new Set(ctx.units.map((u) => u.id));
+    const known = new Map(ctx.units.map((u) => [u.id, u.status]));
     const describe = (id: string) =>
-      known.has(id) ? `${id}, which is closed` : id;
+      known.has(id) ? `${id}, which is ${known.get(id)}` : id;
     return [
       ...plan.createUnits
         .filter((u) => !active.has(u.parent))
@@ -361,7 +373,7 @@ const CHECKS: Record<RuleName, Rule> = {
       children.set(parent, (children.get(parent) ?? 0) + 1);
     };
     for (const u of ctx.units)
-      if (u.status === "active" && !closing.has(u.id)) add(u.parentId);
+      if (u.status !== "closed" && !closing.has(u.id)) add(u.parentId);
     for (const u of plan.createUnits) add(u.parent);
     for (const t of ctx.tasks)
       if (isOpen(t) && !cancelling.has(t.id)) add(t.unitId);
@@ -662,6 +674,159 @@ export const RULES: readonly { name: RuleName; check: Rule }[] =
     return { name, check: CHECKS[name] };
   });
 
+/**
+ * The plan rules that read tasks, applied to a leader's assignments as to a plan's; the
+ * rest read the situation, the closes or the status, which a leader's turn has none of.
+ */
+const TASK_RULES: readonly RuleName[] = [
+  "Capabilities exist",
+  "Units exist",
+  "No cycles",
+  "No duplicates",
+  "Inputs validate",
+  "Span of control",
+  "Effect policy",
+  "Budget respected",
+  "Dependencies resolve",
+  "Model known",
+];
+
+type LeaderRule = (
+  tasks: readonly TaskProposal[],
+  unit: Unit,
+  ctx: ValidationContext,
+) => string[];
+
+const LEADER_CHECKS: Record<LeaderRuleName, LeaderRule> = {
+  "Own unit": (tasks, unit) =>
+    tasks
+      .filter((t) => t.unit !== unit.id)
+      .map(
+        (t) =>
+          `${label(t)} is under ${t.unit}, not the leader's own unit ${unit.id}`,
+      ),
+
+  "Capability held": (tasks, unit) =>
+    tasks.flatMap((t) => {
+      const capability = getCapability(t.capability);
+      if (capability === undefined) return [];
+      return holdsCapability(capability, unit, t.inputs)
+        ? []
+        : [
+            `${label(t)} needs ${t.capability}, whose equipment or Bash allowlist unit ${unit.id} does not hold`,
+          ];
+    }),
+
+  "Budget within share": (tasks, unit, ctx) => {
+    const { share, charged } = unitShare(unit, ctx.tasks, ctx.events);
+    const reasons: string[] = [];
+    for (const dimension of ["tokens", "seconds"] as const) {
+      const asked = tasks.reduce((n, t) => n + (t.budget[dimension] ?? 0), 0);
+      if (asked === 0) continue;
+      const allotted = share[dimension];
+      if (allotted === undefined) {
+        reasons.push(
+          `the assignments ask ${asked} ${dimension}, but no plan task under unit ${unit.id} bounds ${dimension}, so its share is zero`,
+        );
+        continue;
+      }
+      const left = allotted - charged[dimension];
+      if (asked > left)
+        reasons.push(
+          `the assignments ask ${asked} ${dimension} of the ${Math.max(0, left)} left in unit ${unit.id}'s share (${allotted} allotted by the plans, ${charged[dimension]} spent or bound)`,
+        );
+    }
+    return reasons;
+  },
+};
+
+/** The leader's own rules, in the order its role text lists them. */
+export const LEADER_RULE_CHECKS: readonly {
+  name: LeaderRuleName;
+  check: LeaderRule;
+}[] = LEADER_RULES.map((line) => {
+  const name = line.slice(0, line.indexOf(":")) as LeaderRuleName;
+  return { name, check: LEADER_CHECKS[name] };
+});
+
+/** A leader's assignments as the task rules see them: a plan that creates those tasks and nothing else. */
+function asPlan(tasks: readonly TaskProposal[]): ActionPlan {
+  return {
+    createUnits: [],
+    closeUnits: [],
+    createTasks: [...tasks],
+    cancelTasks: [],
+    questionsForHuman: [],
+    grantRequests: [],
+    capabilityRequests: [],
+    applySops: [],
+    incidentStatus: "continue",
+    situation: {
+      changed: "(a leader's assignment)",
+      hypothesis: "(a leader's assignment)",
+      proven: [],
+      inferred: [],
+      keep: [],
+    },
+    rationale: "",
+  };
+}
+
+/**
+ * A leader's assignments pass every task rule of a plan and the leader's own rules, or are
+ * refused whole (DESIGN.md Step 5): under its own unit, to capabilities the unit holds,
+ * inside the unit's share, and, through the plan rules, span of control under that unit,
+ * known models, read-only capabilities and the incident's remaining budget.
+ */
+export function validateLeaderTasks(
+  tasks: readonly TaskProposal[],
+  unit: Unit,
+  ctx: ValidationContext,
+): Verdict<RuleName | LeaderRuleName> {
+  const plan = asPlan(tasks);
+  const rejections: Rejection<RuleName | LeaderRuleName>[] = [
+    ...RULES.filter((r) => TASK_RULES.includes(r.name)).flatMap(
+      ({ name, check }) =>
+        check(plan, ctx).map((reason) => ({ rule: name, reason })),
+    ),
+    ...LEADER_RULE_CHECKS.flatMap(({ name, check }) =>
+      check(tasks, unit, ctx).map((reason) => ({ rule: name, reason })),
+    ),
+  ];
+  return rejections.length === 0
+    ? { ok: true, plan }
+    : { ok: false, rejections };
+}
+
+/**
+ * Validate a leader's assignments and record the verdict as a plan's is recorded: one
+ * `plan.rejected` per failing rule, with the leader as actor and its unit named, which the
+ * leader's next turn reads.
+ */
+export function validateLeaderTasksAndRecord(
+  store: Store,
+  incident: Incident,
+  unit: Unit,
+  tasks: readonly TaskProposal[],
+  providers: readonly Provider[],
+): Verdict<RuleName | LeaderRuleName> {
+  const verdict = validateLeaderTasks(
+    tasks,
+    unit,
+    validationContext(store, incident, providers),
+  );
+  if (!verdict.ok)
+    store.batch(() => {
+      for (const r of verdict.rejections)
+        store.record(incident.id, "plan.rejected", LEADER_ACTOR, {
+          rule: r.rule,
+          reason: r.reason,
+          unitId: unit.id,
+        });
+    });
+  return verdict;
+}
+
 /** The whole plan passes every rule or is rejected whole, with every failing rule and its reason. */
 export function validatePlan(
   plan: ActionPlan,
@@ -691,6 +856,7 @@ export function validationContext(
     providers,
     usage: sumUsage(events),
     owing: unitsOwingReport(units, tasks, events),
+    events,
   };
 }
 
@@ -701,16 +867,58 @@ const COMMAND_RULES: readonly RuleName[] = [
   "Status is earned",
 ];
 
+/** The one rule of the IC's own: an answer names a request a waiting unit raised. */
+export type CommandRuleName = "Answers match";
+
 /**
  * The IC's command turn is held to the rules that cover what it can do, closing units and
  * setting the incident's status, by checking it as a plan that creates nothing (DESIGN.md
- * Step 5). Returns the failing rules with their reasons; the caller records
- * `command.rejected` and ends the cycle.
+ * Step 5), and to one rule of its own: every answer names a waiting unit and an open
+ * request that unit raised, as the change report showed it. Returns the failing rules with
+ * their reasons; the caller records `command.rejected` and ends the cycle.
  */
 export function validateCommand(
   turn: CommandTurn,
   ctx: ValidationContext,
-): Rejection[] {
+): Rejection<RuleName | CommandRuleName>[] {
+  const answers: Rejection<CommandRuleName>[] = turn.answers.flatMap((a) => {
+    const unit = ctx.units.find((u) => u.id === a.unitId);
+    if (unit === undefined)
+      return [
+        { rule: "Answers match", reason: `no unit ${a.unitId} to answer` },
+      ];
+    if (unit.status !== "waiting")
+      return [
+        {
+          rule: "Answers match",
+          reason: `unit ${a.unitId} is ${unit.status}, not waiting on a request`,
+        },
+      ];
+    if (requestTargetOf(ctx.incident, a.unitId, a.request) !== null) return [];
+    const permission = openRequests(ctx.incident, ctx.events).some(
+      (r) =>
+        r.unitId === a.unitId &&
+        r.kind === "permission" &&
+        r.request === a.request,
+    );
+    return [
+      {
+        rule: "Answers match",
+        reason: permission
+          ? `"${a.request}" of unit ${a.unitId} is a permission request, which only a grant answers`
+          : `unit ${a.unitId} raised no open request "${a.request}"`,
+      },
+    ];
+  });
+  for (const key of repeated(
+    turn.answers.map((a) => `${a.unitId}\n${a.request}`),
+  )) {
+    const [unitId, request] = key.split("\n");
+    answers.push({
+      rule: "Answers match",
+      reason: `unit ${unitId}'s request "${request}" is answered twice`,
+    });
+  }
   const asPlan: ActionPlan = {
     createUnits: [],
     closeUnits: turn.closeUnits,
@@ -730,10 +938,13 @@ export function validateCommand(
     },
     rationale: turn.rationale,
   };
-  return RULES.filter(({ name }) => COMMAND_RULES.includes(name)).flatMap(
-    ({ name, check }) =>
-      check(asPlan, ctx).map((reason) => ({ rule: name, reason })),
-  );
+  return [
+    ...RULES.filter(({ name }) => COMMAND_RULES.includes(name)).flatMap(
+      ({ name, check }) =>
+        check(asPlan, ctx).map((reason) => ({ rule: name, reason })),
+    ),
+    ...answers,
+  ];
 }
 
 /**

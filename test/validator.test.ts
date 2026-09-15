@@ -1,15 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { defineCapability } from "../src/capabilities/registry.js";
-import type { ActionPlan, TaskProposal } from "../src/models.js";
+import { READ_ONLY_COMMANDS } from "../src/equipment/index.js";
+import { LEADER_RULES } from "../src/leader.js";
+import type { ActionPlan, TaskProposal, Unit } from "../src/models.js";
 import { PLANNER_RULES } from "../src/planner.js";
 import { Store } from "../src/store.js";
 import {
+  LEADER_RULE_CHECKS,
   RULES,
   type RuleName,
   SPAN_OF_CONTROL,
   strikeTeamRejections,
   validateAndRecord,
+  validateLeaderTasks,
+  validateLeaderTasksAndRecord,
   validatePlan,
   validationContext,
 } from "../src/validator.js";
@@ -1042,6 +1047,315 @@ describe("validator", () => {
     expect(
       store.listEvents("i1").filter((e) => e.type === "plan.rejected"),
     ).toHaveLength(2);
+    store.close();
+  });
+});
+
+describe("validator, a leader's assignments", () => {
+  /** The seeded incident's u-scroll as its leader would assign under it: the fake provider's small model, the read-only built-ins. */
+  const under = (over: Partial<TaskProposal> = {}): TaskProposal =>
+    grepTask({
+      unit: "u-scroll",
+      inputs: { root: "src", pattern: "focus" },
+      ...over,
+    });
+  /**
+   * The verdict on tasks the leader of u-scroll assigns. With `settled`, the seeded
+   * running investigate has completed in 5 seconds, so 55 of the 60 the plan allotted the
+   * unit remain; without it the whole 60 is still bound.
+   */
+  const leaderVerdict = (
+    tasks: TaskProposal[],
+    unitOver: Partial<Unit> = {},
+    budget?: { tokens?: number; seconds?: number },
+    { settled = false } = {},
+  ) => {
+    const { store, ctx } = seeded(budget);
+    if (settled)
+      store.batch(() => {
+        store.setTaskStatus(
+          "i1",
+          "t-running",
+          "completed",
+          "dispatcher",
+          "task.completed",
+        );
+        store.record("i1", "task.usage", "dispatcher", {
+          taskId: "t-running",
+          usage: {
+            inputTokens: 100,
+            uncachedInputTokens: 100,
+            cacheWriteTokens: 0,
+            cacheReadTokens: 0,
+            outputTokens: 10,
+            seconds: 5,
+          },
+        });
+      });
+    const unit = store.listUnits("i1").find((u) => u.id === "u-scroll");
+    if (unit === undefined) throw new Error("u-scroll is seeded");
+    const verdict = validateLeaderTasks(
+      tasks,
+      { ...unit, leader: FAKE_LEADER, ...unitOver },
+      ctx(),
+    );
+    store.close();
+    return verdict;
+  };
+  const hit = (verdict: ReturnType<typeof leaderVerdict>) =>
+    verdict.ok ? [] : verdict.rejections.map((r) => [r.rule, r.reason]);
+
+  it("names its rules after the leader's own list, the way the planner's are keyed", () => {
+    expect(LEADER_RULE_CHECKS.map((r) => r.name)).toEqual(
+      LEADER_RULES.map((line) => line.slice(0, line.indexOf(":"))),
+    );
+  });
+
+  it("accepts a grep under the leader's own unit and an investigate the unit's equipment covers", () => {
+    expect(
+      leaderVerdict(
+        [
+          under(),
+          investigateTask({
+            unit: "u-scroll",
+            inputs: { question: "what calls focus?" },
+            budget: { seconds: 10 },
+          }),
+        ],
+        {
+          equipment: ["default"],
+          bashAllowlist: [...READ_ONLY_COMMANDS],
+        },
+        undefined,
+        { settled: true },
+      ).ok,
+    ).toBe(true);
+  });
+
+  it("refuses a task under another unit, a new unit's ref, or a closed unit", () => {
+    expect(hit(leaderVerdict([under({ unit: "i1-command" })]))).toEqual([
+      [
+        "Own unit",
+        'task "find scrollTo calls" is under i1-command, not the leader\'s own unit u-scroll',
+      ],
+    ]);
+    expect(hit(leaderVerdict([under({ unit: "u-done" })]))).toEqual([
+      [
+        "Units exist",
+        'task "find scrollTo calls" is under no active unit u-done, which is closed',
+      ],
+      [
+        "Own unit",
+        'task "find scrollTo calls" is under u-done, not the leader\'s own unit u-scroll',
+      ],
+    ]);
+  });
+
+  it("refuses a session capability whose equipment or allowlist the unit does not hold, and one whose picked equipment it lacks", () => {
+    const investigate = investigateTask({
+      unit: "u-scroll",
+      inputs: { question: "what calls focus?" },
+      budget: { seconds: 10 },
+    });
+    expect(
+      hit(
+        leaderVerdict([investigate], { equipment: [] }, undefined, {
+          settled: true,
+        }),
+      ),
+    ).toEqual([
+      [
+        "Capability held",
+        'task "read the scroll handler" needs investigate, whose equipment or Bash allowlist unit u-scroll does not hold',
+      ],
+    ]);
+    expect(
+      hit(
+        leaderVerdict(
+          [investigate],
+          {
+            equipment: ["Read", "Grep", "Glob", "Bash"],
+            bashAllowlist: ["ls"],
+          },
+          undefined,
+          { settled: true },
+        ),
+      ),
+    ).toHaveLength(1);
+    const see = under({
+      capability: "reproduce",
+      objective: "watch it",
+      inputs: {
+        browser: "playwright_browser",
+        url: "http://localhost/",
+        steps: ["open"],
+        observe: ["it"],
+      },
+      provider: "fake",
+      model: "fake-small",
+      budget: { seconds: 10 },
+    });
+    expect(
+      hit(
+        leaderVerdict([see], { equipment: ["claude_in_chrome"] }, undefined, {
+          settled: true,
+        }),
+      ).map((r) => r[0]),
+    ).toEqual(["Capability held"]);
+    expect(
+      leaderVerdict([see], { equipment: ["playwright_browser"] }, undefined, {
+        settled: true,
+      }).ok,
+    ).toBe(true);
+  });
+
+  it("refuses assignments over the unit's share: what the plans allotted its tasks less what they spent or are bound to", () => {
+    // u-scroll's plan tasks bound 60 seconds (t-running); nothing has recorded usage, and
+    // t-running is open, so 60 of the 60 are bound and 0 remain for a session task.
+    const held = {
+      equipment: ["default"],
+      bashAllowlist: [...READ_ONLY_COMMANDS],
+    };
+    const investigate = (seconds: number) =>
+      investigateTask({
+        unit: "u-scroll",
+        inputs: { question: "what calls focus?" },
+        budget: { seconds },
+      });
+    expect(hit(leaderVerdict([investigate(10)], held))).toEqual([
+      [
+        "Budget within share",
+        "the assignments ask 10 seconds of the 0 left in unit u-scroll's share (60 allotted by the plans, 60 spent or bound)",
+      ],
+    ]);
+    // Once that task has completed in 5 seconds, 55 remain: 50 fits, 56 does not.
+    expect(
+      leaderVerdict([investigate(50)], held, undefined, { settled: true }).ok,
+    ).toBe(true);
+    expect(
+      hit(leaderVerdict([investigate(56)], held, undefined, { settled: true })),
+    ).toEqual([
+      [
+        "Budget within share",
+        "the assignments ask 56 seconds of the 55 left in unit u-scroll's share (60 allotted by the plans, 5 spent or bound)",
+      ],
+    ]);
+    // No plan task under the unit bounds tokens, so the unit's token share is zero (ruled
+    // 2026-09-15): an assignment may not bound tokens at all, while one that bounds
+    // nothing asks nothing of the share.
+    expect(
+      hit(leaderVerdict([under({ budget: { tokens: 5000 } })], held)),
+    ).toEqual([
+      [
+        "Budget within share",
+        "the assignments ask 5000 tokens, but no plan task under unit u-scroll bounds tokens, so its share is zero",
+      ],
+    ]);
+    expect(leaderVerdict([under()], held).ok).toBe(true);
+  });
+
+  it("counts a waiting child under its parent's span of control, and names a waiting unit's status when refusing work under it", () => {
+    const { store, incident } = seeded();
+    store.setUnitStatus(
+      "i1",
+      "u-scroll",
+      "waiting",
+      "dispatcher",
+      "unit.waiting",
+    );
+    const ctx = validationContext(store, incident, [fakeProvider]);
+    const many = Array.from({ length: SPAN_OF_CONTROL }, (_, i) =>
+      grepTask({ inputs: { root: "src", pattern: `p${i}` } }),
+    );
+    // command already has u-scroll (waiting) and u-done (closed) under it: seven more is eight.
+    const span = validatePlan({ ...empty, createTasks: many }, ctx);
+    expect(span.ok ? [] : span.rejections.map((r) => r.rule)).toEqual([
+      "Span of control",
+    ]);
+    const under = validatePlan(
+      {
+        ...empty,
+        createTasks: [
+          grepTask({ unit: "u-scroll", inputs: { root: "src", pattern: "x" } }),
+        ],
+      },
+      ctx,
+    );
+    expect(under.ok ? [] : under.rejections.map((r) => r.reason)).toEqual([
+      'task "find scrollTo calls" is under no active unit u-scroll, which is waiting',
+    ]);
+    store.close();
+  });
+
+  it("holds a leader to the plan rules on tasks: span of control under its unit, the incident's budget, duplicates and dependencies", () => {
+    const many = Array.from({ length: SPAN_OF_CONTROL }, (_, i) =>
+      under({ inputs: { root: "src", pattern: `p${i}` } }),
+    );
+    // u-scroll already has one open task (t-running), so seven more is eight.
+    expect(hit(leaderVerdict(many)).map((r) => r[0])).toEqual([
+      "Span of control",
+    ]);
+    expect(
+      hit(
+        leaderVerdict([
+          under({ inputs: { root: "src", pattern: "scrollTo" } }),
+        ]),
+      ).map((r) => r[0]),
+    ).toEqual(["No duplicates"]);
+    expect(
+      hit(leaderVerdict([under({ dependsOn: ["t-none"] })])).map((r) => r[0]),
+    ).toEqual(["Dependencies resolve"]);
+    expect(
+      hit(
+        leaderVerdict(
+          [under({ budget: { seconds: 30 } })],
+          {},
+          { seconds: 20 },
+          { settled: true },
+        ),
+      ).map((r) => r[0]),
+    ).toEqual(["Budget respected"]);
+  });
+
+  it("records a refusal as plan.rejected with the leader as actor and the unit named, and nothing on a pass", () => {
+    const { store, incident } = seeded();
+    const unit = store.listUnits("i1").find((u) => u.id === "u-scroll");
+    if (unit === undefined) throw new Error("u-scroll is seeded");
+    const bad = validateLeaderTasksAndRecord(
+      store,
+      incident,
+      unit,
+      [under({ unit: "i1-command" })],
+      [fakeProvider],
+    );
+    expect(bad.ok).toBe(false);
+    expect(
+      store
+        .listEvents("i1")
+        .filter((e) => e.type === "plan.rejected")
+        .map((e) => [e.actor, e.payload]),
+    ).toEqual([
+      [
+        "leader",
+        {
+          rule: "Own unit",
+          reason:
+            'task "find scrollTo calls" is under i1-command, not the leader\'s own unit u-scroll',
+          unitId: "u-scroll",
+        },
+      ],
+    ]);
+    const good = validateLeaderTasksAndRecord(
+      store,
+      incident,
+      unit,
+      [under()],
+      [fakeProvider],
+    );
+    expect(good.ok).toBe(true);
+    expect(
+      store.listEvents("i1").filter((e) => e.type === "plan.rejected"),
+    ).toHaveLength(1);
     store.close();
   });
 });

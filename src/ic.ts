@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { recordActivity } from "./activity.js";
-import { leaderRequest } from "./leader.js";
+import { leaderRequest, openRequests } from "./leader.js";
 import {
   type ActionPlan,
   CommandTurn,
@@ -94,11 +94,28 @@ function spendSince(events: readonly Event[], since: number): Usage {
  * What changed since the IC last acted, rendered first in its briefing under a heading that
  * names the window: discrepancies raised below the IC (first, so the IC reconciles them or
  * sends them up), every unit report with its why and suggestion and whether the picture
- * changed, the resource requests units sent up (R3-6 fills them; the heading is here so
- * `answers` has its source), every question answered and capability provided, the rules
- * its last turn failed, and the spend since then.
+ * changed, the resource requests the waiting units still wait on (each with the text an
+ * `answers` entry names it by, so the IC can answer what it can; a permission request only
+ * a grant answers), every question answered and capability provided, the rules its last
+ * turn failed, and the spend since then.
  */
-export function renderChangeReport(events: readonly Event[]): string[] {
+export function renderChangeReport(
+  events: readonly Event[],
+  incident: Pick<Incident, "questions" | "capabilityRequests"> = {
+    questions: [],
+    capabilityRequests: [],
+  },
+  units: readonly Unit[] = [],
+): string[] {
+  const waiting = new Set(
+    units.filter((u) => u.status === "waiting").map((u) => u.id),
+  );
+  const requests = openRequests(incident, events)
+    .filter((r) => waiting.has(r.unitId))
+    .map(
+      (r) =>
+        `${r.unitId} (waiting) asks ${r.kind}, request "${r.request}"${r.why === null ? "" : `: ${r.why}`}${r.kind === "permission" ? "; only a grant answers it" : ""}`,
+    );
   const last = lastActed(events);
   const since = last?.sequence ?? -1;
   const recent = events.filter((e) => e.sequence > since);
@@ -137,6 +154,14 @@ export function renderChangeReport(events: readonly Event[]): string[] {
   const rejected = recent
     .filter((e) => e.type === "command.rejected")
     .map((e) => `${str(e.payload.rule)}: ${str(e.payload.reason)}`);
+  const refusedUnderCommand = recent
+    .filter(
+      (e) =>
+        e.type === "plan.rejected" &&
+        e.actor === "leader" &&
+        units.some((u) => u.parentId === null && u.id === e.payload.unitId),
+    )
+    .map((e) => `${str(e.payload.rule)}: ${str(e.payload.reason)}`);
   const spend = spendSince(events, since);
   return [
     changeReportHeading(last),
@@ -148,7 +173,7 @@ export function renderChangeReport(events: readonly Event[]): string[] {
     "unit reports:",
     ...bullets(reports),
     "resource requests:",
-    ...bullets([]),
+    ...bullets(requests),
     "questions answered:",
     ...bullets(answered),
     "capabilities provided:",
@@ -156,6 +181,12 @@ export function renderChangeReport(events: readonly Event[]): string[] {
     ...(rejected.length === 0
       ? []
       : ["your last command turn was rejected on:", ...bullets(rejected)]),
+    ...(refusedUnderCommand.length === 0
+      ? []
+      : [
+          "refused on your last leader turn under command:",
+          ...bullets(refusedUnderCommand),
+        ]),
     `spend since then: tokens ${spend.inputTokens + spend.outputTokens}, seconds ${spend.seconds.toFixed(1)}${spend.costUsd === undefined ? "" : `, cost $${spend.costUsd.toFixed(2)} at list price`}`,
   ];
 }
@@ -167,7 +198,11 @@ function renderBriefingBody(
   providers: readonly Provider[],
 ): string[] {
   return [
-    ...renderChangeReport(store.listEvents(incident.id)),
+    ...renderChangeReport(
+      store.listEvents(incident.id),
+      incident,
+      store.listUnits(incident.id),
+    ),
     "",
     renderPlannerInput(store, incident, providers),
   ];

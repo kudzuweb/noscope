@@ -42,7 +42,7 @@ Still proposed rather than ruled, and settled by building them: the storage tabl
 | Term | Meaning |
 |---|---|
 | Incident | An objective pursued over time, with constraints: a project, a single task, a piece of research, anything Mauria asks for. One row; many cycles. ICS's own word; it does not imply that something went wrong here. |
-| Unit | A box in the incident's temporary tree that owns one slice of the problem, the way an ICS Branch or Group does. It has an objective, a parent and children, and it opens, subdivides and closes as the planner's picture of the problem changes. Every unit has a leader (round 3, R3-4): a session on the provider and model the unit names, holding the unit's declared equipment and Bash allowlist, created when the unit first has a ready task, resumed for each task that runs inside it and for each turn, and demobilized when the unit closes. The leader runs the unit's tasks in order and reports against the objective; the root unit, `command`, owns the incident objective, is created with the incident, and its leader is the Incident Commander. |
+| Unit | A box in the incident's temporary tree that owns one slice of the problem, the way an ICS Branch or Group does. It has an objective, a parent and children, and it opens, subdivides and closes as the planner's picture of the problem changes. Every unit has a leader (round 3, R3-4): a session on the provider and model the unit names, holding the unit's declared equipment and Bash allowlist, created when the unit first has a ready task, resumed for each task that runs inside it and for each turn, and demobilized when the unit closes. The leader runs the unit's tasks in order and reports against the objective; the root unit, `command`, owns the incident objective, is created with the incident, and its leader is the Incident Commander. A unit is `waiting` (R3-6) from the report on which its leader raised a resource request until Mauria answers it: it runs nothing and takes no new task, its pending tasks stay pending, and the other units and the incident go on. |
 | Task | A bounded piece of work owned by one unit and bound to one capability: objective, inputs, expected output, completion criteria, evidence required, dependencies, what it reads by reference (`evidenceFrom`: claims by id, and tasks whose results it needs), and for a session-backed capability the model and any instructions. It is the worker's brief, and for a session it is the prompt the session receives: the incident's objective, the current hypothesis and the claims it rests on, the hierarchy around the owning unit, then the task, then the referenced claims and results attached by the runtime. A task on its unit leader's provider and model whose capability needs no equipment or Bash command beyond the unit's runs inside the leader's session, as one resumed call with the brief and the capability's schema; any other session task runs in a session of its own, and a deterministic task in process, and either result reaches the leader on its next turn. A session task may also declare a strike team (`strikeTeam`, round 3, R3-5). |
 | Strike team | Several subagents of one kind and model sent on one task (ICS: same kind and type, one leader). Whoever defines the task defines the team with it: a task's `strikeTeam` entry names the kind, its model, its tools, the member's system prompt, how many the leader intends to send and why; the unit's leader may also ask for one in a turn (`requestStrikeTeam`), which the runtime declares on the task that runs next. No preset kinds and no default kind exist (ruled 2026-09-14), so the record shows what leaders ask for. The validator checks the model against the provider's list, the tools against the read-only built-ins, and the count against the task's token bound, and nothing else. The kinds are defined for the call that runs the task alone, and every member's run is filed as `subagent.ran` under that task. |
 | Task force | A task that declares more than one kind: the same field with several entries, the mixed-kind team ICS sends for one mission. |
@@ -146,8 +146,8 @@ mutation in its payload, which is what makes the tables rebuildable from the eve
 
 | Table | Columns |
 |---|---|
-| `incidents` | `id`, `objective`, `constraints_json`, `priorities_json` (Mauria's, from `create`), `budget_json`, `questions_json`, `capability_requests_json`, `status` (`open`, `satisfied`, `failed`, `blocked`), `period_json` (the current operational period: its number, objectives and priorities as the IC set them; null before the IC's first turn), `created_at`, `updated_at` |
-| `units` | `id`, `incident_id`, `parent_id`, `objective`, `leader_json` (provider and model), `equipment_json`, `bash_allowlist_json`, `session_id` (the leader's session, null until it first runs), `status` (`active`, `closed`), `created_at`, `closed_at` |
+| `incidents` | `id`, `objective`, `constraints_json`, `priorities_json` (Mauria's, from `create`), `budget_json`, `questions_json`, `capability_requests_json` (each question and request carries `unitId` when a unit's leader raised it, and nothing when the planner did), `status` (`open`, `satisfied`, `failed`, `blocked`), `period_json` (the current operational period: its number, objectives and priorities as the IC set them; null before the IC's first turn), `created_at`, `updated_at` |
+| `units` | `id`, `incident_id`, `parent_id`, `objective`, `leader_json` (provider and model), `equipment_json`, `bash_allowlist_json`, `session_id` (the leader's session, null until it first runs), `status` (`active`, `waiting`, `closed`), `created_at`, `closed_at` |
 | `tasks` | `id`, `incident_id`, `unit_id`, `capability`, `objective`, `inputs_json`, `expected_output`, `completion_criteria_json`, `evidence_required_json`, `depends_on_json`, `evidence_from_json`, `provider`, `model` (both required for a session-backed capability), `instructions`, `budget_json`, `strike_team_json` (the kinds the leader may send on the task; `[]` when none), `status` (`pending`, `ready`, `running`, `completed`, `failed`, `cancelled`), `result_json`, `created_at`, `completed_at` |
 | `claims` | `id`, `incident_id`, `subject`, `predicate`, `object_json`, `status` (`asserted`, `verified`, `rejected`), `basis` (`observed`, `inferred`), `confidence`, `evidence_json`, `provenance_json`, `created_at` |
 | `events` | `id`, `scope` (`incident` or `system`), `incident_id` (required for an incident event, null for a system event, enforced by a CHECK), `sequence` (unique per incident, and per the system scope), `type`, `actor`, `payload_json`, `created_at`. A payload carries a `mutation` naming the exact state change the event records, so replay applies that and nothing else; an event with no mutation, such as `plan.proposed`, changes no state. |
@@ -167,8 +167,12 @@ update it received describes a different problem), `strike_team.defined` and
 the mutation `task.strikeTeam` when a leader's request is accepted, and a leader's request
 refused with its reasons), `command.turned` (the IC's command turn,
 the mutation `incident.period` when it was accepted), `command.rejected` (one per rule the
-turn failed) and `plan.reviewed` (one per IC review of a draft, with the verdict); Step 6
-says what each carries.
+turn failed), `plan.reviewed` (one per IC review of a draft, with the verdict), and
+`unit.waiting` and `unit.resumed` (a unit entering `waiting` on its leader's resource
+requests and returning to `active` when they are answered, both the mutation
+`unit.status`); Step 6 says what each carries. A leader's assignment lands as
+`plan.applied`, and a refused one as `plan.rejected`, with the actor `leader` and the unit
+named, beside the planner's.
 
 The file records its schema version in `user_version`. A file at an earlier version is
 migrated in place when opened, one step at a time: version 1 (before `basis`) gives
@@ -444,19 +448,32 @@ when they differ; empty when the draft was approved as drafted. `incident review
 verdicts by kind, which is the evidence for cutting the planner if the IC never changes its
 draft.
 
-The IC and the planner are never without a way to get what they lack, and each kind of lack has its own
-channel:
+No seat is without a way to get what it lacks, and each kind of lack has its own channel.
+A lack is resolved by the nearest seat that can (ruled 2026-09-15, R3-6): a task's
+`insufficient` goes to its unit's leader, never to the planner, and the leader resolves a
+retrievable fact itself and sends the other three kinds up; the IC, leader of command,
+assigns under command the same way and raises the other three kinds in its command turn;
+a resource request on the IC's own leader turn is refused, so command never waits.
 
-| The seat lacks | The channel | Who resolves it |
-|---|---|---|
-| A fact a registered capability can retrieve, from the machine or anything its equipment reaches. | A task. | The runtime, next cycle. |
-| Permission for a capability that writes. | A grant request. | Mauria, with `incident grant`. After v0. |
-| The means: equipment or a capability that does not exist yet, stated as what it would need and why. | A capability request. | Mauria, by registering it and answering the request with `incident provide`, which returns the incident to `open` once nothing else waits; after v0 the planner itself when the missing equipment is an external MCP server it can declare. A capability request is also the runtime telling her what to build next. |
-| Something only a human knows or may decide. | A question for a human. | Mauria, with `incident answer`. |
+| The lack | The IC's and the planner's channel | Who resolves it for them | At a unit's leader |
+|---|---|---|---|
+| A fact a registered capability can retrieve, from the machine or anything its equipment reaches. | A task. | The runtime, next cycle. | The leader itself: `assignTasks` on its turn, tasks under its own unit to capabilities the unit holds, inside the unit's share, checked by the validator (Step 5) and run in this pass on a continue, next pass on a report. |
+| Permission for a capability that writes. | A grant request. | Mauria, with `incident grant`. After v0. | A `permission` resource request on the leader's report, recorded as `grant.requested` naming the unit; the unit waits until a grant exists, which is after v0, as the planner's request holds the incident. In v0 nothing answers it, so a unit that raised one stays `waiting` after its other requests are answered, until a plan closes it. |
+| The means: equipment or a capability that does not exist yet, stated as what it would need and why. | A capability request. | Mauria, by registering it and answering the request with `incident provide`, which returns the incident to `open` once nothing else waits; after v0 the planner itself when the missing equipment is an external MCP server it can declare. A capability request is also the runtime telling her what to build next. | A `missing_means` resource request on the report, recorded as a capability request naming the unit; `incident provide` answers it and returns the unit to `active` once nothing of the unit's is open. |
+| Something only a human knows or may decide. | A question for a human. | Mauria, with `incident answer`. | A `human_knowledge` resource request on the report, recorded as a question naming the unit; `incident answer` answers it and returns the unit to `active` once nothing of the unit's is open. |
 
-The incident goes to `blocked` on any of the last three, raised in a command turn or in a
-plan, `incident show` prints them, and every session is told the same four kinds in its
-preamble so that an `insufficient` answer names which one it hit.
+The incident goes to `blocked` only when a command turn or a plan raises one of the last
+three; a leader's resource request puts its unit in `waiting` and leaves the incident where
+it was, so the other units keep running. Such a report is `pictureChanged` whatever the
+leader said, so it ends the pass and the IC sees the unit waiting before the next unit
+runs: the change report at the top of its briefing lists what each waiting unit asks, with
+the text an `answers` entry names it by, and the IC answers what it can itself (a
+`human_knowledge` or `missing_means` request it can settle from the file) while the rest
+wait for Mauria; an answer must name a waiting unit and an open request it raised. `incident
+show` prints the planner's and the units' requests, and every session is told the same four
+kinds in its preamble so that an `insufficient` answer names which one it hit. The planner's
+section 5 lists an insufficient task's needs other than retrievable facts; section 3 shows
+a waiting unit with what it waits on, and section 6 a report's resource requests.
 ### Step 5: the validator
 Every action plan passes all of these or is rejected whole, with each failing rule and its
 reason recorded as a `plan.rejected` event and fed back as input 9 on the next cycle:
@@ -481,6 +498,20 @@ The IC's command turn is checked by the same code as a plan that creates nothing
 Units exist, Closing is clean and Status is earned, since closing units and setting the
 status is all it does to the tree; a failing rule is recorded as `command.rejected` and
 the cycle ends there (Step 4).
+
+A leader's assignments (`assignTasks` on a `LeaderTurn`, R3-6) pass the rules above that
+read tasks (Capabilities exist, Units exist, No cycles, No duplicates, Inputs validate, Span
+of control, Effect policy, Budget respected, Dependencies resolve, Model known) as a plan
+creating those tasks and nothing else would, and three of the leader's own, or are refused
+whole with `plan.rejected` per failing rule, the actor `leader` and the unit named, which
+the leader's next turn reads:
+
+| Rule | Check |
+|---|---|
+| Own unit | Every task the leader assigns names its own unit; a leader creates no unit and assigns under no other. |
+| Capability held | Every task names a registered capability; a session-backed one needs no equipment or Bash command beyond the unit's (`default` covers every built-in), and one that picks its equipment per task picks equipment the unit holds. A deterministic capability is always held, since it composes in-process equipment and needs no session tool. |
+| Budget within share | A unit's budget is what the plans allotted its tasks, per dimension; charged against it is what the unit's ended tasks spent and what its open tasks are bound to, the leader's earlier assignments included. The assignments' bounds fit inside the difference. A dimension no plan task under the unit bounds is a share of zero (ruled 2026-09-15): an assignment may not bound it, so a leader under only unbounded deterministic tasks assigns only unbounded deterministic tasks, never a session task bounded by the incident's budget alone. |
+
 ### Step 6: dispatch, record, verify
 Ready means every dependency is completed. Dispatch runs the units one at a time in tree
 order (parents before children, siblings as created), each until its leader reports
@@ -496,7 +527,30 @@ asked for its next move under `LeaderTurn`, resumed with the task's ending (the 
 rendered, or "recorded in this session", or the failure) and how many ready tasks remain:
 `continue` runs the next, `report` files `unit.reported` and ends the unit's pass, and
 `pictureChanged: true` on a report ends the whole pass, which `dispatch` returns as the
-unit's id, so the IC's next change report opens with it before the next unit runs. With nothing left to run the
+unit's id, so the IC's next change report opens with it before the next unit runs. A task's ending that came back
+`insufficient` is rendered to the leader with what it needed, each with its kind, and what
+the leader does about each kind (R3-6). Either move may carry `assignTasks`: after the turn
+is recorded the assignments are validated (Step 5) and applied under the unit as
+`plan.applied` with the actor `leader`, the unit and session named, and the task ids, and
+the ready ones run in this pass on a continue and next pass on a report, which ends the
+unit's pass; a refused assignment creates nothing and its reasons open the leader's next
+prompt. A report may carry `resourceRequests` (`permission`,
+`missing_means`, `human_knowledge`, each with what and why): it is forced `pictureChanged`,
+each request is raised as Step 4 says, and the unit enters `waiting`; a waiting unit is
+skipped by dispatch, keeps its pending tasks, and is not asked for a report. The root unit
+never waits: a request on the IC's leader turn is refused (`plan.rejected` by the actor
+`leader`, rule "Resource requests"), read into its next prompt and its change report, and
+the IC raises what it lacks in the command turn that follows. The turn's
+record, its assignments (validated first, while the unit is still active) and its requests
+land in one transaction, so a crash can never leave a recorded report whose requests were
+not raised. `unit.waiting` carries the unit, its session and the `requests` as the leader
+gave them, with the mutation `unit.status`; `unit.resumed`, written by `incident answer` or
+`incident provide`, or by the IC's command turn answering the request, when nothing of the
+unit's is still open, carries the unit and the `questionId` or `need` that was answered,
+with the same mutation. The next pass opens a
+resumed unit with a turn carrying the answers to the requests of its last wait, before
+running any task, so the leader reads them first. A continue turn carries no report, so a
+resource request rides only on a report. With nothing left to run the
 leader is asked for its report; a leader that answers `continue` with nothing left ends the
 unit's pass without one, and a unit whose leader owes a report (a task ended after the last
 report) is asked for it at the start of the next pass even with no task, the turn creating
@@ -603,15 +657,15 @@ to verified, and the validator gates `proven` and `satisfied` on basis `observed
 | Command | Does |
 |---|---|
 | `noscope incident create "<objective>" [--constraint ...] [--priority ...] [--ic-model <model>]` | Creates the incident and its root unit, `command`, whose leader is the Incident Commander on `--ic-model` (default `claude-opus-5`, a model Claude Code serves; the size-up that routes it is R3-8's), with the read-only built-ins as its equipment. `--priority`, like `--constraint`, may repeat; the priorities are an input the IC restates or revises each period and the planner's rationale names when one chose between plans. |
-| `noscope incident show <id>` | The incident file: objective, constraints, priorities, the current operational period's objectives and priorities, budget and spend, claims by status, open tasks, decisions with reasons, questions waiting on Mauria, capability requests, grants, registered capabilities. |
-| `noscope incident tree <id>` | The unit tree with each unit's leader model and last report outcome, and task marks: done, running, ready, pending. |
-| `noscope incident step <id>` | One cycle, then stop. Prints the IC's command turn (objectives, priorities, closes, answers, what it raised, status), the planner's draft, the IC's verdict with its corrections or amended plan and the redraft when there is one, the validator's verdict, what ran, each unit's report, any discrepancy raised, and whether a report stopped the pass. |
+| `noscope incident show <id>` | The incident file: objective, constraints, priorities, the current operational period's objectives and priorities, budget and spend, claims by status, open tasks, decisions with reasons, questions waiting on Mauria and capability requests (each naming the unit that raised it, when a leader did), the units waiting on a resource request with what each waits on, grants, registered capabilities. |
+| `noscope incident tree <id>` | The unit tree with each unit's leader model, last report outcome and, for a waiting unit, what it waits on, and task marks: done, running, ready, pending. |
+| `noscope incident step <id>` | One cycle, then stop. Prints the IC's command turn (objectives, priorities, closes, answers, what it raised, status), the planner's draft, the IC's verdict with its corrections or amended plan and the redraft when there is one, the validator's verdict, what ran, each unit's report with any resource request it sent up, the tasks each leader assigned, any discrepancy raised, and whether a report stopped the pass. |
 | `noscope incident run <id> [--max-cycles N]` | Repeats `step` until the incident leaves `open` or the cap is hit. |
 | `noscope incident events <id>` | The event log with timestamps and actors. |
-| `noscope incident review <id>` | The After Action Review computed from the event log: each cycle (cut at the IC's command turn; at `plan.proposed` in a log from before the IC) with its verdict, the IC's command turn and reviews with their usage, each draft's planner call, rejections, tasks run (capability, model, tokens with the cache split, seconds, cost, claims), each leader's turns with their usage and outcome, discrepancies, strike teams declared or refused, questions and answers; totals by role and model (the IC under `ic`, leaders under `leader`); plan, IC-verdict (by kind: approve, correct, amend), task, leader-turn and claim counts, each unit's reports by cycle, and each declared strike-team config against what ran under it (members, usage, cost, claims citing a member); the cost, recorded where the provider priced it and bounded at list rates where it did not. Deterministic; the judged review is the session-backed `review` capability, after v0. |
+| `noscope incident review <id>` | The After Action Review computed from the event log: each cycle (cut at the IC's command turn; at `plan.proposed` in a log from before the IC) with its verdict, the IC's command turn and reviews with their usage, each draft's planner call, rejections, tasks run (capability, model, tokens with the cache split, seconds, cost, claims), each leader's turns with their usage and outcome, the resource requests it sent up and the tasks it assigned or was refused, discrepancies, strike teams declared or refused, questions and answers; totals by role and model (the IC under `ic`, leaders under `leader`); plan, IC-verdict (by kind: approve, correct, amend), task, leader-turn and claim counts, each unit's reports by cycle, each declared strike-team config against what ran under it (members, usage, cost, claims citing a member), and lacks resolved at a leader against those sent up; the cost, recorded where the provider priced it and bounded at list rates where it did not. Deterministic; the judged review is the session-backed `review` capability, after v0. |
 | `noscope incident sop <id> <name>` | Adds an SOP's unit and its tasks to the incident in one action plan. After v0. |
-| `noscope incident answer <id> "<text>"` | Answers the oldest open question, the IC's or the planner's, and returns the incident to `open`; the IC's next change report carries the answer. |
-| `noscope incident provide <id> "<text>"` | Answers the planner's oldest unanswered capability request with what was provided, or why not, and returns the incident to `open` once nothing else waits. |
+| `noscope incident answer <id> "<text>"` | Answers the oldest open question, the IC's, the planner's or a unit leader's; the IC's next change report carries the answer. A unit's question answered returns that unit to `active` once nothing of the unit's is open; the incident returns to `open` only when a command turn or a plan had blocked it and nothing of theirs still waits. |
+| `noscope incident provide <id> "<text>"` | Answers the oldest unanswered capability request, the IC's, the planner's or a unit leader's, with what was provided, or why not. A unit's request answered returns that unit to `active` once nothing of the unit's is open; the incident returns to `open` only when a command turn or a plan had blocked it and nothing of theirs still waits. |
 | `noscope incident grant <id> <capability> [--per-task]` | Gives a grant for one capability on this incident, recording the planner's reason; `--per-task` makes each task under it ask again. After v0. |
 | `noscope grant standing <capability>` | Whitelists a capability everywhere. After v0. |
 

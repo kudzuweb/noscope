@@ -61,13 +61,22 @@ export function lastReports(
   return reports;
 }
 
-/** A unit's leader and last report on one line: `(leader claude-code/claude-opus-5; last report: met)`. */
+/**
+ * A unit's leader and last report on one line, `(leader claude-code/claude-opus-5; last
+ * report: met)`, and for a unit that waits, what it waits on.
+ */
 export function describeLeader(
   unit: Unit,
   reports: ReadonlyMap<string, LeaderReport>,
+  waitingOn: ReadonlyMap<string, readonly string[]> = new Map(),
 ): string {
   const report = reports.get(unit.id);
-  return `(leader ${unit.leader.provider}/${unit.leader.model}; last report: ${report === undefined ? "none" : report.outcome})`;
+  const requests = waitingOn.get(unit.id) ?? [];
+  const waits =
+    unit.status === "waiting"
+      ? `; waiting on: ${requests.join("; ") || "(nothing recorded)"}`
+      : "";
+  return `(leader ${unit.leader.provider}/${unit.leader.model}; last report: ${report === undefined ? "none" : report.outcome}${waits})`;
 }
 
 /**
@@ -80,7 +89,7 @@ export function renderHierarchy(unit: Unit, units: readonly Unit[]): string[] {
       ? undefined
       : units.find((u) => u.id === unit.parentId);
   const below = units.filter(
-    (u) => u.parentId === unit.id && u.status === "active",
+    (u) => u.parentId === unit.id && u.status !== "closed",
   );
   return [
     `Your unit: ${unit.id}${unit.parentId === null ? " (command, the root)" : ""}, leader ${unit.leader.provider}/${unit.leader.model}: ${unit.objective}`,
@@ -93,11 +102,12 @@ export function renderHierarchy(unit: Unit, units: readonly Unit[]): string[] {
   ];
 }
 
-/** The unit tree with each unit's status, objective, leader and last report, and under each unit its tasks with their marks. */
+/** The unit tree with each unit's status, objective, leader, last report and what it waits on, and under each unit its tasks with their marks. */
 export function renderTree(
   units: readonly Unit[],
   tasks: readonly Task[],
   events: readonly Event[] = [],
+  waitingOn: ReadonlyMap<string, readonly string[]> = new Map(),
 ): string[] {
   const children = childrenOf(units);
   const reports = lastReports(events);
@@ -106,7 +116,7 @@ export function renderTree(
     const indent = "  ".repeat(depth);
     for (const u of children.get(parent) ?? []) {
       lines.push(
-        `${indent}${u.id} [${u.status}] ${u.objective} ${describeLeader(u, reports)}`,
+        `${indent}${u.id} [${u.status}] ${u.objective} ${describeLeader(u, reports, waitingOn)}`,
       );
       for (const t of tasks.filter((t) => t.unitId === u.id))
         lines.push(
