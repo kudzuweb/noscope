@@ -841,3 +841,26 @@ Not exactly to spec, with reasons:
 - The two questions the run raised were answered by the session running it, not by
   Mauria, who was asleep: the fixture restore as a fact, and the browser as an inference
   from the machine's default browser, labelled so in the answer.
+
+## R3-0: Mechanism checks (#28, merged 2026-09-15)
+
+R3-0 of the round 3 plan. Two spike scripts under `spikes/round3/` with a `run.sh` runner:
+`resume.sh` makes three Haiku calls on one session, each with `--resume` and a different
+`--json-schema`, and prints each call's structured output and usage; `agents.sh` makes one
+call that spawns a `pinger` subagent defined with `--agents` and prints the envelope's
+`subagent_stats` and `modelUsage` beside the subagent transcript's own usage, then starts a
+session without agent kinds and resumes it with one. Five rows in DESIGN.md's "Verified
+facts" table record what they showed on 2026-09-15 with Claude Code 2.1.272: a resumed call
+takes its own schema and returns one structured result; usage is per call; the envelope's
+cost includes subagents and their transcripts and `.meta.json` carry per-member usage and the
+spawning `toolUseId`; `--agents` is honored on resume. The compaction row rests on the Claude
+Code docs (`DISABLE_COMPACT`) and was not run live.
+
+Not exactly to spec, with reasons:
+
+- The compaction check is documentary, not a live call: proving that compaction does not
+  fire needs a context near the limit, which would cost more than the fact is worth when the
+  docs state the variable plainly. R3-3 sets the variable and R3-9 is where a wrong reading
+  would show.
+- Cache reads were 0 on every resumed call in `resume.sh`, which the row records as an
+  open observation rather than a fact; R3-3's live test settles it with a fixed schema.
