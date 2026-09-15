@@ -11,6 +11,7 @@ jq -c '{session_id, structured_output, num_turns, usage:{in:.usage.input_tokens,
 sid=$(jq -r .session_id <<<"$c")
 d=~/.claude/projects/$(pwd | sed 's#/#-#g')/$sid/subagents
 echo "subagent transcripts: $(ls "$d" 2>/dev/null | tr '\n' ' ')"
+for m in "$d"/*.meta.json; do echo "$m: $(cat "$m")"; done
 for f in "$d"/*.jsonl; do python3 - "$f" <<'PY'
 import json,sys
 tot={"in":0,"cw":0,"cr":0,"out":0}

@@ -438,7 +438,7 @@ result. The results, each from a live Haiku call on Claude Code 2.1.272 unless n
 | Check | Result |
 |---|---|
 | A call resumed with `--resume <id>` accepts its own `--json-schema` and returns one structured result for that call. | Passes: three calls on one session with three schemas returned three structured outputs, and the session remembered across them. |
-| A resumed call reports usage for that call alone. | Passes: `num_turns` was 2 on every call and cache writes grew by one turn each time. Cache reads were 0 on every call, consistent with the schema changing per call; R3-3 confirms cache reads with a fixed schema. |
+| A resumed call reports usage for that call alone. | Passes: `num_turns` was 2 on every call and cache writes grew by one turn each time. Cache reads were 0 on every `resume.sh` call and 10.2k on the `agents.sh` resumed call; the cause is open and R3-3's live test settles it. |
 | Auto-compaction can be turned off for a headless session. | Passes, from the docs (`code.claude.com/docs/en/model-config`): `DISABLE_COMPACT` in the environment disables it, and the session errors at the context limit instead. `--autocompact <tokens>` sets the window when compaction is wanted. |
 | The parent envelope accounts for subagent usage. | `total_cost_usd` includes the subagents (the `modelUsage` entries sum to it); `modelUsage` lists each model; `subagent_stats` counts spawned, completed, failed and by type. Each subagent's transcript under `<session>/subagents/` carries its own per-message usage and a `.meta.json` with the `toolUseId` of the `Agent` call that spawned it. |
 | `--agents <json>` is honored on a `--resume` call. | Passes: a session started without agents, resumed with a `pinger` kind, spawned it. |
@@ -494,8 +494,7 @@ renderer adds `--resume <id>` when it is set and never sets `--no-session-persis
 `SessionOutcome` is unchanged: one structured result and one usage record per call, which
 R3-0 established. The provider passes `DISABLE_COMPACT=1` in every session's environment,
 so compaction never rewrites a session the runtime is resuming. A live test behind
-`NOSCOPE_LIVE=1` runs two calls on one session with the same schema and asserts the second
-call's cache reads are nonzero (the open observation in R3-0). DESIGN.md Step 3 (session
+`NOSCOPE_LIVE=1` runs two calls on one session with the same schema and asserts the second call's cache reads are nonzero (the open observation in R3-0: zero reads on every `resume.sh` resume under `--tools ""`, 10.2k reads on the `agents.sh` resume under `--tools Agent`). DESIGN.md Step 3 (session
 fields) and the Speed section's last sentence follow.
 
 Acceptance: a renderer test that `resume` produces the flag and its absence does not; the
