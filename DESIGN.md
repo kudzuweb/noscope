@@ -458,7 +458,9 @@ applied as a plan is: units closed, questions and requests recorded, the inciden
 set, the tasks it assigns under command created with `plan.applied` by the actor `ic`
 naming the root unit, its session and the task ids (R4-6: deterministic tasks belong to
 whichever leader assigns them, command included, ruled 2026-09-14; with no leader turn on
-the root the IC assigns them here, and they run in this cycle's pass as the root's tasks),
+the root the IC assigns them here, and they run in this cycle's pass as the root's tasks;
+one that depends on a unit's task runs in the pass after that task completes, since the
+root runs first in tree order and is done for the pass once its ready tasks have run),
 then `command.turned` with the turn, the call's session, model and usage, and the period
 as its mutation. The planner's and `incident review`'s cycle windows open at the plan's
 `plan.applied`, never at the IC's or a leader's. A turn that

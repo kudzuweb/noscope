@@ -634,7 +634,7 @@ export const CommandTurn = z.strictObject({
     .array(TaskProposal)
     .default([])
     .describe(
-      "Deterministic tasks to run under command this cycle (grep, read, check_path, git_history: no provider, no model), each naming the root unit as its unit; they run in this cycle's pass and their results open your next change report. Session work is a unit's: a task to a session-backed capability is refused here and belongs in a period objective for the planner to place under a unit",
+      "Deterministic tasks to run under command this cycle (grep, read, check_path, git_history: no provider, no model), each naming the root unit as its unit; they run in this cycle's pass, and one that dependsOn a unit's task runs in the pass after that task completes, since the root runs first in each pass; their results open your next change report. Session work is a unit's: a task to a session-backed capability is refused here and belongs in a period objective for the planner to place under a unit",
     ),
   questionsForHuman: z.array(z.string().min(1)),
   capabilityRequests: z.array(
