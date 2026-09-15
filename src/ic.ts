@@ -809,7 +809,7 @@ function transferToEvaluate(
   return handoff === null ? null : { ...handoff };
 }
 
-/** The change report, then, after a transfer, the document handed over, then the incident file as the planner reads it (the same ten sections): what the IC reads before any ask. */
+/** The change report, then, after a transfer, the document handed over, then the incident file as the planner reads it (the same eleven sections): what the IC reads before any ask. */
 function renderBriefingBody(
   store: Store,
   incident: Incident,
@@ -832,7 +832,7 @@ function renderBriefingBody(
 
 /**
  * The IC's briefing for a cycle: the change report, then the incident file as the planner
- * reads it (the same ten sections), then the ask. The user message of every command turn;
+ * reads it (the same eleven sections), then the ask. The user message of every command turn;
  * the role text is fixed at the session's first call. After a transfer of command (the
  * initial IC's briefing, or a handoff in flight or pending in the log) the document handed
  * over comes between the change report and the file, and the ask opens with its evaluation.

@@ -663,7 +663,7 @@ function printPlan(ctx: Context, plan: ActionPlan): void {
     ctx.io.out(`  discrepancy: ${plan.discrepancy}`);
   for (const u of plan.createUnits)
     ctx.io.out(
-      `  create unit ${u.ref} under ${u.parent} (leader ${u.leader.provider}/${u.leader.model}): ${u.objective}`,
+      `  create unit ${u.ref} under ${u.parent} (leader ${u.leader.provider}/${u.leader.model}): ${u.objective}${u.takes === undefined ? "" : ` (takes reassignment ${u.takes})`}`,
     );
   for (const c of plan.closeUnits)
     ctx.io.out(`  close unit ${c.unitId}: ${c.reason}`);
@@ -772,6 +772,8 @@ async function cycle(
     );
   for (const c of turn.closeUnits)
     ctx.io.out(`  close unit ${c.unitId}: ${c.reason}`);
+  for (const d of turn.dropReassignments ?? [])
+    ctx.io.out(`  drop reassignment ${d.id}: ${d.why}`);
   for (const a of turn.answers)
     ctx.io.out(`  answer to ${a.unitId} (${a.request}): ${a.answer}`);
   for (const t of turn.assignTasks)
@@ -814,6 +816,14 @@ async function cycle(
     command.record,
   );
   for (const id of commanded.closedUnits) ctx.io.out(`  unit ${id} closed`);
+  for (const r of commanded.reassignments)
+    ctx.io.out(
+      r.dropped
+        ? `  reassignment ${r.id} from unit ${r.unitId} dropped by the IC: ${r.instructions}`
+        : `  reassignment ${r.id} recorded from unit ${r.unitId} with ${r.claims.length} claim(s); the next plan gives it to a new unit`,
+    );
+  for (const id of commanded.cancelledTasks)
+    ctx.io.out(`  task ${id} cancelled`);
   for (const q of commanded.questions)
     ctx.io.out(`  question ${q.id}: ${q.text}`);
   for (const a of commanded.answered)
@@ -907,8 +917,12 @@ async function cycle(
     corrections,
     diff: planDiff(draft.plan, plan),
   });
-  for (const u of applied.units)
-    ctx.io.out(`  unit ${u.id} created under ${u.parentId}: ${u.objective}`);
+  for (const u of applied.units) {
+    const takes = applied.taken.find((t) => t.unitId === u.id);
+    ctx.io.out(
+      `  unit ${u.id} created under ${u.parentId}: ${u.objective}${takes === undefined ? "" : ` (takes reassignment ${takes.reassignmentId})`}`,
+    );
+  }
   for (const id of applied.closedUnits) ctx.io.out(`  unit ${id} closed`);
   for (const t of applied.tasks)
     ctx.io.out(

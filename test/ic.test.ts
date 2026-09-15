@@ -9,22 +9,35 @@ import {
   reportWorkChars,
 } from "../src/ic.js";
 import {
+  openReassignments,
+  reassignments,
+  reassignmentTakenBy,
+} from "../src/leader.js";
+import {
   type ActionPlan,
   CommandTurn,
+  type Event,
   FinalReviewTurn,
   jsonSchemaFor,
   type ReportVerdict,
   type ReviewTurn as Review,
   ReviewTurn,
 } from "../src/models.js";
+import { renderReview } from "../src/review.js";
 import {
   applyCommand,
+  applyPlan,
   planDiff,
   raiseResourceRequests,
 } from "../src/runtime.js";
 import { now, Store } from "../src/store.js";
-import { validateCommand, validationContext } from "../src/validator.js";
 import {
+  validateCommand,
+  validatePlan,
+  validationContext,
+} from "../src/validator.js";
+import {
+  FAKE_LEADER,
   fakeProvider,
   reportedUnit,
   scriptedIncident,
@@ -1900,6 +1913,410 @@ describe("the IC above the planner", () => {
     expect(review).toMatch(
       /^revisions: 1\n {2}001-u02 revision 1: 2 turn\(s\), 1 task\(s\), in 3,000 {2}out 84 {2}3\.0 s {2}\$0\.02; progress → met; changed since the reviewed report: no file mentions remove$/m,
     );
+  });
+
+  it("a run on the stub: the IC reassigns, the unit closes with its pending task cancelled, the planner's next input lists the reassignment, a plan without a taking unit is rejected, a plan with one is applied and the new unit's first brief carries the instructions and the claim ids, and review counts it (R4-4)", {
+    timeout: 60_000,
+  }, async () => {
+    const instructions =
+      "read a.txt around the match rather than grepping again; the grep found the handler's line and nothing about what calls it";
+    const h = harness(
+      [
+        {
+          ...findIt,
+          createTasks: [
+            { ...grepTask, ref: "first" },
+            {
+              ...grepTask,
+              objective: "find remove",
+              inputs: { root: ".", pattern: "remove" },
+              dependsOn: ["first"],
+            },
+          ],
+        },
+        { ...empty, rationale: "nothing takes the slice" },
+        {
+          ...empty,
+          createUnits: [
+            unitProposal("reader", "read the delete handler", "001-command", {
+              takes: "001-r01",
+            }),
+          ],
+          createTasks: [
+            {
+              ...grepTask,
+              unit: "reader",
+              objective: "find handler",
+              inputs: { root: ".", pattern: "handler" },
+            },
+          ],
+          rationale: "a reader takes the slice",
+        },
+      ],
+      [
+        command(),
+        command({
+          reportVerdicts: [
+            {
+              reportId: "",
+              unitId: "001-u02",
+              verdict: "reassign",
+              instructions,
+              why: "a reader would do better than another grep",
+            },
+          ],
+          rationale: "reassign",
+        }),
+        command({ rationale: "the retry" }),
+      ],
+      [],
+    );
+    // The leader reports progress on every turn, so the second grep, which depends on
+    // the first, is still pending when the IC reassigns.
+    h.ctx.env.NOSCOPE_STUB_TURN = JSON.stringify({
+      kind: "report",
+      report: {
+        outcome: "progress",
+        changed: [{ what: "the delete handler is at a.txt:2", claims: [] }],
+        pictureChanged: false,
+      },
+    });
+    await run(
+      ["incident", "create", "--no-size-up", "where is the delete handler"],
+      h.ctx,
+    );
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    expect(h.out).toContain(
+      "  unit 001-u02 reported progress: the delete handler is at a.txt:2",
+    );
+    const first = h.store();
+    const report = first
+      .listEvents("001")
+      .find((e) => e.type === "unit.reported");
+    const claimIds = first.listClaims("001").map((c) => c.id);
+    first.close();
+    if (report === undefined) throw new Error("the unit reported");
+    expect(claimIds).toEqual(["001-c001"]);
+    // Cycle 2: the reassign verdict closes the unit, cancels its pending grep and records
+    // the reassignment; the planner's draft takes nothing and is rejected.
+    h.out.length = 0;
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    expect(h.err).toEqual([]);
+    expect(h.out).toContain(
+      `  verdict on 001-u02's report ${report.id}: reassign: a reader would do better than another grep; instructions: ${instructions}`,
+    );
+    expect(h.out).toContain("  unit 001-u02 closed");
+    expect(h.out).toContain(
+      "  reassignment 001-r01 recorded from unit 001-u02 with 1 claim(s); the next plan gives it to a new unit",
+    );
+    expect(h.out).toContain("  task 001-t02 cancelled");
+    expect(h.out).toContain("plan rejected:");
+    expect(h.out).toContain(
+      "  - Reassignments taken: reassignment 001-r01, the slice of closed unit 001-u02, is not taken: no new unit names it in takes",
+    );
+    const section = (prompt: string) =>
+      prompt.split("## 11. Reassignments\n")[1] ?? "";
+    const planners = h.calls().filter((c) => c.kind === "planner");
+    expect(section(planners[0]?.prompt ?? "")).toBe("  (none)");
+    expect(section(planners[1]?.prompt ?? "")).toBe(
+      [
+        `  - 001-r01: from unit 001-u02 (objective: locate the delete handler), closed in cycle 2 on report ${report.id}`,
+        `    instructions: ${instructions}`,
+        "    why: a reader would do better than another grep",
+        "    claims: 001-c001",
+      ].join("\n"),
+    );
+    const second = h.store();
+    const events = second.listEvents("001");
+    const reassigned = events.find((e) => e.type === "unit.reassigned");
+    expect([reassigned?.actor, reassigned?.payload]).toEqual([
+      "ic",
+      {
+        reassignmentId: "001-r01",
+        reportId: report.id,
+        unitId: "001-u02",
+        objective: "locate the delete handler",
+        instructions,
+        why: "a reader would do better than another grep",
+        claims: ["001-c001"],
+        cycle: 2,
+        dropped: false,
+      },
+    ]);
+    const types = events.map((e) => e.type);
+    expect(types.indexOf("unit.reassigned")).toBeGreaterThan(
+      types.indexOf("report.reviewed"),
+    );
+    expect(types.indexOf("unit.reassigned")).toBeLessThan(
+      types.indexOf("unit.closed"),
+    );
+    expect(
+      events.find((e) => e.type === "task.cancelled")?.payload,
+    ).toMatchObject({
+      rationale: "reassign: a reader would do better than another grep",
+      reassignmentId: "001-r01",
+      mutation: { kind: "task.status", taskId: "001-t02", status: "cancelled" },
+    });
+    expect(second.listTasks("001").map((t) => [t.id, t.status])).toEqual([
+      ["001-t01", "completed"],
+      ["001-t02", "cancelled"],
+    ]);
+    expect(
+      second.listUnits("001").find((u) => u.id === "001-u02")?.status,
+    ).toBe("closed");
+    second.close();
+    // Cycle 3: the reassignment is still open, the plan's reader takes it, and the
+    // reader's leader is oriented with the instructions and the predecessor's claim.
+    h.out.length = 0;
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    expect(h.err).toEqual([]);
+    expect(
+      section(h.calls().filter((c) => c.kind === "planner")[2]?.prompt ?? ""),
+    ).toContain("  - 001-r01: from unit 001-u02");
+    expect(h.out).toContain(
+      "  create unit reader under 001-command (leader claude-code/claude-haiku-4-5): read the delete handler (takes reassignment 001-r01)",
+    );
+    expect(h.out).toContain(
+      "  unit 001-u03 created under 001-command: read the delete handler (takes reassignment 001-r01)",
+    );
+    expect(h.out).toContain("  ran 001-t03 (grep): completed; 1 claim(s)");
+    const turns = h.calls().filter((c) => c.kind === "leader");
+    expect(turns.map((c) => c.resume)).toEqual([null, null]);
+    const brief = turns[1]?.prompt ?? "";
+    expect(brief).toContain(
+      [
+        "You lead unit 001-u03. Your unit's objective: read the delete handler",
+        "Your equipment: none; Bash allowlist: none",
+        `Your unit takes reassignment 001-r01: the slice of unit 001-u02 (its objective: locate the delete handler), which the IC closed after reviewing its report ${report.id}. The IC's instructions, from what that unit found and did not find:`,
+        `  ${instructions}`,
+        "Why: a reader would do better than another grep",
+        "Claims that unit produced, by id; name one in evidenceFrom on a task you assign and the runtime attaches it in full:",
+      ].join("\n"),
+    );
+    expect(brief).toMatch(
+      /^ {2}- 001-c001: \S*a\.txt:2 matches \(observed; confidence 1\)$/m,
+    );
+    const third = h.store();
+    const taken = third
+      .listEvents("001")
+      .find((e) => e.type === "reassignment.taken");
+    expect(taken?.payload).toEqual({
+      reassignmentId: "001-r01",
+      unitId: "001-u03",
+      fromUnitId: "001-u02",
+    });
+    const order = third.listEvents("001").map((e) => e.type);
+    expect(order.indexOf("reassignment.taken")).toBeGreaterThan(
+      order.lastIndexOf("unit.created"),
+    );
+    expect(order.indexOf("reassignment.taken")).toBeLessThan(
+      order.lastIndexOf("plan.applied"),
+    );
+    third.close();
+    h.out.length = 0;
+    expect(await run(["incident", "review", "001"], h.ctx)).toBe(EXIT.ok);
+    const review = h.out.join("\n");
+    expect(review).toContain(
+      "  reassignment 001-r01 recorded from 001-u02 with 1 claim(s)",
+    );
+    expect(review).toContain("  reassignment 001-r01 taken by 001-u03");
+    expect(review).toContain(
+      "report verdicts: 1: 0 accepted, 0 revise, 1 reassign\n  001-u02: 0 accepted, 0 revise, 1 reassign",
+    );
+    expect(review).toContain(
+      `reassignments: 1\n  001-r01 from 001-u02 in cycle 2: 1 claim(s); taken by 001-u03; instructions: ${instructions}`,
+    );
+  });
+
+  it("Reassignments taken: an open reassignment must be taken by exactly one new unit naming it in takes, a takes names an open one, a drop: verdict closes the reassignment as it is recorded, and a taking plan records reassignment.taken (R4-4)", () => {
+    const store = new Store(":memory:");
+    const s = scriptedIncident(store);
+    const a = reportedUnit(s, "u-a", "the handler resets the scroll");
+    const b = reportedUnit(s, "u-b", "the caller is in the list view");
+    const verdict = (
+      report: Event,
+      unitId: string,
+      instructions: string,
+    ): ReportVerdict => ({
+      reportId: report.id,
+      unitId,
+      verdict: "reassign",
+      instructions,
+      why: `${unitId} is the wrong shape`,
+    });
+    const commanded = applyCommand(
+      store,
+      { id: "i1" },
+      command({
+        reportVerdicts: [
+          verdict(a, "u-a", "a reader takes the scroll from the claims"),
+          verdict(b, "u-b", "drop: the caller is settled by u-a's claims"),
+        ],
+      }),
+      1,
+      {},
+    );
+    // Both units close; the dropped slice is recorded closed, the other open.
+    expect(commanded.closedUnits).toEqual(["u-a", "u-b"]);
+    expect(commanded.cancelledTasks).toEqual([]);
+    expect(
+      commanded.reassignments.map((r) => [r.id, r.unitId, r.dropped, r.claims]),
+    ).toEqual([
+      ["i1-r01", "u-a", false, ["u-a-c-grep", "u-a-c-inv"]],
+      ["i1-r02", "u-b", true, ["u-b-c-grep", "u-b-c-inv"]],
+    ]);
+    const events = store.listEvents("i1");
+    expect(
+      events
+        .filter((e) => e.type === "unit.reassigned")
+        .map((e) => [e.payload.reassignmentId, e.payload.dropped]),
+    ).toEqual([
+      ["i1-r01", false],
+      ["i1-r02", true],
+    ]);
+    expect(openReassignments(events).map((r) => r.id)).toEqual(["i1-r01"]);
+    expect(reassignments(events).map((r) => r.id)).toEqual([
+      "i1-r01",
+      "i1-r02",
+    ]);
+    const ctx = () => validationContext(store, s.incident, [fakeProvider]);
+    const reasons = (plan: ActionPlan) => {
+      const v = validatePlan(plan, ctx());
+      return v.ok
+        ? []
+        : v.rejections
+            .filter((r) => r.rule === "Reassignments taken")
+            .map((r) => r.reason);
+    };
+    const taking = (takes: string | undefined, ref = "reader") =>
+      unitProposal(ref, "read the handler", "i1-command", {
+        leader: FAKE_LEADER,
+        ...(takes === undefined ? {} : { takes }),
+      });
+    expect(reasons(empty)).toEqual([
+      "reassignment i1-r01, the slice of closed unit u-a, is not taken: no new unit names it in takes",
+    ]);
+    expect(reasons({ ...empty, createUnits: [taking("i1-r02")] })).toEqual([
+      "new unit reader takes i1-r02, which is no open reassignment",
+      "reassignment i1-r01, the slice of closed unit u-a, is not taken: no new unit names it in takes",
+    ]);
+    expect(
+      reasons({
+        ...empty,
+        createUnits: [taking("i1-r01"), taking("i1-r01", "second")],
+      }),
+    ).toEqual(["reassignment i1-r01 is taken twice"]);
+    const plan: ActionPlan = {
+      ...empty,
+      createUnits: [taking("i1-r01")],
+      rationale: "the reader takes it",
+    };
+    expect(reasons(plan)).toEqual([]);
+    expect(validatePlan(plan, ctx()).ok).toBe(true);
+    // A failing incident owes no taker; a satisfied one still does.
+    expect(reasons({ ...empty, incidentStatus: "failed" })).toEqual([]);
+    expect(reasons({ ...empty, incidentStatus: "satisfied" })).toHaveLength(1);
+    const applied = applyPlan(store, { id: "i1" }, plan);
+    expect(applied.taken).toEqual([
+      { unitId: "i1-u04", reassignmentId: "i1-r01" },
+    ]);
+    const after = store.listEvents("i1");
+    const taken = after.find((e) => e.type === "reassignment.taken");
+    expect(taken?.payload).toEqual({
+      reassignmentId: "i1-r01",
+      unitId: "i1-u04",
+      fromUnitId: "u-a",
+    });
+    expect(openReassignments(after)).toEqual([]);
+    expect(reassignmentTakenBy(after, "i1-u04")?.id).toBe("i1-r01");
+    expect(reassignmentTakenBy(after, "u-a")).toBeNull();
+    // Taken, the next plan owes nothing.
+    expect(reasons(empty)).toEqual([]);
+    // A later command turn drops a reassignment still open (finding 1 of PR 47's review):
+    // the drop must name an open one, once, and closes it on that turn.
+    const c = reportedUnit(s, "u-c", "the view is re-rendered");
+    applyCommand(
+      store,
+      { id: "i1" },
+      command({
+        reportVerdicts: [verdict(c, "u-c", "a browser settles the re-render")],
+      }),
+      2,
+      {},
+    );
+    expect(openReassignments(store.listEvents("i1")).map((r) => r.id)).toEqual([
+      "i1-r03",
+    ]);
+    const dropping = (drops: { id: string; why: string }[]) =>
+      validateCommand(command({ dropReassignments: drops }), ctx())
+        .filter((r) => r.rule === "Drops match")
+        .map((r) => r.reason);
+    expect(dropping([{ id: "i1-r99", why: "moot" }])).toEqual([
+      "no open reassignment i1-r99 to drop",
+    ]);
+    expect(dropping([{ id: "i1-r01", why: "moot" }])).toEqual([
+      "no open reassignment i1-r01 to drop",
+    ]);
+    expect(
+      dropping([
+        { id: "i1-r03", why: "moot" },
+        { id: "i1-r03", why: "still moot" },
+      ]),
+    ).toEqual(["reassignment i1-r03 is dropped twice"]);
+    expect(dropping([{ id: "i1-r03", why: "moot" }])).toEqual([]);
+    applyCommand(
+      store,
+      { id: "i1" },
+      command({
+        dropReassignments: [
+          { id: "i1-r03", why: "the re-render is settled by u-a's claims" },
+        ],
+      }),
+      3,
+      {},
+    );
+    const dropped = store
+      .listEvents("i1")
+      .find((e) => e.type === "reassignment.dropped");
+    expect([dropped?.actor, dropped?.payload]).toEqual([
+      "ic",
+      {
+        reassignmentId: "i1-r03",
+        why: "the re-render is settled by u-a's claims",
+        cycle: 3,
+      },
+    ]);
+    expect(openReassignments(store.listEvents("i1"))).toEqual([]);
+    expect(
+      reassignments(store.listEvents("i1")).map((r) => [
+        r.id,
+        r.dropped,
+        r.droppedWhy,
+      ]),
+    ).toEqual([
+      ["i1-r01", false, null],
+      ["i1-r02", true, "drop: the caller is settled by u-a's claims"],
+      ["i1-r03", true, "the re-render is settled by u-a's claims"],
+    ]);
+    expect(reasons(empty)).toEqual([]);
+    const review = renderReview(
+      s.incident,
+      store.listEvents("i1"),
+      store.listTasks("i1"),
+      store.listClaims("i1"),
+    ).join("\n");
+    expect(review).toContain(
+      "  reassignment i1-r03 dropped by the IC: the re-render is settled by u-a's claims",
+    );
+    expect(review).toContain(
+      [
+        "reassignments: 3",
+        "  i1-r01 from u-a in cycle 1: 2 claim(s); taken by i1-u04; instructions: a reader takes the scroll from the claims",
+        "  i1-r02 from u-b in cycle 1: 2 claim(s); dropped by the IC: drop: the caller is settled by u-a's claims; instructions: drop: the caller is settled by u-a's claims",
+        "  i1-r03 from u-c in cycle 2: 2 claim(s); dropped by the IC: the re-render is settled by u-a's claims; instructions: a browser settles the re-render",
+      ].join("\n"),
+    );
+    store.close();
   });
 
   it("Reports answered: every report since the IC's last accepted turn takes exactly one verdict naming its id and unit, none outside the window, and a verdict closes its unit rather than closeUnits (R4-2)", () => {

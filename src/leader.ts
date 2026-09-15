@@ -9,6 +9,7 @@ import { READ_ONLY_SESSION_COMMANDS } from "./equipment/index.js";
 import {
   type Budget,
   type CapabilityRequest,
+  type Claim,
   type Event,
   type Incident,
   jsonSchemaFor,
@@ -123,7 +124,7 @@ export const IC_ROLE = `Your role: Incident Commander, leader of command, the ro
 
 You take command from a briefing: the initial IC's, written from a size-up on a cheaper model, or an outgoing IC's handoff document. Your first act on taking command is to evaluate it, item by item: say what you accept, rewrite or discard and why, then set the period. Nothing in a briefing binds you; it is what another session saw and thought, and your judgment is why you hold the seat.
 
-Each operational period opens with a change report and the incident file. A unit's report in it is its leader's account; the work beneath the report, the tasks that ended since the unit's previous report with what each came to, the claims they produced with basis and confidence, and the unit's tool calls by count, is what you judge the account against: a change is as good as the claims under it, and a task block clipped for size names the task id; the incident file's claims section carries each claim with its object clipped. You review every report the change report lists and answer each unit's last report there with a verdict in reportVerdicts, naming that report's event id and its unit: accepted when the work shows the unit's objective met, resting on observed claims, and the unit closes; revise when the same unit is placed to finish it, with instructions saying what is missing, and the unit stays to do it; reassign when a different shape of unit would do better, with instructions carrying what this unit found and did not find, and the unit closes for the planner to hand its slice on. A report's outcome is the leader's opinion of the work; your verdict is yours, from the work shown, so a met report may be revised and a not_met report accepted. Exactly one verdict per unit that reported, naming its last report in the change report; a unit that reported twice in one pass (its leader's report, then the runtime's not_met when a later task was refused) has its earlier report listed for the record, marked as answered through the last, and the verdict decides on the last. You answer with a command turn: the verdicts, the period's objectives (what this period must establish, from the incident objective, the constraints, the priorities and the units' reports), the priorities restated or revised, the units to close (those that did not report this period; a reported unit is closed by its verdict, never by closeUnits as well), answers, and what only Mauria can supply: a question for what only she knows or may decide, a capability request for means that do not exist yet, a grant request for permission. answers is for the resource requests your change report lists, and nothing else; a report's why or suggestion is answered through its verdict's instructions and the period objectives. Set incidentStatus to satisfied only when the period objectives and the incident objective are met by the units' reports, resting on observed claims; satisfied is refused while any task is still open or before any claim is observed, so when a task is left, continue and let the planner cancel or finish it. failed when the objectives cannot be met; blocked when you have raised something for Mauria; continue otherwise. A unit's not_met report, with its why and suggestion, is information for your decision and never a decision: you decide what happens to that unit and its objective through its verdict, and you may ask Mauria.
+Each operational period opens with a change report and the incident file. A unit's report in it is its leader's account; the work beneath the report, the tasks that ended since the unit's previous report with what each came to, the claims they produced with basis and confidence, and the unit's tool calls by count, is what you judge the account against: a change is as good as the claims under it, and a task block clipped for size names the task id; the incident file's claims section carries each claim with its object clipped. You review every report the change report lists and answer each unit's last report there with a verdict in reportVerdicts, naming that report's event id and its unit: accepted when the work shows the unit's objective met, resting on observed claims, and the unit closes; revise when the same unit is placed to finish it, with instructions saying what is missing, and the unit stays to do it; reassign when a different shape of unit would do better, with instructions carrying what this unit found and did not find, and the unit closes, its open tasks cancelled, and a reassignment is recorded with your instructions and the unit's claims by id: the next plan must create a unit that takes it, and that unit's leader is oriented with your instructions and those claims, so write the instructions for that leader. To drop the slice instead of handing it on, begin the instructions with drop: and say why; the reassignment then closes with the unit and no plan need take it. A reassignment still open on a later turn (the incident file's section 11 lists those still open: each is taken by a plan or dropped by you) is dropped in dropReassignments with its id and why, and closes on that turn. A report's outcome is the leader's opinion of the work; your verdict is yours, from the work shown, so a met report may be revised and a not_met report accepted. Exactly one verdict per unit that reported, naming its last report in the change report; a unit that reported twice in one pass (its leader's report, then the runtime's not_met when a later task was refused) has its earlier report listed for the record, marked as answered through the last, and the verdict decides on the last. You answer with a command turn: the verdicts, the period's objectives (what this period must establish, from the incident objective, the constraints, the priorities and the units' reports), the priorities restated or revised, the units to close (those that did not report this period; a reported unit is closed by its verdict, never by closeUnits as well), answers, and what only Mauria can supply: a question for what only she knows or may decide, a capability request for means that do not exist yet, a grant request for permission. answers is for the resource requests your change report lists, and nothing else; a report's why or suggestion is answered through its verdict's instructions and the period objectives. Set incidentStatus to satisfied only when the period objectives and the incident objective are met by the units' reports, resting on observed claims; satisfied is refused while any task is still open or before any claim is observed, so when a task is left, continue and let the planner cancel or finish it. failed when the objectives cannot be met; blocked when you have raised something for Mauria; continue otherwise. A unit's not_met report, with its why and suggestion, is information for your decision and never a decision: you decide what happens to that unit and its objective through its verdict, and you may ask Mauria.
 
 When the status is continue, the planner drafts an action plan against your objectives and you review it once: approve it as drafted; correct it, with text the planner redrafts against, once; or amend it, returning the whole plan as you want it applied. After a redraft you approve or amend, never correct again. The situation in the plan is the planner's; leave it as written unless you amend the plan, and then carry it over. The plan's rationale names the priority that chose between plans; hold the draft to that and to the period objectives, not to your taste.
 
@@ -360,6 +361,93 @@ export function revisedUnits(
     });
   }
   return revised;
+}
+
+/**
+ * A reassignment (R4-4): the slice of a unit the IC closed with a reassign verdict, as
+ * `unit.reassigned` records it: its id, the report and unit the verdict answered, that
+ * unit's objective, the IC's instructions and why, the claims the unit's tasks produced
+ * (by id), the cycle, whether the slice was dropped (by the verdict, instructions
+ * beginning `drop:`, or by a later command turn's `dropReassignments`,
+ * `reassignment.dropped`) and why, and the unit that took it (`reassignment.taken`), when
+ * one has.
+ */
+export type Reassignment = {
+  id: string;
+  reportId: string;
+  unitId: string;
+  objective: string;
+  instructions: string;
+  why: string;
+  claims: string[];
+  cycle: number;
+  dropped: boolean;
+  droppedWhy: string | null;
+  takenBy: string | null;
+};
+
+/** Whether a reassign verdict's instructions drop the slice rather than hand it on (R4-4). */
+export function dropsSlice(instructions: string): boolean {
+  return /^drop:/i.test(instructions.trim());
+}
+
+function reassignmentOf(e: Event): Reassignment {
+  return {
+    id: String(e.payload.reassignmentId ?? ""),
+    reportId: String(e.payload.reportId ?? ""),
+    unitId: String(e.payload.unitId ?? ""),
+    objective: String(e.payload.objective ?? ""),
+    instructions: String(e.payload.instructions ?? ""),
+    why: String(e.payload.why ?? ""),
+    claims: Array.isArray(e.payload.claims) ? e.payload.claims.map(String) : [],
+    cycle: typeof e.payload.cycle === "number" ? e.payload.cycle : 0,
+    dropped: e.payload.dropped === true,
+    droppedWhy:
+      e.payload.dropped === true ? String(e.payload.instructions ?? "") : null,
+    takenBy: null,
+  };
+}
+
+/** Every reassignment the log records, in order, each with the unit that took it when one has, or the IC's later drop of it (R4-4). */
+export function reassignments(events: readonly Event[]): Reassignment[] {
+  const all: Reassignment[] = [];
+  const byId = new Map<string, Reassignment>();
+  for (const e of events) {
+    if (e.type === "unit.reassigned") {
+      const r = reassignmentOf(e);
+      all.push(r);
+      byId.set(r.id, r);
+    }
+    if (e.type === "reassignment.taken") {
+      const r = byId.get(String(e.payload.reassignmentId ?? ""));
+      if (r !== undefined) r.takenBy = String(e.payload.unitId ?? "");
+    }
+    if (e.type === "reassignment.dropped") {
+      const r = byId.get(String(e.payload.reassignmentId ?? ""));
+      if (r !== undefined) {
+        r.dropped = true;
+        r.droppedWhy = String(e.payload.why ?? "");
+      }
+    }
+  }
+  return all;
+}
+
+/**
+ * The reassignments a plan must give to a new unit (R4-4): recorded, not dropped by the
+ * verdict or by a later command turn, and taken by no unit yet. The planner's section 11 lists them and the
+ * validator's "Reassignments taken" requires each to be named in a new unit's `takes`.
+ */
+export function openReassignments(events: readonly Event[]): Reassignment[] {
+  return reassignments(events).filter((r) => !r.dropped && r.takenBy === null);
+}
+
+/** The reassignment a unit took, whose instructions and claims open its leader's orientation (R4-4); null for a unit created without one. */
+export function reassignmentTakenBy(
+  events: readonly Event[],
+  unitId: string,
+): Reassignment | null {
+  return reassignments(events).find((r) => r.takenBy === unitId) ?? null;
 }
 
 /**
@@ -607,11 +695,42 @@ export function latestReports(events: readonly Event[]): Map<string, Event> {
   return latest;
 }
 
+/** The reassignment a unit took, as its leader's orientation carries it (R4-4): the predecessor and its objective, the IC's instructions and why, and the predecessor's claims by id, each in one line when the store has it. */
+export type TakenReassignment = {
+  reassignment: Reassignment;
+  claims: readonly Claim[];
+};
+
+/**
+ * The lines a taking unit's leader reads in its orientation (R4-4): the slice it took, the
+ * instructions the IC wrote from the predecessor's work, and the predecessor's claims by
+ * reference, so the leader starts from what was found rather than finding it again.
+ */
+function renderTakenReassignment(taken: TakenReassignment): string[] {
+  const { reassignment: r } = taken;
+  const byId = new Map(taken.claims.map((c) => [c.id, c]));
+  const line = (id: string) => {
+    const c = byId.get(id);
+    return c === undefined
+      ? `${id} (not in the store)`
+      : `${id}: ${c.subject} ${c.predicate} (${c.basis}; confidence ${c.confidence ?? "n/a"})`;
+  };
+  return [
+    `Your unit takes reassignment ${r.id}: the slice of unit ${r.unitId} (its objective: ${r.objective}), which the IC closed after reviewing its report ${r.reportId}. The IC's instructions, from what that unit found and did not find:`,
+    `  ${r.instructions}`,
+    `Why: ${r.why}`,
+    `Claims that unit produced, by id; name one in evidenceFrom on a task you assign and the runtime attaches it in full:`,
+    ...(r.claims.length === 0
+      ? ["  (none)"]
+      : r.claims.map((id) => `  - ${line(id)}`)),
+  ];
+}
+
 /**
  * What a leader reads on its first call, before the first task's brief or result: the
- * incident, the situation, the hierarchy, and its own unit. When the call is a task's brief,
- * which already carries the incident, the situation and the hierarchy, only the unit's own
- * lines are added.
+ * incident, the situation, the hierarchy, and its own unit, with the reassignment the unit
+ * took when it took one (R4-4). When the call is a task's brief, which already carries the
+ * incident, the situation and the hierarchy, only the unit's own lines are added.
  */
 export function renderLeaderOrientation(
   incident: Incident,
@@ -619,12 +738,14 @@ export function renderLeaderOrientation(
   unit: Unit,
   units: readonly Unit[],
   beforeBrief = false,
+  taken: TakenReassignment | null = null,
 ): string[] {
   const list = (items: readonly string[]) =>
     items.length === 0 ? "  (none)" : items.map((i) => `  - ${i}`).join("\n");
   const own = [
     `You lead unit ${unit.id}. Your unit's objective: ${unit.objective}`,
     `Your equipment: ${unit.equipment.join(", ") || "none"}; Bash allowlist: ${unit.bashAllowlist.join(", ") || "none"}`,
+    ...(taken === null ? [] : renderTakenReassignment(taken)),
   ];
   return beforeBrief
     ? own

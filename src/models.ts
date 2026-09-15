@@ -83,6 +83,9 @@ export const EventType = z.enum([
   "leader.failed",
   "report.reviewed",
   "unit.revised",
+  "unit.reassigned",
+  "reassignment.taken",
+  "reassignment.dropped",
 ]);
 
 export const Budget = z.object({
@@ -321,6 +324,13 @@ export const UnitProposal = z.object({
   bashAllowlist: z
     .array(z.string())
     .describe("Commands the leader's read-only Bash may run"),
+  takes: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "The id of an open reassignment this unit takes (R4-4): the slice of a unit the IC closed with a reassign verdict, whose instructions and claims the new unit's leader is oriented with; every open reassignment is taken by exactly one new unit",
+    ),
 });
 
 export const UnitClose = z.strictObject({
@@ -673,6 +683,22 @@ export const CommandTurn = z.strictObject({
     .array(UnitClose)
     .describe(
       "Units to close that did not report this period; a reported unit is closed by accepting or reassigning its report, never here",
+    ),
+  dropReassignments: z
+    .array(
+      z.strictObject({
+        id: z
+          .string()
+          .min(1)
+          .describe(
+            "An open reassignment's id, as the incident file's section 11 lists it",
+          ),
+        why: z.string().min(1),
+      }),
+    )
+    .optional()
+    .describe(
+      "Open reassignments to drop rather than have a plan take (R4-4): each closes on this turn and no unit takes it",
     ),
   answers: z
     .array(ResourceAnswer)

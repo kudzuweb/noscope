@@ -10,7 +10,9 @@ import {
   LEADER_ACTOR,
   LEADER_RULES,
   latestReports,
+  openReassignments,
   openRequests,
+  type Reassignment,
   reportsAwaitingVerdict,
   requestTargetOf,
   revisedUnits,
@@ -56,6 +58,8 @@ export type ValidationContext = {
   owing: ReadonlySet<string>;
   /** Units with a revise verdict not yet delivered to their leader (R4-3); a plan cannot close one, while the IC's own close is its decision (`validateCommand` blanks this). */
   revised: ReadonlySet<string>;
+  /** The reassignments open (R4-4): recorded, not dropped, taken by no unit; a plan gives each to a new unit that names it in `takes`. */
+  reassignments: readonly Reassignment[];
   /** The incident's log, from which a unit's share of the budget is computed. */
   events: readonly Event[];
 };
@@ -681,6 +685,31 @@ const CHECKS: Record<RuleName, Rule> = {
       reasons.push("satisfied with no observed claim");
     return reasons;
   },
+
+  "Reassignments taken": (plan, ctx) => {
+    // A failing incident owes no taker; a satisfied one still does, since the IC said
+    // the slice needed a different unit.
+    if (plan.incidentStatus === "failed") return [];
+    const open = new Map(ctx.reassignments.map((r) => [r.id, r]));
+    const takes = plan.createUnits.flatMap((u) =>
+      u.takes === undefined ? [] : [u.takes],
+    );
+    return [
+      ...plan.createUnits
+        .filter((u) => u.takes !== undefined && !open.has(u.takes))
+        .map(
+          (u) =>
+            `${unitLabel(u)} takes ${u.takes}, which is no open reassignment`,
+        ),
+      ...repeated(takes).map((id) => `reassignment ${id} is taken twice`),
+      ...[...open.values()]
+        .filter((r) => !takes.includes(r.id))
+        .map(
+          (r) =>
+            `reassignment ${r.id}, the slice of closed unit ${r.unitId}, is not taken: no new unit names it in takes`,
+        ),
+    ];
+  },
 };
 
 /** Every rule the design names, in the order the planner reads them; the checks are keyed by the planner's own rule names. */
@@ -906,6 +935,7 @@ export function validationContext(
     usage: sumUsage(events),
     owing: unitsOwingReport(units, tasks, events),
     revised: new Set(revisedUnits(units, events).keys()),
+    reassignments: openReassignments(events),
     events,
   };
 }
@@ -917,11 +947,12 @@ const COMMAND_RULES: readonly RuleName[] = [
   "Status is earned",
 ];
 
-/** The IC's own rules: an answer names a request a waiting unit raised; every report in the change report has one verdict; an assignment under command is deterministic. */
+/** The IC's own rules: an answer names a request a waiting unit raised; every report in the change report has one verdict; an assignment under command is deterministic; a drop names an open reassignment (R4-4). */
 export type CommandRuleName =
   | "Answers match"
   | "Reports answered"
-  | "Deterministic only";
+  | "Deterministic only"
+  | "Drops match";
 
 /**
  * The units a command turn closes through its verdicts (R4-2): an accepted or reassigned
@@ -996,11 +1027,11 @@ function reportsAnswered(
 /**
  * The IC's command turn is held to the rules that cover what it can do, closing units and
  * setting the incident's status, by checking it as a plan that creates nothing (DESIGN.md
- * Step 5), with the units its verdicts close folded into the plan's closes, and to three
+ * Step 5), with the units its verdicts close folded into the plan's closes, and to four
  * rules of its own: every answer names a waiting unit and an open request that unit
  * raised, as the change report showed it; every report the change report listed has
- * exactly one verdict (R4-2); and every task it assigns is deterministic (R4-6), since
- * session work is a unit's. Its assignments are the plan's tasks, so "Units exist" and
+ * exactly one verdict (R4-2); every task it assigns is deterministic (R4-6), since
+ * session work is a unit's; and every reassignment it drops is open (R4-4). Its assignments are the plan's tasks, so "Units exist" and
  * "Status is earned" see them (a turn that assigns work and declares `satisfied` is
  * refused as a plan would be), and they pass the other task rules as a leader's do, and
  * "Own unit" against the root. Returns the failing rules with their reasons; the caller
@@ -1076,6 +1107,19 @@ export function validateCommand(
       reason: `unit ${unitId}'s request "${request}" is answered twice`,
     });
   }
+  const open = new Set(ctx.reassignments.map((r) => r.id));
+  const drops: Rejection<CommandRuleName>[] = [
+    ...(turn.dropReassignments ?? [])
+      .filter((d) => !open.has(d.id))
+      .map((d) => ({
+        rule: "Drops match" as const,
+        reason: `no open reassignment ${d.id} to drop`,
+      })),
+    ...repeated((turn.dropReassignments ?? []).map((d) => d.id)).map((id) => ({
+      rule: "Drops match" as const,
+      reason: `reassignment ${id} is dropped twice`,
+    })),
+  ];
   const window = reportsAwaitingVerdict(ctx.events);
   const latest = latestReports(ctx.events);
   // Only a verdict that names a unit's last listed report closes anything; the rest are
@@ -1120,6 +1164,7 @@ export function validateCommand(
         })),
     ),
     ...answers,
+    ...drops,
     ...reportsAnswered(turn, window, latest).map(
       (reason): Rejection<CommandRuleName> => ({
         rule: "Reports answered",
