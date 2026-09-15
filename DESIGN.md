@@ -715,8 +715,9 @@ environment, refused when the provider does not serve it), asked the same turn w
 full briefing (the IC's review re-briefs a fresh session before the draft, as after a
 handoff). For the IC the change is a transfer of command, `command.transferred` of kind
 `fallback` with the refusal as its reason and the outgoing and incoming models, and the
-root unit's leader changes, so every later IC call stays on the fallback; the IC's own
-leader turns under `command` record the same transfer. For a unit leader the unit's leader
+root unit's leader changes, so every later IC call stays on the fallback (the root takes
+no leader turn, R4-6, so the IC's calls are the only ones command's seat makes). For a
+unit leader the unit's leader
 changes on the `leader.failed` that filed the refusal (`fallback`, the mutation
 `unit.leader`), and the fresh session's `leader.started` names the refused session
 (`replaced`) and `fallbackFrom`. For a task session the task itself is retried once, in its
@@ -730,12 +731,15 @@ seat (the IC's model was already changed once, a leader already moved, a task wh
 model is the fallback), goes to judgment and no seat retries beyond the one fallback; a
 seat that already runs on the fallback model (`--ic-model claude-opus-4-8`, or a plan
 naming Opus 4.8 as a unit's leader) has nothing to fall back to, so its first refusal
-blocks or reports the same way: for
-a unit leader's or a task session's refusals the runtime writes the unit's report on the
-leader's behalf, `unit.reported` with the actor `runtime` and `writtenBy: "runtime"`,
-`not_met` with both refusals as its why, the IC's choices (another model, a different unit,
-drop the slice) as its suggestion, and picture-changing, so the pass ends and the IC
-decides on it in its next command turn; for the IC's own refusals on both models the
+blocks or reports the same way: for a unit leader's or a unit's task session's refusals
+the runtime writes the unit's report on the leader's behalf, `unit.reported` with the
+actor `runtime` and `writtenBy: "runtime"`, `not_met` with both refusals as its why, the
+IC's choices (another model, a different unit, drop the slice) as its suggestion, and
+picture-changing, so the pass ends and the IC decides on it in its next command turn; a
+task under command has no leader to report for it, so its refusals end as its
+`task.failed` with the `refusals`, the pass goes on to command's next task, and the change
+report lists the failure under the tasks under command for the IC to judge (R4-6); for
+the IC's own refusals on both models the
 incident is blocked on a question naming them (`question.asked` and `incident.blocked`
 with `icRefusals`), `step` and `run` print the question and exit 0 as they do when a plan's
 question blocks, and `incident answer` with a model name transfers command to that model

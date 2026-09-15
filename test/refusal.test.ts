@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { EXIT, run } from "../src/cli.js";
 import { dispatch } from "../src/dispatcher.js";
+import { renderChangeReport } from "../src/ic.js";
 import { fallbackModel } from "../src/leader.js";
 import type { ActionPlan } from "../src/models.js";
 import { parseClaudeCodeResult } from "../src/providers/claude-code.js";
@@ -1119,6 +1120,88 @@ describe("a refusal replaces the session", () => {
     // No session was put on the unit: the task never ran inside its leader.
     expect(store.listUnits("i1")[1]?.sessionId).toBeNull();
     expect(store.listTasks("i1")[0]?.status).toBe("failed");
+    store.close();
+  });
+
+  it("a root task refused on both models ends as a task failure carrying both refusals, listed under the tasks under command: command files no report", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "noscope-refusal-"));
+    const store = new Store(":memory:");
+    const { incident, task } = scriptedIncident(store);
+    task({
+      id: "t-inv",
+      capability: "investigate",
+      inputs: { question: "where is deletion handled?" },
+      provider: "claude-code",
+      model: "claude-haiku-4-5",
+      budget: { seconds: 30 },
+      status: "ready",
+    });
+    task({
+      id: "t-grep",
+      capability: "grep",
+      inputs: { root: ".", pattern: "delete" },
+      status: "ready",
+    });
+    const env = {
+      NOSCOPE_CLAUDE_BIN: stub,
+      NOSCOPE_STUB_CALLS: join(dir, "calls"),
+      NOSCOPE_STUB_SESSION_COUNTER: join(dir, "sessions"),
+      NOSCOPE_STUB_CALL_COUNTER: join(dir, "ordinal"),
+      NOSCOPE_STUB_REFUSE: "1,2",
+    };
+    const { ran, reports, pictureChanged } = await dispatch(store, incident, {
+      cwd: tree,
+      env,
+    });
+    // Both root tasks ran, the grep in process; nothing reports for command.
+    expect(ran.map((r) => [r.taskId, r.status])).toEqual([
+      ["t-grep", "completed"],
+      ["t-inv", "failed"],
+    ]);
+    expect(reports).toEqual([]);
+    expect(pictureChanged).toBeNull();
+    const calls = readFileSync(env.NOSCOPE_STUB_CALLS, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l) as Call);
+    expect(calls.map((c) => [c.kind, c.resume, modelOf(c)])).toEqual([
+      ["task", null, "claude-haiku-4-5"],
+      ["task", null, "claude-opus-4-8"],
+    ]);
+    const events = store.listEvents("i1");
+    expect(events.some((e) => e.type === "unit.reported")).toBe(false);
+    expect(events.find((e) => e.type === "task.failed")?.payload).toMatchObject(
+      {
+        reason:
+          "refused on claude-haiku-4-5 (reasoning_extraction, session stub-session-1) and then on the fallback claude-opus-4-8 (reasoning_extraction, session stub-session-2)",
+        model: "claude-opus-4-8",
+        fallbackFrom: "claude-haiku-4-5",
+        refusals: [
+          {
+            model: "claude-haiku-4-5",
+            sessionId: "stub-session-1",
+            refused: refusal,
+          },
+          {
+            model: "claude-opus-4-8",
+            sessionId: "stub-session-2",
+            refused: refusal,
+          },
+        ],
+      },
+    );
+    // The IC judges it at its command turn: the change report lists the failure under
+    // the tasks under command, with the refusals as its reason.
+    const report = renderChangeReport(events, incident, store.listUnits("i1"));
+    const at = report.indexOf(
+      "tasks under command, ended with no leader to report them:",
+    );
+    expect(at).toBeGreaterThan(-1);
+    expect(report.slice(at + 4, at + 7)).toEqual([
+      "  - task t-inv (investigate, claude-haiku-4-5): run investigate",
+      "      claims: none",
+      "      failed: refused on claude-haiku-4-5 (reasoning_extraction, session stub-session-1) and then on the fallback claude-opus-4-8 (reasoning_extraction, session stub-session-2)",
+    ]);
     store.close();
   });
 

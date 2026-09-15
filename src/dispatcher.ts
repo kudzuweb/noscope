@@ -9,7 +9,6 @@ import {
   runDeterministic,
   runSession,
 } from "./capabilities/index.js";
-import { blockOnRefusals, IcRefused, recordTransfer } from "./ic.js";
 import {
   answeredRequestsOf,
   describeRefusedCall,
@@ -47,11 +46,7 @@ import {
   type SessionActivity,
   SessionError,
 } from "./providers/index.js";
-import {
-  applyLeaderTasks,
-  fallbackTransferred,
-  raiseResourceRequests,
-} from "./runtime.js";
+import { applyLeaderTasks, raiseResourceRequests } from "./runtime.js";
 import { type Store, sumUsage } from "./store.js";
 import { unitsInTreeOrder } from "./tree.js";
 import {
@@ -638,16 +633,13 @@ async function leaderTurn(
   let fallbackFrom: string | null = null;
   let outcome: Awaited<ReturnType<typeof provider.run>>;
   let turn: LeaderTurn;
-  const isRoot = unit.parentId === null;
   // A refused turn is filed (`leader.failed` with the refusal and what the call spent) and,
   // when it was a resumed call, the session is released with the category: a refused
   // session stays refused on every later call (seen 2026-09-15). On the unit's model the
   // filing also moves the leader to the fallback (the mutation `unit.leader` on
-  // `leader.failed`; for the root unit, whose leader is the IC, a `command.transferred`
-  // of kind `fallback` as the IC's own turns record it; R4-7), and a fresh session on it
-  // is asked the same turn; refused on the fallback too, the runtime reports `not_met`
-  // for the unit with both refusals, or, for the root, blocks the incident on the
-  // question naming them.
+  // `leader.failed`; R4-7), and a fresh session on it is asked the same turn; refused on
+  // the fallback too, the runtime reports `not_met` for the unit with both refusals. The
+  // IC's own refusals are `icCall`'s (src/ic.ts): the root takes no leader turn (R4-6).
   const fileRefusal = (
     error: SessionError,
     refused: Refusal,
@@ -663,13 +655,13 @@ async function leaderTurn(
         unitId: unit.id,
         sessionId: error.sessionId,
         ...unit.leader,
-        seat: isRoot ? "ic" : "leader",
+        seat: "leader",
         reason: error.message,
         refused,
         ...(error.usage === null ? {} : { usage: error.usage }),
-        ...(fallback === null || isRoot ? {} : { fallback }),
+        ...(fallback === null ? {} : { fallback }),
       };
-      if (fallback === null || isRoot)
+      if (fallback === null)
         store.record(incident.id, "leader.failed", actor, payload);
       else
         store.setUnitLeader(
@@ -688,36 +680,10 @@ async function leaderTurn(
           reason: `refused: ${refused.category}`,
           refused,
         });
-      if (fallback !== null && isRoot)
-        recordTransfer(
-          store,
-          incident.id,
-          {
-            kind: "fallback",
-            unitId: unit.id,
-            outgoingSessionId: error.sessionId ?? unit.sessionId ?? "",
-            outgoing: unit.leader,
-            incomingSessionId: null,
-            incoming: { ...unit.leader, model: fallback },
-            document: null,
-            chosenBy: "runtime",
-            reason: `refused on ${describeRefusedCall(call)}`,
-            refusals: [call],
-          },
-          actor,
-        );
     });
     return call;
   };
   const refusedTwice = (refusals: RefusedCall[]): Turned => {
-    if (isRoot)
-      throw blockOnRefusals(
-        store,
-        incident.id,
-        refusals,
-        provider.models,
-        actor,
-      );
     const current = { ...unit, sessionId: null };
     const report = reportRefusals(
       store,
@@ -740,10 +706,7 @@ async function leaderTurn(
     } catch (error) {
       if (error instanceof SessionError && error.refused !== null) {
         const fallback = fallbackModel(options.env, provider);
-        if (
-          unit.leader.model === fallback ||
-          (isRoot && fallbackTransferred(store.listEvents(incident.id)))
-        )
+        if (unit.leader.model === fallback)
           return refusedTwice([fileRefusal(error, error.refused, null)]);
         const first = fileRefusal(error, error.refused, fallback);
         if (error.sessionId !== null)
@@ -774,7 +737,6 @@ async function leaderTurn(
     }
     turn = LeaderTurn.parse(outcome.output);
   } catch (error) {
-    if (error instanceof IcRefused) throw error;
     throw new Error(`leader of unit ${unit.id}: ${describe(error)}`, {
       cause: error,
     });
@@ -990,6 +952,7 @@ export async function dispatch(
           );
         const capability = getCapability(next.capability);
         let ending: TaskEnding;
+        let refusals: readonly RefusedCall[] | undefined;
         if (capability === undefined) {
           const reason = `no capability named ${next.capability}`;
           store.setTaskStatus(
@@ -1035,23 +998,27 @@ export async function dispatch(
           );
           ending = run.ending;
           unit = run.unit;
-          // A task refused on both models: the runtime reports `not_met` for the unit
-          // with both refusals, picture-changing, and the pass ends for the IC to decide.
-          if (run.refusals !== undefined) {
-            const report = reportRefusals(
-              store,
-              incident,
-              unit,
-              "task",
-              run.refusals,
-              actor,
-            );
-            reports.push({ unitId: unit.id, sessionId: null, report });
-            done.add(unit.id);
-            return { ran, reports, stopped: null, pictureChanged: unit.id };
-          }
+          refusals = run.refusals;
         }
+        // A root task refused on both models ends as its `task.failed` (R4-7, the
+        // refusals on it), which the change report lists under the tasks under command:
+        // command files no report, and the IC judges it at its command turn (R4-6).
         if (unit.parentId === null) continue;
+        // A unit's task refused on both models: the runtime reports `not_met` for the unit
+        // with both refusals, picture-changing, and the pass ends for the IC to decide.
+        if (refusals !== undefined) {
+          const report = reportRefusals(
+            store,
+            incident,
+            unit,
+            "task",
+            refusals,
+            actor,
+          );
+          reports.push({ unitId: unit.id, sessionId: null, report });
+          done.add(unit.id);
+          return { ran, reports, stopped: null, pictureChanged: unit.id };
+        }
         const ended = store
           .listTasks(incident.id)
           .find((t) => t.id === next.id);

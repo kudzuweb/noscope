@@ -2331,8 +2331,7 @@ the log, so every later IC call stays there); a fresh session on the fallback is
 same turn, and its `leader.started` names the refused session as `replaced` and
 `fallbackFrom`. A fallback transfer is never pending for evaluation (`pendingTransfer` skips
 it), and a handoff recorded by a successor that fell back keeps the fallback as its incoming
-leader. The IC's own leader turns under `command` (the dispatcher's `leaderTurn` on the root
-unit) record the same transfer. Refused on the fallback too, or refused after a fallback
+leader. Refused on the fallback too, or refused after a fallback
 transfer already exists (the IC's model was changed once, by the runtime or by an answer),
 `blockOnRefusals` asks a question naming every refusal (`question.asked` with
 `icRefusals`), blocks the incident (`incident.blocked` with the same) and throws
@@ -2365,7 +2364,11 @@ the runtime already knows is coming; `task.completed` and `task.usage` then carr
 and `fallbackFrom`;
 refused there too, or refused when the task's own model is the fallback, `TaskRefused`
 carries both, `task.failed` records `refusals` with both and the models, and `dispatch`
-writes the same runtime report for the unit instead of asking its leader, ending the pass.
+writes the same runtime report for the unit instead of asking its leader, ending the pass;
+under the root, which has no leader to report for it (R4-6), the task's failure stands on
+its own, the pass goes on to command's next task, and the change report's "tasks under
+command" block (R4-1's `describeEnding`) lists it as `failed: refused on ...`, ruled by
+the orchestrator in review: command files no report.
 `incident show` lists every model change under "model changes:"; `step` prints a fallback
 transfer under the turn that forced it; `incident review` lists a fallback transfer with its
 models, chooser and refusals (no evaluation lines), a leader's refused turn with its move
@@ -2396,8 +2399,16 @@ the runtime's report and both refusals, and the IC's next change report carries 
 in its own session refused is retried on the fallback with both models on its events; a
 task refused on both fails with both, the unit reports by the runtime, and no leader turn
 is asked; a task refused inside its leader's resumed session releases it, and the leader's
-turn after the retry starts fresh; `NOSCOPE_IC_FALLBACK_MODEL` is validated against the
-provider's list.
+turn after the retry starts fresh; a root task refused on both fails with both refusals,
+no report is filed, the pass runs command's other task, and the change report lists the
+failure under the tasks under command; `NOSCOPE_IC_FALLBACK_MODEL` is validated against
+the provider's list.
+
+Rebased over R4-6 in review: the root takes no leader turn, so `leaderTurn`'s root
+branches (the `seat: "ic"` filing, the transfer on the root's `leader.failed`, the block
+on the root's second refusal) were dead and are deleted; `blockOnRefusals` is `icCall`'s
+alone; the runtime's `not_met` report for a task refused twice is written on the unit
+path only.
 
 Not exactly to spec, with reasons:
 

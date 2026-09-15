@@ -946,7 +946,7 @@ export class IcRefused extends Error {
  * the same, which `icModelHold` reads until a transfer of command follows), and the error
  * that ends the cycle is returned for the caller to throw.
  */
-export function blockOnRefusals(
+function blockOnRefusals(
   store: Store,
   incidentId: string,
   refusals: readonly RefusedCall[],
