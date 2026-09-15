@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { EXIT, run } from "../src/cli.js";
-import { renderChangeReport, renderCommandBriefing } from "../src/ic.js";
+import {
+  renderChangeReport,
+  renderCommandBriefing,
+  reportWorkChars,
+} from "../src/ic.js";
 import {
   type ActionPlan,
   CommandTurn,
@@ -21,6 +25,7 @@ import { Store } from "../src/store.js";
 import { validateCommand, validationContext } from "../src/validator.js";
 import {
   fakeProvider,
+  reportedUnit,
   scriptedIncident,
   unitProposal,
 } from "./fixtures/models.js";
@@ -389,6 +394,10 @@ describe("the IC above the planner", () => {
     expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
     const second =
       h.calls().filter((c) => c.kind === "command")[1]?.prompt ?? "";
+    const reported = h
+      .store()
+      .listEvents("001")
+      .find((e) => e.type === "unit.reported");
     expect(
       second.startsWith(
         [
@@ -396,7 +405,12 @@ describe("the IC above the planner", () => {
           "discrepancies raised:",
           "  - leader of 001-u02: this tree is not the application",
           "unit reports:",
-          "  - 001-u02: not_met, picture changed; changed: the handler is not in a.txt (claims none); why: the tree has no handler; suggestion: look elsewhere",
+          `  - 001-u02, report ${reported?.id}: not_met, picture changed; changed: the handler is not in a.txt (claims none); why: the tree has no handler; suggestion: look elsewhere`,
+          "    work since its previous report:",
+          "      task 001-t01 (grep): find delete",
+          "        completed; result: 11 line(s) of JSON, in the task record",
+          `        claims: 001-c001: ${join(tree, "a.txt")}:2 matches (observed, confidence 1.00)`,
+          "      tool calls: none",
           "resource requests:",
           "  (none)",
           "questions answered:",
@@ -786,6 +800,181 @@ describe("the IC above the planner", () => {
       briefing.indexOf("# Your command turn for operational period 2"),
     ).toBeGreaterThan(briefing.indexOf("## 10. Situation"));
     expect(s.unit.parentId).toBeNull();
+    store.close();
+  });
+
+  it("the change report carries the work behind each report: the unit's tasks since its previous report, their claims, and its tool calls by count (R4-1)", () => {
+    const store = new Store(":memory:");
+    const s = scriptedIncident(store);
+    const first = reportedUnit(s, "u-a", "the handler resets the scroll");
+    const between = (lines: string[]) =>
+      lines.slice(
+        lines.indexOf("unit reports:"),
+        lines.indexOf("resource requests:"),
+      );
+    const lines = renderChangeReport(
+      store.listEvents("i1"),
+      s.incident,
+      store.listUnits("i1"),
+    );
+    expect(between(lines)).toEqual([
+      "unit reports:",
+      `  - u-a, report ${first.id}: met; changed: the handler is found (claims u-a-c-grep, u-a-c-inv)`,
+      "    work since its previous report:",
+      "      task u-a-grep (grep): find the delete handler",
+      "        completed; result: 10 line(s) of JSON, in the task record",
+      "        claims: u-a-c-grep: /r/a.ts:2 matches (observed, confidence 1.00)",
+      "      task u-a-investigate (investigate, claude-haiku-4-5): explain the scroll",
+      "        completed, answered; summary: the handler resets the scroll",
+      "        claims: u-a-c-inv: /r/a.ts:2 scrolls_on_delete (inferred, confidence 0.70)",
+      "      tool calls: Read 2, Grep 1",
+    ]);
+    // The IC acts; the unit's next report shows only what ended after its first: a failed
+    // task, an interpret that came back insufficient, and the leader's own turn's calls.
+    store.setIncidentPeriod(
+      "i1",
+      { number: 1, objectives: ["o1"], priorities: [] },
+      "runtime",
+      { cycle: 1 },
+    );
+    const failed = s.task({
+      id: "u-a-read",
+      unitId: "u-a",
+      capability: "read",
+      objective: "read the handler",
+    });
+    store.setTaskStatus(
+      "i1",
+      failed.id,
+      "failed",
+      "dispatcher",
+      "task.failed",
+      {
+        extra: { reason: "no such file", timedOut: false },
+      },
+    );
+    const interpret = s.task({
+      id: "u-a-interpret",
+      unitId: "u-a",
+      capability: "interpret",
+      objective: "weigh it",
+      provider: "claude-code",
+      model: "claude-haiku-4-5",
+    });
+    store.setTaskStatus(
+      "i1",
+      interpret.id,
+      "completed",
+      "dispatcher",
+      "task.completed",
+      {
+        result: {
+          outcome: "insufficient",
+          claims: [],
+          findings: null,
+          needed: [{ kind: "observation", what: "the view after a delete" }],
+        },
+      },
+    );
+    store.record("i1", "tool.called", "dispatcher", {
+      sessionId: "s-leader",
+      unitId: "u-a",
+      taskId: null,
+      cycle: null,
+      agentId: null,
+      tool: "Glob",
+      isError: false,
+      durationMs: 5,
+    });
+    store.record("i1", "unit.reported", "dispatcher", {
+      unitId: "u-a",
+      sessionId: "s-leader",
+      provider: "claude-code",
+      model: "claude-haiku-4-5",
+      report: {
+        outcome: "not_met",
+        changed: [],
+        pictureChanged: true,
+        why: "the file is gone",
+        suggestion: "reproduce it",
+      },
+    });
+    const second = store.listEvents("i1").at(-1);
+    expect(
+      between(
+        renderChangeReport(
+          store.listEvents("i1"),
+          s.incident,
+          store.listUnits("i1"),
+        ),
+      ),
+    ).toEqual([
+      "unit reports:",
+      `  - u-a, report ${second?.id}: not_met, picture changed; changed: nothing; why: the file is gone; suggestion: reproduce it`,
+      "    work since its previous report:",
+      "      task u-a-read (read): read the handler",
+      "        failed: no such file",
+      "        claims: none",
+      "      task u-a-interpret (interpret, claude-haiku-4-5): weigh it",
+      "        completed, insufficient; needed: observation: the view after a delete",
+      "        claims: none",
+      "      tool calls: Glob 1",
+    ]);
+    store.close();
+  });
+
+  it("a task's block over the cap is clipped with the task id as the pointer, and the cap comes from NOSCOPE_REPORT_WORK_CHARS (R4-1)", () => {
+    const store = new Store(":memory:");
+    const s = scriptedIncident(store);
+    reportedUnit(s, "u-a", "x".repeat(400));
+    const lines = renderChangeReport(
+      store.listEvents("i1"),
+      s.incident,
+      store.listUnits("i1"),
+      200,
+    );
+    const grep = lines.indexOf(
+      "      task u-a-grep (grep): find the delete handler",
+    );
+    const investigate = lines.findIndex((l) =>
+      l.startsWith("      task u-a-investigate"),
+    );
+    expect(grep).toBeGreaterThan(0);
+    expect(investigate).toBeGreaterThan(grep);
+    // The grep's block fits; the investigate's is cut at the cap and points at its task.
+    expect(lines[grep + 2]).toBe(
+      "        claims: u-a-c-grep: /r/a.ts:2 matches (observed, confidence 1.00)",
+    );
+    const block = lines.slice(
+      investigate,
+      lines.indexOf("      tool calls: Read 2, Grep 1"),
+    );
+    const pointer = block.at(-1) ?? "";
+    expect(pointer).toMatch(
+      /^ {6}\[\+\d+ chars clipped; the full record is task u-a-investigate\]$/,
+    );
+    expect(block.slice(0, -1).join("\n")).toHaveLength(200);
+    expect(reportWorkChars()).toBe(1500);
+    expect(reportWorkChars({ NOSCOPE_REPORT_WORK_CHARS: "" })).toBe(1500);
+    expect(reportWorkChars({ NOSCOPE_REPORT_WORK_CHARS: "800" })).toBe(800);
+    for (const bad of ["0", "-1", "12.5", "lots"])
+      expect(() => reportWorkChars({ NOSCOPE_REPORT_WORK_CHARS: bad })).toThrow(
+        /NOSCOPE_REPORT_WORK_CHARS must be a positive whole number/,
+      );
+    // The briefing reads the cap from the call's environment.
+    const briefing = renderCommandBriefing(
+      store,
+      s.incident,
+      [fakeProvider],
+      null,
+      { NOSCOPE_REPORT_WORK_CHARS: "200" },
+    );
+    expect(briefing).toContain(
+      "chars clipped; the full record is task u-a-investigate]",
+    );
+    expect(
+      renderCommandBriefing(store, s.incident, [fakeProvider]),
+    ).not.toContain("chars clipped");
     store.close();
   });
 

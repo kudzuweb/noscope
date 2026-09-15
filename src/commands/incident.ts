@@ -13,6 +13,8 @@ import {
   pendingTransfer,
   prepareHandoff,
   recordTransfer,
+  renderReport,
+  reportWorkChars,
   reviewTurn,
 } from "../ic.js";
 import { IC_MODEL, IC_PROVIDER, openRequestsByUnit } from "../leader.js";
@@ -374,6 +376,7 @@ function renderIncidentFile(
   store: Store,
   incident: Incident,
   capabilities: readonly string[],
+  env: NodeJS.ProcessEnv = {},
 ): string[] {
   const units = store.listUnits(incident.id);
   const tasks = store.listTasks(incident.id);
@@ -483,6 +486,18 @@ function renderIncidentFile(
     if (s.inferred.length === 0) lines.push("    (none)");
     lines.push(`  keep: ${s.keep.join(", ") || "(none)"}`);
   }
+  // Each unit's last report with the work behind it, as the IC's change report showed it (R4-1).
+  const lastReports = new Map<string, Event>();
+  for (const e of events)
+    if (e.type === "unit.reported" && typeof e.payload.unitId === "string")
+      lastReports.set(e.payload.unitId, e);
+  lines.push("unit reports, the last of each unit, with the work behind it:");
+  const cap = reportWorkChars(env);
+  for (const u of units) {
+    const report = lastReports.get(u.id);
+    if (report !== undefined) lines.push(...renderReport(events, report, cap));
+  }
+  if (lastReports.size === 0) lines.push("  (none yet)");
   const discrepancies = events.filter((e) => e.type === "picture.discrepancy");
   if (discrepancies.length > 0) {
     lines.push("discrepancies raised:");
@@ -536,6 +551,7 @@ export const show: Handler = async (args, ctx) => {
       store,
       incident,
       registeredCapabilities(),
+      ctx.env,
     ))
       ctx.io.out(line);
     return EXIT.ok;
