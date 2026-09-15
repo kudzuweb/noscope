@@ -333,6 +333,35 @@ describe("claude code provider", () => {
       transcriptPath: null,
       subagents: [],
     });
+    // A subagent's assistant line after the session's last one (it carries the Agent call
+    // as parent_tool_use_id) is the member's context, never the session's.
+    const withMember = recorded.stream
+      .split("\n")
+      .flatMap((line) =>
+        line.includes('"type":"result"')
+          ? [
+              JSON.stringify({
+                type: "assistant",
+                session_id: SESSION,
+                parent_tool_use_id: "toolu_01ELnurHZ9WbdKdkTcvriKqg",
+                message: {
+                  role: "assistant",
+                  id: "msg_member",
+                  content: [{ type: "text", text: "PONG" }],
+                  usage: {
+                    input_tokens: 500_000,
+                    cache_creation_input_tokens: 0,
+                    cache_read_input_tokens: 0,
+                    output_tokens: 1,
+                  },
+                },
+              }),
+              line,
+            ]
+          : [line],
+      )
+      .join("\n");
+    expect(parseClaudeCodeResult(withMember).usage.contextTokens).toBe(9357);
     // An envelope with no modelUsage entry for the snapshot: the date is stripped instead.
     const stripped = parseClaudeCodeResult(
       recorded.stream

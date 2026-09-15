@@ -534,25 +534,27 @@ function sizeUpLines(
 
 /** How much of the briefing the IC kept: the verdicts on its first accepted command turn that evaluated one, counted by kind. */
 function briefingKept(events: readonly Event[]): string {
-  const briefed = events.some((e) => e.type === "incident.briefed");
+  const briefed = events.find((e) => e.type === "incident.briefed");
   const failed = events.some(
     (e) => e.type === "command.failed" && e.payload.seat === "initial_ic",
   );
+  if (briefed === undefined)
+    return failed
+      ? "briefing: none (the size-up failed)"
+      : "briefing: none (no size-up)";
+  // The first accepted turn after the briefing that evaluated: a handoff's verdicts, on a
+  // later turn, are the handoff document's and are listed with its transfer.
   const evaluated = events.find(
     (e) =>
       e.type === "command.turned" &&
+      e.sequence > briefed.sequence &&
       e.payload.rejected !== true &&
       Array.isArray(
         (e.payload.turn as { briefingEvaluation?: unknown } | undefined)
           ?.briefingEvaluation,
       ),
   );
-  if (evaluated === undefined)
-    return briefed
-      ? "briefing kept: not evaluated yet"
-      : failed
-        ? "briefing: none (the size-up failed)"
-        : "briefing: none (no size-up)";
+  if (evaluated === undefined) return "briefing kept: not evaluated yet";
   const verdicts = list(
     (evaluated.payload.turn as { briefingEvaluation: unknown[] })
       .briefingEvaluation,

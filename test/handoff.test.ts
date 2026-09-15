@@ -187,7 +187,7 @@ describe("the IC handoff at the context threshold", () => {
       "IC handoff: session stub-session-1 wrote its handoff document after 6500 tokens of context (threshold 5000); command passes to a fresh session",
       "IC command turn for period 2 (session stub-session-4): second period",
       "  command transferred from session stub-session-1 to session stub-session-4",
-      "  briefing: accepted the briefing's first objective: stub evaluation",
+      "  handoff: accepted the briefing's first objective: stub evaluation",
       "  objective: find the handler",
     ]);
     // Step 2's calls: the handoff resumed on the outgoing session, the command turn on a
@@ -476,6 +476,46 @@ describe("the IC handoff at the context threshold", () => {
     const second = h.calls().filter((c) => c.kind === "command")[1] as Call;
     expect(second.prompt).not.toContain("# Transfer of command");
     expect(schemaOf(second).required).not.toContain("briefingEvaluation");
+  });
+
+  it("a review that skips the optional evaluation leaves the transfer pending, so the next command turn evaluates under the required schema", {
+    timeout: 60_000,
+  }, async () => {
+    const h = harness([findIt, empty], [6000, 1000]);
+    await run(
+      ["incident", "create", "where is the delete handler", "--no-size-up"],
+      h.ctx,
+    );
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    expect(h.out.some((l) => l.startsWith("  handoff:"))).toBe(false);
+    let store = h.store();
+    let events = store.listEvents("001");
+    expect(events.at(-1)).toBeDefined();
+    expect(pendingTransfer(events)?.type).toBe("command.transferred");
+    store.close();
+    h.out.length = 0;
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    expect(h.out).toContain(
+      "  handoff: accepted the briefing's first objective: stub evaluation",
+    );
+    const second = h.calls().filter((c) => c.kind === "command")[1] as Call;
+    expect(second.resume).toBe("stub-session-3");
+    expect(second.prompt).toContain(
+      "# Transfer of command: the outgoing IC's handoff document",
+    );
+    expect(schemaOf(second).required).toContain("briefingEvaluation");
+    store = h.store();
+    events = store.listEvents("001");
+    expect(pendingTransfer(events)).toBeNull();
+    store.close();
+    h.out.length = 0;
+    expect(await run(["incident", "review", "001"], h.ctx)).toBe(EXIT.ok);
+    const review = h.out.join("\n");
+    expect(review).toContain(
+      "    evaluated on its command turn: 1 of 1 item(s) accepted, 0 rewritten, 0 discarded",
+    );
+    // A handoff's verdicts are never the briefing's: this incident had no size-up.
+    expect(review).toContain("briefing: none (no size-up)");
   });
 
   it("an outgoing session that cannot be resumed is released with the reason and the successor starts on the file alone", {

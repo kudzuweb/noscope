@@ -10,6 +10,7 @@ import {
   commandTurn,
   type Handoff,
   type HandoffOutcome,
+  pendingTransfer,
   prepareHandoff,
   recordTransfer,
   reviewTurn,
@@ -650,6 +651,12 @@ async function cycle(
     ctx,
     await prepareHandoff(store, incident, icOptions),
   );
+  // What the turn's evaluation is of: the handoff in flight, or the transfer pending in the log.
+  const evaluating =
+    handoff !== null ||
+    pendingTransfer(store.listEvents(incident.id))?.payload.kind === "handoff"
+      ? "handoff"
+      : "briefing";
   const command = await commandTurn(
     store,
     incident,
@@ -668,7 +675,7 @@ async function cycle(
   if (turn.discrepancy !== undefined)
     ctx.io.out(`  discrepancy: ${turn.discrepancy}`);
   for (const v of turn.briefingEvaluation ?? [])
-    ctx.io.out(`  briefing: ${v.verdict} ${v.item}: ${v.why}`);
+    ctx.io.out(`  ${evaluating}: ${v.verdict} ${v.item}: ${v.why}`);
   for (const o of turn.periodObjectives) ctx.io.out(`  objective: ${o}`);
   for (const p of turn.priorities) ctx.io.out(`  priority: ${p}`);
   for (const c of turn.closeUnits)

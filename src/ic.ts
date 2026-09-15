@@ -341,8 +341,11 @@ export function recordTransfer(
  * last accepted `command.turned` (a rejected turn does not count, matching `cycleOf`), and
  * the retry of a rejected first turn still evaluates. A handoff names its incoming session
  * and is written with that session's `leader.started`, after the turn that recorded its
- * first call, so it is pending until an accepted command turn or a review has run on that
- * session: the successor evaluates the document once, on whichever call was its first.
+ * first call, so it is pending until an accepted command turn, or a review that carried a
+ * `briefingEvaluation` (the field is optional there), has run on that session: the
+ * successor evaluates the document once, on whichever call was its first, and a review
+ * that skipped the field leaves the next command turn to evaluate under the schema that
+ * requires it.
  */
 export function pendingTransfer(events: readonly Event[]): Event | null {
   let accepted = -1;
@@ -353,7 +356,11 @@ export function pendingTransfer(events: readonly Event[]): Event | null {
       accepted = e.sequence;
       turnedOn.add(str(e.payload.sessionId));
     }
-    if (e.type === "plan.reviewed") turnedOn.add(str(e.payload.sessionId));
+    if (
+      e.type === "plan.reviewed" &&
+      Array.isArray(e.payload.briefingEvaluation)
+    )
+      turnedOn.add(str(e.payload.sessionId));
     if (e.type === "command.transferred") transfer = e;
   }
   if (transfer === null) return null;

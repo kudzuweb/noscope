@@ -364,9 +364,10 @@ what context. An initial transfer names no incoming session and is pending while
 later than the last accepted `command.turned` (a rejected turn does not count, as it does
 not for `cycleOf`, so the retry of a rejected first turn still evaluates); a handoff names
 its incoming session, is written with that session's `leader.started` after the turn that
-recorded its first call, and is pending until an accepted command turn or a review has run
-on that session, so the successor evaluates the document once, on whichever call was its
-first; a handoff in flight, whose transfer is not written yet, is rendered the same way from
+recorded its first call, and is pending until an accepted command turn, or a review that
+carried a `briefingEvaluation`, has run on that session, so the successor evaluates the
+document once, on whichever call was its first, and a review that skipped the optional
+field leaves the next command turn to evaluate under the schema that requires it; a handoff in flight, whose transfer is not written yet, is rendered the same way from
 the runtime's hand. The ask then opens with the evaluation instruction (for a briefing,
 each initial objective and each unit sketched; for a handoff document, each period
 objective and priority, each unit's state, the hypothesis, each thing set aside and the

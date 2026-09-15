@@ -1793,8 +1793,13 @@ R3-8's `Transfer` with `kind: "handoff"` (`unitId`, `outgoingSessionId`, `outgoi
 here) from `icCall`'s `started` with the successor's `leader.started`, the moment its id
 is known, after `command.turned` or `plan.reviewed` in the same transaction;
 `pendingTransfer` treats a transfer that names its incoming session as pending until an
-accepted command turn or a review has run on that session, so the successor evaluates
-once, on whichever call was its first, and the next turn is not asked again. `step` prints
+accepted command turn, or a review that carried a `briefingEvaluation`, has run on that
+session, so the successor evaluates once, on whichever call was its first, the next turn
+is not asked again, and a review that skipped the optional field leaves the next command
+turn to evaluate under the schema that requires it. `review`'s `briefing kept` line
+counts only the first accepted turn after `incident.briefed`, so a handoff's verdicts are
+never counted as the briefing's; `step` labels the verdict lines `briefing:` or
+`handoff:` by the transfer's kind. `step` prints
 the handoff (session, context, threshold), the
 transfer after the successor's turn, a lost outgoing session, and a pending handoff
 resumed. `incident show` prints `IC: <provider>/<model>, session <id or none yet>; N
@@ -1845,8 +1850,8 @@ document, none once a successor started, none when the last call recorded no
 `contextTokens` however large its summed input, and none when the last IC call ran on
 another session; the threshold's default, override and refusals, with the CLI's exit 1 on
 a bad value; the document schema's strictness and its rendering. The providers test pins
-`contextTokens` 9,357 on the live fixture and 1,500 on the stub. The models test counts 40
-event types.
+`contextTokens` 9,357 on the live fixture and 1,500 on the stub, and that a trailing
+subagent line is not read as the session's context.
 
 Not exactly to spec, with reasons:
 

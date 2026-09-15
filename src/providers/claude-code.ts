@@ -458,10 +458,17 @@ export function parseClaudeCodeResult(
   const cacheReadTokens = int(u.cache_read_input_tokens);
   // The envelope sums input over every API turn of the call (the fixture's three messages
   // read 7,253 + 8,762 + 9,040 and the envelope says 25,055), so the context the session
-  // holds is the last assistant message's own input: what its next call resumes from.
+  // holds is the last assistant message's own input: what its next call resumes from. A
+  // subagent's lines carry its Agent call as parent_tool_use_id and are its context, not
+  // the session's.
   const lastMessage = [...lines]
     .reverse()
-    .find((l) => l.type === "assistant" && l.message?.usage !== undefined);
+    .find(
+      (l) =>
+        l.type === "assistant" &&
+        l.message?.usage !== undefined &&
+        l.parent_tool_use_id == null,
+    );
   const m = lastMessage?.message?.usage;
   const usage = Usage.parse({
     inputTokens: uncachedInputTokens + cacheWriteTokens + cacheReadTokens,
