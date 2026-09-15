@@ -62,6 +62,11 @@ checkout read-only and one sizing up a diagnostic objective on it, and a
 installed (`npx playwright install chromium`) and network access for
 `npx --yes @playwright/mcp@latest`.
 
+`pnpm build` compiles `src/` into `dist/` and then writes `dist/runtime-version.json`, the
+commit the build ran at (`-dirty` when a tracked file differed from it, `unknown` with no
+git or no checkout); every event the runtime writes carries it as its `runtime` tag, so a
+seat's briefing can be re-rendered later by checking that commit out (R4-12; DESIGN.md
+Step 2). Rebuild after every pull, since `bin/noscope.mjs` runs `dist/` as it stands.
 `pnpm check` runs lint (biome), typecheck, tests (vitest), unused-code detection (knip) and
 the build, which is what CI runs on every pull request. Every command in the design's
 command list is known to the binary; exit codes are the table in `DESIGN.md` Step 7.
