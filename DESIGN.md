@@ -576,8 +576,8 @@ request and grant request the turn carries; command never waits.
 The incident goes to `blocked` only when a command turn or a plan raises one of the last
 three; a leader's resource request puts its unit in `waiting` and leaves the incident where
 it was, so the other units keep running. Such a report is `pictureChanged` whatever the
-leader said, so it ends the pass and the IC sees the unit waiting before the next unit
-runs: the change report at the top of its briefing lists what each waiting unit asks, with
+leader said, so it ends the pass and the IC sees the unit waiting before anything new
+starts: the change report at the top of its briefing lists what each waiting unit asks, with
 the text an `answers` entry names it by, and the IC answers what it can itself (a
 `human_knowledge` or `missing_means` request it can settle from the file) while the rest
 wait for Mauria; an answer must name a waiting unit and an open request it raised. `incident
@@ -639,28 +639,48 @@ the leader's next turn reads:
 | Budget within share | A unit's budget is what the plans allotted its tasks, per dimension; charged against it is what the unit's ended tasks spent and what its open tasks are bound to, the leader's earlier assignments included. The assignments' bounds fit inside the difference. A dimension no plan task under the unit bounds is a share of zero (ruled 2026-09-15): an assignment may not bound it, so a leader under only unbounded deterministic tasks assigns only unbounded deterministic tasks, never a session task bounded by the incident's budget alone. |
 
 ### Step 6: dispatch, record, verify
-Ready means every dependency is completed. Dispatch runs the units one at a time in tree
-order (parents before children, siblings as created), each until its leader reports
-(round 3, R3-4), except the root (R4-6): its leader is the IC, which takes no leader turn,
-so the root's runnable tasks run one after another with no turn between, a deterministic
-one in process and a session-backed one in a session of its own, never inside the IC's
-session, whatever its model and equipment (`runsInsideLeader` is false for the root); its
-pass ends without a report once its ready tasks have run, and the IC judges their results
-at its command turn, where the change report lists them (Step 4). Run 003 is the reason:
-with every task under `command`, the IC's own session took the investigate as an
-assignment and five leader turns at 60k to 115k context cost $0.94. A unit's leader session is created when the unit first has a ready task:
+Ready means every dependency is completed. Dispatch runs the units to their reports, each
+under its leader (round 3, R3-4), and runs unrelated units at once (round 4, R4-9): two
+units are related when a task of one that has not ended names, in `dependsOn`, a task of
+the other that has not ended, either way round, and related units run one at a time in
+tree order (parents before children, siblings as created), as every unit did before R4-9; a
+parent and a child are related only through their tasks. A unit's pass starts when the
+unit has something to do (a resumed leader to brief, a runnable task, a report owed), no
+unit related to it is mid-pass, and fewer than `NOSCOPE_PARALLEL` passes are running (a
+positive whole number read from the command's environment, 3 when unset, refused
+otherwise); the cap bounds unit passes, and the tasks inside a unit are bounded by the plan.
+The root is the exception (R4-6): its leader is the IC, which takes no leader turn, so the
+root's runnable tasks run with no turn between, a deterministic one in process and a
+session-backed one in a session of its own, never inside the IC's session, whatever its
+model and equipment (`runsInsideLeader` is false for the root), and so every runnable root
+task starts at once; its pass ends without a report once its ready tasks have run, and the
+IC judges their results at its command turn, where the change report lists them (Step 4).
+Run 003 is the reason: with every task under `command`, the IC's own session took the
+investigate as an assignment and five leader turns at 60k to 115k context cost $0.94. A
+unit's leader session is created when the unit first has a ready task:
 its system prompt is the preamble, the seat's place and the leader role text, fixed for the
 unit's life (a resumed call keeps the first call's system prompt), and its first user message
-opens with the orientation. Each runnable task in the unit runs in turn: a task on the
+opens with the orientation. In a unit, every runnable task not yet attempted starts at
+once: a task on the
 leader's provider and model whose capability's equipment and Bash allowlist the unit already
 holds runs inside the leader's session, as one resumed call whose prompt is the task's brief
-and whose schema is the capability's output schema; any other session task runs in a session
-of its own, and a deterministic task in process, as before. After each task the leader is
-asked for its next move under `LeaderTurn`, resumed with the task's ending (the result
-rendered, or "recorded in this session", or the failure) and how many ready tasks remain:
-`continue` runs the next, `report` files `unit.reported` and ends the unit's pass, and
+and whose schema is the capability's output schema, and such tasks run one at a time, each
+followed by the leader's turn on it, since the session takes one call at a time; any other
+session task runs in a session of its own, each its own process, and a deterministic task
+in process, and these start together the moment they are runnable, so `dependsOn` is what
+serializes tasks and a task with none waits for nothing. Each task's ending reaches the
+leader on a turn of its own under `LeaderTurn`, in the order the tasks ended, one call on
+the session at a time (a turn waits for a task running inside the session): the turn
+carries the ending (the result
+rendered, or "recorded in this session", or the failure), how many ready tasks remain and
+which runs next, and which tasks of the unit are still running in sessions of their own;
+`continue` starts what the ending made runnable and what the leader assigned, `report`
+files `unit.reported` and ends the unit's pass while its tasks in flight finish and land,
+their endings kept for the leader's next turn, and
 `pictureChanged: true` on a report ends the whole pass, which `dispatch` returns as the
-unit's id, so the IC's next change report opens with it before the next unit runs. A task's ending that came back
+unit's id, so the IC's next change report opens with it: from that moment nothing new
+starts anywhere, and every run in flight finishes and lands, each task's leader hearing
+its ending, before `dispatch` returns. A task's ending that came back
 `insufficient` is rendered to the leader with what it needed, each with its kind, and what
 the leader does about each kind (R3-6). Either move may carry `assignTasks`: after the turn
 is recorded the assignments are validated (Step 5) and applied under the unit as
@@ -682,11 +702,15 @@ unit's is still open, carries the unit and the `questionId` or `need` that was a
 with the same mutation. The next pass opens a
 resumed unit with a turn carrying the answers to the requests of its last wait, before
 running any task, so the leader reads them first. A continue turn carries no report, so a
-resource request rides only on a report. With nothing left to run the
-leader is asked for its report; a leader that answers `continue` with nothing left ends the
+resource request rides only on a report. With nothing left to run and nothing running the
+leader is asked for its report; with nothing left to start but tasks still running it is
+asked to continue and wait for them or report now; a leader that answers `continue` with
+nothing left and nothing running ends the
 unit's pass without one, and a unit whose leader owes a report (a task ended after the last
 report) is asked for it at the start of the next pass even with no task, the turn creating
-the session if none exists. Every turn is one call on the leader's session, recorded as
+the session if none exists and carrying every ending the leader has not heard (tasks that
+ended after its last turn: a pass that died, or tasks that landed after it reported), so a
+result never goes unread. Every turn is one call on the leader's session, recorded as
 `unit.reported` (with the report) or `unit.continued`, each with the unit, the session id,
 the leader's provider and model and the call's usage; `leader.started` records the session
 on the unit at its first call, with the `cwd` it was launched from, whether that call was a
@@ -758,7 +782,10 @@ by its request's timeout alone: the provider kills the process and files its cal
 session id, so the leader's next call never finds its session still in use; the
 dispatcher's own timer bounds deterministic tasks only. A leader's turns are not counted
 against the incident's budget, as the planner's calls are not; `incident review` costs them
-under the role `leader`.
+under the role `leader`. The budget is checked before every task starts, with what the
+tasks in flight are held to (each task's own bound, or its capability's typical cost)
+counted beside what is spent, so concurrent starts cannot overrun it together; a stop
+prevents new starts and lets the runs in flight land.
 
 A task's strike team (R3-5) is provided to whichever call runs the task: the leader's
 resumed call when the task runs inside the leader, or the task's own session otherwise, as
@@ -770,7 +797,9 @@ what the agent tool's result shows the session (the fixture's `Agent` result car
 `agentId: <id>`, captured 2026-09-15). A leader's `requestStrikeTeam` on a `continue` turn
 is checked and declared on the task that runs next, in the turn's transaction after
 `unit.continued` (Step 4); on a `report` turn, or with no task left, it is refused as
-asked with nothing to send it on (the reason says which). `strike_team.defined` carries the task, the unit, who
+asked with nothing to send it on (the reason says which). Since R4-9 the task that runs
+next is one not yet started: one still waiting on a dependency, or one the leader assigns
+on the same turn; a task with no dependency has started already. `strike_team.defined` carries the task, the unit, who
 declared it (`plan`, written by `applyPlan` beside `task.created`, or `leader`, with the
 session id and the mutation `task.strikeTeam`) and the kinds; `strike_team.rejected`
 carries the same and `reasons`, one per rule line. A member's run is the `subagent.ran`
@@ -779,7 +808,9 @@ declaration to run on task id and kind.
 
 Each task's run, wherever it ran, writes `task.started`, then the result and
 `task.completed` or `task.failed` in one transaction, with a `task.usage` event carrying
-what the run spent:
+what the run spent, and every event keeps its own timestamp, so concurrent runs cost as
+they did in sequence and `incident review` reports each cycle's wall time beside the sum
+of its tasks' seconds (R4-9):
 the whole input billed (the figure a token budget counts, summed by the envelope over every
 API turn of the call) and its split into uncached, cache-write and cache-read tokens,
 output tokens, seconds, `contextTokens`, the context of the call's last message (that
@@ -1040,12 +1071,16 @@ Measured 2026-09-12 on this machine, all with the five flags then fixed (the fou
 
 So one cycle as written is the IC's command turn and review, two resumed Opus calls on a
 context that grows with the file, plus the planner, about 15 to 20 s, twice on a
-correction, plus its tasks run one
-after another, each session-backed one roughly 7 to 30 s and each deterministic one
-negligible. An incident that takes five cycles with two sessions each runs three to four minutes.
-That is slow for a daemon and right for v0, which is stepped by hand to be watched. The
-lever after v0 is running ready tasks in parallel, which turns the sum into a
-maximum; the startup cost per session stays unless sessions are reused with `--resume`,
+correction, plus its tasks, each session-backed one roughly 7 to 30 s and each
+deterministic one negligible. Through round 3 the tasks ran one after another, and an
+incident that took five cycles with two sessions each ran three to four minutes; that was
+slow for a daemon and right for v0, which is stepped by hand to be watched. Since R4-9
+(Step 6) unrelated units run at once, up to `NOSCOPE_PARALLEL` passes (3 by default), and
+inside a unit the tasks in sessions of their own start together, so a cycle's task time is
+the longest chain of dependent tasks rather than the sum; `incident review` prints each
+cycle's wall time, its dispatch span, the sum of its tasks' seconds and their ratio, which
+is what the fourth run (R4-10) measures. Tasks inside a leader's session still run one at
+a time, and the startup cost per session stays unless sessions are reused with `--resume`,
 which the provider supports since round 3 (R3-3) and unit leaders use (R3-4): a resumed
 Haiku call with a fixed schema read its earlier turns from cache in most runs and rewrote
 them in the rest (2026-09-15; the Reference table has the counts), so a resumed call's

@@ -471,7 +471,7 @@ const LeaderReportFields = z.object({
   pictureChanged: z
     .boolean()
     .describe(
-      "Whether what the unit found changes the picture the incident is working from, so the IC should act before the next unit runs",
+      "Whether what the unit found changes the picture the incident is working from, so the IC should act before anything new starts",
     ),
   why: z
     .string()

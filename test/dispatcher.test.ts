@@ -13,7 +13,7 @@ import {
   runsInsideLeader,
   unitsOwingReport,
 } from "../src/leader.js";
-import type { ActionPlan, TaskProposal } from "../src/models.js";
+import type { ActionPlan, Event, Task, TaskProposal } from "../src/models.js";
 import { applyPlan, raiseResourceRequests } from "../src/runtime.js";
 import { Store } from "../src/store.js";
 import { citesMember } from "../src/strike-team.js";
@@ -771,7 +771,7 @@ describe("dispatcher, unit leaders", () => {
       properties: Record<string, unknown>;
     };
 
-  it("runs a grep in process, an investigate on the leader's model as a resumed call on its session, and an interpret on another model in its own session, with per-task events and one report", async () => {
+  it("a dependency chain runs in order: a grep in process, an investigate on the leader's model as a resumed call on its session, and an interpret on another model in its own session, with per-task events and one report", async () => {
     const store = new Store(":memory:");
     const { incident, led, task } = scriptedIncident(store);
     const unit = led();
@@ -790,7 +790,8 @@ describe("dispatcher, unit leaders", () => {
       provider: "claude-code",
       model: "claude-haiku-4-5",
       budget: { seconds: 30 },
-      status: "ready",
+      dependsOn: ["t-grep"],
+      status: "pending",
     });
     task({
       id: "t-read",
@@ -803,7 +804,8 @@ describe("dispatcher, unit leaders", () => {
       provider: "claude-code",
       model: "claude-opus-5",
       budget: { seconds: 30 },
-      status: "ready",
+      dependsOn: ["t-inv"],
+      status: "pending",
     });
     const log = callsLog();
     process.env.NOSCOPE_STUB_CALLS = log;
@@ -856,7 +858,7 @@ describe("dispatcher, unit leaders", () => {
     expect(calls[0]?.prompt).toContain(
       "Task t-grep (grep) completed. Its result:",
     );
-    expect(calls[0]?.prompt).toContain("2 ready task(s) remain in your unit.");
+    expect(calls[0]?.prompt).toContain("1 ready task(s) remain in your unit.");
     const leaderSystem =
       calls[0]?.args[calls[0].args.indexOf("--system-prompt") + 1];
     // A unit's leader reads the leader seat paragraph and the leader role text.
@@ -884,6 +886,8 @@ describe("dispatcher, unit leaders", () => {
     const types = events.map((e) => e.type);
     for (const type of ["task.started", "task.completed", "task.usage"])
       expect(types.filter((t) => t === type)).toHaveLength(3);
+    // Each dependent became ready only once its dependency completed.
+    expect(types.filter((t) => t === "task.ready")).toHaveLength(2);
     expect(types.filter((t) => t === "leader.started")).toHaveLength(1);
     expect(types.filter((t) => t === "unit.continued")).toHaveLength(2);
     expect(types.filter((t) => t === "unit.reported")).toHaveLength(1);
@@ -908,9 +912,13 @@ describe("dispatcher, unit leaders", () => {
     store.close();
   });
 
-  it("a report that changed the picture stops the pass before the next unit, and a unit whose leader owes a report is asked without a task", async () => {
+  it("with NOSCOPE_PARALLEL=1, a report that changed the picture stops the pass before the next unit, and a unit whose leader owes a report is asked without a task", async () => {
     const store = new Store(":memory:");
     const { incident, task, addUnit } = scriptedIncident(store);
+    const oneAtATime = {
+      cwd: tree,
+      env: { NOSCOPE_CLAUDE_BIN: stub, NOSCOPE_PARALLEL: "1" },
+    };
     addUnit({ id: "u-a", objective: "the first half" });
     addUnit({ id: "u-b", objective: "the second half" });
     task({
@@ -941,7 +949,7 @@ describe("dispatcher, unit leaders", () => {
     });
     let first: Awaited<ReturnType<typeof dispatch>>;
     try {
-      first = await dispatch(store, incident, stubbed);
+      first = await dispatch(store, incident, oneAtATime);
     } finally {
       delete process.env.NOSCOPE_STUB_TURN;
     }
@@ -971,7 +979,7 @@ describe("dispatcher, unit leaders", () => {
     });
     let second: Awaited<ReturnType<typeof dispatch>>;
     try {
-      second = await dispatch(store, incident, stubbed);
+      second = await dispatch(store, incident, oneAtATime);
     } finally {
       delete process.env.NOSCOPE_STUB_TURN;
     }
@@ -982,7 +990,7 @@ describe("dispatcher, unit leaders", () => {
     process.env.NOSCOPE_STUB_CALLS = log;
     let third: Awaited<ReturnType<typeof dispatch>>;
     try {
-      third = await dispatch(store, incident, stubbed);
+      third = await dispatch(store, incident, oneAtATime);
     } finally {
       delete process.env.NOSCOPE_STUB_CALLS;
     }
@@ -1123,6 +1131,7 @@ describe("dispatcher, unit leaders", () => {
       inputs: { root: ".", pattern: "delete" },
       status: "ready",
     });
+    // Chained, so each turn has a task not yet started to declare the team on.
     task({
       id: "t-inv",
       unitId: unit.id,
@@ -1131,7 +1140,8 @@ describe("dispatcher, unit leaders", () => {
       provider: "claude-code",
       model: "claude-haiku-4-5",
       budget: { seconds: 30, tokens: 5_000 },
-      status: "ready",
+      dependsOn: ["t-grep"],
+      status: "pending",
     });
     task({
       id: "t-read",
@@ -1145,7 +1155,8 @@ describe("dispatcher, unit leaders", () => {
       model: "claude-opus-5",
       budget: { seconds: 30 },
       strikeTeam: [reader],
-      status: "ready",
+      dependsOn: ["t-inv"],
+      status: "pending",
     });
     const log = callsLog();
     process.env.NOSCOPE_STUB_CALLS = log;
@@ -1725,9 +1736,10 @@ describe("dispatcher, lacks at the leader", () => {
         },
       }),
     });
+    // One unit at a time, so u-b is still untouched when u-a's report stops the pass.
     const first = await dispatch(store, incident, {
       cwd: tree,
-      env: { NOSCOPE_CLAUDE_BIN: stub, ...env },
+      env: { NOSCOPE_CLAUDE_BIN: stub, NOSCOPE_PARALLEL: "1", ...env },
     });
     expect(first.ran.map((r) => r.taskId)).toEqual(["t-a"]);
     expect(first.pictureChanged).toBe("u-a");
@@ -2191,6 +2203,421 @@ describe("dispatcher, lacks at the leader", () => {
     store.setUnitStatus("i1", "u-a", "waiting", "dispatcher", "unit.waiting");
     expect(renderHierarchy(unit, store.listUnits("i1"))[2]).toBe(
       `Below it: ${child.id}: the first half`,
+    );
+    store.close();
+  });
+});
+
+describe("dispatcher, parallel dispatch", () => {
+  type Call = {
+    kind: string;
+    resume: string | null;
+    concurrent: number;
+    args: string[];
+    prompt: string;
+  };
+  const scratch = () => mkdtempSync(join(tmpdir(), "noscope-parallel-"));
+  const readCalls = (log: string): Call[] =>
+    readFileSync(log, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l) as Call);
+  /** An investigate result the stub answers every task session with. */
+  const answered = JSON.stringify({
+    outcome: "answered",
+    claims: [],
+    findings: { summary: "a.txt", observations: [] },
+    needed: [],
+  });
+  /** The stub with its call log, turn counter and a task output in `dir`, plus `env`. */
+  const stubEnv = (dir: string, env: Record<string, string> = {}) => ({
+    NOSCOPE_CLAUDE_BIN: stub,
+    NOSCOPE_STUB_CALLS: join(dir, "calls"),
+    NOSCOPE_STUB_TURN_COUNTER: join(dir, "turns"),
+    NOSCOPE_STUB_OUTPUT: answered,
+    ...env,
+  });
+  /** A session task under a unit with no equipment, so it runs in a session of its own. */
+  const investigate = (
+    id: string,
+    unitId: string,
+    over: Partial<Task> = {},
+  ): Partial<Task> & Pick<Task, "capability"> => ({
+    id,
+    capability: "investigate",
+    unitId,
+    objective: `run investigate ${id}`,
+    inputs: { question: `${id}?` },
+    provider: "claude-code",
+    model: "claude-haiku-4-5",
+    budget: { seconds: 30 },
+    status: "ready",
+    ...over,
+  });
+  const sequenceOf = (events: readonly Event[], type: string, taskId: string) =>
+    events.find(
+      (e) =>
+        e.type === type &&
+        (e.payload.mutation as { taskId?: unknown } | undefined)?.taskId ===
+          taskId,
+    )?.sequence ?? -1;
+  const typesByUnit = (store: Store, unitId: string) =>
+    store
+      .listEvents("i1")
+      .filter(
+        (e) =>
+          e.payload.unitId === unitId ||
+          store.listTasks("i1").find((t) => t.unitId === unitId)?.id ===
+            (e.payload.mutation as { taskId?: unknown } | undefined)?.taskId ||
+          e.payload.taskId ===
+            store.listTasks("i1").find((t) => t.unitId === unitId)?.id,
+      )
+      .map((e) => e.type);
+
+  const twoUnits = (store: Store) => {
+    const { incident, task, addUnit } = scriptedIncident(store);
+    addUnit({ id: "u-a", objective: "the first half" });
+    addUnit({ id: "u-b", objective: "the second half" });
+    task(investigate("t-a", "u-a"));
+    task(investigate("t-b", "u-b"));
+    return incident;
+  };
+
+  it("two independent units run at once: their tasks' started and completed events overlap, and the run writes the same events per unit as one unit at a time does", async () => {
+    const parallel = new Store(":memory:");
+    const dir = scratch();
+    const first = await dispatch(parallel, twoUnits(parallel), {
+      cwd: tree,
+      env: stubEnv(dir, { NOSCOPE_STUB_SLEEP_MS: "1500" }),
+    });
+    expect(first.stopped).toBeNull();
+    expect(first.pictureChanged).toBeNull();
+    expect(first.ran.map((r) => [r.taskId, r.status]).sort()).toEqual([
+      ["t-a", "completed"],
+      ["t-b", "completed"],
+    ]);
+    expect(first.reports.map((r) => r.unitId).sort()).toEqual(["u-a", "u-b"]);
+    const events = parallel.listEvents("i1");
+    // Both started before either completed.
+    const startedB = sequenceOf(events, "task.started", "t-b");
+    const completedA = sequenceOf(events, "task.completed", "t-a");
+    const completedB = sequenceOf(events, "task.completed", "t-b");
+    expect(startedB).toBeLessThan(Math.min(completedA, completedB));
+    const at = (sequence: number) =>
+      Date.parse(events.find((e) => e.sequence === sequence)?.createdAt ?? "");
+    expect(at(startedB)).toBeLessThan(at(completedA));
+    // Two task sessions, then a turn each; the stub's own count of other processes running
+    // at its start is a bound, not a measure (two starts 4 ms apart can each see none).
+    const calls = readCalls(join(dir, "calls"));
+    expect(calls.map((c) => c.kind)).toEqual([
+      "task",
+      "task",
+      "leader",
+      "leader",
+    ]);
+    expect(Math.max(...calls.map((c) => c.concurrent))).toBeLessThanOrEqual(1);
+    // One unit at a time writes the same events for each unit, in the same order.
+    const serial = new Store(":memory:");
+    await dispatch(serial, twoUnits(serial), {
+      cwd: tree,
+      env: stubEnv(scratch(), { NOSCOPE_PARALLEL: "1" }),
+    });
+    for (const unitId of ["u-a", "u-b"])
+      expect(typesByUnit(parallel, unitId)).toEqual(
+        typesByUnit(serial, unitId),
+      );
+    expect(events.map((e) => e.type).sort()).toEqual(
+      serial
+        .listEvents("i1")
+        .map((e) => e.type)
+        .sort(),
+    );
+    parallel.close();
+    serial.close();
+  }, 20_000);
+
+  it("a picture-changing report from one unit ends the pass: the other unit's task in flight completes and its leader hears it, and nothing new starts", async () => {
+    const store = new Store(":memory:");
+    const { incident, task, addUnit } = scriptedIncident(store);
+    addUnit({ id: "u-a", objective: "the first half" });
+    addUnit({ id: "u-b", objective: "the second half" });
+    task({
+      id: "t-a",
+      capability: "grep",
+      unitId: "u-a",
+      inputs: { root: ".", pattern: "delete" },
+      status: "ready",
+    });
+    task(investigate("t-b", "u-b", { objective: "slow: run investigate" }));
+    task(investigate("t-b2", "u-b", { dependsOn: ["t-b"], status: "pending" }));
+    const dir = scratch();
+    const dispatched = await dispatch(store, incident, {
+      cwd: tree,
+      env: stubEnv(dir, {
+        NOSCOPE_STUB_SLEEP_MS: "1500",
+        NOSCOPE_STUB_SLEEP_IF: "slow:",
+        // u-a's turn comes first (its grep takes milliseconds); u-b's after its 1.5 s task.
+        NOSCOPE_STUB_TURNS: JSON.stringify([
+          {
+            kind: "report",
+            report: {
+              outcome: "not_met",
+              changed: [{ what: "the handler is elsewhere", claims: [] }],
+              pictureChanged: true,
+              why: "the grep hit nothing relevant",
+              suggestion: "look in the view layer",
+            },
+          },
+          { kind: "continue", report: null },
+        ]),
+      }),
+    });
+    expect(dispatched.pictureChanged).toBe("u-a");
+    expect(dispatched.stopped).toBeNull();
+    expect(dispatched.reports.map((r) => r.unitId)).toEqual(["u-a"]);
+    expect(dispatched.ran.map((r) => [r.taskId, r.status])).toEqual([
+      ["t-a", "completed"],
+      ["t-b", "completed"],
+    ]);
+    const tasks = store.listTasks("i1");
+    expect(tasks.find((t) => t.id === "t-b")?.status).toBe("completed");
+    // t-b2 became runnable when t-b completed, but nothing starts after the stop.
+    expect(tasks.find((t) => t.id === "t-b2")?.status).toBe("pending");
+    const events = store.listEvents("i1");
+    const reported = events.find((e) => e.type === "unit.reported");
+    expect(reported?.payload.unitId).toBe("u-a");
+    expect(sequenceOf(events, "task.completed", "t-b")).toBeGreaterThan(
+      reported?.sequence ?? Number.POSITIVE_INFINITY,
+    );
+    // u-b's leader heard the ending on a turn of its own, after the stop.
+    const calls = readCalls(join(dir, "calls"));
+    expect(calls.map((c) => c.kind)).toEqual(["task", "leader", "leader"]);
+    expect(calls[2]?.prompt).toContain(
+      "Task t-b (investigate) completed. Its result:",
+    );
+    expect(calls[2]?.prompt).toContain("1 ready task(s) remain in your unit.");
+    expect(events.at(-1)?.type).toBe("unit.continued");
+    expect(events.at(-1)?.payload.unitId).toBe("u-b");
+    store.close();
+  }, 20_000);
+
+  it("the cap holds: with NOSCOPE_PARALLEL=2, three independent units run two at a time and the third starts after a report", async () => {
+    const store = new Store(":memory:");
+    const { incident, task, addUnit } = scriptedIncident(store);
+    for (const u of ["u-a", "u-b", "u-c"]) {
+      addUnit({ id: u, objective: `the ${u} slice` });
+      task(investigate(`t-${u}`, u));
+    }
+    const dir = scratch();
+    const dispatched = await dispatch(store, incident, {
+      cwd: tree,
+      env: stubEnv(dir, {
+        NOSCOPE_PARALLEL: "2",
+        NOSCOPE_STUB_SLEEP_MS: "1000",
+      }),
+    });
+    expect(dispatched.reports.map((r) => r.unitId).sort()).toEqual([
+      "u-a",
+      "u-b",
+      "u-c",
+    ]);
+    // Never more than two stub processes at once: each saw at most one other running.
+    const calls = readCalls(join(dir, "calls"));
+    expect(Math.max(...calls.map((c) => c.concurrent))).toBeLessThanOrEqual(1);
+    const events = store.listEvents("i1");
+    const firstReport = events.find((e) => e.type === "unit.reported");
+    expect(firstReport).toBeDefined();
+    const started = events.filter((e) => e.type === "task.started");
+    const completed = events.filter((e) => e.type === "task.completed");
+    expect(started).toHaveLength(3);
+    // The first two overlapped; the third waited for a pass to end, which is its report.
+    expect(started[1]?.sequence).toBeLessThan(completed[0]?.sequence ?? -1);
+    expect(started[2]?.sequence).toBeGreaterThan(firstReport?.sequence ?? -1);
+    store.close();
+  }, 20_000);
+
+  it("inside a unit, tasks in sessions of their own start at once, a dependsOn serializes, and the turn after a task says which are still running", async () => {
+    const store = new Store(":memory:");
+    const { incident, task, addUnit } = scriptedIncident(store);
+    addUnit({ id: "u-a", objective: "the first half" });
+    task(investigate("t-1", "u-a", { objective: "slow: run investigate" }));
+    task(investigate("t-2", "u-a", { dependsOn: ["t-1"], status: "pending" }));
+    task(investigate("t-3", "u-a"));
+    const dir = scratch();
+    const dispatched = await dispatch(store, incident, {
+      cwd: tree,
+      env: stubEnv(dir, {
+        NOSCOPE_STUB_SLEEP_MS: "1500",
+        NOSCOPE_STUB_SLEEP_IF: "slow:",
+      }),
+    });
+    expect(dispatched.ran.map((r) => r.taskId)).toEqual(["t-3", "t-1", "t-2"]);
+    expect(dispatched.reports.map((r) => r.unitId)).toEqual(["u-a"]);
+    const events = store.listEvents("i1");
+    // t-1 and t-3 started before either completed; t-2 started only after t-1 completed.
+    expect(sequenceOf(events, "task.started", "t-3")).toBeLessThan(
+      sequenceOf(events, "task.completed", "t-1"),
+    );
+    expect(sequenceOf(events, "task.started", "t-2")).toBeGreaterThan(
+      sequenceOf(events, "task.completed", "t-1"),
+    );
+    const calls = readCalls(join(dir, "calls"));
+    expect(calls.map((c) => c.kind)).toEqual([
+      "task",
+      "task",
+      "leader",
+      "leader",
+      "task",
+      "leader",
+    ]);
+    // After t-3: nothing to start, t-1 still running, so the leader is asked to continue or report, not for its report.
+    expect(calls[2]?.prompt).toContain(
+      "Task t-3 (investigate) completed. Its result:",
+    );
+    expect(calls[2]?.prompt).toContain(
+      "No task of yours is ready to start. Your next move: continue and wait for the running ones, or report now if the picture changed.",
+    );
+    expect(calls[2]?.prompt).toContain(
+      "Still running in sessions of their own: t-1 (investigate); each reaches you on the turn after it ends.",
+    );
+    expect(calls[2]?.prompt).not.toContain("No ready tasks remain");
+    // After t-1: t-2 is runnable and nothing runs.
+    expect(calls[3]?.prompt).toContain("1 ready task(s) remain in your unit.");
+    expect(calls[3]?.prompt).toContain("Next: task t-2 (investigate)");
+    expect(calls[3]?.prompt).not.toContain("Still running");
+    // After t-2: the report.
+    expect(calls[5]?.prompt).toContain("No ready tasks remain in your unit.");
+    expect(events.filter((e) => e.type === "unit.continued")).toHaveLength(2);
+    expect(events.filter((e) => e.type === "unit.reported")).toHaveLength(1);
+    store.close();
+  }, 20_000);
+
+  it("tasks inside the leader's session run one at a time, each followed by the leader's turn", async () => {
+    const store = new Store(":memory:");
+    const { incident, led, task } = scriptedIncident(store);
+    // The led unit holds investigate's equipment and its leader is on the task's model.
+    const unit = led();
+    task(investigate("t-inv1", unit.id));
+    task(investigate("t-inv2", unit.id));
+    const dir = scratch();
+    const dispatched = await dispatch(store, incident, {
+      cwd: tree,
+      env: stubEnv(dir),
+    });
+    expect(dispatched.ran.map((r) => r.taskId)).toEqual(["t-inv1", "t-inv2"]);
+    const calls = readCalls(join(dir, "calls"));
+    expect(calls.map((c) => [c.kind, c.resume, c.concurrent])).toEqual([
+      ["task", null, 0],
+      ["leader", "stub-session", 0],
+      ["task", "stub-session", 0],
+      ["leader", "stub-session", 0],
+    ]);
+    expect(calls[1]?.prompt).toContain(
+      "Task t-inv1 (investigate) completed in this session; its result is recorded.",
+    );
+    expect(calls[1]?.prompt).toContain("1 ready task(s) remain in your unit.");
+    expect(calls[1]?.prompt).toContain("Next: task t-inv2 (investigate)");
+    expect(calls[3]?.prompt).toContain("No ready tasks remain in your unit.");
+    store.close();
+  });
+
+  it("a leader that reports while a task of its own is still running: the task lands without a turn, and the next pass's owed turn carries its ending", async () => {
+    const store = new Store(":memory:");
+    const { incident, task, addUnit } = scriptedIncident(store);
+    addUnit({ id: "u-a", objective: "the first half" });
+    task({
+      id: "t-fast",
+      capability: "grep",
+      unitId: "u-a",
+      inputs: { root: ".", pattern: "delete" },
+      status: "ready",
+    });
+    task(investigate("t-slow", "u-a", { objective: "slow: run investigate" }));
+    const dir = scratch();
+    const env = stubEnv(dir, {
+      NOSCOPE_STUB_SLEEP_MS: "1500",
+      NOSCOPE_STUB_SLEEP_IF: "slow:",
+      NOSCOPE_STUB_TURN: JSON.stringify({
+        kind: "report",
+        report: { outcome: "progress", changed: [], pictureChanged: false },
+      }),
+    });
+    const first = await dispatch(store, incident, { cwd: tree, env });
+    expect(first.ran.map((r) => r.taskId)).toEqual(["t-fast", "t-slow"]);
+    expect(first.reports.map((r) => r.unitId)).toEqual(["u-a"]);
+    const events = store.listEvents("i1");
+    expect(
+      events
+        .map((e) => e.type)
+        .filter((t) => t === "unit.reported" || t === "unit.continued"),
+    ).toEqual(["unit.reported"]);
+    // The report came before t-slow landed; the pass still waited for it.
+    expect(sequenceOf(events, "task.completed", "t-slow")).toBeGreaterThan(
+      events.find((e) => e.type === "unit.reported")?.sequence ?? -1,
+    );
+    expect(store.listTasks("i1").find((t) => t.id === "t-slow")?.status).toBe(
+      "completed",
+    );
+    expect(
+      unitsOwingReport(store.listUnits("i1"), store.listTasks("i1"), events),
+    ).toEqual(new Set(["u-a"]));
+    // Next pass: nothing to run; the owed turn renders the ending the leader never heard.
+    const second = await dispatch(store, incident, { cwd: tree, env });
+    expect(second.ran).toEqual([]);
+    expect(second.reports.map((r) => r.unitId)).toEqual(["u-a"]);
+    // The log is in start order: t-slow's session started before the grep's turn.
+    const calls = readCalls(join(dir, "calls"));
+    expect(calls.map((c) => c.kind)).toEqual(["task", "leader", "leader"]);
+    expect(calls[2]?.prompt).toContain(
+      "Your unit has not reported since its last task ended.\nTask t-slow (investigate) completed. Its result:\n  summary: a.txt",
+    );
+    expect(calls[2]?.prompt).toContain("No ready tasks remain in your unit.");
+    store.close();
+  }, 20_000);
+
+  it("a task in flight is held against the budget: a second unit's task that would not fit is refused before it starts", async () => {
+    const store = new Store(":memory:");
+    const { task, addUnit } = scriptedIncident(store);
+    const incident = store.getIncident("i1");
+    if (incident === undefined) throw new Error("exists");
+    addUnit({ id: "u-a", objective: "the first half" });
+    addUnit({ id: "u-b", objective: "the second half" });
+    task(investigate("t-a", "u-a", { budget: { seconds: 30, tokens: 60 } }));
+    task(investigate("t-b", "u-b", { budget: { seconds: 30, tokens: 60 } }));
+    const dispatched = await dispatch(
+      store,
+      { ...incident, budget: { tokens: 100 } },
+      { cwd: tree, env: stubEnv(scratch(), { NOSCOPE_STUB_SLEEP_MS: "500" }) },
+    );
+    expect(dispatched.stopped).toBe(
+      "tokens: 0 spent and 60 in flight of 100, t-b needs 60",
+    );
+    expect(dispatched.ran.map((r) => [r.taskId, r.status])).toEqual([
+      ["t-a", "completed"],
+    ]);
+    expect(store.listTasks("i1").find((t) => t.id === "t-b")?.status).toBe(
+      "ready",
+    );
+    const types = store.listEvents("i1").map((e) => e.type);
+    expect(types).toContain("budget.exceeded");
+    // The stop came while t-a ran; t-a still landed and its leader still heard it.
+    expect(types.indexOf("budget.exceeded")).toBeLessThan(
+      types.indexOf("task.completed"),
+    );
+    expect(types.at(-1)).toBe("unit.reported");
+    store.close();
+  });
+
+  it("NOSCOPE_PARALLEL must be a positive whole number", async () => {
+    const store = new Store(":memory:");
+    const { incident } = scriptedIncident(store);
+    await expect(
+      dispatch(store, incident, {
+        cwd: tree,
+        env: { NOSCOPE_CLAUDE_BIN: stub, NOSCOPE_PARALLEL: "0" },
+      }),
+    ).rejects.toThrow(
+      'NOSCOPE_PARALLEL must be a positive whole number of unit passes, not "0"',
     );
     store.close();
   });

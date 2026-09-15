@@ -560,6 +560,10 @@ describe("planner", () => {
       expect(sent.args[sent.args.indexOf("--system-prompt") + 1]).toBe(
         PLANNER_SYSTEM_PROMPT,
       );
+      // R4-9: the rule text says what runs at once and what dependsOn does.
+      expect(PLANNER_SYSTEM_PROMPT).toContain(
+        "Independent tasks run at once, across units and within one (only tasks inside a leader's session run one at a time), and dependsOn is what serializes them",
+      );
       expect(sent.args).not.toContain("--allowedTools");
       expect(
         sent.prompt.startsWith("# Incident file\n\n## 1. Command picture"),
