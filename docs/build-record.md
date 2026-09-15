@@ -2443,7 +2443,7 @@ Not exactly to spec, with reasons:
   (session ...)`), changing R3-10a's format, so that a refusal on the fallback reads
   differently from one on the primary model.
 
-## R4-9: Parallel dispatch (#PR, merged 2026-09-15)
+## R4-9: Parallel dispatch (#44, merged 2026-09-15)
 
 R4-9 of the round 4 plan. Built: `dispatch` in `src/dispatcher.ts` runs the passes of
 unrelated units at once and, inside a unit, starts every runnable task that is not inside
@@ -2555,7 +2555,10 @@ Not exactly to spec, with reasons:
 
 - The cap bounds unit passes, as the plan says, and not processes: a unit with several
   independent session tasks starts them all, so the number of Claude Code processes can
-  exceed `NOSCOPE_PARALLEL`. The plan's own task count and budget bound that side.
+  exceed `NOSCOPE_PARALLEL`; a unit with N independent session tasks spawns N+1 processes
+  (its leader's and one per task), and with R4-6 the root's session tasks run in sessions
+  of their own too. The plan's own task count and budget bound that side; a process cap is
+  a follow-up, noted in review.
 - The plan says a picture-changing report ends the pass "and the others finish the task in
   flight"; here the leader of a task that lands after the halt is also asked its turn on
   that ending, because the owed turn is the only other way the result would reach it, and
