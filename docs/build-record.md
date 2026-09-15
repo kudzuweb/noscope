@@ -1991,3 +1991,27 @@ Not exactly to spec, with reasons:
   holds `Bash` and every entry is on the session list, so a unit a plan declared with a
   subset still runs `investigate` inside its leader under the unit's own allowlist; before
   this the leader rule "Capability held" would have refused it.
+
+## R3-10: Third run (no PR; run 2026-09-15, written up in 29d4077)
+
+R3-10 of the round 3 plan. The first incident's objective run live a third time with round 3
+merged, on `~/.noscope/third-run.sqlite`, stepped by hand by the session running the build
+while Mauria slept, and written up under "## Third run" in `docs/first-incident.md` with the
+measures beside runs 001 and 002, the round-3 changes step by step, and what the run found
+in the runtime. The acceptance holds: incident 002 reached `satisfied` in three command turns
+with the same code path named (`PageCard.tsx:1884`); the IC amended the first draft and
+approved the second; the root unit's picture-changing report ended the pass and the IC closed
+the incident on it. $4.86 at list rates against $16.20 for run 002.
+
+Not exactly to spec, with reasons:
+
+- The run is two incidents. Incident 001's IC on Opus 5 was refused by the API on every
+  resumed turn (category `reasoning_extraction`); the runtime looped on the flagged session,
+  which PR 38 fixed, and a fresh Opus 5 session refused too, so incident 002 ran with
+  `--ic-model claude-sonnet-5`, the override recorded on its transfer.
+- The run forced a second fix: the effect policy rejected the first plan's unit for a Bash
+  allowlist of `grep` and the read-only git subcommands, which PR 39 fixed.
+- The size-up's two questions were answered by the operator as out of scope, as run 002's
+  fixture questions were, and each answer says so.
+- Strike teams, lacks at the leader, the handoff and a `not_met` report did not occur; the
+  write-up lists them as not exercised.
