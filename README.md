@@ -43,6 +43,9 @@ subagent transcripts (default `~/.claude`).
 a fresh one (default 120000): the context of the last message of the IC's last call, in
 tokens, not the call's summed input; the IC is never compacted, so this is what keeps it
 below Claude Code's limit.
+`NOSCOPE_REPORT_WORK_CHARS` is the size, in characters, at which each task's block under a
+unit's report in the IC's change report (and in `incident show`) is clipped, the task id
+left as the pointer to the full record (default 1500).
 `NOSCOPE_LIVE=1` also runs the live tests, which call the real binary: a Haiku session, a
 Haiku leader sending a two-member `pinger` strike team, a Haiku initial IC sizing up this
 checkout read-only and one sizing up a diagnostic objective on it, and a

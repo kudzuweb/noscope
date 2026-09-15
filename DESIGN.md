@@ -357,7 +357,22 @@ raised since the IC's last turn, then every `unit.reported` (outcome, whether th
 changed, what changed on which claims, and for `not_met` the why and suggestion), every
 question answered and capability provided, the rules the IC's last turn failed if it was
 rejected, and the spend since then (every usage any seat recorded after the IC's last
-turn, summed). The IC's first briefing on an incident says so. When a transfer of command
+turn, summed). Each report is headed by its unit's id and the report's event id, the id a
+verdict answers it by, and carries the work behind it (R4-1), so the IC judges the
+leader's account against what the unit did: the unit's tasks that ended since its previous
+report (id, capability and model, objective; then the claims the task produced, id,
+subject, predicate, basis and confidence, never the object, which the file's claims
+section carries clipped, a deterministic task's claims past the first three by id only;
+then how it ended and what it came to: a session result's outcome and summary, or its
+conclusion or observation count when the findings carry no summary, cut at 300 characters
+since the file carries the findings, or what an insufficient result needed; a
+deterministic result's size in lines of JSON; a failure's reason), and the unit's tool
+calls in that window by tool name with counts, the tasks' and the leader's own turns'.
+Each task's block is clipped at `NOSCOPE_REPORT_WORK_CHARS` characters (default 1,500)
+with the task id as the pointer to the full record, the claims placed before the ending
+so the cap falls on a summary's tail and never on the claims, so a report adds a bounded
+amount to the IC's context and the handoff threshold stays meaningful. The IC's first
+briefing on an incident says so. When a transfer of command
 is pending, the briefing carries the transfer's document after the change report: for the
 initial transfer (R3-8) every line of the incident briefing, who wrote it on what model,
 and how the IC's own model was chosen; for a handoff (R3-9) the outgoing IC's document
@@ -788,7 +803,7 @@ to verified, and the validator gates `proven` and `satisfied` on basis `observed
 | Command | Does |
 |---|---|
 | `noscope incident create "<objective>" [--constraint ...] [--priority ...] [--budget-tokens N] [--budget-seconds N] [--initial-model <model>] [--ic-model <model>] [--no-size-up]` | Creates the incident and its root unit, `command`, with the read-only built-ins as its equipment, then runs the size-up (R3-8): the initial IC on `--initial-model` (default `claude-haiku-4-5`) reads the objective, the constraints, the priorities and the runtime's own findings with the read-only tool set and writes the incident briefing, recorded as `incident.briefed` with its tool calls; command then transfers to the IC proper on the model the briefing names, `--ic-model` overriding it (and the default, `claude-opus-5`, standing in when the briefing names a model Claude Code does not serve), recorded as `command.transferred` with the briefing as its document. Prints the briefing and the transfer. A question in the briefing blocks the incident before the IC starts, the way a plan's does; `incident answer` reopens it. `--no-size-up` creates the incident on `--ic-model` or the default with no briefing, for tests and for incidents that need none. A size-up that fails is filed as `command.failed`, the incident stands unbriefed on `--ic-model` or the default, and the command exits 1. `--priority`, like `--constraint`, may repeat; the priorities are an input the IC restates or revises each period and the planner's rationale names when one chose between plans. |
-| `noscope incident show <id>` | The incident file: objective, constraints, priorities, the current operational period's objectives and priorities, budget and spend, the IC's provider, model and current session with the number of transfers of command, claims by status, open tasks, decisions with reasons, questions waiting on Mauria and capability requests (each naming the unit that raised it, when a leader did), the units waiting on a resource request with what each waits on, grants, registered capabilities. |
+| `noscope incident show <id>` | The incident file: objective, constraints, priorities, the current operational period's objectives and priorities, budget and spend, the IC's provider, model and current session with the number of transfers of command, claims by status, open tasks, decisions with reasons, the situation from the last plan, each unit's last report with the work behind it as the IC's change report showed it (R4-1; clipped per task at `NOSCOPE_REPORT_WORK_CHARS`), questions waiting on Mauria and capability requests (each naming the unit that raised it, when a leader did), the units waiting on a resource request with what each waits on, grants, registered capabilities. |
 | `noscope incident tree <id>` | The unit tree with each unit's leader model, last report outcome and, for a waiting unit, what it waits on, and task marks: done, running, ready, pending. |
 | `noscope incident step <id>` | One cycle, then stop. Prints a handoff when one runs (the outgoing session, the context that triggered it, the threshold, and the transfer once the successor has answered), the IC's command turn (its verdicts on a briefing it took command with, objectives, priorities, closes, answers, what it raised, status), the planner's draft, the IC's verdict with its corrections or amended plan and the redraft when there is one, the validator's verdict, what ran, each unit's report with any resource request it sent up, the tasks each leader assigned, any discrepancy raised, and whether a report stopped the pass. |
 | `noscope incident run <id> [--max-cycles N]` | Repeats `step` until the incident leaves `open` or the cap is hit. |

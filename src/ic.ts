@@ -3,6 +3,7 @@ import { recordActivity } from "./activity.js";
 import { leaderRequest, openRequests } from "./leader.js";
 import {
   type ActionPlan,
+  Claim,
   CommandTurn,
   type Event,
   FinalReviewTurn,
@@ -13,6 +14,7 @@ import {
   jsonSchemaFor,
   type Leader,
   ReviewTurn,
+  Task,
   type Unit,
   type Usage,
 } from "./models.js";
@@ -46,15 +48,43 @@ const HANDOFF_SCHEMA = jsonSchemaFor(HandoffDocument);
 /** The context size, in tokens of the last message of the IC's last call, at which command is handed off; `NOSCOPE_IC_HANDOFF_TOKENS` overrides it. */
 const DEFAULT_HANDOFF_TOKENS = 120_000;
 
-/** The handoff threshold the environment sets, or the default; refused when it is not a positive whole number. */
-export function handoffThreshold(env: NodeJS.ProcessEnv = {}): number {
-  const raw = env.NOSCOPE_IC_HANDOFF_TOKENS;
-  if (raw === undefined || raw === "") return DEFAULT_HANDOFF_TOKENS;
+/** The size, in characters, at which a task's block under a report in the change report is clipped (R4-1); `NOSCOPE_REPORT_WORK_CHARS` overrides it. */
+const DEFAULT_REPORT_WORK_CHARS = 1500;
+
+/** A setting the environment gives as a positive whole number, or its default; refused when it is anything else. */
+function wholeNumberSetting(
+  env: NodeJS.ProcessEnv,
+  name: string,
+  unit: string,
+  fallback: number,
+): number {
+  const raw = env[name];
+  if (raw === undefined || raw === "") return fallback;
   if (!/^[1-9]\d*$/.test(raw))
     throw new Error(
-      `NOSCOPE_IC_HANDOFF_TOKENS must be a positive whole number of tokens, not ${JSON.stringify(raw)}`,
+      `${name} must be a positive whole number of ${unit}, not ${JSON.stringify(raw)}`,
     );
   return Number(raw);
+}
+
+/** The handoff threshold the environment sets, or the default; refused when it is not a positive whole number. */
+export function handoffThreshold(env: NodeJS.ProcessEnv = {}): number {
+  return wholeNumberSetting(
+    env,
+    "NOSCOPE_IC_HANDOFF_TOKENS",
+    "tokens",
+    DEFAULT_HANDOFF_TOKENS,
+  );
+}
+
+/** The clip cap for a task's block under a report, from the environment or the default; refused when it is not a positive whole number. */
+export function reportWorkChars(env: NodeJS.ProcessEnv = {}): number {
+  return wholeNumberSetting(
+    env,
+    "NOSCOPE_REPORT_WORK_CHARS",
+    "characters",
+    DEFAULT_REPORT_WORK_CHARS,
+  );
 }
 
 /** The root unit, whose leader is the IC. */
@@ -174,6 +204,229 @@ function spendSince(events: readonly Event[], since: number): Usage {
   return costUsd === undefined || priced === 0 ? total : { ...total, costUsd };
 }
 
+/** A task event's recorded mutation, read loosely: the task it created, or the task id and result of its status change. */
+const mutationOf = (e: Event) =>
+  e.payload.mutation as
+    | {
+        kind?: unknown;
+        taskId?: unknown;
+        task?: unknown;
+        claim?: unknown;
+        result?: unknown;
+      }
+    | undefined;
+
+/** Every task the log created, by id, as its `task.create` mutation carried it. */
+function tasksCreated(events: readonly Event[]): Map<string, Task> {
+  const tasks = new Map<string, Task>();
+  for (const e of events) {
+    const m = mutationOf(e);
+    if (m?.kind !== "task.create") continue;
+    const parsed = Task.safeParse(m.task);
+    if (parsed.success) tasks.set(parsed.data.id, parsed.data);
+  }
+  return tasks;
+}
+
+/** A session result's summary is clipped to this many characters under a report: the incident file carries the findings in full, and the block's cap is for the claims. */
+const SUMMARY_CHARS = 300;
+
+/** The text cut at `SUMMARY_CHARS` with an ellipsis, or whole when it fits. */
+const clipSummary = (text: string): string =>
+  text.length <= SUMMARY_CHARS ? text : `${text.slice(0, SUMMARY_CHARS)}…`;
+
+/**
+ * What a task came to, in one line: a session result's outcome and its summary (the
+ * conclusion, or the observation count, when the capability's findings carry no summary),
+ * clipped at `SUMMARY_CHARS`, a deterministic result's size in lines of JSON, or the
+ * failure's reason. The result itself stays in the task record.
+ */
+function describeEnding(task: Task, ended: Event): string {
+  if (ended.type === "task.failed")
+    return `failed: ${str(ended.payload.reason) || "(no reason recorded)"}`;
+  const result = mutationOf(ended)?.result;
+  if (task.model === null) {
+    const lines =
+      result === undefined || result === null
+        ? 0
+        : JSON.stringify(result, null, 2).split("\n").length;
+    return `completed; result: ${lines} line(s) of JSON, in the task record`;
+  }
+  const r = (result ?? {}) as {
+    outcome?: unknown;
+    findings?: unknown;
+    needed?: unknown;
+  };
+  const f = (r.findings ?? {}) as {
+    summary?: unknown;
+    conclusion?: unknown;
+    observations?: unknown;
+  };
+  const summary =
+    typeof f.summary === "string"
+      ? clipSummary(f.summary)
+      : typeof f.conclusion === "string"
+        ? clipSummary(f.conclusion)
+        : Array.isArray(f.observations)
+          ? `${f.observations.length} observation(s), in the task record`
+          : "(no summary)";
+  const needed = Array.isArray(r.needed)
+    ? r.needed
+        .map((n) => {
+          const need = n as { kind?: unknown; what?: unknown };
+          return `${str(need.kind)}: ${str(need.what)}`;
+        })
+        .join("; ")
+    : "";
+  return `completed, ${str(r.outcome) || "(no outcome)"}; ${r.outcome === "insufficient" && needed !== "" ? `needed: ${needed}` : `summary: ${summary}`}`;
+}
+
+/** One claim in one line: id, subject, predicate, basis, confidence. Its object is in the incident file's claims, never here. */
+function describeClaim(c: Claim): string {
+  return `${c.id}: ${c.subject} ${c.predicate} (${c.basis}, confidence ${c.confidence === null ? "none" : c.confidence.toFixed(2)})`;
+}
+
+/** A deterministic task's claims past this many are listed by id only: they are observed at confidence 1 by construction, one per match, and a wide grep would otherwise fill the block. */
+const DETERMINISTIC_CLAIMS_SHOWN = 3;
+
+/**
+ * A task's claims in one line: none, each in full, or for a deterministic task with many
+ * the first few in full and the rest by id, so the block's cap falls on a session's
+ * claims (whose basis and confidence are what the IC judges) and not on a match list.
+ */
+function describeClaims(task: Task, claims: readonly Claim[]): string {
+  if (claims.length === 0) return "none";
+  if (task.model !== null || claims.length <= DETERMINISTIC_CLAIMS_SHOWN)
+    return claims.map(describeClaim).join("; ");
+  const rest = claims.slice(DETERMINISTIC_CLAIMS_SHOWN);
+  return `${claims.slice(0, DETERMINISTIC_CLAIMS_SHOWN).map(describeClaim).join("; ")}; and ${rest.length} more, observed at confidence 1.00: ${rest.map((c) => c.id).join(", ")}`;
+}
+
+/** A task's block clipped at the cap, the pointer naming the task so the IC can find the full record. */
+function clipBlock(lines: readonly string[], taskId: string, cap: number) {
+  const text = lines.join("\n");
+  if (text.length <= cap) return [...lines];
+  return [
+    ...text.slice(0, cap).split("\n"),
+    `      [+${text.length - cap} chars clipped; the full record is task ${taskId}]`,
+  ];
+}
+
+/**
+ * The work behind one report (R4-1), for the IC to judge the leader's account against:
+ * the unit's tasks that ended since its previous report (or since the incident began), in
+ * the order they ended, each with its capability, objective, the claims it produced (id,
+ * subject, predicate, basis, confidence; the claims before the ending, so the block's cap
+ * falls on a summary's tail and never on the claims) and how it ended and what it came
+ * to, the task's block clipped at `cap` characters with the task id as the pointer to the
+ * full record; then the unit's tool calls in that window by tool name with counts, the tasks'
+ * and the leader's own turns' (a task's calls are filed under it, a turn's under the
+ * unit with no task and no cycle; the IC's own calls under the root carry a cycle and
+ * are not the root unit's work as a leader). A bounded amount of text per task, so a
+ * report's work adds a bounded amount to the IC's context and the handoff threshold
+ * stays meaningful.
+ */
+function renderReportWork(
+  events: readonly Event[],
+  report: Event,
+  cap: number,
+): string[] {
+  const unitId = str(report.payload.unitId);
+  let previous = -1;
+  for (const e of events)
+    if (
+      e.type === "unit.reported" &&
+      e.sequence < report.sequence &&
+      str(e.payload.unitId) === unitId
+    )
+      previous = e.sequence;
+  const window = events.filter(
+    (e) => e.sequence > previous && e.sequence <= report.sequence,
+  );
+  const tasks = tasksCreated(events);
+  const ended: { task: Task; event: Event }[] = [];
+  for (const e of window) {
+    if (e.type !== "task.completed" && e.type !== "task.failed") continue;
+    const task = tasks.get(str(mutationOf(e)?.taskId));
+    if (task !== undefined && task.unitId === unitId)
+      ended.push({ task, event: e });
+  }
+  const taskIds = new Set(ended.map((t) => t.task.id));
+  const claimsByTask = new Map<string, Claim[]>();
+  for (const e of events) {
+    const m = mutationOf(e);
+    if (m?.kind !== "claim.create") continue;
+    const parsed = Claim.safeParse(m.claim);
+    if (!parsed.success || !taskIds.has(parsed.data.provenance.taskId))
+      continue;
+    const list = claimsByTask.get(parsed.data.provenance.taskId) ?? [];
+    list.push(parsed.data);
+    claimsByTask.set(parsed.data.provenance.taskId, list);
+  }
+  const byTool = new Map<string, number>();
+  for (const e of window) {
+    if (e.type !== "tool.called" || str(e.payload.unitId) !== unitId) continue;
+    const taskId = e.payload.taskId;
+    const own =
+      typeof taskId === "string"
+        ? taskIds.has(taskId)
+        : taskId === null && e.payload.cycle === null;
+    if (!own) continue;
+    const tool = str(e.payload.tool) || "?";
+    byTool.set(tool, (byTool.get(tool) ?? 0) + 1);
+  }
+  const calls = [...byTool].map(([tool, k]) => `${tool} ${k}`).join(", ");
+  return [
+    "    work since its previous report:",
+    ...(ended.length === 0 ? ["      (no task ended)"] : []),
+    ...ended.flatMap(({ task, event }) => {
+      const claims = claimsByTask.get(task.id) ?? [];
+      return clipBlock(
+        [
+          `      task ${task.id} (${task.capability}${task.model === null ? "" : `, ${task.model}`}): ${task.objective}`,
+          `        claims: ${describeClaims(task, claims)}`,
+          `        ${describeEnding(task, event)}`,
+        ],
+        task.id,
+        cap,
+      );
+    }),
+    `      tool calls: ${calls === "" ? "none" : calls}`,
+  ];
+}
+
+/**
+ * A unit's report as the IC reads it: one line headed by the unit id and the report's
+ * event id (the id a verdict answers it by), with the outcome, whether the picture
+ * changed, what changed on which claims, and for `not_met` the why and suggestion; then
+ * the work behind it (`renderReportWork`).
+ */
+export function renderReport(
+  events: readonly Event[],
+  report: Event,
+  cap: number,
+): string[] {
+  const r = report.payload.report as
+    | {
+        outcome?: unknown;
+        changed?: { what?: unknown; claims?: unknown }[];
+        pictureChanged?: unknown;
+        why?: unknown;
+        suggestion?: unknown;
+      }
+    | undefined;
+  const changed = (r?.changed ?? [])
+    .map(
+      (c) =>
+        `${str(c.what)} (claims ${Array.isArray(c.claims) && c.claims.length > 0 ? c.claims.join(", ") : "none"})`,
+    )
+    .join("; ");
+  return [
+    `  - ${str(report.payload.unitId)}, report ${report.id}: ${str(r?.outcome)}${r?.pictureChanged === true ? ", picture changed" : ""}; changed: ${changed || "nothing"}${typeof r?.why === "string" ? `; why: ${r.why}` : ""}${typeof r?.suggestion === "string" ? `; suggestion: ${r.suggestion}` : ""}`,
+    ...renderReportWork(events, report, cap),
+  ];
+}
+
 /**
  * What changed since the IC last acted, rendered first in its briefing under a heading that
  * names the window: discrepancies raised below the IC (first, so the IC reconciles them or
@@ -181,7 +434,8 @@ function spendSince(events: readonly Event[], since: number): Usage {
  * changed, the resource requests the waiting units still wait on (each with the text an
  * `answers` entry names it by, so the IC can answer what it can; a permission request only
  * a grant answers), every question answered and capability provided, the rules its last
- * turn failed, and the spend since then.
+ * turn failed, and the spend since then. Each report carries the work behind it, each
+ * task's block clipped at `workChars` (R4-1).
  */
 export function renderChangeReport(
   events: readonly Event[],
@@ -190,6 +444,7 @@ export function renderChangeReport(
     capabilityRequests: [],
   },
   units: readonly Unit[] = [],
+  workChars = DEFAULT_REPORT_WORK_CHARS,
 ): string[] {
   const waiting = new Set(
     units.filter((u) => u.status === "waiting").map((u) => u.id),
@@ -211,24 +466,7 @@ export function renderChangeReport(
     );
   const reports = recent
     .filter((e) => e.type === "unit.reported")
-    .map((e) => {
-      const r = e.payload.report as
-        | {
-            outcome?: unknown;
-            changed?: { what?: unknown; claims?: unknown }[];
-            pictureChanged?: unknown;
-            why?: unknown;
-            suggestion?: unknown;
-          }
-        | undefined;
-      const changed = (r?.changed ?? [])
-        .map(
-          (c) =>
-            `${str(c.what)} (claims ${Array.isArray(c.claims) && c.claims.length > 0 ? c.claims.join(", ") : "none"})`,
-        )
-        .join("; ");
-      return `${str(e.payload.unitId)}: ${str(r?.outcome)}${r?.pictureChanged === true ? ", picture changed" : ""}; changed: ${changed || "nothing"}${typeof r?.why === "string" ? `; why: ${r.why}` : ""}${typeof r?.suggestion === "string" ? `; suggestion: ${r.suggestion}` : ""}`;
-    });
+    .flatMap((e) => renderReport(events, e, workChars));
   const answered = recent
     .filter((e) => e.type === "question.answered" && str(e.payload.answer))
     .map((e) => `${str(e.payload.questionId)} → ${str(e.payload.answer)}`);
@@ -255,7 +493,7 @@ export function renderChangeReport(
     "discrepancies raised:",
     ...bullets(discrepancies),
     "unit reports:",
-    ...bullets(reports),
+    ...(reports.length === 0 ? ["  (none)"] : reports),
     "resource requests:",
     ...bullets(requests),
     "questions answered:",
@@ -488,12 +726,14 @@ function renderBriefingBody(
   incident: Incident,
   providers: readonly Provider[],
   transfer: TransferPayload | null = null,
+  env: NodeJS.ProcessEnv = {},
 ): string[] {
   return [
     ...renderChangeReport(
       store.listEvents(incident.id),
       incident,
       store.listUnits(incident.id),
+      reportWorkChars(env),
     ),
     "",
     ...(transfer === null ? [] : [...renderTransfer(transfer), ""]),
@@ -513,11 +753,12 @@ export function renderCommandBriefing(
   incident: Incident,
   providers: readonly Provider[],
   handoff: Handoff | null = null,
+  env: NodeJS.ProcessEnv = {},
 ): string {
   const events = store.listEvents(incident.id);
   const transfer = transferToEvaluate(events, handoff);
   return [
-    ...renderBriefingBody(store, incident, providers, transfer),
+    ...renderBriefingBody(store, incident, providers, transfer, env),
     "",
     `# Your command turn for operational period ${cycleOf(events) + 1}`,
     `${transfer === null ? "S" : `${evaluateAsk(transfer)}s`}et the period's objectives and priorities, close what is done, answer the resource requests you can, raise for Mauria what only she can supply, and say whether the incident continues.`,
@@ -827,6 +1068,7 @@ export function commandTurn(
         incident,
         providers,
         unit.sessionId === null ? handoff : null,
+        options.env,
       ),
     evaluates ? FIRST_COMMAND_TURN_SCHEMA : COMMAND_TURN_SCHEMA,
     (o): CommandTurn =>
@@ -874,7 +1116,13 @@ export async function reviewTurn(
         cycle,
         corrections,
         unit.sessionId === null
-          ? renderBriefingBody(store, incident, providers, transfer)
+          ? renderBriefingBody(
+              store,
+              incident,
+              providers,
+              transfer,
+              options.env,
+            )
           : null,
         transfer,
       );

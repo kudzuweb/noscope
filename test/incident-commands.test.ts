@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { EXIT, run } from "../src/cli.js";
 import type { Context } from "../src/context.js";
 import { Store } from "../src/store.js";
+import { reportedUnit, scriptedIncident } from "./fixtures/models.js";
 
 function ctx(db: string) {
   const out: string[] = [];
@@ -134,6 +135,40 @@ describe("incident commands", () => {
     );
     expect(priced.out.join("\n")).toContain(
       "spent tokens 15, seconds 2.0, task cost $1.23 at list price",
+    );
+  });
+
+  it("show prints each unit's last report with the work behind it, clipped at NOSCOPE_REPORT_WORK_CHARS (R4-1)", async () => {
+    const db = freshDb();
+    const store = new Store(db);
+    const s = scriptedIncident(store, "001");
+    const report = reportedUnit(s, "u-a", "the handler resets the scroll");
+    store.close();
+    const full = ctx(db);
+    expect(await run(["incident", "show", "001"], full.context)).toBe(EXIT.ok);
+    const text = full.out.join("\n");
+    expect(text).toContain(
+      [
+        "unit reports, the last of each unit, with the work behind it:",
+        `  - u-a, report ${report.id}: met; changed: the handler is found (claims u-a-c-grep, u-a-c-inv)`,
+        "    work since its previous report:",
+        "      task u-a-grep (grep): find the delete handler",
+        "        claims: u-a-c-grep: /r/a.ts:2 matches (observed, confidence 1.00)",
+        "        completed; result: 10 line(s) of JSON, in the task record",
+        "      task u-a-investigate (investigate, claude-haiku-4-5): explain the scroll",
+        "        claims: u-a-c-inv: /r/a.ts:2 scrolls_on_delete (inferred, confidence 0.70)",
+        "        completed, answered; summary: the handler resets the scroll",
+        "      tool calls: Read 2, Grep 1",
+        "questions waiting on a human:",
+      ].join("\n"),
+    );
+    const clipped = ctx(db);
+    clipped.context.env.NOSCOPE_REPORT_WORK_CHARS = "60";
+    expect(await run(["incident", "show", "001"], clipped.context)).toBe(
+      EXIT.ok,
+    );
+    expect(clipped.out.join("\n")).toMatch(
+      /\n {6}\[\+\d+ chars clipped; the full record is task u-a-grep\]\n/,
     );
   });
 
