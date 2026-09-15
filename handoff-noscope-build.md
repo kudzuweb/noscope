@@ -87,6 +87,24 @@ Results that arrived at the relay after this refresh (digests; full reports at t
   the refusal early-return must land in the rewritten `pass()`.
 - `build-r4-2` applied PR 45's three fixes (commit 819d1de, pushed); it waits for the word
   to rebase after 42 and 43.
+- PR 43 (R4-7) review, `review43-correctness`, fix required; full report
+  `scratchpad/review43-report.md`. Sound on its base (the snake_case stream claim re-checked
+  against the binary); blocking only on the rebase: GitHub marks it conflicting, and
+  test/refusal.test.ts:766 asserts a change-report line R4-1 changed on main (`- <unit>,
+  report <id>: ...`). Non-blocking: (2) an assistant frame with stop_reason refusal alone
+  should not mark a successful call refused; use stop_details for the category only and set
+  the refusal from the system line or the envelope. (3) `incident answer` while the IC is
+  held must target the refusal question (the last `question.asked` with `icRefusals`), not
+  the oldest open one. (4) A task refused inside its leader's session should release that
+  session with `refused: <category>` in `runTask`. (5) `spent.set` keeps only the last
+  `task.usage` per task; accumulate so a retried task's refused call counts in the unit's
+  share. (6) Name `task.failed`'s field `refusals` like the other events. (7) Docs: #43 in
+  the header; the blocking step exits 0 (5 is the next step); DESIGN.md:665 should say a seat
+  already on the fallback model blocks on its first refusal. (8) Hazards: PR 42 makes the
+  `isRoot` branches in `fileRefusal`/`refusedTwice` dead; PR 44 rewrites the dispatcher, so
+  whichever lands second ports the task-refusal return and the `runTask`/`runOne` changes.
+
+All four pending results have now reached the relay; nothing is outstanding from agents.
 - PR 45 (R4-2) review: approved, seven non-blocking; the fix list already went to
   `build-r4-2` (see the table above).
 
