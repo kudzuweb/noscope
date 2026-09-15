@@ -272,11 +272,23 @@ process running from source, or from a `dist/` without the file, stamps `unknown
 `incident events` prints the tag where it changes between events and `incident review`
 names the runtimes an incident ran under with the event range of each. Reproduction is
 by hand, with no command: check out the tagged commit, `pnpm build`, replay the events
-with `sequence` below the call's answer event (`command.turned`, `plan.proposed`,
-`unit.reported`, `unit.continued`) into a fresh store (`Store.replay`, with the system
-events), and call that build's renderer (`renderChangeReport`, `renderPlannerInput`, the
-base protocol's orientation or turn prompt) on the rebuilt store; the transcript is the
-check that it rendered the same.
+with `sequence` below the first event the call wrote into a fresh store (`Store.replay`,
+with the system events), and call that build's renderer on the rebuilt store; the
+transcript is the check that it rendered the same. The cut is the call's first event,
+not its answer (`command.turned`, `plan.proposed`, `unit.reported`, `unit.continued`),
+because a call writes events before it answers: an IC call records the session on the
+unit as soon as its id is known (`leader.started`, the `unit.session` mutation) and,
+after a handoff, the transfer with it, and a refused-then-retried turn writes
+`command.failed` and the release first; a planner call writes nothing before
+`plan.proposed`. The recipe feeds the renderers the store alone feeds: the change
+report (`renderChangeReport` over the rebuilt store's events, incident and units) and a
+leader's orientation (`renderLeaderOrientation` with the incident, the IC's situation
+from the events, the unit and the units), and the planner's input
+(`renderPlannerInput`, which also takes the providers, from `getProvider` for the
+unit's provider name under the same environment). A leader's turn prompt
+(`renderTurnPrompt`) is not in the recipe: it takes the leader loop's in-memory state
+(the cause, the endings not yet heard, the tasks running and landed), which the log
+records only as the task events it was built from.
 
 Capabilities are not a table. The registry is code, and `incident show` prints what is
 registered.

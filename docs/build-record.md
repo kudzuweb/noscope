@@ -3306,7 +3306,7 @@ Not exactly to spec, with reasons:
   concurrent stubs both took ordinal 1, so `NOSCOPE_STUB_REFUSE=3,4` missed t-dep). It
   passes alone and passed on the next full run; the stub is unchanged here.
 
-## R4-12: The runtime tag on events (#PR, merged 2026-09-15)
+## R4-12: The runtime tag on events (#50, merged 2026-09-15)
 
 R4-12 of the round 4 plan, ruled by Mauria on 2026-09-15 (13:34 to 13:39): what a seat
 received is preserved in the Claude Code transcript (every call writes a `prompt_snapshot`
@@ -3318,7 +3318,9 @@ the two commands.
 
 The tag (`src/runtime-version.ts`): `describeRuntime(cwd)` is `git rev-parse HEAD` in the
 checkout, `-dirty` when `git status --porcelain --untracked-files=no` lists anything, and
-`unknown` when git fails or there is no checkout; `writeRuntimeVersion(dir, checkout)`
+`unknown` when git fails, there is no checkout, or `git rev-parse --show-toplevel` is not
+`cwd` itself (compared by real path), so a noscope directory that only sits inside another
+repository is not tagged with that repository's HEAD (PR 50's review); `writeRuntimeVersion(dir, checkout)`
 writes `{ "runtime": <tag> }` to `dir/runtime-version.json`; `readRuntime(dir)` reads it
 back, `unknown` when the file is missing, empty or malformed; `RUNTIME` is the read of
 the file beside the module. Run as a script, the module writes the file beside itself
@@ -3344,17 +3346,21 @@ named `none recorded (written before the tag)`, or `runtimes: none` on an empty 
 (`describeRuntimeTag` and `runtimesLine` in `src/review.ts`).
 
 Reproduction is documented in DESIGN.md Step 2, with no command: check out the tagged
-commit, `pnpm build`, replay the events with `sequence` below the call's answer event
-(`command.turned`, `plan.proposed`, `unit.reported`, `unit.continued`) into a fresh store
-with `Store.replay` (the system events with them), and call that build's renderer
-(`renderChangeReport`, `renderPlannerInput`, `renderLeaderOrientation` or
-`renderTurnPrompt`) on it; the transcript is the check. DESIGN.md Step 2 (the `events`
+commit, `pnpm build`, replay the events with `sequence` below the first event the call
+wrote (not its answer: an IC call writes `leader.started`, after a handoff the transfer,
+and on a refused-then-retried turn `command.failed` and the release, before it answers;
+PR 50's review) into a fresh store with `Store.replay` (the system events with them), and
+call that build's renderer on it: `renderChangeReport` and `renderLeaderOrientation`,
+which the store feeds, and `renderPlannerInput` with the providers from `getProvider`;
+`renderTurnPrompt` is left out, since it takes the leader loop's in-memory state. The
+transcript is the check. DESIGN.md Step 2 (the `events`
 row, version 7, the reproduction paragraph) and Step 7 (`events`, `review`), README's
 build paragraph and `docs/architecture.html`'s incident-file node follow.
 
 Tests: `test/runtime-version.test.ts` (new) pins `describeRuntime` on this checkout
 against `git rev-parse HEAD` and the tree's dirtiness, `unknown` on a directory that
-does not exist, `writeRuntimeVersion` into a temp directory read back by `readRuntime`
+does not exist and on a directory nested inside this checkout (verified by dropping the
+root check, which fails it), `writeRuntimeVersion` into a temp directory read back by `readRuntime`
 with the same tag, `unknown` from a missing, empty or malformed file, and `RUNTIME`
 non-empty. `test/store.test.ts` pins that every event a store writes, incident and
 system, carries `RUNTIME`; that a replay keeps each event's own tag; and the version 7
