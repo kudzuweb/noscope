@@ -8,9 +8,9 @@ export const BUILTIN_TOOLS = ["Read", "Grep", "Glob", "Bash"] as const;
 export type BuiltinTool = (typeof BUILTIN_TOOLS)[number];
 
 /**
- * The commands a read-only Bash may run, shared by `run_readonly` in-process and by the
- * session allowlist. Name-level only: `run_readonly` also refuses the arguments that make
- * one of these write, which the provider's `Bash(cmd *)` shape cannot express.
+ * The commands `run_readonly` executes in process; the session list below extends it.
+ * Name-level only: `run_readonly` also refuses the arguments that make one of these write,
+ * which the provider's `Bash(cmd *)` shape cannot express.
  */
 export const READ_ONLY_COMMANDS = [
   "ls",
@@ -35,11 +35,7 @@ export const READ_ONLY_SESSION_COMMANDS = [
   "grep",
   "rg",
   "diff",
-  "sort",
-  "uniq",
-  "tree",
   "pwd",
-  "echo",
   "which",
   "basename",
   "dirname",

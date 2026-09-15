@@ -1169,6 +1169,8 @@ describe("validator, a leader's assignments", () => {
         'task "read the scroll handler" needs investigate, whose equipment or Bash allowlist unit u-scroll does not hold',
       ],
     ]);
+    // A unit declared with a subset of the read-only list still holds investigate: the list
+    // bounds what a plan declares, and the capability runs under the unit's own allowlist.
     expect(
       hit(
         leaderVerdict(
@@ -1177,6 +1179,16 @@ describe("validator, a leader's assignments", () => {
             equipment: ["Read", "Grep", "Glob", "Bash"],
             bashAllowlist: ["ls"],
           },
+          undefined,
+          { settled: true },
+        ),
+      ),
+    ).toHaveLength(0);
+    expect(
+      hit(
+        leaderVerdict(
+          [investigate],
+          { equipment: ["Read", "Grep", "Glob"], bashAllowlist: [] },
           undefined,
           { settled: true },
         ),

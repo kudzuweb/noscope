@@ -3,6 +3,8 @@ import {
   renderTaskResult,
   resolveEquipment,
 } from "./capabilities/index.js";
+import { READ_ONLY_SESSION_COMMANDS } from "./equipment/index.js";
+
 import {
   type Budget,
   type CapabilityRequest,
@@ -143,8 +145,17 @@ export function holdsCapability(
       ? capability.equipment
       : [String(inputs[select] ?? "")];
   if (!needed.every(covered)) return false;
-  const allowed = new Set(unit.bashAllowlist);
-  return (capability.session.bashAllowlist ?? []).every((c) => allowed.has(c));
+  // A read-only allowlist is held whenever the unit holds Bash and every entry the capability
+  // asks for is on the session list: the list bounds what a plan may declare, and in print
+  // mode Claude Code permits read-only commands beyond the allowlist anyway (DESIGN.md
+  // Reference, 2026-09-15), so a unit declared with a subset still runs the capability inside
+  // its leader, under the unit's own allowlist.
+  const wanted = capability.session.bashAllowlist ?? [];
+  if (wanted.length === 0) return true;
+  if (!unit.equipment.includes("Bash") && !unit.equipment.includes("default"))
+    return false;
+  const readOnly = new Set<string>(READ_ONLY_SESSION_COMMANDS);
+  return wanted.every((c) => readOnly.has(c));
 }
 
 /** The tasks a leader assigned, from `plan.applied` events with the leader as actor. */
