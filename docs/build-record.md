@@ -2452,8 +2452,9 @@ names, in `dependsOn`, a task of the other that has not ended, either way round
 (`relatedUnits`, read from the store's tasks before each scheduling round, so a task a
 leader assigns mid-pass with a cross-unit dependency relates its units from the next
 round on; a dependency already completed, failed or cancelled orders nothing, and a
-parent and a child are related only through their tasks). A unit's pass starts when the unit has something to do (a resumed leader to
-brief, a runnable task, a report owed), no unit related to it is mid-pass, and fewer than
+parent and a child are related only through their tasks). A unit's pass starts when the
+unit has something to do (a resumed leader to brief, a runnable task, a report owed), no
+unit related to it is mid-pass, and fewer than
 `NOSCOPE_PARALLEL` passes are running: a positive whole number read from the command's
 environment (`options.env`, `process.env` when absent), 3 when unset, refused otherwise
 with the same shape of error as `NOSCOPE_IC_HANDOFF_TOKENS`; related units keep tree
@@ -2518,6 +2519,25 @@ task's objective, in the tests), so one task of a pass is slow and the rest are 
 check, the strike-team request's target), Step 7 (the review row) and the Speed section
 follow; `docs/architecture.html` follows on the dispatcher node, cycle step 7 and the
 speed line; README and CLAUDE.md list `NOSCOPE_PARALLEL`.
+
+Merged after R4-6 and R4-7, which land in the pass as follows. The root (R4-6): its
+resumed branch is skipped, an ending of its gets no turn (`continue` before `settle`), and
+its pass ends with `done.add` once its runs have landed, so with `runsInsideLeader` false
+for the root every root session task starts at once in a process of its own and the IC
+reads the results in its change report. Refusals (R4-7): `runIt` carries `runOne`'s
+`refusals` on the landed ending (`Landed`, a `TaskEnding` with optional `refusals`), and
+the loop, before `settle`, files the runtime's `not_met` report on the unit
+(`reportRefusals`, pushed with `sessionId: null`), marks the unit done and halts with
+`pictureChanged` naming it; a root task refused twice ends as its `task.failed` under the
+tasks under command, as R4-7 built it. That refusal report is filed even when the leader
+reported earlier in the pass (the ending landed after the report), since the IC decides
+on refusals with its verdicts; the unit then has two reports in one pass. A leader's own
+fallback (R4-7, `setUnitLeader` inside `leaderTurn`) changes `unit.leader.model` mid-pass
+through `settle`'s returned unit, so `runsInsideLeader` flips for the unit's tasks not yet
+started (planned-inside tasks run in sessions of their own, at once), the one-inside-task
+gate evaluates against the new leader, and `endedSinceLastTurn` renders an ending that ran
+inside the old session as an outside one; accepted as is. Two tests that ran inside tasks
+under the root moved onto the `led()` unit, since the root takes no turn.
 
 Tests: two independent units on the stub with sleeping sessions run at once (the second's
 `task.started` precedes both `task.completed` by sequence and by timestamp, and the same
