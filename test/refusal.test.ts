@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -148,12 +148,108 @@ describe("a refusal replaces the session", () => {
     });
   });
 
+  it("the category is read from the stream's system line under the stream's key spelling or the transcript's", () => {
+    const init = { type: "system", subtype: "init", session_id: "s-refused" };
+    const result = {
+      duration_api_ms: 965,
+      stop_reason: "refusal",
+      session_id: "s-refused",
+      usage: { input_tokens: 2, cache_creation_input_tokens: 10 },
+    };
+    for (const system of [
+      {
+        type: "system",
+        subtype: "model_refusal_no_fallback",
+        api_refusal_category: "reasoning_extraction",
+        api_refusal_explanation: refusal.explanation,
+      },
+      {
+        type: "system",
+        subtype: "model_refusal_no_fallback",
+        apiRefusalCategory: "reasoning_extraction",
+        apiRefusalExplanation: refusal.explanation,
+      },
+    ]) {
+      const stdout = [init, system, result]
+        .map((l) => JSON.stringify(l))
+        .join("\n");
+      let caught: unknown;
+      try {
+        parseClaudeCodeResult(stdout);
+      } catch (error) {
+        caught = error;
+      }
+      if (!(caught instanceof SessionError))
+        throw new Error(`a SessionError, not ${String(caught)}`);
+      expect(caught.refused).toEqual(refusal);
+    }
+  });
+
+  it("a stream carrying the refusal only as a stop reason takes the category from the session's transcript", () => {
+    const projectsDir = mkdtempSync(join(tmpdir(), "noscope-projects-"));
+    const cwd = "/work/dir";
+    const dir = join(projectsDir, "-work-dir");
+    mkdirSync(dir, { recursive: true });
+    // The transcript's record of the refusal, as Claude Code 2.1.272 wrote it on 2026-09-15.
+    writeFileSync(
+      join(dir, "s-refused.jsonl"),
+      [
+        { type: "user", message: { role: "user", content: "the ask" } },
+        {
+          type: "system",
+          subtype: "model_refusal_no_fallback",
+          content: "",
+          level: "warning",
+          originalModel: "claude-opus-5",
+          apiRefusalCategory: "reasoning_extraction",
+          apiRefusalExplanation: refusal.explanation,
+          sessionId: "s-refused",
+        },
+      ]
+        .map((l) => JSON.stringify(l))
+        .join("\n"),
+    );
+    const stdout = [
+      { type: "system", subtype: "init", session_id: "s-refused" },
+      {
+        duration_api_ms: 965,
+        stop_reason: "refusal",
+        session_id: "s-refused",
+        usage: { input_tokens: 2, cache_creation_input_tokens: 10 },
+      },
+    ]
+      .map((l) => JSON.stringify(l))
+      .join("\n");
+    const where = { projectsDir, cwd };
+    let caught: unknown;
+    try {
+      parseClaudeCodeResult(stdout, where);
+    } catch (error) {
+      caught = error;
+    }
+    if (!(caught instanceof SessionError))
+      throw new Error(`a SessionError, not ${String(caught)}`);
+    expect(caught.refused).toEqual(refusal);
+    expect(caught.sessionId).toBe("s-refused");
+    // Without the transcript the category stays unstated.
+    let bare: unknown;
+    try {
+      parseClaudeCodeResult(stdout);
+    } catch (error) {
+      bare = error;
+    }
+    expect((bare as SessionError).refused).toEqual({
+      category: "unstated",
+      explanation: "the result's stop reason is refusal",
+    });
+  });
+
   it("a refusal that exits 0, with or without a typed result, is a SessionError from the stream alone", () => {
     const system = JSON.stringify({
       type: "system",
       subtype: "model_refusal_no_fallback",
-      apiRefusalCategory: "reasoning_extraction",
-      apiRefusalExplanation: refusal.explanation,
+      api_refusal_category: "reasoning_extraction",
+      api_refusal_explanation: refusal.explanation,
     });
     const init = JSON.stringify({
       type: "system",

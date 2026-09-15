@@ -434,40 +434,92 @@ export function failedSessionActivity(
 }
 
 /**
- * The session's outcome from its `--output-format stream-json` output: the tool calls read
- * off the stream, the final `result` envelope parsed as before, and, when the envelope
- * counts spawned subagents and `where` says where transcripts live, each subagent's run
- * read from its transcript. Throws, naming why, when there is no usable outcome.
+ * The API's refusal of the call, when the stream carries one. Claude Code writes a `system`
+ * line with `subtype: "model_refusal_no_fallback"`, then a synthetic assistant message
+ * whose `stop_reason` is `refusal` and whose `stop_details` repeat the category, then
+ * exits 1 with a result whose `stop_reason` is `refusal` (seen 2026-09-15 on 2.1.272, Opus
+ * 5, category `reasoning_extraction`). The category's key differs by record: the stream's
+ * system line carries `api_refusal_category` and `api_refusal_explanation` (the SDK
+ * serializer in 2.1.272), while the session's transcript carries `apiRefusalCategory` and
+ * `apiRefusalExplanation`; R3-10a read the transcript's spelling off the stream and the
+ * third run recorded `unstated`. Both spellings are read here, then the assistant line's
+ * `stop_details`, and, when the stream still names no category, the transcript under the
+ * project directory (`readTranscriptRefusal`). A result with the stop reason and no
+ * category anywhere is a refusal of an unstated category.
  */
-/**
- * The API's refusal of the call, when the stream carries one: Claude Code writes a `system`
- * line with `subtype: "model_refusal_no_fallback"`, the category and the explanation, then
- * exits 1 with a result whose `stop_reason` is `refusal` (seen 2026-09-15 on 2.1.272, Opus 5,
- * category `reasoning_extraction`). A result with that `stop_reason` and no system line is
- * a refusal of an unstated category.
- */
-function refusalOf(lines: readonly StreamLine[]): Refusal | null {
-  const line = lines.find(
+function refusalOf(
+  lines: readonly StreamLine[],
+  where?: TranscriptLocation,
+  sessionId?: string | null,
+): Refusal | null {
+  const refused = streamRefusal(lines);
+  if (refused === null) return null;
+  if (refused.category !== UNSTATED) return refused;
+  const transcript =
+    where === undefined || sessionId == null
+      ? null
+      : readTranscriptRefusal(`${sessionDir(where, sessionId)}.jsonl`);
+  return transcript ?? refused;
+}
+
+const UNSTATED = "unstated";
+
+/** The refusal in a sequence of stream or transcript lines: the system line under either key spelling, else the assistant's `stop_details`, else the stop reason alone. */
+function streamRefusal(lines: readonly StreamLine[]): Refusal | null {
+  const system = lines.find(
     (l) =>
       l.type === "system" &&
       (l as { subtype?: unknown }).subtype === "model_refusal_no_fallback",
   ) as
-    | { apiRefusalCategory?: unknown; apiRefusalExplanation?: unknown }
+    | {
+        api_refusal_category?: unknown;
+        api_refusal_explanation?: unknown;
+        apiRefusalCategory?: unknown;
+        apiRefusalExplanation?: unknown;
+      }
     | undefined;
-  if (line !== undefined)
-    return {
-      category: text(line.apiRefusalCategory) ?? "unstated",
-      explanation: text(line.apiRefusalExplanation) ?? "",
-    };
-  const refusedResult = lines.some(
-    (l) => (l as ResultEnvelope).stop_reason === "refusal",
-  );
+  const stopDetails = lines
+    .map(
+      (l) =>
+        (l.type === "assistant" ? l.message : undefined) as
+          | { stop_reason?: unknown; stop_details?: unknown }
+          | undefined,
+    )
+    .find((m) => m?.stop_reason === "refusal")?.stop_details as
+    | { category?: unknown; explanation?: unknown }
+    | undefined;
+  const category =
+    text(system?.api_refusal_category) ??
+    text(system?.apiRefusalCategory) ??
+    text(stopDetails?.category);
+  const explanation =
+    text(system?.api_refusal_explanation) ??
+    text(system?.apiRefusalExplanation) ??
+    text(stopDetails?.explanation);
+  if (category !== null)
+    return { category, explanation: explanation ?? "" };
+  const refusedResult =
+    system !== undefined ||
+    stopDetails !== undefined ||
+    lines.some((l) => (l as ResultEnvelope).stop_reason === "refusal");
   return refusedResult
     ? {
-        category: "unstated",
-        explanation: "the result's stop reason is refusal",
+        category: UNSTATED,
+        explanation: explanation ?? "the result's stop reason is refusal",
       }
     : null;
+}
+
+/** The refusal the session's transcript records, when the file exists and names a category; the transcript is written as the session runs, so it is there once the process has exited. */
+function readTranscriptRefusal(path: string): Refusal | null {
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
+  const refused = streamRefusal(jsonLines(raw) as StreamLine[]);
+  return refused === null || refused.category === UNSTATED ? null : refused;
 }
 
 /** The usage a result envelope reports, with the context of the session's last message from the stream. */
@@ -530,20 +582,34 @@ function refusedError(
   );
 }
 
-export function parseClaudeCodeResult(
-  stdout: string,
-  where?: TranscriptLocation,
-): SessionOutcome {
-  const lines = jsonLines(stdout) as StreamLine[];
-  // A refusal's result may carry no `type`; it is found by its stop reason, and a refusal
-  // that exits 0 is a refusal all the same.
-  const envelope = [...lines]
+/** The stream's result envelope: the last `result` line, or, since a refusal's result may carry no `type`, the last line whose stop reason is `refusal`. */
+function envelopeOf(lines: readonly StreamLine[]): ResultEnvelope | undefined {
+  return [...lines]
     .reverse()
     .find(
       (l) =>
         l.type === "result" || (l as ResultEnvelope).stop_reason === "refusal",
     ) as ResultEnvelope | undefined;
-  const refused = refusalOf(lines);
+}
+
+/**
+ * The session's outcome from its `--output-format stream-json` output: the tool calls read
+ * off the stream, the final `result` envelope parsed as before, and, when the envelope
+ * counts spawned subagents and `where` says where transcripts live, each subagent's run
+ * read from its transcript. A refusal that exits 0 is a refusal all the same. Throws,
+ * naming why, when there is no usable outcome.
+ */
+export function parseClaudeCodeResult(
+  stdout: string,
+  where?: TranscriptLocation,
+): SessionOutcome {
+  const lines = jsonLines(stdout) as StreamLine[];
+  const envelope = envelopeOf(lines);
+  const refused = refusalOf(
+    lines,
+    where,
+    text(envelope?.session_id) ?? initSessionId(lines),
+  );
   if (envelope === undefined) {
     if (refused !== null)
       throw refusedError(refused, initSessionId(lines), null, {
@@ -690,23 +756,18 @@ export function claudeCodeProvider(
         // A refusal exits 1 with its result still written: the session id, the usage of
         // the refused call and the refusal are all on the stream.
         const lines = jsonLines(stdout) as StreamLine[];
-        const refused = refusalOf(lines);
-        if (refused !== null) {
-          const result = [...lines]
-            .reverse()
-            .find(
-              (l) =>
-                l.type === "result" ||
-                (l as ResultEnvelope).stop_reason === "refusal",
-            ) as ResultEnvelope | undefined;
+        const result = envelopeOf(lines);
+        const sessionId =
+          (result === undefined ? null : text(result.session_id)) ??
+          failed.sessionId;
+        const refused = refusalOf(lines, where, sessionId);
+        if (refused !== null)
           throw refusedError(
             refused,
-            (result === undefined ? null : text(result.session_id)) ??
-              failed.sessionId,
+            sessionId,
             result === undefined ? null : usageOf(result, lines),
             failed.activity,
           );
-        }
         throw new SessionError(
           `claude exited ${code === null ? "on a signal" : code}: ${stderr.trim() || lastLine.slice(0, 200)}`,
           failed.sessionId,
