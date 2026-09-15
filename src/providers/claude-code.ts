@@ -22,15 +22,16 @@ const CLAUDE_CODE_MODELS = [
   "claude-sonnet-4-6",
 ] as const;
 
+/** After a timeout's SIGTERM, how long the child has to exit before SIGKILL. */
+const KILL_GRACE_MS = 5_000;
+
 /**
  * The fixed isolation flags: together they drop a session's context from about 40k tokens to
  * about 3k and keep Mauria's settings, skills and hooks out (DESIGN.md Step 3, verified
  * 2026-09-12 on Claude Code 2.1.270). Transcripts are kept on purpose: every session's
- * record under Claude Code's project directory is the material for refining the runtime.
+ * record under Claude Code's project directory is the material for refining the runtime,
+ * and `--no-session-persistence` is never set, so a session stays resumable.
  */
-/** After a timeout's SIGTERM, how long the child has to exit before SIGKILL. */
-const KILL_GRACE_MS = 5_000;
-
 export const CLAUDE_CODE_ISOLATION_FLAGS = [
   "--output-format",
   "json",
@@ -62,6 +63,8 @@ export function renderClaudeCodeArgs(request: SessionRequest): string[] {
     JSON.stringify(request.outputSchema),
     ...CLAUDE_CODE_ISOLATION_FLAGS,
   ];
+  if (request.resume === "") throw new Error("resume needs a session id");
+  if (request.resume !== undefined) args.push("--resume", request.resume);
   // A headless session may use only allowlisted tools: the read-only Bash commands, every
   // tool of each attached MCP server (`mcp__<server>`), and Claude in Chrome's own server.
   const allowed = [
@@ -165,9 +168,11 @@ function runProcess(
 ): Promise<{ stdout: string; stderr: string; code: number | null }> {
   return new Promise((resolve, reject) => {
     // Its own process group, so a timeout kills the session and everything it spawned.
+    // Compaction is off in every session: a resumed session must never have been rewritten
+    // between calls, and the runtime hands off before the context limit instead.
     const child = spawn(binary, args, {
       cwd,
-      env,
+      env: { ...env, DISABLE_COMPACT: "1" },
       stdio: ["pipe", "pipe", "pipe"],
       detached: true,
     });
