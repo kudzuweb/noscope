@@ -17,7 +17,7 @@ import {
 } from "./models.js";
 import type { Provider } from "./providers/index.js";
 import { cycleOf, type Store, sumUsage } from "./store.js";
-import { describeLeader, lastReports } from "./tree.js";
+import { describeLeader, lastReports, lastVerdicts } from "./tree.js";
 
 // The planner is ICS's Planning Section: a stateless provider call each cycle that drafts an
 // action plan from the incident file and the period objectives the IC set, and redrafts
@@ -123,6 +123,7 @@ function unitTree(
   waitingOn: ReadonlyMap<string, readonly string[]>,
 ): string[] {
   const reports = lastReports(events);
+  const verdicts = lastVerdicts(events);
   const byParent = new Map<string | null, Unit[]>();
   for (const u of units) {
     const list = byParent.get(u.parentId) ?? [];
@@ -133,7 +134,7 @@ function unitTree(
   const walk = (parent: string | null, depth: number) => {
     for (const u of byParent.get(parent) ?? []) {
       lines.push(
-        `${"  ".repeat(depth + 1)}${u.id} [${u.status}] ${u.objective} ${describeLeader(u, reports, waitingOn)}`,
+        `${"  ".repeat(depth + 1)}${u.id} [${u.status}] ${u.objective} ${describeLeader(u, reports, waitingOn, verdicts)}`,
       );
       walk(u.id, depth + 1);
     }

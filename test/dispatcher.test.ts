@@ -2921,8 +2921,12 @@ describe("incident step", () => {
     expect(
       await withStubOutput(bad, () => run(["incident", "step", "001"], ctx)),
     ).toBe(EXIT.ok);
-    expect(out[7]).toBe("plan rejected:");
-    expect(out[8]).toMatch(/^ {2}- Units exist: /);
+    // The IC's default verdict on the report the last step filed (R4-2): the stub revises a progress report.
+    expect(out[2]).toMatch(
+      /^ {2}verdict on 001-u02's report [0-9a-f-]{36}: revise: stub: progress; instructions: stub: carry on$/,
+    );
+    expect(out[8]).toBe("plan rejected:");
+    expect(out[9]).toMatch(/^ {2}- Units exist: /);
     out.length = 0;
     const done: ActionPlan = {
       ...plan,

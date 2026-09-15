@@ -13,6 +13,7 @@ import {
   CommandTurn,
   FinalReviewTurn,
   jsonSchemaFor,
+  type ReportVerdict,
   type ReviewTurn as Review,
   ReviewTurn,
 } from "../src/models.js";
@@ -87,6 +88,7 @@ const findIt: ActionPlan = {
 
 const command = (over: Partial<CommandTurn> = {}): CommandTurn => ({
   periodObjectives: ["find the handler"],
+  reportVerdicts: [],
   priorities: ["observation over reading"],
   closeUnits: [],
   answers: [],
@@ -1184,6 +1186,54 @@ describe("the IC above the planner", () => {
     store.close();
   });
 
+  it("a rejected command turn keeps the root's ended tasks listed on the retry, the same window as the reports; an accepted turn clears them (R4-2)", () => {
+    const store = new Store(":memory:");
+    const s = scriptedIncident(store);
+    const grep = s.task({
+      id: "c-grep",
+      capability: "grep",
+      objective: "find the handler",
+    });
+    store.setTaskStatus(
+      "i1",
+      grep.id,
+      "completed",
+      "dispatcher",
+      "task.completed",
+      { result: { root: "/r", matches: [], truncated: false } },
+    );
+    const under = () => {
+      const lines = renderChangeReport(
+        store.listEvents("i1"),
+        s.incident,
+        store.listUnits("i1"),
+      );
+      const start = lines.indexOf(
+        "tasks under command, ended with no leader to report them:",
+      );
+      return start === -1
+        ? []
+        : lines.slice(start, lines.indexOf("resource requests:"));
+    };
+    expect(under()[1]).toBe("  - task c-grep (grep): find the handler");
+    store.record("i1", "command.turned", "runtime", {
+      turn: command(),
+      cycle: 1,
+      rejected: true,
+    });
+    store.record("i1", "command.rejected", "validator", {
+      rule: "Status is earned",
+      reason: "task c-grep is still open",
+    });
+    expect(under()[1]).toBe("  - task c-grep (grep): find the handler");
+    store.record("i1", "command.turned", "runtime", {
+      turn: command(),
+      cycle: 1,
+    });
+    expect(under()).toEqual([]);
+    store.close();
+  });
+
   it("a long summary never clips the claims: they come first and the summary is cut, and a wide grep lists its claims past the first three by id (R4-1)", () => {
     const store = new Store(":memory:");
     const s = scriptedIncident(store);
@@ -1532,6 +1582,387 @@ describe("the IC above the planner", () => {
     const types = store.listEvents("i1").map((e) => e.type);
     expect(types.slice(-2)).toEqual(["command.turned", "capability.answered"]);
     expect(incident().status).toBe("open");
+    store.close();
+  });
+
+  it("a run on the stub: an accepted verdict closes the unit through the close path, a verdict naming no listed report is rejected and the report is listed again, and review and tree carry the verdict (R4-2)", {
+    timeout: 60_000,
+  }, async () => {
+    const h = harness(
+      [
+        findIt,
+        {
+          ...empty,
+          incidentStatus: "satisfied",
+          rationale: "the handler is at a.txt:2",
+        },
+      ],
+      [
+        command(),
+        command({
+          reportVerdicts: [
+            {
+              reportId: "",
+              unitId: "001-nope",
+              verdict: "accepted",
+              instructions: "",
+              why: "the wrong unit",
+            },
+          ],
+          rationale: "misfiled",
+        }),
+        command({
+          reportVerdicts: [
+            {
+              reportId: "",
+              unitId: "001-u02",
+              verdict: "accepted",
+              instructions: "",
+              why: "the handler is at a.txt:2 on an observed claim",
+            },
+          ],
+          rationale: "accepted",
+        }),
+      ],
+      [],
+    );
+    // The leader reports met after its one task; the stub fills each verdict's empty
+    // reportId with the id the briefing lists for that unit.
+    h.ctx.env.NOSCOPE_STUB_TURN = JSON.stringify({
+      kind: "report",
+      report: { outcome: "met", changed: [], pictureChanged: false },
+    });
+    await run(
+      ["incident", "create", "--no-size-up", "where is the delete handler"],
+      h.ctx,
+    );
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    expect(h.out).toContain("  unit 001-u02 reported met: nothing changed");
+    const first = h.store();
+    const report = first
+      .listEvents("001")
+      .find((e) => e.type === "unit.reported");
+    first.close();
+    if (report === undefined) throw new Error("the unit reported");
+    h.out.length = 0;
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    expect(h.out).toContain("command turn rejected:");
+    expect(h.out).toContain(
+      "  - Reports answered: no report (no report listed) awaits a verdict",
+    );
+    expect(h.out).toContain(
+      `  - Reports answered: report ${report.id} of unit 001-u02 has no verdict`,
+    );
+    h.out.length = 0;
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    const third =
+      h.calls().filter((c) => c.kind === "command")[2]?.prompt ?? "";
+    expect(third).toContain(
+      `  - 001-u02, report ${report.id}: met; changed: nothing`,
+    );
+    expect(third).toContain(
+      "your last command turn was rejected on:\n  - Reports answered: no report (no report listed) awaits a verdict",
+    );
+    expect(h.out).toContain(
+      `  verdict on 001-u02's report ${report.id}: accepted: the handler is at a.txt:2 on an observed claim`,
+    );
+    expect(h.out).toContain("  unit 001-u02 closed");
+    expect(h.out.at(-1)).toBe("incident 001 is now satisfied");
+    const store = h.store();
+    const events = store.listEvents("001");
+    const reviewed = events.filter((e) => e.type === "report.reviewed");
+    expect(reviewed.map((e) => [e.actor, e.payload])).toEqual([
+      [
+        "ic",
+        {
+          reportId: report.id,
+          unitId: "001-u02",
+          verdict: "accepted",
+          instructions: "",
+          why: "the handler is at a.txt:2 on an observed claim",
+          cycle: 2,
+        },
+      ],
+    ]);
+    expect(events.find((e) => e.type === "unit.closed")?.payload).toMatchObject(
+      {
+        reason: "accepted: the handler is at a.txt:2 on an observed claim",
+        sessionId: "stub-session",
+        mutation: { kind: "unit.close", unitId: "001-u02" },
+      },
+    );
+    expect(store.listUnits("001").find((u) => u.id === "001-u02")?.status).toBe(
+      "closed",
+    );
+    store.close();
+    h.out.length = 0;
+    expect(await run(["incident", "review", "001"], h.ctx)).toBe(EXIT.ok);
+    const review = h.out.join("\n");
+    expect(review).toMatch(
+      /set period 2: 1 objective\(s\), 0 close\(s\), 1 verdict\(s\), continue/,
+    );
+    expect(review).toContain(
+      `  verdict on 001-u02's report ${report.id}: accepted: the handler is at a.txt:2 on an observed claim`,
+    );
+    expect(review).toContain(
+      "report verdicts: 1: 1 accepted, 0 revise, 0 reassign\n  001-u02: 1 accepted, 0 revise, 0 reassign",
+    );
+    h.out.length = 0;
+    expect(await run(["incident", "tree", "001"], h.ctx)).toBe(EXIT.ok);
+    expect(h.out).toContain(
+      "  001-u02 [closed] locate the delete handler (leader claude-code/claude-haiku-4-5; last report: met, accepted)",
+    );
+  });
+
+  it("Reports answered: every report since the IC's last accepted turn takes exactly one verdict naming its id and unit, none outside the window, and a verdict closes its unit rather than closeUnits (R4-2)", () => {
+    const store = new Store(":memory:");
+    const s = scriptedIncident(store);
+    const a = reportedUnit(s, "u-a", "the handler resets the scroll");
+    const b = reportedUnit(s, "u-b", "the caller is in the list view");
+    const ctx = () => validationContext(store, s.incident, [fakeProvider]);
+    const verdict = (over: Partial<ReportVerdict> = {}): ReportVerdict => ({
+      reportId: a.id,
+      unitId: "u-a",
+      verdict: "accepted",
+      instructions: "",
+      why: "the handler is found on an observed claim",
+      ...over,
+    });
+    const reasons = (turn: CommandTurn) =>
+      validateCommand(turn, ctx()).map((r) => [r.rule, r.reason]);
+    // A missing verdict, one per report left unanswered.
+    expect(reasons(command())).toEqual([
+      ["Reports answered", `report ${a.id} of unit u-a has no verdict`],
+      ["Reports answered", `report ${b.id} of unit u-b has no verdict`],
+    ]);
+    // A verdict on a report that is not in the window, on the wrong unit, and two on one report.
+    expect(
+      reasons(
+        command({
+          reportVerdicts: [
+            verdict({ reportId: "e-none", unitId: "u-c" }),
+            verdict({ reportId: b.id, unitId: "u-a" }),
+            verdict({ reportId: b.id, unitId: "u-b" }),
+          ],
+        }),
+      ),
+    ).toEqual([
+      ["Reports answered", "no report e-none awaits a verdict"],
+      ["Reports answered", `report ${b.id} is unit u-b's, not u-a's`],
+      ["Reports answered", `report ${b.id} has two verdicts`],
+      ["Reports answered", `report ${a.id} of unit u-a has no verdict`],
+    ]);
+    // A reported unit is never in closeUnits as well: an accepted or reassigned one is
+    // closed by its verdict (the conflict, not a second close; the fold keeps "Closing is
+    // clean" quiet on it), and a revised one stays.
+    expect(
+      reasons(
+        command({
+          reportVerdicts: [
+            verdict(),
+            verdict({
+              reportId: b.id,
+              unitId: "u-b",
+              verdict: "revise",
+              instructions: "read the caller too",
+            }),
+          ],
+          closeUnits: [
+            { unitId: "u-a", reason: "done" },
+            { unitId: "u-b", reason: "done too" },
+          ],
+        }),
+      ),
+    ).toEqual([
+      [
+        "Reports answered",
+        "unit u-a is accepted and in closeUnits; its verdict closes it",
+      ],
+      [
+        "Reports answered",
+        "unit u-b is revised and in closeUnits; a revised unit stays",
+      ],
+    ]);
+    // The verdict's close is held to "Closing is clean" like any close: a unit still
+    // running a task is not accepted out from under it.
+    s.task({ id: "t-late", unitId: "u-b", capability: "grep" });
+    expect(
+      reasons(
+        command({
+          reportVerdicts: [
+            verdict(),
+            verdict({ reportId: b.id, unitId: "u-b" }),
+          ],
+        }),
+      ),
+    ).toEqual([["Closing is clean", "unit u-b still runs t-late"]]);
+    const good = command({
+      reportVerdicts: [
+        verdict(),
+        verdict({
+          reportId: b.id,
+          unitId: "u-b",
+          verdict: "revise",
+          instructions: "the reason is still missing; read the caller",
+          why: "the same unit holds the file",
+        }),
+      ],
+    });
+    expect(reasons(good)).toEqual([]);
+    const commanded = applyCommand(store, { id: "i1" }, good, 1, {});
+    expect(commanded.closedUnits).toEqual(["u-a"]);
+    const units = new Map(store.listUnits("i1").map((u) => [u.id, u.status]));
+    expect(units.get("u-a")).toBe("closed");
+    expect(units.get("u-b")).toBe("active");
+    const events = store.listEvents("i1");
+    const reviewed = events.filter((e) => e.type === "report.reviewed");
+    expect(reviewed.map((e) => [e.actor, e.payload])).toEqual([
+      [
+        "ic",
+        {
+          reportId: a.id,
+          unitId: "u-a",
+          verdict: "accepted",
+          instructions: "",
+          why: "the handler is found on an observed claim",
+          cycle: 1,
+        },
+      ],
+      [
+        "ic",
+        {
+          reportId: b.id,
+          unitId: "u-b",
+          verdict: "revise",
+          instructions: "the reason is still missing; read the caller",
+          why: "the same unit holds the file",
+          cycle: 1,
+        },
+      ],
+    ]);
+    const closed = events.find((e) => e.type === "unit.closed");
+    expect(closed?.payload).toMatchObject({
+      reason: "accepted: the handler is found on an observed claim",
+      mutation: { kind: "unit.close", unitId: "u-a" },
+    });
+    expect(events.map((e) => e.type).slice(-4)).toEqual([
+      "command.turned",
+      "report.reviewed",
+      "report.reviewed",
+      "unit.closed",
+    ]);
+    // Answered reports leave the window: the next turn owes nothing, and the revised unit's
+    // next report opens a new one.
+    expect(reasons(command())).toEqual([]);
+    store.close();
+  });
+
+  it("a rejected turn leaves its reports in the window for the retry; the runtime's report for a refused unit takes a verdict like a leader's, and a unit that reported twice in one pass is answered on its last (R4-2, R4-7, R4-9)", () => {
+    const store = new Store(":memory:");
+    const s = scriptedIncident(store);
+    const a = reportedUnit(s, "u-a", "the handler resets the scroll");
+    // u-r's leader reported, then a later task of its was refused twice in the same
+    // pass, so the runtime filed a second report: the IC decides on that one.
+    const earlier = reportedUnit(s, "u-r", "the reason is in the caller");
+    store.record("i1", "unit.reported", "runtime", {
+      unitId: "u-r",
+      sessionId: null,
+      provider: "claude-code",
+      model: "claude-opus-5",
+      report: {
+        outcome: "not_met",
+        changed: [],
+        pictureChanged: true,
+        why: "leader was refused by the API on both models",
+        suggestion: "the IC decides",
+      },
+      writtenBy: "runtime",
+      refusals: [],
+    });
+    const refused = store.listEvents("i1").at(-1);
+    if (refused === undefined) throw new Error("recorded");
+    const heads = () =>
+      renderChangeReport(
+        store.listEvents("i1"),
+        s.incident,
+        store.listUnits("i1"),
+      ).filter((l) => /^ {2}- \S+, report /.test(l));
+    expect(heads()).toEqual([
+      `  - u-a, report ${a.id}: met; changed: the handler is found (claims u-a-c-grep, u-a-c-inv)`,
+      `  - u-r, report ${earlier.id}: met; changed: the handler is found (claims u-r-c-grep, u-r-c-inv) [an earlier report this window; the verdict answers report ${refused.id}]`,
+      `  - u-r, report ${refused.id}: not_met, picture changed; changed: nothing; why: leader was refused by the API on both models; suggestion: the IC decides`,
+    ]);
+    const ctx = () => validationContext(store, s.incident, [fakeProvider]);
+    const verdict = (over: Partial<ReportVerdict> = {}): ReportVerdict => ({
+      reportId: a.id,
+      unitId: "u-a",
+      verdict: "accepted",
+      instructions: "",
+      why: "found",
+      ...over,
+    });
+    // The runtime's report is owed a verdict like any other, and the unit's earlier
+    // report in the window takes none of its own.
+    expect(
+      validateCommand(command({ reportVerdicts: [verdict()] }), ctx()).map(
+        (r) => r.reason,
+      ),
+    ).toEqual([`report ${refused.id} of unit u-r has no verdict`]);
+    expect(
+      validateCommand(
+        command({
+          reportVerdicts: [
+            verdict(),
+            verdict({ reportId: earlier.id, unitId: "u-r" }),
+          ],
+        }),
+        ctx(),
+      ).map((r) => r.reason),
+    ).toEqual([
+      `report ${earlier.id} is unit u-r's earlier report this window; its verdict answers report ${refused.id}`,
+      `report ${refused.id} of unit u-r has no verdict`,
+    ]);
+    // A rejected turn answered nothing: both reports are still listed and still owed.
+    store.record("i1", "command.turned", "runtime", {
+      turn: command(),
+      cycle: 1,
+      rejected: true,
+    });
+    store.record("i1", "command.rejected", "validator", {
+      rule: "Reports answered",
+      reason: `report ${a.id} of unit u-a has no verdict`,
+    });
+    expect(heads()).toHaveLength(3);
+    expect(validateCommand(command(), ctx()).map((r) => r.reason)).toEqual([
+      `report ${a.id} of unit u-a has no verdict`,
+      `report ${refused.id} of unit u-r has no verdict`,
+    ]);
+    // Accepting the runtime's report closes the sessionless unit through its verdict.
+    const good = command({
+      reportVerdicts: [
+        verdict(),
+        verdict({
+          reportId: refused.id,
+          unitId: "u-r",
+          why: "the slice is not worth a third seat",
+        }),
+      ],
+    });
+    expect(validateCommand(good, ctx())).toEqual([]);
+    const commanded = applyCommand(store, { id: "i1" }, good, 1, {});
+    expect(commanded.closedUnits).toEqual(["u-a", "u-r"]);
+    expect(store.listUnits("i1").find((u) => u.id === "u-r")?.status).toBe(
+      "closed",
+    );
+    expect(
+      store
+        .listEvents("i1")
+        .filter((e) => e.type === "report.reviewed")
+        .map((e) => [e.payload.reportId, e.payload.unitId, e.payload.verdict]),
+    ).toEqual([
+      [a.id, "u-a", "accepted"],
+      [refused.id, "u-r", "accepted"],
+    ]);
     store.close();
   });
 });

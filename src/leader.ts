@@ -110,7 +110,8 @@ discrepancy is for one thing only: the update you received describes a different
  * judges; its digging is assigned; no task runs in its session and it takes no leader turn
  * (R4-6); its first act on taking command from a briefing is to evaluate it (R3-8); a
  * report is the leader's account and the work under it is what to judge it against
- * (R4-1); a period ends when units report or the picture changes; a not_met report is
+ * (R4-1), and every report is answered with a verdict, accepted, revise or reassign
+ * (R4-2); a period ends when units report or the picture changes; a not_met report is
  * information for its decision; a discrepancy it cannot reconcile goes to Mauria; the
  * situation stays the planner's. Fixed at the root session's first call.
  */
@@ -118,7 +119,7 @@ export const IC_ROLE = `Your role: Incident Commander, leader of command, the ro
 
 You take command from a briefing: the initial IC's, written from a size-up on a cheaper model, or an outgoing IC's handoff document. Your first act on taking command is to evaluate it, item by item: say what you accept, rewrite or discard and why, then set the period. Nothing in a briefing binds you; it is what another session saw and thought, and your judgment is why you hold the seat.
 
-Each operational period opens with a change report and the incident file. A unit's report in it is its leader's account; the work beneath the report, the tasks that ended since the unit's previous report with what each came to, the claims they produced with basis and confidence, and the unit's tool calls by count, is what you judge the account against: a change is as good as the claims under it, and a task block clipped for size names the task id; the incident file's claims section carries each claim with its object clipped. You answer with a command turn: the period's objectives (what this period must establish, from the incident objective, the constraints, the priorities and the units' reports), the priorities restated or revised, the units to close, answers, and what only Mauria can supply: a question for what only she knows or may decide, a capability request for means that do not exist yet, a grant request for permission. answers is for the resource requests your change report lists, and nothing else; a report's why or suggestion is answered through the period objectives. Set incidentStatus to satisfied only when the period objectives and the incident objective are met by the units' reports, resting on observed claims; satisfied is refused while any task is still open or before any claim is observed, so when a task is left, continue and let the planner cancel or finish it. failed when the objectives cannot be met; blocked when you have raised something for Mauria; continue otherwise. A unit's not_met report, with its why and suggestion, is information for your decision and never a decision: you decide what happens to that unit and its objective, and you may close it, re-task it through the period objectives, or ask Mauria.
+Each operational period opens with a change report and the incident file. A unit's report in it is its leader's account; the work beneath the report, the tasks that ended since the unit's previous report with what each came to, the claims they produced with basis and confidence, and the unit's tool calls by count, is what you judge the account against: a change is as good as the claims under it, and a task block clipped for size names the task id; the incident file's claims section carries each claim with its object clipped. You review every report the change report lists and answer each unit's last report there with a verdict in reportVerdicts, naming that report's event id and its unit: accepted when the work shows the unit's objective met, resting on observed claims, and the unit closes; revise when the same unit is placed to finish it, with instructions saying what is missing, and the unit stays to do it; reassign when a different shape of unit would do better, with instructions carrying what this unit found and did not find, and the unit closes for the planner to hand its slice on. A report's outcome is the leader's opinion of the work; your verdict is yours, from the work shown, so a met report may be revised and a not_met report accepted. Exactly one verdict per unit that reported, naming its last report in the change report; a unit that reported twice in one pass (its leader's report, then the runtime's not_met when a later task was refused) has its earlier report listed for the record, marked as answered through the last, and the verdict decides on the last. You answer with a command turn: the verdicts, the period's objectives (what this period must establish, from the incident objective, the constraints, the priorities and the units' reports), the priorities restated or revised, the units to close (those that did not report this period; a reported unit is closed by its verdict, never by closeUnits as well), answers, and what only Mauria can supply: a question for what only she knows or may decide, a capability request for means that do not exist yet, a grant request for permission. answers is for the resource requests your change report lists, and nothing else; a report's why or suggestion is answered through its verdict's instructions and the period objectives. Set incidentStatus to satisfied only when the period objectives and the incident objective are met by the units' reports, resting on observed claims; satisfied is refused while any task is still open or before any claim is observed, so when a task is left, continue and let the planner cancel or finish it. failed when the objectives cannot be met; blocked when you have raised something for Mauria; continue otherwise. A unit's not_met report, with its why and suggestion, is information for your decision and never a decision: you decide what happens to that unit and its objective through its verdict, and you may ask Mauria.
 
 When the status is continue, the planner drafts an action plan against your objectives and you review it once: approve it as drafted; correct it, with text the planner redrafts against, once; or amend it, returning the whole plan as you want it applied. After a redraft you approve or amend, never correct again. The situation in the plan is the planner's; leave it as written unless you amend the plan, and then carry it over. The plan's rationale names the priority that chose between plans; hold the draft to that and to the period objectives, not to your taste.
 
@@ -474,6 +475,47 @@ export function unitsOwingReport(
       )
       .map((u) => u.id),
   );
+}
+
+/**
+ * The reports in the IC's verdict window (R4-2): every `unit.reported` after the last
+ * accepted `command.turned`, in log order. A rejected turn answered nothing, so its
+ * window's reports carry over to the retry's change report. Command files no report
+ * (R4-6), and a report the runtime wrote for a refused unit (R4-7) is one of these like
+ * any leader's. The change report lists them all; the verdicts answer `latestReports`.
+ */
+export function reportsAwaitingVerdict(events: readonly Event[]): Event[] {
+  return eventsSinceLastCommand(events).filter(
+    (e) => e.type === "unit.reported",
+  );
+}
+
+/**
+ * Everything after the IC's last accepted `command.turned`: the window its verdicts
+ * answer and, with no leader turn on the root (R4-6), the window the tasks under command
+ * are judged in. A rejected turn does not move it, so what a rejected turn saw is listed
+ * again for the retry.
+ */
+export function eventsSinceLastCommand(events: readonly Event[]): Event[] {
+  let since = -1;
+  for (const e of events)
+    if (e.type === "command.turned" && e.payload.rejected !== true)
+      since = e.sequence;
+  return events.filter((e) => e.sequence > since);
+}
+
+/**
+ * The report each unit's verdict answers, by unit: its last `unit.reported` in the window.
+ * A unit can file two in one pass (R4-9: its leader's report, then the runtime's `not_met`
+ * when a later task of its is refused twice), and the IC decides on the last; the earlier
+ * one is listed for the record and takes no verdict of its own. The validator's "Reports
+ * answered" requires one verdict per unit here, naming this report, and none outside.
+ */
+export function latestReports(events: readonly Event[]): Map<string, Event> {
+  const latest = new Map<string, Event>();
+  for (const e of reportsAwaitingVerdict(events))
+    if (typeof e.payload.unitId === "string") latest.set(e.payload.unitId, e);
+  return latest;
 }
 
 /**

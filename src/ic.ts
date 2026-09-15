@@ -2,10 +2,13 @@ import { z } from "zod";
 import { recordActivity } from "./activity.js";
 import {
   describeRefusedCall,
+  eventsSinceLastCommand,
   fallbackModel,
+  latestReports,
   leaderRequest,
   openRequests,
   type RefusedCall,
+  reportsAwaitingVerdict,
 } from "./leader.js";
 import {
   type ActionPlan,
@@ -498,7 +501,11 @@ export function renderReport(
  * by, so the IC can answer what it can; a permission request only a grant answers), every
  * question answered and capability provided, the rules its last turn failed, and the spend
  * since then. Each report carries the work behind it, and each task's block, under a
- * report or under command, is clipped at `workChars` (R4-1).
+ * report or under command, is clipped at `workChars` (R4-1). The reports listed are those
+ * since the IC's last accepted command turn, the ones its verdicts must answer (R4-2), so a
+ * report a rejected turn left unanswered is listed again for the retry; a unit's earlier
+ * report in that window is marked as answered through its last. The tasks under command
+ * use the same window, so a rejected turn does not drop the root's ended tasks either.
  */
 export function renderChangeReport(
   events: readonly Event[],
@@ -527,9 +534,17 @@ export function renderChangeReport(
       (e) =>
         `${str(e.payload.seat)}${str(e.payload.unitId) === "" ? "" : ` of ${str(e.payload.unitId)}`}: ${str(e.payload.discrepancy)}`,
     );
-  const reports = recent
-    .filter((e) => e.type === "unit.reported")
-    .flatMap((e) => renderReport(events, e, workChars));
+  const latest = latestReports(events);
+  const reports = reportsAwaitingVerdict(events).flatMap((e) => {
+    const [head = "", ...work] = renderReport(events, e, workChars);
+    const last = latest.get(str(e.payload.unitId));
+    return [
+      last === undefined || last.id === e.id
+        ? head
+        : `${head} [an earlier report this window; the verdict answers report ${last.id}]`,
+      ...work,
+    ];
+  });
   const answered = recent
     .filter((e) => e.type === "question.answered" && str(e.payload.answer))
     .map((e) => `${str(e.payload.questionId)} → ${str(e.payload.answer)}`);
@@ -541,7 +556,7 @@ export function renderChangeReport(
     .map((e) => `${str(e.payload.rule)}: ${str(e.payload.reason)}`);
   const underCommand = renderTasksUnderCommand(
     events,
-    recent,
+    eventsSinceLastCommand(events),
     units.find((u) => u.parentId === null),
     workChars,
   );
@@ -834,7 +849,7 @@ export function renderCommandBriefing(
     ...renderBriefingBody(store, incident, providers, transfer, env),
     "",
     `# Your command turn for operational period ${cycleOf(events) + 1}`,
-    `${transfer === null ? "S" : `${evaluateAsk(transfer)}s`}et the period's objectives and priorities, close what is done, answer the resource requests you can, raise for Mauria what only she can supply, and say whether the incident continues.`,
+    `${transfer === null ? "S" : `${evaluateAsk(transfer)}s`}et the period's objectives and priorities, answer each unit's last report the change report lists with a verdict (accepted, revise or reassign), close what is done, answer the resource requests you can, raise for Mauria what only she can supply, and say whether the incident continues.`,
   ].join("\n");
 }
 

@@ -2606,3 +2606,119 @@ Not exactly to spec, with reasons:
   so the events of a parallel run are the events of the sequential run reordered; a turn
   that reads several endings would have been a schema and prompt change the plan did not
   ask for.
+
+## R4-2: Report verdicts (#45, merged 2026-09-15)
+
+R4-2 of the round 4 plan, on R4-1's ground, rebased onto R4-6, R4-7 and R4-9. Built: the IC answers every report with a
+verdict, Mauria's ruling of 2026-09-15 that the IC reviews a unit's work when it comes in
+and decides whether the unit is done, goes back for revision, or hands its slice to a
+different unit. `CommandTurn` gains `reportVerdicts`, an array of `ReportVerdict` (a strict
+object: `reportId`, the `unit.reported` event id as the change report heads the report;
+`unitId`; `verdict`, `accepted` | `revise` | `reassign`; `instructions`; `why`), required
+in the schema so the provider's own validation asks for it, with a refinement after parse
+that refuses instructions on an accepted verdict and requires non-blank instructions on a
+revise or reassign. `closeUnits` stays for units closed without a report. The reports a
+turn must answer are `reportsAwaitingVerdict` in `src/leader.ts`: every `unit.reported`
+after the last accepted `command.turned`; `latestReports` picks each unit's last of them,
+the one its verdict answers. The change report's "unit reports:" now lists that window
+(before, the reports since the IC's last turn of any kind, which dropped a rejected turn's
+reports from the retry's briefing), a unit's earlier report in it marked `[an earlier
+report this window; the verdict answers report <id>]`. The validator's `validateCommand`
+gains the rule "Reports answered" (a `CommandRuleName` beside "Answers match"): each
+verdict names a unit's last report in the window and that unit, a unit's earlier report
+is refused by name with the id its verdict answers, no report has two verdicts, no
+reporting unit is left without one, and no reported unit is in `closeUnits` as well (an accepted or reassigned unit is closed by its
+verdict; a revised unit stays). The verdicts' closes are folded into the plan the command turn is
+checked as (`verdictCloses`: accepted and reassigned units, reason `<verdict>: <why>`,
+only for verdicts that name a listed report and its unit, and only for units not already
+in `closeUnits`), so "Units exist" and "Closing is clean" hold them like any close: a unit
+still running a task is not accepted out from under it, and a unit closed twice is named
+once, by "Reports answered". `applyCommand` in `src/runtime.ts` records, after
+`command.turned` and the call, one `report.reviewed` per verdict (payload `reportId`,
+`unitId`, `verdict`, `instructions`, `why`, `cycle`; actor `ic`), then closes the
+`closeUnits` and the verdict closes through `store.closeUnit`, so an accepted or
+reassigned unit gets the same `unit.closed` (session demobilized) as a planned close; a
+revised unit stays active for R4-3 to brief. `Commanded.closedUnits` carries both kinds.
+`report.reviewed` is a new `EventType` (46 now, after R4-6's `plan.warned`). `incident step` prints `verdict on
+<unit>'s report <id>: <verdict>: <why>; instructions: …` under the command turn; `incident
+review` says `N verdict(s)` on the command turn's line, lists each verdict under it with
+the report id, its why and instructions, and after the IC-verdict line counts `report verdicts: N: a
+accepted, b revise, c reassign` for the incident and one line per unit; `incident tree`
+(and the planner's section 3, which shares `describeLeader`) shows `last report: met,
+accepted`, the IC's last verdict from `lastVerdicts` in `src/tree.ts`. `IC_ROLE` says the
+three-way judgment with its reasons: accepted when the work shows the objective met on
+observed claims and the unit closes; revise when the same unit is placed to finish and
+the instructions say what is missing; reassign when a different shape of unit would do
+better, the instructions carrying what was found and not found; the outcome is the
+leader's opinion and the verdict the IC's; exactly one per unit that reported, on its last report; a reported unit is closed by its verdict, never by `closeUnits` as well; a
+report's why or suggestion is answered through the verdict's instructions and the period
+objectives. The command turn's ask names the verdicts. The stub (`test/stub-claude`)
+answers every report its briefing lists: a turn with no `reportVerdicts`, or an empty
+list, gets `accepted` for a `met` report and `revise` with stub instructions otherwise,
+and a verdict with no `reportId` (or an empty one) gets the id of the last report listed
+for its unit, since a test literal cannot know the store's UUID. DESIGN.md Step 2 (the
+event), Step 4 (the change report's window, the schema, the verdicts, the application
+order), Step 5 (the command turn's own rules as a table) and Step 7 (`tree`, `step`,
+`review`), the architecture page's IC node and steps 1 and 2, and CLAUDE.md's IC sentence
+follow. Tests: models tests for the three verdicts, both refinements, an unknown verdict,
+an empty why, an unnamed key, the field's presence in the schema's `required`; validator
+tests on two reported units for a missing verdict (one reason per report), a verdict on a
+report not in the window, on the wrong unit, two on one report, accepted beside
+`closeUnits`, an accepted unit still running a task (rejected by "Closing is clean" and
+nothing else), and a good turn applied: the accepted unit closed with the verdict as its
+reason, the revised one active, `report.reviewed` per verdict with actor `ic`, the event
+order, and the window cleared for the next turn; a test that a rejected turn leaves the
+report listed and owed; a test that the report the runtime files for a unit refused
+twice (R4-7) is listed, owed a verdict, and closed by an accepted one with
+`report.reviewed` recording it, and that with the unit's leader report earlier in the same
+window the earlier report is listed with its marker, a verdict on it is refused with the
+id that takes one, and the last is the one owed; a stub run where the leader reports `met`, a turn with a verdict
+on no listed report is rejected on both reasons and the next briefing lists the report
+again, the accepted verdict closes the unit through `unit.closed`, `review` counts and
+lists it and `tree` marks it; the review and dispatcher snapshots follow the stub's
+default revise.
+
+Not exactly to spec, with reasons:
+
+- A verdict names a report by its event id and its unit, not a unit alone as the plan
+  block says, on the orchestrator's design points, since `report.reviewed` is keyed on the
+  report. The rule counts units, as the plan block does: under parallel dispatch (R4-9) a
+  unit can file two reports in one pass, its leader's and then the runtime's `not_met`
+  when a later task of its is refused twice, and the verdict answers the last, the one
+  the IC is deciding on; the earlier is listed and marked, and a verdict naming it is
+  refused with the id that takes one. The stub answers each reporting unit on its last
+  listed report. Decided with the orchestrator on PR 44's second review.
+- The "tasks under command" block of the change report (R4-6) used the window since the
+  IC's last turn of any kind, so after a rejected command turn the retry's briefing
+  re-listed the reports but dropped the root's tasks that ended before the rejection.
+  Fixed here: both use `eventsSinceLastCommand` in `src/leader.ts`, everything after the
+  last accepted `command.turned`; tested by a rejected turn that keeps a completed root
+  task listed and an accepted one that clears it.
+- The window is the reports since the IC's last accepted command turn, not since it last
+  acted, and the change report's report list now uses the same window: a rejected turn
+  answered nothing, and under the old window the reports vanished from the retry's
+  briefing while the rule would still owe verdicts on them.
+- As first built, command's own report was listed with a `[command's own report; no
+  verdict]` marker and a verdict on it refused by name, since the root's leader turn then
+  filed `unit.reported` after a task under command. R4-6 merged first and removed the
+  root's leader turn, so the rebase dropped that handling rather than carry dead paths:
+  the root filter in `reportsAwaitingVerdict` (and `reportsSinceLastCommand`, which had
+  become the same function), the marker, the "command's own" reason, the `IC_ROLE`
+  sentence, the schema description on `reportVerdicts` and the test.
+- The runtime-authored `not_met` report R4-7 files for a unit refused twice lands in the
+  window and takes a verdict like a leader's, with no code change: accepted or reassign
+  closes the unit; revise leaves it active with no session, which R4-3's fresh-session
+  path picks up.
+- `reassign` closes the unit here, on the orchestrator's reading, so R4-4 adds the
+  reassignment record rather than the close; the plan block leaves both to R4-4.
+- The verdicts' closes are folded into the plan checked under "Closing is clean" rather
+  than checked separately, so an accepted unit that still runs a task is refused by the
+  existing rule and its wording; only verdicts that name a listed report and its unit
+  fold, so a misnamed verdict is one "Reports answered" reason and not also a "Units
+  exist" one.
+- The planner's unit tree shows the last verdict too, since it shares `describeLeader`
+  with `tree`; it changes no planner snapshot, as no fixture carries a verdict.
+- The stub decides a default verdict by the report's outcome (met → accepted, otherwise
+  revise), so every existing multi-cycle test keeps its meaning without each scripting
+  verdicts on ids it cannot know; a test that wants a particular verdict scripts it with
+  `reportId: ""` and the unit id.

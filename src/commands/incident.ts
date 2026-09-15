@@ -766,6 +766,10 @@ async function cycle(
     ctx.io.out(`  ${evaluating}: ${v.verdict} ${v.item}: ${v.why}`);
   for (const o of turn.periodObjectives) ctx.io.out(`  objective: ${o}`);
   for (const p of turn.priorities) ctx.io.out(`  priority: ${p}`);
+  for (const v of turn.reportVerdicts)
+    ctx.io.out(
+      `  verdict on ${v.unitId}'s report ${v.reportId}: ${v.verdict}: ${v.why}${v.instructions === "" ? "" : `; instructions: ${v.instructions}`}`,
+    );
   for (const c of turn.closeUnits)
     ctx.io.out(`  close unit ${c.unitId}: ${c.reason}`);
   for (const a of turn.answers)

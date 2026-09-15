@@ -205,7 +205,11 @@ size-up that fails, or whose answer does not fit the schema, is `command.failed`
 `plan.applied`, and a refused one as `plan.rejected`, with the actor `leader` and the unit
 named, beside the planner's. Round 4 adds `plan.warned` (R4-6): one per warning the
 validator raised on a plan it let through, with the rule, the reason and the plan's
-rationale, written before the plan is applied.
+rationale, written before the plan is applied; and `report.reviewed` (R4-2): one per
+verdict on a command turn, with the report's event id, the unit, the verdict (`accepted`,
+`revise` or `reassign`), the instructions, the why and the cycle, actor `ic`; it changes
+no state itself, since an accepted or reassigned unit closes through `unit.closed` with
+the verdict as its reason.
 
 The file records its schema version in `user_version`. A file at an earlier version is
 migrated in place when opened, one step at a time: version 1 (before `basis`) gives
@@ -376,11 +380,15 @@ work (capability, objective, claims, then how it ended: a deterministic result's
 whole under the cap, since no leader reads the root's results and this block is the IC's
 only view of them; a session result's summary, or what an insufficient result needed; a
 failure's reason), because no leader reports on the root's tasks and the IC judges them
-here (R4-6), then every
+here (R4-6; the tasks listed are those ended since the IC's last accepted command turn,
+the reports' window, so a rejected turn drops none of them from the retry), then every
 question answered and capability provided, the rules the IC's last turn failed if it was
 rejected, and the spend since then (every usage any seat recorded after the IC's last
-turn, summed). Each report is headed by its unit's id and the report's event id, the id a
-verdict answers it by, and carries the work behind it (R4-1), so the IC judges the
+turn, summed). The reports listed are every `unit.reported` since the IC's last accepted
+command turn, the reports its verdicts must answer (R4-2), so a report a rejected turn
+left unanswered is listed again for the retry; a unit's earlier report in that window is
+marked `[an earlier report this window; the verdict answers report <id>]`. Each report is
+headed by its unit's id and the report's event id, the id a verdict answers it by, and carries the work behind it (R4-1), so the IC judges the
 leader's account against what the unit did: the unit's tasks that ended since its previous
 report (id, capability and model, objective; then the claims the task produced, id,
 subject, predicate, basis and confidence, never the object, which the file's claims
@@ -426,7 +434,8 @@ const CommandTurn = z.object({
   briefingEvaluation: z.array(BriefingVerdict).optional(),  // item, verdict (accepted | rewritten | discarded), why: each initial objective and unit sketched in the briefing the IC took command with; required on the first turn after a transfer (FirstCommandTurn)
   periodObjectives: z.array(z.string()).min(1),  // what this period must establish, from the incident objective, the constraints, the priorities and the reports
   priorities: z.array(z.string()),               // the incident's, restated or revised
-  closeUnits: z.array(UnitClose),
+  reportVerdicts: z.array(ReportVerdict),        // reportId (the report's event id, as the change report heads it), unitId, verdict (accepted | revise | reassign), instructions, why: one per unit that reported, naming its last report the change report lists (R4-2); instructions required for revise and reassign and empty for accepted, enforced by a refinement after parse
+  closeUnits: z.array(UnitClose),                // units closed without a report; a reported unit is closed by its verdict, never here as well
   answers: z.array(ResourceAnswer).default([]),  // unit, request, answer: resource requests from units the IC can answer itself (the requests arrive with R3-6; the answers ride on command.turned until then)
   assignTasks: z.array(TaskProposal).default([]), // R4-6: deterministic tasks under command (grep, read, check_path, git_history), each naming the root as its unit; run in this cycle's pass, results in the next change report; a session task here is refused
   questionsForHuman: z.array(z.string()),
@@ -466,18 +475,43 @@ const HandoffDocument = z.strictObject({           // the outgoing IC's last cal
 });
 ```
 
+The IC reviews a unit's work when its report comes in (ruled by Mauria, 2026-09-15; R4-2):
+every unit whose report the change report lists is answered with one verdict in
+`reportVerdicts`, naming the unit and the event id of its last report in the window. A
+unit can file two reports in one pass under parallel dispatch (R4-9): its leader's, then
+the runtime's `not_met` when a later task of its is refused twice; the IC decides on the
+last, `report.reviewed` carries that report's id, and the earlier report is listed for
+the record and takes no verdict of its own. `accepted` means the work shows the unit's
+objective met, resting on observed claims, and the unit closes through the same path as
+`closeUnits`, the verdict as the reason; `revise` means the same unit is placed to finish
+it, the instructions say what is missing, and the unit stays active (R4-3 delivers the
+instructions to its leader as a revision brief); `reassign` means a different shape of
+unit would do better, the instructions carry what this unit found and did not find, and
+the unit closes (R4-4 records the reassignment for the planner to hand its slice on). A
+report's outcome is the leader's opinion; the verdict is the IC's, from the work shown, so
+a `met` report may be revised and a `not_met` one accepted. The report the runtime writes
+for a unit refused twice (R4-7; `writtenBy: "runtime"`, `not_met`, the unit left active)
+is listed and takes a verdict like any leader's: `accepted` or `reassign` closes the unit,
+`revise` leaves it active with no session for R4-3 to brief afresh. Command files no
+report (R4-6), so no verdict is owed for it. Each verdict is recorded as `report.reviewed` with the report id, the unit, the
+verdict, the instructions and the why, actor `ic`; `incident review` counts verdicts by
+kind for the incident and per unit and lists each with its why, and `incident tree` marks
+each unit's last verdict beside its last report.
+
 A command turn is held to the validator's rules that cover what it can do (Units exist,
-Closing is clean, Status is earned, and the task rules on its assignments; Step 5) and
-applied as a plan is: units closed, questions and requests recorded, the incident's status
-set, the tasks it assigns under command created with `plan.applied` by the actor `ic`
-naming the root unit, its session and the task ids (R4-6: deterministic tasks belong to
-whichever leader assigns them, command included, ruled 2026-09-14; with no leader turn on
-the root the IC assigns them here, and they run in this cycle's pass as the root's tasks;
-one that depends on a unit's task runs in the pass after that task completes, since the
-root runs first in tree order and is done for the pass once its ready tasks have run),
-then `command.turned` with the turn, the call's session, model and usage, and the period
-as its mutation. The planner's and `incident review`'s cycle windows open at the plan's
-`plan.applied`, never at the IC's or a leader's. A turn that
+Closing is clean, Status is earned, and the task rules on its assignments; Step 5), with
+the units its verdicts close folded into the closes checked, and to its own rules (Answers
+match, Reports answered, Deterministic only), and applied as a plan is: `command.turned`
+with the turn, the call's session, model and usage, and the period as its mutation, then
+one `report.reviewed` per verdict, units closed, by `closeUnits` and by verdict, questions
+and requests recorded, the incident's status set, the tasks it assigns under command
+created with `plan.applied` by the actor `ic` naming the root unit, its session and the
+task ids (R4-6: deterministic tasks belong to whichever leader assigns them, command
+included, ruled 2026-09-14; with no leader turn on the root the IC assigns them here, and
+they run in this cycle's pass as the root's tasks; one that depends on a unit's task runs
+in the pass after that task completes, since the root runs first in tree order and is done
+for the pass once its ready tasks have run). The planner's and `incident review`'s cycle
+windows open at the plan's `plan.applied`, never at the IC's or a leader's. A turn that
 fails a rule is recorded as `command.turned` with `rejected` and one `command.rejected`
 per rule, the cycle ends, and the next briefing names the rules. When the turn's status is
 not `continue` the cycle ends after it: the incident is `blocked` on what the IC raised,
@@ -491,7 +525,7 @@ Input, rendered as labeled sections in a stable order so the prefix caches:
 
 1. The incident file's command picture: objective, constraints, priorities (Mauria's), the current operational period's number, objectives and priorities as the IC set them, budget remaining, grants given, questions still unanswered.
 2. Claims, each line showing its status and basis and its provenance. A claim with the predicate its capability declares as `summarize` (grep's `matches`, in v0) appears in full only in the cycle after it lands, or when the last situation names it in `proven` or `keep`; the rest of its task's claims collapse to one line per task: the inputs, the claim count, and the files with counts.
-3. The current unit tree with each unit's objective, status, leader model and last report outcome.
+3. The current unit tree with each unit's objective, status, leader model, last report outcome and the IC's last verdict on it (R4-2).
 4. Tasks completed since the last cycle, each against its contract, with a session's findings (summary, observations, conclusion, reasoning) in full and a deterministic result clipped.
 5. Tasks that came back `insufficient`, each with what the session said it needed.
 6. Unit reports since the last cycle: each unit's outcome, whether the picture changed, what changed on which claims, and for `not_met` the why and suggestion.
@@ -618,12 +652,18 @@ applied as it stands. One warning exists:
 
 The IC's command turn is checked by the same code as a plan that creates nothing, under
 Units exist, Closing is clean and Status is earned, since closing units and setting the
-status is all it does to the tree, and its `assignTasks` (R4-6) as a plan creating those
-tasks under the task rules a leader's assignments pass, plus Own unit against the root and
-the IC's own rule Deterministic only: a task to a session-backed capability is refused with
-"the IC assigns deterministic work only, and session work goes under a unit", since the
-root's tasks run with no leader turn (Step 6) and session work is a unit's; a failing rule
-is recorded as `command.rejected` and the cycle ends there (Step 4).
+status is all it does to the tree, with the units its verdicts close (accepted or
+reassigned) folded into the closes those rules check, and its `assignTasks` (R4-6) as a
+plan creating those tasks under the task rules a leader's assignments pass, plus Own unit
+against the root; and by three rules of its own:
+
+| Rule | Check |
+|---|---|
+| Answers match | Every answer names a waiting unit and an open request that unit raised, as the change report showed it, and no request is answered twice; a permission request is not answered here, since only a grant answers it. |
+| Reports answered | Every unit that reported since the IC's last accepted command turn has exactly one verdict, naming the unit and the event id of its last report in that window; no verdict names a report outside that window, a unit's earlier report in it, or another unit's report; and no reported unit is in `closeUnits` as well: an accepted or reassigned unit is closed by its verdict, and a revised unit stays (R4-2). Command files no report (R4-6), so every report in the window is a unit's, the runtime-authored report of a refused unit (R4-7) included. |
+| Deterministic only | A task to a session-backed capability is refused with "the IC assigns deterministic work only, and session work goes under a unit", since the root's tasks run with no leader turn (Step 6) and session work is a unit's (R4-6). |
+
+A failing rule is recorded as `command.rejected` and the cycle ends there (Step 4).
 
 A leader's assignments (`assignTasks` on a `LeaderTurn`, R3-6) pass the rules above that
 read tasks (Capabilities exist, Units exist, No cycles, No duplicates, Inputs validate, Span
@@ -942,11 +982,11 @@ to verified, and the validator gates `proven` and `satisfied` on basis `observed
 |---|---|
 | `noscope incident create "<objective>" [--constraint ...] [--priority ...] [--budget-tokens N] [--budget-seconds N] [--initial-model <model>] [--ic-model <model>] [--no-size-up]` | Creates the incident and its root unit, `command`, with the read-only built-ins as its equipment, then runs the size-up (R3-8): the initial IC on `--initial-model` (default `claude-haiku-4-5`) reads the objective, the constraints, the priorities and the runtime's own findings with the read-only tool set and writes the incident briefing, recorded as `incident.briefed` with its tool calls; command then transfers to the IC proper on the model the briefing names, `--ic-model` overriding it (and the default, `claude-opus-5`, standing in when the briefing names a model Claude Code does not serve), recorded as `command.transferred` with the briefing as its document. Prints the briefing and the transfer. A question in the briefing blocks the incident before the IC starts, the way a plan's does; `incident answer` reopens it. `--no-size-up` creates the incident on `--ic-model` or the default with no briefing, for tests and for incidents that need none. A size-up that fails is filed as `command.failed`, the incident stands unbriefed on `--ic-model` or the default, and the command exits 1. `--priority`, like `--constraint`, may repeat; the priorities are an input the IC restates or revises each period and the planner's rationale names when one chose between plans. |
 | `noscope incident show <id>` | The incident file: objective, constraints, priorities, the current operational period's objectives and priorities, budget and spend, the IC's provider, model and current session with the number of transfers of command and every model change the log records (R4-7: each transfer of command with its kind, models and reason, each unit leader moved to the fallback after a refusal, each task retried on it), claims by status, open tasks, decisions with reasons, the situation from the last plan, each unit's last report with the work behind it as the IC's change report showed it (R4-1; clipped per task at `NOSCOPE_REPORT_WORK_CHARS`), questions waiting on Mauria and capability requests (each naming the unit that raised it, when a leader did), the units waiting on a resource request with what each waits on, grants, registered capabilities. |
-| `noscope incident tree <id>` | The unit tree with each unit's leader model, last report outcome and, for a waiting unit, what it waits on, and task marks: done, running, ready, pending. |
-| `noscope incident step <id>` | One cycle, then stop. Prints a handoff when one runs (the outgoing session, the context that triggered it, the threshold, and the transfer once the successor has answered), the IC's command turn (its verdicts on a briefing it took command with, objectives, priorities, closes, answers, what it raised, status), a transfer of command to the fallback model when a refusal forced one during the turn or a review (R4-7), the planner's draft, the IC's verdict with its corrections or amended plan and the redraft when there is one, the validator's verdict, what ran, each unit's report with any resource request it sent up, the tasks each leader assigned, any discrepancy raised, and whether a report stopped the pass. When the IC is refused on its model and on the fallback, prints that the incident is blocked, the question, and the `answer` command that resumes it, and exits 0 (R4-7). |
+| `noscope incident tree <id>` | The unit tree with each unit's leader model, last report outcome, the IC's last verdict on it (R4-2), and, for a waiting unit, what it waits on, and task marks: done, running, ready, pending. |
+| `noscope incident step <id>` | One cycle, then stop. Prints a handoff when one runs (the outgoing session, the context that triggered it, the threshold, and the transfer once the successor has answered), the IC's command turn (its verdicts on a briefing it took command with, objectives, priorities, its verdict on each report with the why and instructions, closes, answers, what it raised, status), a transfer of command to the fallback model when a refusal forced one during the turn or a review (R4-7), the planner's draft, the IC's verdict with its corrections or amended plan and the redraft when there is one, the validator's verdict, what ran, each unit's report with any resource request it sent up, the tasks each leader assigned, any discrepancy raised, and whether a report stopped the pass. When the IC is refused on its model and on the fallback, prints that the incident is blocked, the question, and the `answer` command that resumes it, and exits 0 (R4-7). |
 | `noscope incident run <id> [--max-cycles N]` | Repeats `step` until the incident leaves `open` or the cap is hit; the IC's double refusal stops it the same way. |
 | `noscope incident events <id>` | The event log with timestamps and actors. |
-| `noscope incident review <id>` | The After Action Review computed from the event log: the size-up when there was one (the initial IC's call with its usage and tool calls, what the briefing said in numbers, whom command transferred to and who chose the model, or the size-up's failure; its questions), then each cycle (cut at the IC's command turn; at `plan.proposed` in a log from before the IC) with its verdict, the IC's command turn, reviews and handoff call with their usage, each transfer of command with the context size that triggered it, the document's length and its evaluation, or, for a fallback, the models, who chose the new one and the refusals (and their count at the end), each draft's planner call, rejections, tasks run (capability, model, tokens with the cache split, seconds, cost, claims), the cycle's wall time beside its dispatch span, the sum of its tasks' seconds and `parallel` (the sum over the span: 1.0 in sequence, higher when tasks overlapped), each leader's turns with their usage and outcome (a refused turn priced and named by its category, with the leader's move to the fallback; a report the runtime wrote after two refusals listed as such), a task's refused call priced and named with the model it was retried on, the resource requests it sent up and the tasks it assigned or was refused, discrepancies, strike teams declared or refused, questions and answers; totals by role and model (the IC under `ic`, the initial IC under `initial_ic`, leaders under `leader`); plan, IC-verdict (by kind: approve, correct, amend), briefing-kept (the verdicts on the IC's first accepted command turn that evaluated one: accepted, rewritten, discarded, of how many items; or that none was evaluated yet, that there was no size-up, or that it failed), task, leader-turn and claim counts, each unit's reports by cycle, each declared strike-team config against what ran under it (members, usage, cost, claims citing a member), and lacks resolved at a leader against those sent up; every refusal per seat with its category, model and session; the cost, recorded where the provider priced it and bounded at list rates where it did not. Deterministic; the judged review is the session-backed `review` capability, after v0. |
+| `noscope incident review <id>` | The After Action Review computed from the event log: the size-up when there was one (the initial IC's call with its usage and tool calls, what the briefing said in numbers, whom command transferred to and who chose the model, or the size-up's failure; its questions), then each cycle (cut at the IC's command turn; at `plan.proposed` in a log from before the IC) with its verdict, the IC's command turn (with its verdict on each report under it: the unit, the verdict, its why and instructions), reviews and handoff call with their usage, each transfer of command with the context size that triggered it, the document's length and its evaluation, or, for a fallback, the models, who chose the new one and the refusals (and their count at the end), each draft's planner call, rejections, tasks run (capability, model, tokens with the cache split, seconds, cost, claims), the cycle's wall time beside its dispatch span, the sum of its tasks' seconds and `parallel` (the sum over the span: 1.0 in sequence, higher when tasks overlapped), each leader's turns with their usage and outcome (a refused turn priced and named by its category, with the leader's move to the fallback; a report the runtime wrote after two refusals listed as such), a task's refused call priced and named with the model it was retried on, the resource requests it sent up and the tasks it assigned or was refused, discrepancies, strike teams declared or refused, questions and answers; totals by role and model (the IC under `ic`, the initial IC under `initial_ic`, leaders under `leader`); plan, IC-verdict (by kind: approve, correct, amend), report-verdict (R4-2: by kind, accepted, revise, reassign, for the incident and per unit), briefing-kept (the verdicts on the IC's first accepted command turn that evaluated one: accepted, rewritten, discarded, of how many items; or that none was evaluated yet, that there was no size-up, or that it failed), task, leader-turn and claim counts, each unit's reports by cycle, each declared strike-team config against what ran under it (members, usage, cost, claims citing a member), and lacks resolved at a leader against those sent up; every refusal per seat with its category, model and session; the cost, recorded where the provider priced it and bounded at list rates where it did not. Deterministic; the judged review is the session-backed `review` capability, after v0. |
 | `noscope incident sop <id> <name>` | Adds an SOP's unit and its tasks to the incident in one action plan. After v0. |
 | `noscope incident answer <id> "<text>"` | Answers the oldest open question, the IC's, the planner's or a unit leader's; the IC's next change report carries the answer. A unit's question answered returns that unit to `active` once nothing of the unit's is open; the incident returns to `open` only when a command turn or a plan had blocked it and nothing of theirs still waits. While the incident is blocked on the IC's refusals (R4-7), the answer goes to the question the refusals raised, whatever older questions of the units are open, and one naming a model Claude Code serves, as a whole word anywhere in the text, transfers command to it and reopens the incident; any other answer is stored, the question is asked again and the incident stays blocked, with a hint listing the models. |
 | `noscope incident provide <id> "<text>"` | Answers the oldest unanswered capability request, the IC's, the planner's or a unit leader's, with what was provided, or why not. A unit's request answered returns that unit to `active` once nothing of the unit's is open; the incident returns to `open` only when a command turn or a plan had blocked it and nothing of theirs still waits. |
