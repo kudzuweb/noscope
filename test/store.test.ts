@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Claim, Incident, Task, Unit } from "../src/models.js";
+import { RUNTIME } from "../src/runtime-version.js";
 import { now, resolveDbPath, Store, sumUsage } from "../src/store.js";
 
 function scripted(store: Store): void {
@@ -563,14 +564,14 @@ describe("store", () => {
     s1.db.pragma("user_version = 1");
     s1.close();
     const first = new Store(path);
-    expect(first.db.pragma("user_version", { simple: true })).toBe(7);
+    expect(first.db.pragma("user_version", { simple: true })).toBe(8);
     first.close();
     // A crash after the column was added but before the version was written: reopening finishes the job.
     const half = new Store(path);
     half.db.pragma("user_version = 1");
     half.close();
     const s2 = new Store(path);
-    expect(s2.db.pragma("user_version", { simple: true })).toBe(7);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(8);
     expect(
       s2
         .listClaims("i1")
@@ -598,7 +599,7 @@ describe("store", () => {
     s1.db.pragma("user_version = 2");
     s1.close();
     const s2 = new Store(path);
-    expect(s2.db.pragma("user_version", { simple: true })).toBe(7);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(8);
     expect(s2.listTasks("i1").map((t) => t.evidenceFrom)).toEqual([
       { claims: [], tasks: [] },
     ]);
@@ -619,7 +620,7 @@ describe("store", () => {
     s1.db.pragma("user_version = 3");
     s1.close();
     const s2 = new Store(path);
-    expect(s2.db.pragma("user_version", { simple: true })).toBe(7);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(8);
     expect(s2.listUnits("i1").map((u) => [u.id, u.objective])).toEqual([
       ["u-command", "command"],
       ["u1", "delete-handler investigation"],
@@ -663,7 +664,7 @@ describe("store", () => {
     s1.db.pragma("user_version = 4");
     s1.close();
     const s2 = new Store(path);
-    expect(s2.db.pragma("user_version", { simple: true })).toBe(7);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(8);
     expect(s2.listTasks("i1").map((t) => t.strikeTeam)).toEqual([[]]);
     const team = {
       kind: "pinger",
@@ -713,10 +714,13 @@ describe("store", () => {
     s1.setUnitSession("i1", "u-command", "old-ic-session", "dispatcher");
     s1.setUnitSession("i1", "u1", "leader-session", "dispatcher");
     s1.db.exec("ALTER TABLE incidents DROP COLUMN period_json");
+    // A version 5 file has no runtime column either; the step that writes the release
+    // adds it first (R4-12).
+    s1.db.exec("ALTER TABLE events DROP COLUMN runtime");
     s1.db.pragma("user_version = 5");
     s1.close();
     const s2 = new Store(path);
-    expect(s2.db.pragma("user_version", { simple: true })).toBe(7);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(8);
     expect(s2.getIncident("i1")?.period).toBeUndefined();
     expect(s2.listUnits("i1").map((u) => [u.id, u.sessionId])).toEqual([
       ["u-command", null],
@@ -727,6 +731,7 @@ describe("store", () => {
     const released = s2.listEvents("i1").at(-1);
     expect(released?.type).toBe("leader.released");
     expect(released?.actor).toBe("migration");
+    expect(released?.runtime).toBe(RUNTIME);
     expect(released?.payload).toMatchObject({
       unitId: "u-command",
       released: "old-ic-session",
@@ -793,7 +798,7 @@ describe("store", () => {
     s1.db.pragma("user_version = 6");
     s1.close();
     const s2 = new Store(path);
-    expect(s2.db.pragma("user_version", { simple: true })).toBe(7);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(8);
     expect(s2.listUnits("i1").map((u) => [u.id, u.type, u.role])).toEqual([
       ["u-command", "ic", null],
       ["u1", "base", null],
@@ -842,6 +847,59 @@ describe("store", () => {
     expect(c.snapshot()).toEqual(s2.snapshot());
     b.close();
     c.close();
+    s2.close();
+  });
+
+  it("stamps every event it writes with the runtime tag, and a replay keeps each event's own", () => {
+    const store = new Store(":memory:");
+    scripted(store);
+    store.record(null, "grant.given", "cli", { note: "a system event" });
+    const events = [...store.listEvents("i1"), ...store.listEvents(null)];
+    expect(events.length).toBeGreaterThan(5);
+    expect(RUNTIME).not.toBe("");
+    for (const e of events) expect(e.runtime).toBe(RUNTIME);
+    // A replay re-inserts each event as it was, so an event from another build keeps that
+    // build's tag: what reproduction (DESIGN.md Step 2) checks out.
+    const tagged = events.map((e, i) =>
+      i === 0 ? { ...e, runtime: "0123abcd" } : e,
+    );
+    const b = new Store(":memory:");
+    b.replay(tagged);
+    expect(b.snapshot()).toEqual(store.snapshot());
+    expect(
+      [...b.listEvents("i1"), ...b.listEvents(null)].map((e) => e.runtime),
+    ).toEqual(tagged.map((e) => e.runtime));
+    b.close();
+    store.close();
+  });
+
+  it("migrates a version 7 file: the events written before the tag read null, and those written after carry it", async () => {
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const path = `${mkdtempSync(`${tmpdir()}/noscope-`)}/v7.sqlite`;
+    const s1 = new Store(path);
+    scripted(s1);
+    const before = s1.listEvents("i1").length;
+    s1.db.exec("ALTER TABLE events DROP COLUMN runtime");
+    s1.db.pragma("user_version = 7");
+    s1.close();
+    const s2 = new Store(path);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(8);
+    expect(s2.listEvents("i1").map((e) => e.runtime)).toEqual(
+      Array(before).fill(null),
+    );
+    s2.record("i1", "plan.proposed", "planner", { rationale: "after" });
+    const after = s2.listEvents("i1");
+    expect(after.length).toBe(before + 1);
+    expect(after.at(-1)?.runtime).toBe(RUNTIME);
+    // The untagged events replay untagged: a rebuilt store says the same about them.
+    const b = new Store(":memory:");
+    b.replay([...s2.listEvents(null), ...after]);
+    expect(b.listEvents("i1").map((e) => e.runtime)).toEqual([
+      ...Array(before).fill(null),
+      RUNTIME,
+    ]);
+    b.close();
     s2.close();
   });
 

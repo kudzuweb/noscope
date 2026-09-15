@@ -160,7 +160,7 @@ mutation in its payload, which is what makes the tables rebuildable from the eve
 | `units` | `id`, `incident_id`, `parent_id`, `type` (the registered unit type, R4-10: `ic` for command, `base` for a led unit), `objective`, `leader_json` (provider and model), `equipment_json`, `bash_allowlist_json`, `role` (the config's own role text, null for the type's), `session_id` (the leader's session, null until it first runs), `status` (`active`, `waiting`, `closed`), `created_at`, `closed_at` |
 | `tasks` | `id`, `incident_id`, `unit_id`, `capability`, `objective`, `inputs_json`, `expected_output`, `completion_criteria_json`, `evidence_required_json`, `depends_on_json`, `evidence_from_json`, `provider`, `model` (both required for a session-backed capability), `instructions`, `budget_json`, `strike_team_json` (the kinds the leader may send on the task; `[]` when none), `status` (`pending`, `ready`, `running`, `completed`, `failed`, `cancelled`), `result_json`, `created_at`, `completed_at` |
 | `claims` | `id`, `incident_id`, `subject`, `predicate`, `object_json`, `status` (`asserted`, `verified`, `rejected`), `basis` (`observed`, `inferred`), `confidence`, `evidence_json`, `provenance_json`, `created_at` |
-| `events` | `id`, `scope` (`incident` or `system`), `incident_id` (required for an incident event, null for a system event, enforced by a CHECK), `sequence` (unique per incident, and per the system scope), `type`, `actor`, `payload_json`, `created_at`. A payload carries a `mutation` naming the exact state change the event records, so replay applies that and nothing else; an event with no mutation, such as `plan.proposed`, changes no state. |
+| `events` | `id`, `scope` (`incident` or `system`), `incident_id` (required for an incident event, null for a system event, enforced by a CHECK), `sequence` (unique per incident, and per the system scope), `type`, `actor`, `payload_json`, `created_at`, `runtime` (R4-12: the noscope commit the writing process was built from, `-dirty` when a tracked file differed from it at the build, `unknown` when the build found no checkout; null on an event from before the tag). A payload carries a `mutation` naming the exact state change the event records, so replay applies that and nothing else; an event with no mutation, such as `plan.proposed`, changes no state. A replay re-inserts each event with its own tag, never the replaying build's. |
 | `grants` | `id`, `scope` (`incident` or `standing`), `incident_id` (null for standing), `capability`, `effect`, `reason`, `granted_by`, `per_task` (boolean), `created_at`. Empty in v0. |
 
 Event types in v0: `incident.created`, `incident.blocked`, `incident.closed`, `unit.created`, `unit.closed`,
@@ -254,8 +254,29 @@ that build's leader role text in its snapshotted system prompt (a resumed call k
 first call's system prompt), so the IC's first command turn starts a fresh session under
 the IC's own role text; version 6 (before unit types, R4-10) gives every unit a `type`,
 `ic` for the root and `base` for the rest, and a null `role`, and a `unit.create` recorded
-before then replays the same way, so a round 4 file reads as before. A file at a later
+before then replays the same way, so a round 4 file reads as before; version 7 (before
+the runtime tag, R4-12) adds `runtime` to `events`, which every earlier event reads as
+null, since what wrote them is not recorded (the column is added ahead of the version 5
+step too, since that step writes an event). A file at a later
 version is refused.
+
+The runtime tag is what makes a seat's briefing reproducible, ruled by Mauria on
+2026-09-15 (13:34 to 13:39): what a seat received is preserved in the Claude Code
+transcript (every call writes a `prompt_snapshot` record with the full system prompt, and
+the user messages are the transcript; verified on run 003's IC session, and transcripts
+are kept for 99999 days on this machine), so briefings are not stored; the tag says which
+code rendered them. `pnpm build` writes `dist/runtime-version.json`, the commit of the
+checkout it ran in (`src/runtime-version.ts`, run after `tsc`), and the store stamps
+`RUNTIME`, read from that file beside the compiled module, on every event it writes; a
+process running from source, or from a `dist/` without the file, stamps `unknown`.
+`incident events` prints the tag where it changes between events and `incident review`
+names the runtimes an incident ran under with the event range of each. Reproduction is
+by hand, with no command: check out the tagged commit, `pnpm build`, replay the events
+with `sequence` below the call's answer event (`command.turned`, `plan.proposed`,
+`unit.reported`, `unit.continued`) into a fresh store (`Store.replay`, with the system
+events), and call that build's renderer (`renderChangeReport`, `renderPlannerInput`, the
+base protocol's orientation or turn prompt) on the rebuilt store; the transcript is the
+check that it rendered the same.
 
 Capabilities are not a table. The registry is code, and `incident show` prints what is
 registered.

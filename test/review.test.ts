@@ -121,6 +121,7 @@ function event(
     actor: "test",
     payload,
     createdAt: `2026-09-13T13:${String(sequence).padStart(2, "0")}:00.000Z`,
+    runtime: null,
   };
 }
 
