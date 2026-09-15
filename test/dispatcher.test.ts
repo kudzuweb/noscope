@@ -2389,13 +2389,17 @@ describe("dispatcher, parallel dispatch", () => {
     expect(sequenceOf(events, "task.completed", "t-b")).toBeGreaterThan(
       reported?.sequence ?? Number.POSITIVE_INFINITY,
     );
-    // u-b's leader heard the ending on a turn of its own, after the stop.
+    // u-b's leader heard the ending on a turn of its own, after the stop. The log is in
+    // process-start order, and t-b's session and u-a's turn start together, so the turns
+    // are found by kind.
     const calls = readCalls(join(dir, "calls"));
-    expect(calls.map((c) => c.kind)).toEqual(["task", "leader", "leader"]);
-    expect(calls[2]?.prompt).toContain(
+    expect(calls.filter((c) => c.kind === "task")).toHaveLength(1);
+    const turns = calls.filter((c) => c.kind === "leader");
+    expect(turns).toHaveLength(2);
+    expect(turns[1]?.prompt).toContain(
       "Task t-b (investigate) completed. Its result:",
     );
-    expect(calls[2]?.prompt).toContain("1 ready task(s) remain in your unit.");
+    expect(turns[1]?.prompt).toContain("1 ready task(s) remain in your unit.");
     expect(events.at(-1)?.type).toBe("unit.continued");
     expect(events.at(-1)?.payload.unitId).toBe("u-b");
     store.close();
