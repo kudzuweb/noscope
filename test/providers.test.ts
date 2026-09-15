@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -84,6 +85,9 @@ describe("claude code provider", () => {
       fresh,
     );
     expect(resumed).not.toContain("--no-session-persistence");
+    expect(() => renderClaudeCodeArgs({ ...request(), resume: "" })).toThrow(
+      /resume needs a session id/,
+    );
   });
 
   it("puts the preamble before the role and names the four kinds of lack", () => {
@@ -256,18 +260,23 @@ describe("claude code provider", () => {
     150_000,
   );
 
-  // The open observation from R3-0: its resumed calls read nothing from cache. The cause is
-  // Haiku 4.5's minimum cacheable prefix of 4096 tokens (Anthropic's prompt caching docs),
-  // above a bare session's context of about 3k; a first call writes nothing to cache, so a
-  // resumed call has nothing to read. The role text here is padded past that minimum, and
-  // the first call's cache write is asserted so a too-short prefix fails for its own reason.
+  // Haiku 4.5's minimum cacheable prefix is 4096 tokens (Anthropic's prompt caching docs),
+  // above a bare session's context of about 3k, so an unpadded first call writes nothing to
+  // cache; the role text here is padded past that minimum, with a fresh id per run so a
+  // rerun inside the cache's lifetime writes again instead of reading the last run's prefix.
+  // Whether a resumed call reads the earlier calls' prefix from cache or rewrites it varies
+  // run to run (measured 2026-09-15 on Claude Code 2.1.272: the first resume read in 14 of
+  // 24 runs, a second resume in 24 of 26), so no assertion on cache reads holds. What held
+  // every time is that the resumed call's own usage, written or read, covers the launch
+  // call's whole context, which is the usage-per-call fact the design rests on.
   it.skipIf(process.env.NOSCOPE_LIVE !== "1")(
-    "live: a resumed Haiku session remembers, keeps its id, reports its own usage and reads from cache",
+    "live: a resumed Haiku session remembers, keeps its id, and reports its own usage over the whole context",
     async () => {
+      const run = randomUUID();
       const padding = Array.from(
         { length: 160 },
         (_, i) =>
-          `Note ${i}: the runtime keeps every session record so a run can be read back call by call.`,
+          `Note ${i} of run ${run}: the runtime keeps every session record so a run can be read back call by call.`,
       ).join(" ");
       const base: SessionRequest = {
         ...request(),
@@ -296,7 +305,9 @@ describe("claude code provider", () => {
       const result = SessionResult.parse(second.output);
       expect(result.outcome).toBe("answered");
       expect(JSON.stringify(result.findings)).toMatch(/pelican/i);
-      expect(second.usage.cacheReadTokens).toBeGreaterThan(0);
+      expect(
+        second.usage.cacheWriteTokens + second.usage.cacheReadTokens,
+      ).toBeGreaterThanOrEqual(first.usage.cacheWriteTokens);
     },
     300_000,
   );

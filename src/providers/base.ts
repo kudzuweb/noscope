@@ -31,7 +31,11 @@ export type SessionRequest = {
   /**
    * A session id to resume: the call continues that session for one more structured result
    * with this request's prompt and schema, and reports usage for this call alone (DESIGN.md
-   * Step 3; verified 2026-09-15). Absent, the provider starts a fresh session.
+   * Step 3; verified 2026-09-15). `systemPrompt` on a resumed call is ignored: Claude Code
+   * records the system prompt on the session's first call (`--system-prompt-snapshot on`,
+   * the 2.1.272 default) and keeps it on every resume, so a seat whose role text must change
+   * needs a fresh session. Resume with the session's original `cwd`. Absent, the provider
+   * starts a fresh session.
    */
   resume?: string;
 };

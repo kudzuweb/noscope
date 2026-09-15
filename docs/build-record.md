@@ -929,23 +929,41 @@ The stub binary answers a `--resume` call with the id it was given as `session_i
 records `DISABLE_COMPACT` in its log. Tests: the renderer with and without `resume`, the
 stub resumed twice, the environment reaching the stub, and a live test behind
 `NOSCOPE_LIVE=1` that runs two Haiku calls on one session with one schema and asserts the
-id is kept, the word from the first call is recalled, and the second call reads from cache.
+id is kept, the word from the first call is recalled, and the second call's own usage,
+written or read, covers the first call's whole context.
 DESIGN.md Step 3 (a `resume` row in the session table, the compaction sentence beside the
 isolation flags) and the Speed section's last sentence follow; `docs/architecture.html`
 names both on the session line. No caller sets `resume` yet; R3-4's unit leaders do.
 
 Not exactly to spec, with reasons:
 
-- The open observation from R3-0 resolves: cache reads were 0 on its resumed calls, and on a
-  first live run of this PR's test too, because the first call had written nothing to
-  cache. Haiku 4.5's minimum cacheable prefix is 4096 tokens (Anthropic's prompt caching
-  docs, read 2026-09-15), above a bare session's context of about 3k, so a short session
-  caches nothing on any call, resumed or not; the schema changing per call was not the
-  cause. The live test pads its role text past the minimum and asserts the first call's
-  cache write as well as the second call's cache read; with the padding, the first call
-  wrote 5457 tokens and the resumed call read 11128 (Claude Code 2.1.272, 2026-09-15). The
-  design's `resume` row records the minimum, since a leader's session on Haiku will only
-  cache once its context has grown past it.
+- The plan's acceptance, a live assertion that the second call's cache reads are nonzero,
+  is not met, because the fact is not reliably true. Two things were found (all live, Claude
+  Code 2.1.272, 2026-09-15). First, a bare session caches nothing on any call: Haiku 4.5's
+  minimum cacheable prefix is 4096 tokens (Anthropic's prompt caching docs, read the same
+  day) and the session's context is about 3k, so the first live run of the test read 0
+  because its first call had written 0; the test now pads its role text past the minimum,
+  with a fresh id per run so a rerun inside the cache's lifetime writes again, and asserts
+  the first call's write. Second, with the padding, whether a resumed call reads the earlier
+  calls' prefix from cache is intermittent: over 24 runs of two calls, the resumed call read
+  the launch call's prefix in 14 and rewrote the whole context (about 12k tokens) in 10;
+  over 26 runs of three calls, a second resumed call read the first resumed call's prefix
+  in 24. The runs are sequential and seconds apart, and no client-side signal separates a
+  prefix that differed from a cache miss. The test therefore asserts what held in every
+  run: the resumed call's own usage, written or read, covers the first call's whole context,
+  which is the usage-per-call fact R3-4 costs tasks by. The `resume.sh` zeros, whose first
+  call did write 8.7k, are one more instance of the same intermittency and stay unexplained;
+  the R3-0 Reference row and the design's `resume` row carry the counts, and the Speed
+  section says a resumed call's input cost is bounded by the whole context at cache-write
+  rates rather than by the new turn. The probe that produced the counts is not committed.
+- Two rules for R3-4 are recorded on the `resume` field and in the design's `resume` row,
+  from the review: `systemPrompt` on a resumed call is ignored, because Claude Code 2.1.272
+  defaults `--system-prompt-snapshot on` and keeps the first call's system prompt on every
+  resume, so a seat whose role text must change needs a fresh session; and a session is
+  resumed with its original `cwd`, since its transcript lives under that directory's
+  project folder (stated as the safe rule, not verified).
+- The renderer rejects an empty `resume` (`resume needs a session id`) rather than passing
+  `--resume ""` to the binary.
 - `DISABLE_COMPACT` is set inside `runProcess` on the spawned environment rather than by
   each caller of the provider, so no request can forget it.
 - The Reference table gains no row here; R3-0 lands the resume rows, and this PR's finding

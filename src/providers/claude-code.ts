@@ -63,6 +63,7 @@ export function renderClaudeCodeArgs(request: SessionRequest): string[] {
     JSON.stringify(request.outputSchema),
     ...CLAUDE_CODE_ISOLATION_FLAGS,
   ];
+  if (request.resume === "") throw new Error("resume needs a session id");
   if (request.resume !== undefined) args.push("--resume", request.resume);
   // A headless session may use only allowlisted tools: the read-only Bash commands, every
   // tool of each attached MCP server (`mcp__<server>`), and Claude in Chrome's own server.
