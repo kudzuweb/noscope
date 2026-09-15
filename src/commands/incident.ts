@@ -2,6 +2,8 @@ import { parseArgs } from "node:util";
 import { listCapabilities } from "../capabilities/index.js";
 import { type Context, EXIT, type Handler } from "../context.js";
 import { dispatch } from "../dispatcher.js";
+import { READ_ONLY_COMMANDS } from "../equipment/index.js";
+import { IC_MODEL, IC_PROVIDER } from "../leader.js";
 import {
   Budget,
   type CapabilityRequest,
@@ -42,6 +44,7 @@ export const create: Handler = async (args, ctx) => {
         priority: { type: "string", multiple: true, default: [] },
         "budget-tokens": { type: "string" },
         "budget-seconds": { type: "string" },
+        "ic-model": { type: "string", default: IC_MODEL },
       },
     });
   } catch (error) {
@@ -71,6 +74,14 @@ export const create: Handler = async (args, ctx) => {
     );
     return EXIT.usage;
   }
+  const icModel = String(parsed.values["ic-model"]);
+  const icProvider = getProvider(IC_PROVIDER, ctx.env);
+  if (!icProvider.models.includes(icModel)) {
+    ctx.io.err(
+      `noscope incident create: --ic-model ${icModel} is not a model ${IC_PROVIDER} serves (${icProvider.models.join(", ")})`,
+    );
+    return EXIT.usage;
+  }
   const store = openStore(ctx);
   try {
     const at = now();
@@ -87,11 +98,17 @@ export const create: Handler = async (args, ctx) => {
       createdAt: at,
       updatedAt: at,
     };
+    // The root unit's leader is the Incident Commander, on the model `--ic-model` names
+    // until the size-up routes it (R3-8); it holds the read-only built-ins and nothing else.
     const command: Unit = {
       id: `${id}-command`,
       incidentId: id,
       parentId: null,
-      purpose: "command: holds the objective and the current plan",
+      objective: "command: holds the objective and the current plan",
+      leader: { provider: IC_PROVIDER, model: icModel },
+      equipment: ["Read", "Grep", "Glob", "Bash"],
+      bashAllowlist: [...READ_ONLY_COMMANDS],
+      sessionId: null,
       status: "active",
       createdAt: at,
       closedAt: null,
@@ -100,7 +117,9 @@ export const create: Handler = async (args, ctx) => {
       store.createIncident(incident, ACTOR);
       store.createUnit(command, "runtime");
     });
-    ctx.io.out(`incident ${id} created: ${objective}`);
+    ctx.io.out(
+      `incident ${id} created: ${objective} (IC ${IC_PROVIDER}/${icModel})`,
+    );
     return EXIT.ok;
   } finally {
     store.close();
@@ -215,6 +234,14 @@ function renderIncidentFile(
     if (s.inferred.length === 0) lines.push("    (none)");
     lines.push(`  keep: ${s.keep.join(", ") || "(none)"}`);
   }
+  const discrepancies = events.filter((e) => e.type === "picture.discrepancy");
+  if (discrepancies.length > 0) {
+    lines.push("discrepancies raised:");
+    for (const d of discrepancies)
+      lines.push(
+        `  - ${String(d.payload.seat)}${d.payload.unitId === undefined ? "" : ` of ${String(d.payload.unitId)}`}: ${String(d.payload.discrepancy)} (${d.createdAt})`,
+      );
+  }
   lines.push("questions waiting on a human:");
   for (const q of incident.questions.filter((q) => q.answer === undefined))
     lines.push(`  - ${q.text}`);
@@ -288,6 +315,7 @@ export const tree: Handler = async (args, ctx) => {
     for (const line of renderTree(
       store.listUnits(incident.id),
       store.listTasks(incident.id),
+      store.listEvents(incident.id),
     ))
       ctx.io.out(line);
     return EXIT.ok;
@@ -319,8 +347,12 @@ async function cycle(
   ctx.io.out(
     `plan proposed (session ${proposal.sessionId}): ${plan.rationale}`,
   );
+  if (plan.discrepancy !== undefined)
+    ctx.io.out(`  discrepancy: ${plan.discrepancy}`);
   for (const u of plan.createUnits)
-    ctx.io.out(`  create unit ${u.ref} under ${u.parent}: ${u.purpose}`);
+    ctx.io.out(
+      `  create unit ${u.ref} under ${u.parent} (leader ${u.leader.provider}/${u.leader.model}): ${u.objective}`,
+    );
   for (const c of plan.closeUnits)
     ctx.io.out(`  close unit ${c.unitId}: ${c.reason}`);
   for (const t of plan.createTasks)
@@ -342,7 +374,7 @@ async function cycle(
   ctx.io.out("plan approved");
   const applied = applyPlan(store, incident, plan);
   for (const u of applied.units)
-    ctx.io.out(`  unit ${u.id} created under ${u.parentId}: ${u.purpose}`);
+    ctx.io.out(`  unit ${u.id} created under ${u.parentId}: ${u.objective}`);
   for (const id of applied.closedUnits) ctx.io.out(`  unit ${id} closed`);
   for (const t of applied.tasks)
     ctx.io.out(
@@ -355,15 +387,32 @@ async function cycle(
     ctx.io.out(`incident ${incident.id} is now ${applied.incidentStatus}`);
     return { status: applied.incidentStatus, stopped: null };
   }
-  const { ran, stopped } = await dispatch(store, incident, {
-    cwd: ctx.cwd,
-    env: ctx.env,
-  });
+  const before = store.listEvents(incident.id).length;
+  const { ran, reports, stopped, pictureChanged } = await dispatch(
+    store,
+    incident,
+    { cwd: ctx.cwd, env: ctx.env },
+  );
   for (const r of ran)
     ctx.io.out(
       `  ran ${r.taskId} (${r.capability}): ${r.status}${r.reason === undefined ? "" : `, ${r.reason}`}; ${r.claims} claim(s)`,
     );
+  for (const r of reports)
+    ctx.io.out(
+      `  unit ${r.unitId} reported ${r.report.outcome}${r.report.pictureChanged ? ", picture changed" : ""}: ${r.report.changed.map((c) => c.what).join("; ") || "nothing changed"}${r.report.why === undefined ? "" : `; why: ${r.report.why}`}${r.report.suggestion === undefined ? "" : `; suggestion: ${r.report.suggestion}`}`,
+    );
+  for (const d of store
+    .listEvents(incident.id)
+    .slice(before)
+    .filter((e) => e.type === "picture.discrepancy"))
+    ctx.io.out(
+      `  discrepancy from ${String(d.payload.seat)} of ${String(d.payload.unitId)}: ${String(d.payload.discrepancy)}`,
+    );
   if (stopped !== null) ctx.io.out(`  budget stopped the pass: ${stopped}`);
+  else if (pictureChanged !== null)
+    ctx.io.out(
+      `  the pass stopped: unit ${pictureChanged} changed the picture`,
+    );
   else if (ran.length === 0) ctx.io.out("  nothing ready to run");
   const claims = store.listClaims(incident.id);
   ctx.io.out(

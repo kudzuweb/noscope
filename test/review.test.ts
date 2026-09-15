@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { EXIT, run } from "../src/cli.js";
 import type { ActionPlan, Event, Incident, Task } from "../src/models.js";
 import { renderReview } from "../src/review.js";
+import { unitProposal } from "./fixtures/models.js";
 
 const tree = resolve("test/fixtures/tree");
 const stub = resolve("test/stub-claude");
@@ -32,11 +33,7 @@ const empty: ActionPlan = {
 const findIt: ActionPlan = {
   ...empty,
   createUnits: [
-    {
-      ref: "find",
-      purpose: "locate the delete handler",
-      parent: "001-command",
-    },
+    unitProposal("find", "locate the delete handler", "001-command"),
   ],
   createTasks: [
     {
@@ -163,6 +160,17 @@ describe("incident review", () => {
       /planner\s+claude-opus-5\s+2\s+3,000\s+84\s+3\.0\s+\$0\.02/,
     );
     expect(text).toMatch(/grep\s+\(none\)\s+1\s+0\s+0\s+\d+\.\d\s+\$0\.00/);
+    // The find unit's leader was asked once, after the grep, and reported with nothing left to run.
+    expect(text).toContain(
+      "leader of 001-u02 claude-haiku-4-5: in 1,500 (uncached 1,000 / write 200 / read 300)  out 42  1.5 s  $0.01  reported progress, 0 change(s)  session stub-session",
+    );
+    expect(text).toMatch(
+      /leader\s+claude-haiku-4-5\s+1\s+1,500\s+42\s+1\.5\s+\$0\.01/,
+    );
+    expect(text).toContain("leader turns: 1 (1 reports)");
+    expect(text).toContain(
+      "  001-u02: cycle 1: reported progress, 0 change(s)",
+    );
     expect(text).toContain(
       "plans: 2 proposed, 2 applied, 0 rejected (0 rule lines)",
     );
@@ -171,7 +179,7 @@ describe("incident review", () => {
     );
     expect(text).toContain("claims: 1 verified, 0 asserted, 0 rejected");
     expect(text).toContain("questions: none");
-    expect(h.out.at(-1)).toBe("cost: $0.02");
+    expect(h.out.at(-1)).toBe("cost: $0.04");
   });
 
   it("exits 4 for an incident that does not exist", async () => {

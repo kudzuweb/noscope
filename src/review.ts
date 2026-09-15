@@ -205,13 +205,18 @@ function activityLines(
   taskId: string | null,
   model: string | null,
   cycle: number,
+  leaderOf: string | null = null,
 ): string[] {
-  // A task's calls by its id; the planner's by the cycle it drafted, since a leader session
-  // (R3-4) may file a call under no task and that call is not the planner's.
+  // A task's calls by its id; a leader's turn by its unit with no task and no cycle; the
+  // planner's by the cycle it drafted.
   const own = (e: Event) =>
-    taskId === null
-      ? e.payload.cycle === cycle
-      : str(e.payload.taskId) === taskId;
+    leaderOf !== null
+      ? str(e.payload.unitId) === leaderOf &&
+        e.payload.taskId === null &&
+        e.payload.cycle === null
+      : taskId === null
+        ? e.payload.cycle === cycle
+        : str(e.payload.taskId) === taskId;
   const lines: string[] = [];
   const calls = events.filter(
     (e) => e.type === "tool.called" && own(e) && e.payload.agentId === null,
@@ -280,6 +285,8 @@ export function renderReview(
   let ruleLines = 0;
   let sessionsRan = 0;
   let deterministicRan = 0;
+  let leaderTurns = 0;
+  const reportsByUnit = new Map<string, string[]>();
   let failedWithoutRunning = 0;
   const questions: string[] = [];
 
@@ -405,6 +412,43 @@ export function renderReview(
           `    insufficient: ${list(outcome.payload.needed).map(String).join("; ")}`,
         );
     }
+    // A leader's turns: every one costs its own call on the unit's leader model; a turn
+    // that filed a report is listed with the report's outcome. The turns' own tool calls
+    // are filed under the unit with no task, so they are listed once per unit after its
+    // turns; a task run inside the leader's session lists its calls under the task.
+    const turnedUnits = new Map<string, string | null>();
+    for (const e of cycle.events) {
+      if (e.type !== "unit.reported" && e.type !== "unit.continued") continue;
+      leaderTurns += 1;
+      const unitId = str(e.payload.unitId);
+      const model = str(e.payload.model) || null;
+      const usage = (e.payload.usage ?? {}) as Partial<Usage>;
+      const turnCost = costOf(usage, model);
+      add(roleTotals("leader", model), usage, turnCost);
+      addCost(cost, turnCost);
+      const report = e.payload.report as
+        | { outcome?: unknown; pictureChanged?: unknown; changed?: unknown }
+        | undefined;
+      const move =
+        e.type === "unit.reported"
+          ? `reported ${str(report?.outcome)}${report?.pictureChanged === true ? ", picture changed" : ""}, ${list(report?.changed).length} change(s)`
+          : "continued";
+      if (e.type === "unit.reported") {
+        const lines = reportsByUnit.get(unitId) ?? [];
+        lines.push(`cycle ${cycle.number}: ${move}`);
+        reportsByUnit.set(unitId, lines);
+      }
+      lines.push(
+        `  leader of ${unitId} ${model ?? "(no model)"}: ${describeUsage(usage, turnCost)}  ${move}${session(str(e.payload.sessionId))}`,
+      );
+      turnedUnits.set(unitId, model);
+    }
+    for (const [unitId, model] of turnedUnits)
+      lines.push(
+        ...activityLines(cycle.events, null, model, cycle.number, unitId).map(
+          (l) => `${l} (leader of ${unitId})`,
+        ),
+      );
     for (const e of cycle.events) {
       if (e.type === "task.failed" && !ranInCycle.has(taskIdOf(e))) {
         failedWithoutRunning += 1;
@@ -432,6 +476,10 @@ export function renderReview(
           );
       if (e.type === "capability.answered" && str(e.payload.answer) !== "")
         lines.push(`  provided: ${str(e.payload.answer)}`);
+      if (e.type === "picture.discrepancy")
+        lines.push(
+          `  discrepancy from ${str(e.payload.seat)}${str(e.payload.unitId) === "" ? "" : ` of ${str(e.payload.unitId)}`}: ${clip(str(e.payload.discrepancy))}`,
+        );
     }
     lines.push("");
   }
@@ -461,6 +509,13 @@ export function renderReview(
   lines.push(
     `tasks: ${sessionsRan + deterministicRan} ran (${deterministicRan} deterministic, ${sessionsRan} sessions) of ${tasks.length} created${failedWithoutRunning === 0 ? "" : `, ${failedWithoutRunning} failed before running`}`,
   );
+  const reported = [...reportsByUnit.values()].reduce(
+    (n, r) => n + r.length,
+    0,
+  );
+  lines.push(`leader turns: ${leaderTurns} (${reported} reports)`);
+  for (const [unitId, unitReports] of reportsByUnit)
+    lines.push(`  ${unitId}: ${unitReports.join("; ")}`);
   const toolCalls = events.filter((e) => e.type === "tool.called");
   const inSubagents = toolCalls.filter(
     (e) => e.payload.agentId !== null,

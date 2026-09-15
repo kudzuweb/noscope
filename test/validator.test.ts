@@ -12,7 +12,12 @@ import {
   validatePlan,
   validationContext,
 } from "../src/validator.js";
-import { fakeProvider, scriptedIncident } from "./fixtures/models.js";
+import {
+  FAKE_LEADER,
+  fakeProvider,
+  scriptedIncident,
+  unitProposal,
+} from "./fixtures/models.js";
 
 const AT = "2026-09-13T06:00:00.000Z";
 
@@ -88,10 +93,10 @@ function seeded(
 ) {
   const store = new Store(":memory:");
   const s = scriptedIncident(store, "i1", AT);
-  s.addUnit({ id: "u-scroll", purpose: "where the scroll position is set" });
+  s.addUnit({ id: "u-scroll", objective: "where the scroll position is set" });
   s.addUnit({
     id: "u-done",
-    purpose: "served its purpose",
+    objective: "served its purpose",
     status: "closed",
     closedAt: AT,
   });
@@ -220,7 +225,9 @@ describe("validator", () => {
     const plan: ActionPlan = {
       ...empty,
       createUnits: [
-        { ref: "u-new", purpose: "the delete path", parent: "u-scroll" },
+        unitProposal("u-new", "the delete path", "u-scroll", {
+          leader: FAKE_LEADER,
+        }),
       ],
       createTasks: [
         grepTask({ unit: "u-new", inputs: { root: "src", pattern: "delete" } }),
@@ -244,8 +251,8 @@ describe("validator", () => {
       {
         ...empty,
         createUnits: [
-          { ref: "a", purpose: "a", parent: "b" },
-          { ref: "b", purpose: "b", parent: "a" },
+          unitProposal("a", "a", "b", { leader: FAKE_LEADER }),
+          unitProposal("b", "b", "a", { leader: FAKE_LEADER }),
         ],
       },
     ],
@@ -315,22 +322,26 @@ describe("validator", () => {
     expect(
       rulesHit({
         ...empty,
-        createUnits: [{ ref: "n", purpose: "n", parent: "u-done" }],
+        createUnits: [
+          unitProposal("n", "n", "u-done", { leader: FAKE_LEADER }),
+        ],
       }),
     ).toEqual(["Units exist"]);
     expect(
       rulesHit({
         ...empty,
-        createUnits: [{ ref: "a", purpose: "a", parent: "a" }],
+        createUnits: [unitProposal("a", "a", "a", { leader: FAKE_LEADER })],
       }),
     ).toEqual(["No cycles"]);
     expect(
       rulesHit({
         ...empty,
         createUnits: [
-          { ref: "u-scroll", purpose: "collides", parent: "i1-command" },
-          { ref: "x", purpose: "x", parent: "i1-command" },
-          { ref: "x", purpose: "again", parent: "i1-command" },
+          unitProposal("u-scroll", "collides", "i1-command", {
+            leader: FAKE_LEADER,
+          }),
+          unitProposal("x", "x", "i1-command", { leader: FAKE_LEADER }),
+          unitProposal("x", "again", "i1-command", { leader: FAKE_LEADER }),
         ],
       }),
     ).toEqual(["No cycles"]);
@@ -476,6 +487,102 @@ describe("validator", () => {
     ).toEqual(["Model known"]);
   });
 
+  it("Model known: a new unit's leader names a provider and a model that provider serves", () => {
+    expect(
+      reasonsOf({
+        ...empty,
+        createUnits: [
+          unitProposal("a", "on a huge model", "i1-command", {
+            leader: { provider: "fake", model: "fake-huge" },
+          }),
+          unitProposal("b", "on codex", "i1-command", {
+            leader: { provider: "codex", model: "fake-small" },
+          }),
+        ],
+      }),
+    ).toEqual([
+      "Model known: new unit a names fake-huge, which fake does not serve for its leader",
+      "Model known: new unit b names unknown provider codex for its leader",
+    ]);
+    expect(
+      rulesHit({
+        ...empty,
+        createUnits: [
+          unitProposal("a", "fine", "i1-command", {
+            leader: FAKE_LEADER,
+            equipment: ["Read", "Grep", "playwright_browser"],
+            bashAllowlist: ["ls", "cat"],
+          }),
+        ],
+      }),
+    ).toEqual([]);
+  });
+
+  it("Effect policy: a new unit's leader gets only known equipment and read-only Bash commands", () => {
+    expect(
+      reasonsOf({
+        ...empty,
+        createUnits: [
+          unitProposal("a", "too much", "i1-command", {
+            leader: FAKE_LEADER,
+            equipment: ["Read", "Write", "grep_files"],
+            bashAllowlist: ["ls", "rm"],
+          }),
+        ],
+      }),
+    ).toEqual([
+      "Effect policy: new unit a gives its leader Write, which is no built-in tool, default, or registered external equipment",
+      "Effect policy: new unit a gives its leader grep_files, which is no built-in tool, default, or registered external equipment",
+      "Effect policy: new unit a allows its leader's Bash to run rm, which is not read-only",
+    ]);
+  });
+
+  it("Closing is clean: a unit whose leader has a session and has not reported since its last task ended cannot close", () => {
+    const { store, ctx } = seeded();
+    store.setUnitSession("i1", "u-scroll", "s-lead", "dispatcher", {
+      unitId: "u-scroll",
+      sessionId: "s-lead",
+    });
+    // The running task ends with no report after it, so the leader owes one.
+    store.setTaskStatus(
+      "i1",
+      "t-running",
+      "failed",
+      "dispatcher",
+      "task.failed",
+    );
+    const closing: ActionPlan = {
+      ...empty,
+      closeUnits: [{ unitId: "u-scroll", reason: "done" }],
+    };
+    const owed = validatePlan(closing, ctx());
+    expect(owed.ok).toBe(false);
+    if (!owed.ok)
+      expect(owed.rejections).toEqual([
+        {
+          rule: "Closing is clean",
+          reason:
+            "unit u-scroll's leader (session s-lead) has not reported since its last task ended",
+        },
+      ]);
+    store.record("i1", "unit.reported", "dispatcher", {
+      unitId: "u-scroll",
+      sessionId: "s-lead",
+      report: { outcome: "met", changed: [], pictureChanged: false },
+    });
+    expect(validatePlan(closing, ctx()).ok).toBe(true);
+    // A task ending after the report reopens the debt.
+    store.setTaskStatus(
+      "i1",
+      "t-failed",
+      "failed",
+      "dispatcher",
+      "task.failed",
+    );
+    expect(validatePlan(closing, ctx()).ok).toBe(false);
+    store.close();
+  });
+
   it("Closing is clean: refuses an already closed unit, a double close, and new work under a unit closed in the same plan", () => {
     expect(
       reasonsOf({
@@ -498,7 +605,9 @@ describe("validator", () => {
         ...empty,
         cancelTasks: ["t-running"],
         closeUnits: [{ unitId: "u-scroll", reason: "done" }],
-        createUnits: [{ ref: "n", purpose: "beneath", parent: "u-scroll" }],
+        createUnits: [
+          unitProposal("n", "beneath", "u-scroll", { leader: FAKE_LEADER }),
+        ],
         createTasks: [
           grepTask({ unit: "n", inputs: { root: "src", pattern: "q" } }),
         ],
@@ -555,7 +664,9 @@ describe("validator", () => {
     expect(
       reasonsOf({
         ...empty,
-        createUnits: [{ ref: "i1-u03", purpose: "x", parent: "i1-command" }],
+        createUnits: [
+          unitProposal("i1-u03", "x", "i1-command", { leader: FAKE_LEADER }),
+        ],
       }),
     ).toEqual([
       "No cycles: ref i1-u03 starts with the incident id and could be mistaken for a unit id",

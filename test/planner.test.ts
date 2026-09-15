@@ -10,7 +10,7 @@ import {
 } from "../src/planner.js";
 import { claudeCodeProvider, type Provider } from "../src/providers/index.js";
 import { Store } from "../src/store.js";
-import { scriptedIncident } from "./fixtures/models.js";
+import { scriptedIncident, unitProposal } from "./fixtures/models.js";
 
 const AT = "2026-09-13T06:00:00.000Z";
 const tree = resolve("test/fixtures/tree");
@@ -31,7 +31,11 @@ function cycledIncident(store: Store) {
       id: "u-scroll",
       incidentId: "i1",
       parentId: s.unit.id,
-      purpose: "where the scroll position is set after a delete",
+      objective: "where the scroll position is set after a delete",
+      leader: { provider: "claude-code", model: "claude-haiku-4-5" },
+      equipment: [],
+      bashAllowlist: [],
+      sessionId: null,
       status: "active",
       createdAt: AT,
       closedAt: null,
@@ -130,6 +134,25 @@ function cycledIncident(store: Store) {
   store.record("i1", "task.usage", "dispatcher", {
     usage: { inputTokens: 1200, outputTokens: 300, seconds: 4.5 },
   });
+  store.record("i1", "unit.reported", "dispatcher", {
+    unitId: "u-scroll",
+    sessionId: "s-lead",
+    provider: "claude-code",
+    model: "claude-haiku-4-5",
+    report: {
+      outcome: "not_met",
+      changed: [
+        {
+          what: "scrollTo is called once, at view.ts:88",
+          claims: ["c-verified"],
+        },
+      ],
+      pictureChanged: false,
+      why: "the call site is known but not what reaches it",
+      suggestion: "read the handler that calls it",
+    },
+    usage: { inputTokens: 900, outputTokens: 80, seconds: 2 },
+  });
   store.record("i1", "plan.proposed", "planner", { rationale: "too wide" });
   store.record("i1", "plan.rejected", "validator", {
     rule: "Span of control",
@@ -219,13 +242,13 @@ describe("planner", () => {
     store.close();
   });
 
-  it("section 9 carries the last applied plan's situation as the planner wrote it, and (none) before one", () => {
+  it("section 10 carries the last applied plan's situation as the planner wrote it, and (none) before one", () => {
     const store = new Store(":memory:");
     scriptedIncident(store, "i1", AT);
     const incident = store.getIncident("i1");
     if (incident === undefined) throw new Error("no incident");
     expect(renderPlannerInput(store, incident, [fakeProvider])).toContain(
-      "## 9. Situation from the last cycle\n  (none)",
+      "## 10. Situation from the last cycle\n  (none)",
     );
     store.record("i1", "plan.applied", "runtime", {
       rationale: "narrow in",
@@ -242,7 +265,7 @@ describe("planner", () => {
       },
     });
     const text = renderPlannerInput(store, incident, [fakeProvider]);
-    expect(text.split("## 9. Situation from the last cycle\n")[1]).toBe(
+    expect(text.split("## 10. Situation from the last cycle\n")[1]).toBe(
       [
         "changed: the greps landed",
         "hypothesis: focus() scrolls the resting selection",
@@ -258,7 +281,7 @@ describe("planner", () => {
     store.close();
   });
 
-  it("renders the incident file as the nine sections in the design's order", () => {
+  it("renders the incident file as the ten sections in the design's order", () => {
     const store = new Store(":memory:");
     cycledIncident(store);
     const incident = store.getIncident("i1");
@@ -294,8 +317,8 @@ describe("planner", () => {
         - c-verified: /repo/src/view.ts:88 matches {"pattern":"scrollTo","text":"el.scrollTo(0, bottom)"} (verified, observed; confidence 1; evidence /repo/src/view.ts:88) [from grep task t-grep]
 
       ## 3. Unit tree
-        i1-command [active] command: where deletion moves the scroll position
-          u-scroll [active] where the scroll position is set after a delete
+        i1-command [active] command: where deletion moves the scroll position (leader claude-code/claude-haiku-4-5; last report: none)
+          u-scroll [active] where the scroll position is set after a delete (leader claude-code/claude-haiku-4-5; last report: not_met)
 
       ## 4. Tasks completed since the last cycle
         - t-grep (grep, under u-scroll): objective "find scrollTo calls"; inputs {"root":"src","pattern":"scrollTo"}; expected "every call site"; criteria ["each match cited"]; result {"matches":1}; claims c-verified
@@ -303,10 +326,13 @@ describe("planner", () => {
       ## 5. Tasks that came back insufficient since the last cycle
         - t-interp (interpret): "say why the view scrolls" needed retrievable_fact: the delete handler's body
 
-      ## 6. Open tasks
+      ## 6. Unit reports since the last cycle
+        - u-scroll: not_met; changed: scrollTo is called once, at view.ts:88 (claims c-verified); why: the call site is known but not what reaches it; suggestion: read the handler that calls it
+
+      ## 7. Open tasks
         - t-open [ready] under u-scroll: investigate — read the delete handler; inputs {"question":"what does deleteComment do?"}; fake/fake-small; depends on t-grep
 
-      ## 7. Capabilities and models
+      ## 8. Capabilities and models
       capabilities, each with the inputs a task to it must carry:
         - check_path [deterministic, read_only]: Establish whether a path exists and what it is (typical 0.001s)
           inputs: { path: string, required }
@@ -325,24 +351,24 @@ describe("planner", () => {
       providers and models:
         - fake: fake-large, fake-small
 
-      ## 8. Rules the validator applies
+      ## 9. Rules the validator applies
         - Capabilities exist: every task names a registered capability.
         - Units exist: every task's unit and every new unit's parent is an active unit id or the ref of a unit created in this plan; a closed unit takes no new work.
         - No cycles: the tree stays a tree; a unit ref is used once, is not an existing unit id, and does not start with the incident id; a task ref likewise against task ids, and new tasks' dependsOn form no cycle.
         - No duplicates: no new task repeats an open or completed one, or another new task, with the same capability and effective inputs under the same unit; a task this plan cancels does not count.
         - Inputs validate: task inputs parse against the capability's input schema; a task that takes evidence names it by id in evidenceFrom (claims, and tasks whose results it needs) rather than copying it into inputs, or carries it inline.
         - Span of control: no unit ends the plan with more than 7 direct children, units and tasks combined; target 5.
-        - Effect policy: only read_only capabilities in v0.
+        - Effect policy: only read_only capabilities in v0; a new unit's equipment names built-in tools, default, or registered external equipment, and its bashAllowlist only read-only commands.
         - Budget respected: a task's budget, where it sets one, fits inside the incident's remaining budget; a session-backed task carries a time bound and, when the incident bounds tokens, a token bound; a deterministic task needs neither.
         - Dependencies resolve: every dependsOn names a task in the incident that is completed or still open and not cancelled in this plan, or the ref of a task created in this plan; every cancelTasks names an open task, once; every evidenceFrom claim exists, and every evidenceFrom task is completed or in the task's dependsOn.
-        - Model known: every task to a session-backed capability names a provider and a model that provider serves; a task to a deterministic capability names neither.
-        - Closing is clean: a unit closed in this plan is active, has no running task after this plan's cancels, is closed once, and is given no new unit or task in the same plan.
+        - Model known: every task to a session-backed capability, and every new unit's leader, names a provider and a model that provider serves; a task to a deterministic capability names neither.
+        - Closing is clean: a unit closed in this plan is active, has no running task after this plan's cancels, is closed once, is given no new unit or task in the same plan, and its leader has reported since its last task ended or has no session.
         - Status is earned: satisfied requires every open task completed or cancelled, no new tasks, and at least one observed claim; satisfied or failed raises no question, capability request or grant request; blocked raises at least one.
         - Inferred links are worked: every inferred link in the situation names what settles it: a task in this plan by its ref, an open task by its id, a question this plan raises by its position, or a reproduce task by its ref or id; every claim id in proven, inferred and keep names a claim in the incident, and every proven claim has basis observed, whichever task observed it.
       rejected last cycle:
         - Span of control: u-scroll would have 8 children
 
-      ## 9. Situation from the last cycle
+      ## 10. Situation from the last cycle
         (none)"
     `);
   });
@@ -352,11 +378,11 @@ describe("planner", () => {
     scriptedIncident(store, "i1", AT);
     const plan: ActionPlan = {
       createUnits: [
-        {
-          ref: "scroll",
-          purpose: "where the scroll position is set",
-          parent: "i1-command",
-        },
+        unitProposal(
+          "scroll",
+          "where the scroll position is set",
+          "i1-command",
+        ),
       ],
       closeUnits: [],
       createTasks: [
@@ -429,7 +455,7 @@ describe("planner", () => {
       expect(
         sent.prompt.startsWith("# Incident file\n\n## 1. Command picture"),
       ).toBe(true);
-      expect(sent.prompt).toContain("## 8. Rules the validator applies");
+      expect(sent.prompt).toContain("## 9. Rules the validator applies");
     } finally {
       delete process.env.NOSCOPE_STUB_OUTPUT;
       delete process.env.NOSCOPE_STUB_LOG;
