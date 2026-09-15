@@ -22,9 +22,40 @@ export const READ_ONLY_COMMANDS = [
   "stat",
 ] as const;
 
-/** The read-only Bash allowlist a v0 session gets, in the provider's `Bash(cmd *)` shape. */
+/**
+ * The commands a session's read-only Bash may run: the in-process list plus the readers a code
+ * investigation needs and the read-only git subcommands, as whole entries the provider renders
+ * to `Bash(cmd *)`. This is what the effect policy checks a unit's or capability's allowlist
+ * against. In print mode Claude Code permits read-only commands beyond the allowlist and
+ * denies writes regardless (DESIGN.md Reference, 2026-09-15), so the list is a floor for the
+ * planner to declare within, not the fence.
+ */
+export const READ_ONLY_SESSION_COMMANDS = [
+  ...READ_ONLY_COMMANDS,
+  "grep",
+  "rg",
+  "diff",
+  "sort",
+  "uniq",
+  "tree",
+  "pwd",
+  "echo",
+  "which",
+  "basename",
+  "dirname",
+  "realpath",
+  "git log",
+  "git status",
+  "git diff",
+  "git show",
+  "git blame",
+  "git ls-files",
+  "git rev-parse",
+] as const;
+
+/** The read-only Bash allowlist a session gets, in the provider's `Bash(cmd *)` shape. */
 export function bashAllowlist(
-  commands: readonly string[] = READ_ONLY_COMMANDS,
+  commands: readonly string[] = READ_ONLY_SESSION_COMMANDS,
 ): string[] {
   return commands.map((c) => `Bash(${c} *)`);
 }

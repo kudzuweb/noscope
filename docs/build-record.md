@@ -1963,3 +1963,25 @@ Not exactly to spec, with reasons:
 - A task refused inside a leader's session is not replaced at the task: it fails as a task
   with the refusal in its reason, and the leader's next turn on that session is what gets
   replaced.
+
+## R3-10b: The session's read-only command list (#PR, merged 2026-09-15)
+
+Forced by run 003 (R3-10): the planner's first plan under the Sonnet IC gave its new unit a
+Bash allowlist of `grep`, `rg`, `git log`, `git status` and `git diff`, and the validator's
+"Effect policy" rejected all five as "not read-only", because the rule compared entries
+against `READ_ONLY_COMMANDS`, the seven-command list `run_readonly` executes in process
+(`ls`, `cat`, `head`, `tail`, `wc`, `find`, `stat`), and the planner was never shown the
+list. Built: `READ_ONLY_SESSION_COMMANDS` in `src/equipment/builtin.ts`, the in-process list
+plus the readers a code investigation needs and the read-only git subcommands as whole
+entries; the effect policy, `investigate`, the size-up, the root unit at `create` and the
+provider's default allowlist use it; the planner's "Effect policy" rule text names the list
+so a plan is never drafted outside it. `run_readonly` keeps the in-process list, since it
+executes one binary and cannot take a two-word entry. DESIGN.md Step 3's built-in tool row
+and Step 5's Effect policy row follow; tests derive their expectations from the list.
+
+Not exactly to spec, with reasons:
+
+- The list is a floor, not the fence: in print mode Claude Code permits read-only commands
+  beyond the allowlist and denies writes regardless (the Reference row from R3-8), so
+  widening it changes what the planner may declare and what the validator accepts, not what
+  a session can do.

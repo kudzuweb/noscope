@@ -3,7 +3,7 @@ import {
   BUILTIN_TOOLS,
   getExternalEquipment,
   isBuiltinTool,
-  READ_ONLY_COMMANDS,
+  READ_ONLY_SESSION_COMMANDS,
 } from "./equipment/index.js";
 import {
   holdsCapability,
@@ -410,7 +410,9 @@ const CHECKS: Record<RuleName, Rule> = {
             `${unitLabel(u)} gives its leader ${name}, which is no built-in tool, default, or registered external equipment`,
         ),
       ...u.bashAllowlist
-        .filter((c) => !(READ_ONLY_COMMANDS as readonly string[]).includes(c))
+        .filter(
+          (c) => !(READ_ONLY_SESSION_COMMANDS as readonly string[]).includes(c),
+        )
         .map(
           (c) =>
             `${unitLabel(u)} allows its leader's Bash to run ${c}, which is not read-only`,

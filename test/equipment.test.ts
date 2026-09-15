@@ -7,6 +7,7 @@ import {
   bashAllowlist,
   isBuiltinTool,
   listEquipment,
+  READ_ONLY_SESSION_COMMANDS,
   readFileEquipment,
   runEquipment,
   statPathEquipment,
@@ -337,6 +338,7 @@ describe("equipment", () => {
     expect(isBuiltinTool("Write")).toBe(false);
     expect(isBuiltinTool("grep_files")).toBe(false);
     expect(bashAllowlist(["ls", "cat"])).toEqual(["Bash(ls *)", "Bash(cat *)"]);
-    expect(bashAllowlist()).toHaveLength(7);
+    expect(bashAllowlist()).toHaveLength(READ_ONLY_SESSION_COMMANDS.length);
+    expect(bashAllowlist()).toContain("Bash(git log *)");
   });
 });

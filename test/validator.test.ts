@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { defineCapability } from "../src/capabilities/registry.js";
-import { READ_ONLY_COMMANDS } from "../src/equipment/index.js";
+import { READ_ONLY_SESSION_COMMANDS } from "../src/equipment/index.js";
 import { LEADER_RULES } from "../src/leader.js";
 import type { ActionPlan, TaskProposal, Unit } from "../src/models.js";
 import { PLANNER_RULES } from "../src/planner.js";
@@ -1124,7 +1124,7 @@ describe("validator, a leader's assignments", () => {
         ],
         {
           equipment: ["default"],
-          bashAllowlist: [...READ_ONLY_COMMANDS],
+          bashAllowlist: [...READ_ONLY_SESSION_COMMANDS],
         },
         undefined,
         { settled: true },
@@ -1214,7 +1214,7 @@ describe("validator, a leader's assignments", () => {
     // t-running is open, so 60 of the 60 are bound and 0 remain for a session task.
     const held = {
       equipment: ["default"],
-      bashAllowlist: [...READ_ONLY_COMMANDS],
+      bashAllowlist: [...READ_ONLY_SESSION_COMMANDS],
     };
     const investigate = (seconds: number) =>
       investigateTask({

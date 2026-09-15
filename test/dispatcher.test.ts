@@ -7,6 +7,7 @@ import { getCapability } from "../src/capabilities/index.js";
 import { defineCapability } from "../src/capabilities/registry.js";
 import { EXIT, run } from "../src/cli.js";
 import { dispatch } from "../src/dispatcher.js";
+import { READ_ONLY_SESSION_COMMANDS } from "../src/equipment/index.js";
 import { renderChangeReport } from "../src/ic.js";
 import {
   answeredRequestsOf,
@@ -521,7 +522,7 @@ describe("dispatcher", () => {
     const prompt = calls[0]?.prompt ?? "";
     expect(prompt.split("\n").slice(0, 4)).toEqual([
       "You lead unit i1-command. Your unit's objective: command: where deletion moves the scroll position",
-      "Your equipment: Read, Grep, Glob, Bash; Bash allowlist: ls, cat, head, tail, wc, find, stat",
+      `Your equipment: Read, Grep, Glob, Bash; Bash allowlist: ${READ_ONLY_SESSION_COMMANDS.join(", ")}`,
       "",
       "Your first task follows; run it and answer against its schema.",
     ]);

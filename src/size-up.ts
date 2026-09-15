@@ -5,7 +5,7 @@ import {
   BUILTIN_TOOLS,
   listEquipment,
   listExternalEquipment,
-  READ_ONLY_COMMANDS,
+  READ_ONLY_SESSION_COMMANDS,
 } from "./equipment/index.js";
 import {
   type Incident,
@@ -140,7 +140,7 @@ export async function gatherFindings(
       (c) => `${c.name} [${c.kind}, ${c.effect}]: ${c.description}`,
     ),
     equipment: [
-      `built-in tools: ${BUILTIN_TOOLS.join(", ")} (Bash under the read-only allowlist: ${READ_ONLY_COMMANDS.join(", ")})`,
+      `built-in tools: ${BUILTIN_TOOLS.join(", ")} (Bash under the read-only allowlist: ${READ_ONLY_SESSION_COMMANDS.join(", ")})`,
       ...listEquipment().map((e) => `${e.name}: ${e.description}`),
       ...listExternalEquipment().map((e) => `${e.name}: ${e.description}`),
     ],
@@ -228,7 +228,7 @@ export async function sizeUp(
     tools: [...BUILTIN_TOOLS],
     mcpServers: [],
     integrations: [],
-    bashAllowlist: [...READ_ONLY_COMMANDS],
+    bashAllowlist: [...READ_ONLY_SESSION_COMMANDS],
     cwd: options.cwd,
     addDirs: [],
     outputSchema: SIZE_UP_SCHEMA,
