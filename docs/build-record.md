@@ -2304,14 +2304,18 @@ that system message for the SDK stream with snake_case keys (`api_refusal_catego
 read the camelCase names off the stream, found the line, and took the missing field as
 `unstated` with an empty explanation, which is exactly what the events show. The run's raw
 stream was not captured, so the stream's spelling is verified from the code and inferred
-from the events, not seen live. Built: `refusalOf` in `src/providers/claude-code.ts` reads
-the system line under either spelling, then the assistant line's `stop_details` (the
-transcript's synthetic assistant message carries `category` and `explanation` there, and
-the binary's own refusal reader uses it), and, when the stream still names no category and
-the session id is known, the session's transcript under the project directory
-(`readTranscriptRefusal`, the path R3-1's provider already resolves); `unstated` remains
-only when no record names one. The stub prints the snake_case line and `stop_details`, as
-the stream does. The Reference row records the two spellings and that Claude Code has a
+from the events, not seen live. Built: `refusalOf` in `src/providers/claude-code.ts` takes
+the call as refused on the system line or a result envelope whose `stop_reason` is
+`refusal`, never on the synthetic assistant frame alone, since the binary's own
+`model_refusal_fallback` routing delivers the refused leg's assistant frame ahead of a
+successful result on its fallback (review finding; inferred from the binary's schema
+descriptions, not seen live). The category is read from the system line under either
+spelling, then the assistant frame's `stop_details` (the transcript's synthetic assistant
+message carries `category` and `explanation` there, and the binary's own refusal reader
+uses it), and, when the stream still names no category and the session id is known, the
+session's transcript under the project directory (`readTranscriptRefusal`, the path R3-1's
+provider already resolves); `unstated` remains only when no record names one. The stub
+prints the snake_case line and `stop_details`, as the stream does. The Reference row records the two spellings and that Claude Code has a
 refusal fallback of its own (`model_refusal_fallback`), which the run's sessions did not
 have.
 

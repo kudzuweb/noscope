@@ -438,46 +438,68 @@ export function failedSessionActivity(
  * line with `subtype: "model_refusal_no_fallback"`, then a synthetic assistant message
  * whose `stop_reason` is `refusal` and whose `stop_details` repeat the category, then
  * exits 1 with a result whose `stop_reason` is `refusal` (seen 2026-09-15 on 2.1.272, Opus
- * 5, category `reasoning_extraction`). The category's key differs by record: the stream's
- * system line carries `api_refusal_category` and `api_refusal_explanation` (the SDK
- * serializer in 2.1.272), while the session's transcript carries `apiRefusalCategory` and
- * `apiRefusalExplanation`; R3-10a read the transcript's spelling off the stream and the
- * third run recorded `unstated`. Both spellings are read here, then the assistant line's
- * `stop_details`, and, when the stream still names no category, the transcript under the
- * project directory (`readTranscriptRefusal`). A result with the stop reason and no
- * category anywhere is a refusal of an unstated category.
+ * 5, category `reasoning_extraction`). The refusal itself is the system line or the result
+ * envelope's stop reason; the assistant frame alone is not one, because the binary's own
+ * `model_refusal_fallback` routing delivers the refused leg's assistant frame and then a
+ * successful result on its fallback, and that call succeeded. The category's key differs
+ * by record: the stream's system line carries `api_refusal_category` and
+ * `api_refusal_explanation` (the SDK serializer in 2.1.272), while the session's transcript
+ * carries `apiRefusalCategory` and `apiRefusalExplanation`; R3-10a read the transcript's
+ * spelling off the stream and the third run recorded `unstated`. Both spellings are read
+ * here, then the assistant frame's `stop_details`, and, when the stream still names no
+ * category, the transcript under the project directory (`readTranscriptRefusal`). A
+ * refusal with no category anywhere is a refusal of an unstated category.
  */
 function refusalOf(
   lines: readonly StreamLine[],
   where?: TranscriptLocation,
   sessionId?: string | null,
 ): Refusal | null {
-  const refused = streamRefusal(lines);
-  if (refused === null) return null;
-  if (refused.category !== UNSTATED) return refused;
+  if (!isRefused(lines)) return null;
+  const named = refusalCategory(lines);
+  if (named !== null) return named;
   const transcript =
     where === undefined || sessionId == null
       ? null
       : readTranscriptRefusal(`${sessionDir(where, sessionId)}.jsonl`);
-  return transcript ?? refused;
+  return (
+    transcript ?? {
+      category: UNSTATED,
+      explanation: "the result's stop reason is refusal",
+    }
+  );
 }
 
 const UNSTATED = "unstated";
 
-/** The refusal in a sequence of stream or transcript lines: the system line under either key spelling, else the assistant's `stop_details`, else the stop reason alone. */
-function streamRefusal(lines: readonly StreamLine[]): Refusal | null {
-  const system = lines.find(
+/** Whether the stream records a refused call: the system line, or a result envelope whose stop reason is `refusal`. */
+function isRefused(lines: readonly StreamLine[]): boolean {
+  return (
+    refusalSystemLine(lines) !== undefined ||
+    envelopeOf(lines)?.stop_reason === "refusal"
+  );
+}
+
+type RefusalSystemLine = {
+  api_refusal_category?: unknown;
+  api_refusal_explanation?: unknown;
+  apiRefusalCategory?: unknown;
+  apiRefusalExplanation?: unknown;
+};
+
+function refusalSystemLine(
+  lines: readonly StreamLine[],
+): RefusalSystemLine | undefined {
+  return lines.find(
     (l) =>
       l.type === "system" &&
       (l as { subtype?: unknown }).subtype === "model_refusal_no_fallback",
-  ) as
-    | {
-        api_refusal_category?: unknown;
-        api_refusal_explanation?: unknown;
-        apiRefusalCategory?: unknown;
-        apiRefusalExplanation?: unknown;
-      }
-    | undefined;
+  ) as RefusalSystemLine | undefined;
+}
+
+/** The refusal's category and explanation from a sequence of stream or transcript lines: the system line under either key spelling, else the refused assistant frame's `stop_details`; null when neither names a category. */
+function refusalCategory(lines: readonly StreamLine[]): Refusal | null {
+  const system = refusalSystemLine(lines);
   const stopDetails = lines
     .map(
       (l) =>
@@ -492,24 +514,15 @@ function streamRefusal(lines: readonly StreamLine[]): Refusal | null {
     text(system?.api_refusal_category) ??
     text(system?.apiRefusalCategory) ??
     text(stopDetails?.category);
+  if (category === null) return null;
   const explanation =
     text(system?.api_refusal_explanation) ??
     text(system?.apiRefusalExplanation) ??
     text(stopDetails?.explanation);
-  if (category !== null) return { category, explanation: explanation ?? "" };
-  const refusedResult =
-    system !== undefined ||
-    stopDetails !== undefined ||
-    lines.some((l) => (l as ResultEnvelope).stop_reason === "refusal");
-  return refusedResult
-    ? {
-        category: UNSTATED,
-        explanation: explanation ?? "the result's stop reason is refusal",
-      }
-    : null;
+  return { category, explanation: explanation ?? "" };
 }
 
-/** The refusal the session's transcript records, when the file exists and names a category; the transcript is written as the session runs, so it is there once the process has exited. */
+/** The refusal category the session's transcript records, when the file exists and names one; the transcript is written as the session runs, so it is there once the process has exited. */
 function readTranscriptRefusal(path: string): Refusal | null {
   let raw: string;
   try {
@@ -517,8 +530,7 @@ function readTranscriptRefusal(path: string): Refusal | null {
   } catch {
     return null;
   }
-  const refused = streamRefusal(jsonLines(raw) as StreamLine[]);
-  return refused === null || refused.category === UNSTATED ? null : refused;
+  return refusalCategory(jsonLines(raw) as StreamLine[]);
 }
 
 /** The usage a result envelope reports, with the context of the session's last message from the stream. */

@@ -694,12 +694,15 @@ resumed (the call dies before the stream's init line, as the binary does for a s
 cannot find) is replaced: a fresh session is oriented and asked the same turn, and its
 `leader.started` names the dead session (`replaced`) and the reason. A call the API
 refused outright is treated the same way, with a change of model (R3-10a, R4-7; the
-Reference table has the observed fact): the provider reads Claude Code's
-`model_refusal_no_fallback` system line under either spelling of its category key, the
-assistant line's `stop_details`, or, when the stream carries the refusal only as a
-`stop_reason`, the session's transcript under Claude Code's project directory, and throws a
-`SessionError` carrying the session id, the refused call's usage and `refused` (the
-category and the API's explanation, `unstated` only when no record names one); a refused
+Reference table has the observed fact): the provider takes a call as refused when the
+stream carries Claude Code's `model_refusal_no_fallback` system line or a result whose
+`stop_reason` is `refusal` (never from the synthetic assistant frame alone, which the
+binary's own `model_refusal_fallback` routing delivers ahead of a successful result on its
+fallback), reads the category from the system line under either spelling of its key, the
+assistant frame's `stop_details`, or, when the stream names none, the session's transcript
+under Claude Code's project directory, and throws a `SessionError` carrying the session id,
+the refused call's usage and `refused` (the category and the API's explanation, `unstated`
+only when no record names one); a refused
 session stays refused on every later call, so a refused turn is filed (`leader.failed` for
 a leader, `command.failed` for the IC, each with the refusal and the usage) and, when it
 was resumed, the session is released through `leader.released` with the reason `refused:

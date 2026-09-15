@@ -263,6 +263,53 @@ describe("a refusal replaces the session", () => {
     });
   });
 
+  it("a refused assistant frame followed by a successful result is not a refusal: the binary's own fallback routing delivers both", () => {
+    const stdout = [
+      { type: "system", subtype: "init", session_id: "s-routed" },
+      {
+        type: "assistant",
+        session_id: "s-routed",
+        message: {
+          model: "<synthetic>",
+          role: "assistant",
+          content: [
+            {
+              type: "text",
+              text: "API Error: safeguards flagged this message.",
+            },
+          ],
+          stop_reason: "refusal",
+          stop_details: { type: "refusal", ...refusal },
+        },
+      },
+      {
+        type: "assistant",
+        session_id: "s-routed",
+        message: {
+          model: "claude-opus-4-8",
+          role: "assistant",
+          content: [{ type: "text", text: "{}" }],
+          stop_reason: "end_turn",
+        },
+      },
+      {
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        stop_reason: "end_turn",
+        session_id: "s-routed",
+        result: "{}",
+        structured_output: {},
+        usage: { input_tokens: 2, cache_creation_input_tokens: 10 },
+      },
+    ]
+      .map((l) => JSON.stringify(l))
+      .join("\n");
+    const outcome = parseClaudeCodeResult(stdout);
+    expect(outcome.sessionId).toBe("s-routed");
+    expect(outcome.output).toEqual({});
+  });
+
   it("a refusal that exits 0, with or without a typed result, is a SessionError from the stream alone", () => {
     const system = JSON.stringify({
       type: "system",
