@@ -39,6 +39,9 @@ const LEADER_TURN_SECONDS = 300;
 /** The actor on what a leader's turn changes: the tasks it assigns (`plan.applied`), a refused assignment (`plan.rejected`). */
 export const LEADER_ACTOR = "leader";
 
+/** The actor on the deterministic tasks the IC assigns under command in its command turn (`plan.applied`, R4-6). */
+export const IC_ACTOR = "ic";
+
 /**
  * The rules the validator holds a leader's assignments to beyond a plan's task rules, stated
  * so the leader does not assign what will be refused (DESIGN.md Step 5). The name before
@@ -66,13 +69,14 @@ discrepancy is for one thing only: the update you received describes a different
 
 /**
  * The role text as the Incident Commander reads it (R3-7): it scopes, breaks down, equips and
- * judges; its digging is assigned; its first act on taking command from a briefing is to
- * evaluate it (R3-8); a report is the leader's account and the work under it is what to
- * judge it against (R4-1); a period ends when units report or the picture changes; a
- * not_met report is information for its decision; a discrepancy it cannot reconcile goes
- * to Mauria; the situation stays the planner's. Fixed at the root session's first call.
+ * judges; its digging is assigned; no task runs in its session and it takes no leader turn
+ * (R4-6); its first act on taking command from a briefing is to evaluate it (R3-8); a
+ * report is the leader's account and the work under it is what to judge it against
+ * (R4-1); a period ends when units report or the picture changes; a not_met report is
+ * information for its decision; a discrepancy it cannot reconcile goes to Mauria; the
+ * situation stays the planner's. Fixed at the root session's first call.
  */
-export const IC_ROLE = `Your role: Incident Commander, leader of command, the root unit, and Mauria's delegate on this incident. You scope the incident, break it down, equip it and judge what comes back. You do not dig: a fact is retrieved by a task under a unit, never with your own tools, so what you want known becomes a period objective for the planner to task. Your tools are for a task assigned under command, not for your turns: a session with tools is tempted to keep reading instead of deciding, and a turn is decided from the file in front of you.
+export const IC_ROLE = `Your role: Incident Commander, leader of command, the root unit, and Mauria's delegate on this incident. You scope the incident, break it down, equip it and judge what comes back. You do not dig: a fact is retrieved by a task under a unit, never with your own tools, so what you want known becomes a period objective for the planner to task. No task runs in your session: a task under command is deterministic and runs in process, and a session-backed task placed under command runs in a session of its own; either's result reaches you in your next change report as a task result under command, with no leader turn between. You assign deterministic tasks under command in your command turn (assignTasks: grep, read, check_path, git_history, each naming command as its unit, no provider or model), and they run in this cycle's pass, except that one depending on a unit's task runs in the pass after that task completes; session work is a unit's, never assigned by you, and a session-backed task in assignTasks is refused. Your tools serve no turn: a session with tools is tempted to keep reading instead of deciding, and a turn is decided from the file in front of you.
 
 You take command from a briefing: the initial IC's, written from a size-up on a cheaper model, or an outgoing IC's handoff document. Your first act on taking command is to evaluate it, item by item: say what you accept, rewrite or discard and why, then set the period. Nothing in a briefing binds you; it is what another session saw and thought, and your judgment is why you hold the seat.
 
@@ -80,8 +84,7 @@ Each operational period opens with a change report and the incident file. A unit
 
 When the status is continue, the planner drafts an action plan against your objectives and you review it once: approve it as drafted; correct it, with text the planner redrafts against, once; or amend it, returning the whole plan as you want it applied. After a redraft you approve or amend, never correct again. The situation in the plan is the planner's; leave it as written unless you amend the plan, and then carry it over. The plan's rationale names the priority that chose between plans; hold the draft to that and to the period objectives, not to your taste.
 
-A period ends when the units have reported or when one report changes the picture; you are never consulted per task. A task under command runs under you as under any leader, and after it you continue or report the same way: report what changed, not what you did. You assign tasks under command like any leader (assignTasks): a retrievable fact a task under command lacked is yours to get that way, and the other three kinds of lack you raise in your command turn, never as a leader's resource requests, which are refused on command. Assignments are checked by the validator's rules on tasks and by these:
-${LEADER_RULES.map((r) => `- ${r}`).join("\n")}
+A period ends when the units have reported or when one report changes the picture; you are never consulted per task, and command files no report: a task under command ends the root's pass when it and the other ready tasks under command have run, and you judge its result at your command turn. Every kind of lack you raise in your command turn: a retrievable fact as a deterministic task you assign or as a period objective for the planner to task, and permission, missing means and what only a human knows through the grant request, capability request and question. Command has no leader turn and no resource requests to raise.
 
 discrepancy is for one thing only: the update you received describes a different problem from the one you have been commanding, as if you believed you were fighting a fire and the update describes a hurricane. Say what differs. A discrepancy raised below you that the incident file cannot reconcile becomes a question for Mauria in your command turn. A different detail, a wrong line number, a claim you disagree with, is not a discrepancy.`;
 
@@ -105,8 +108,10 @@ const STRIKE_TEAM_OFFER =
  * leader's provider and model whose equipment and Bash allowlist the leader already holds
  * (`default` covers every built-in tool). A capability that picks one piece of external
  * equipment per task (`equipmentSelect`) never does, since the leader's session attaches
- * all of its equipment. Anything else runs in a session of its own, or in process, and its
- * result reaches the leader on its next turn.
+ * all of its equipment. Nothing runs inside the root's leader, the IC, whose digging is
+ * assigned (R4-6: run 003 had the IC's own session take an investigate under command).
+ * Anything else runs in a session of its own, or in process, and its result reaches the
+ * leader on its next turn, or the IC in its next change report.
  */
 export function runsInsideLeader(
   capability: Capability,
@@ -114,6 +119,7 @@ export function runsInsideLeader(
   unit: Unit,
 ): boolean {
   if (capability.kind !== "session") return false;
+  if (unit.parentId === null) return false;
   if (capability.session.equipmentSelect !== undefined) return false;
   if (
     task.provider !== unit.leader.provider ||
@@ -390,7 +396,8 @@ export function answeredRequestsOf(
  * Units whose leader owes a report: one of the unit's tasks ended after its last report.
  * Dispatch asks such a unit for a report even when it has nothing left to run (the turn
  * creates the session if none exists), and the validator refuses to close it until it has
- * (DESIGN.md Step 5).
+ * (DESIGN.md Step 5). The root never owes one: it takes no leader turn, and the IC judges
+ * its tasks' results at its command turn (R4-6).
  */
 export function unitsOwingReport(
   units: readonly Unit[],
@@ -416,6 +423,7 @@ export function unitsOwingReport(
       .filter(
         (u) =>
           u.status === "active" &&
+          u.parentId !== null &&
           (lastEnded.get(u.id) ?? -1) > (lastReport.get(u.id) ?? -1),
       )
       .map((u) => u.id),

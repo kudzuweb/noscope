@@ -1,4 +1,5 @@
 import {
+  IC_ACTOR,
   LEADER_ACTOR,
   openRequestsByUnit,
   type RequestTarget,
@@ -597,11 +598,12 @@ export function applyPlan(
   };
 }
 
-/** What applying a command turn changed: the units closed, the questions raised, the requests answered, the period set and the incident's status. */
+/** What applying a command turn changed: the units closed, the questions raised, the requests answered, the tasks assigned under command, the period set and the incident's status. */
 export type Commanded = {
   closedUnits: string[];
   questions: Question[];
   answered: Answered[];
+  tasks: Task[];
   period: Period;
   incidentStatus: IncidentStatus;
 };
@@ -614,6 +616,9 @@ export type Commanded = {
  * set (DESIGN.md Step 4). The period's number is the cycle. Each answer to a unit's
  * resource request is delivered with `answerRequest` (validated to name an open request of
  * a waiting unit), so the unit resumes in this cycle's dispatch once nothing of its is open.
+ * The deterministic tasks the IC assigns under command (R4-6) are created last, with
+ * `plan.applied` by the actor `ic` naming the root unit, its session and the task ids, and
+ * run in this cycle's dispatch pass as the root's tasks.
  */
 export function applyCommand(
   store: Store,
@@ -639,6 +644,17 @@ export function applyCommand(
     priorities: turn.priorities,
   };
   const answered: Answered[] = [];
+  const root = store.listUnits(incident.id).find((u) => u.parentId === null);
+  const tasks =
+    turn.assignTasks.length === 0 || root === undefined
+      ? []
+      : buildTasks(
+          incident.id,
+          store.listTasks(incident.id),
+          turn.assignTasks,
+          (ref) => ref,
+          now(),
+        );
   store.batch(() => {
     store.setIncidentPeriod(incident.id, period, actor, {
       ...extra,
@@ -663,11 +679,24 @@ export function applyCommand(
         );
       answered.push(answerRequest(store, incident, target, a.answer, actor));
     }
+    if (tasks.length > 0 && root !== undefined) {
+      for (const t of tasks) store.createTask(t, IC_ACTOR);
+      // `record` above may have put the IC's first session on the root; name that one.
+      const session =
+        store.listUnits(incident.id).find((u) => u.id === root.id)?.sessionId ??
+        null;
+      store.record(incident.id, "plan.applied", IC_ACTOR, {
+        unitId: root.id,
+        sessionId: session,
+        tasks: tasks.map((t) => t.id),
+      });
+    }
   });
   return {
     closedUnits: turn.closeUnits.map((c) => c.unitId),
     questions,
     answered,
+    tasks,
     period,
     incidentStatus,
   };

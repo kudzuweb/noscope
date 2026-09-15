@@ -1,4 +1,4 @@
-import { LEADER_ACTOR } from "./leader.js";
+import { IC_ACTOR, LEADER_ACTOR } from "./leader.js";
 import {
   type Claim,
   type Event,
@@ -683,7 +683,10 @@ export function renderReview(
       (e) => e.type === "plan.rejected" && e.actor !== LEADER_ACTOR,
     );
     const appliedEvent = cycle.events.find(
-      (e) => e.type === "plan.applied" && e.actor !== LEADER_ACTOR,
+      (e) =>
+        e.type === "plan.applied" &&
+        e.actor !== LEADER_ACTOR &&
+        e.actor !== IC_ACTOR,
     );
     const a = appliedEvent?.payload ?? {};
     let verdict: string;
@@ -862,6 +865,10 @@ export function renderReview(
       turnedUnits.set(unitId, model);
     }
     for (const e of cycle.events) {
+      if (e.type === "plan.applied" && e.actor === IC_ACTOR)
+        lines.push(
+          `  IC assigned ${list(e.payload.tasks).length} task(s) under command: ${list(e.payload.tasks).map(String).join(", ")}`,
+        );
       if (e.actor !== LEADER_ACTOR) continue;
       if (e.type === "plan.applied") {
         const assigned = list(e.payload.tasks).length;

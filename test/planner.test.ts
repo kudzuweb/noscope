@@ -53,6 +53,13 @@ function cycledIncident(store: Store) {
     { rationale: "first period" },
   );
   store.record("i1", "plan.proposed", "planner", { rationale: "first look" });
+  // A warning is recorded before its plan is applied (R4-6); this one is not shown, since
+  // the cycle after it rejected its plan, so nothing was warned on last cycle.
+  store.record("i1", "plan.warned", "validator", {
+    rule: "Session work under a unit",
+    reason:
+      'task "read at command" is session work (investigate) under i1-command, the root',
+  });
   store.record("i1", "plan.applied", "runtime", { rationale: "first look" });
   const done = s.task({
     id: "t-grep",
@@ -345,6 +352,33 @@ describe("planner", () => {
     store.close();
   });
 
+  it("section 9 shows the last applied plan's warnings as warned last cycle, and none once a later cycle rejected its plan", () => {
+    const store = new Store(":memory:");
+    const s = scriptedIncident(store, "i1", AT);
+    store.record("i1", "plan.warned", "validator", {
+      rule: "Session work under a unit",
+      reason:
+        'task "read at command" is session work (investigate) under i1-command, the root',
+    });
+    store.record("i1", "plan.applied", "runtime", { rationale: "first look" });
+    const warned = () => {
+      const text = renderPlannerInput(store, s.incident, [fakeProvider]);
+      return text.slice(
+        text.indexOf("warned last cycle:"),
+        text.indexOf("## 10."),
+      );
+    };
+    expect(warned()).toBe(
+      'warned last cycle:\n  - Session work under a unit: task "read at command" is session work (investigate) under i1-command, the root\n\n',
+    );
+    store.record("i1", "plan.rejected", "validator", {
+      rule: "Span of control",
+      reason: "u-scroll would have 8 children",
+    });
+    expect(warned()).toBe("warned last cycle:\n  (nothing warned)\n\n");
+    store.close();
+  });
+
   it("renders the incident file as the ten sections in the design's order", () => {
     const store = new Store(":memory:");
     cycledIncident(store);
@@ -436,8 +470,12 @@ describe("planner", () => {
         - Closing is clean: a unit closed in this plan is active, has no running task after this plan's cancels, is closed once, is given no new unit or task in the same plan, and its leader has reported since its last task ended or has no session.
         - Status is earned: satisfied requires every open task completed or cancelled, no new tasks, and at least one observed claim; satisfied or failed raises no question, capability request or grant request; blocked raises at least one.
         - Inferred links are worked: every inferred link in the situation names what settles it: a task in this plan by its ref, an open task by its id, a question this plan raises by its position, or a reproduce task by its ref or id; every claim id in proven, inferred and keep names a claim in the incident, and every proven claim has basis observed, whichever task observed it.
+      warned on, and applied anyway:
+        - Session work under a unit: a task to a session-backed capability belongs under a unit with a leader, never under command, the root; one placed under command runs in a session of its own, with no leader to judge it and no leader turn after it, and its result reaches the IC as a task result; the IC's own session runs no task. A deterministic task under command is fine.
       rejected last cycle:
         - Span of control: u-scroll would have 8 children
+      warned last cycle:
+        (nothing warned)
 
       ## 10. Situation from the last cycle
         (none)"

@@ -90,6 +90,7 @@ const command = (over: Partial<CommandTurn> = {}): CommandTurn => ({
   priorities: ["observation over reading"],
   closeUnits: [],
   answers: [],
+  assignTasks: [],
   questionsForHuman: [],
   capabilityRequests: [],
   grantRequests: [],
@@ -729,6 +730,101 @@ describe("the IC above the planner", () => {
     closed.close();
   });
 
+  it("the IC assigns a deterministic task under command in its command turn, which runs in the pass with no leader turn and opens the next change report; a session task assigned there, or one under another unit, is rejected (R4-6)", {
+    timeout: 60_000,
+  }, async () => {
+    const underCommand = { ...grepTask, unit: "001-command" };
+    const h = harness(
+      [empty],
+      [
+        command({ assignTasks: [underCommand] }),
+        command({
+          assignTasks: [
+            {
+              ...underCommand,
+              capability: "investigate",
+              objective: "read the handler",
+              inputs: { question: "what handles deletion?" },
+              provider: "claude-code",
+              model: "claude-haiku-4-5",
+              budget: { seconds: 30 },
+            },
+            { ...grepTask, unit: "u-none" },
+          ],
+        }),
+      ],
+      [{ verdict: "approve", rationale: "as drafted" }],
+    );
+    await run(
+      ["incident", "create", "--no-size-up", "where is the delete handler"],
+      h.ctx,
+    );
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    expect(h.out).toContain("  assign under command: grep: find delete");
+    expect(h.out).toContain(
+      "  task 001-t01 [ready] under 001-command: grep: find delete",
+    );
+    expect(h.out).toContain("  ran 001-t01 (grep): completed; 1 claim(s)");
+    // The task was created at the command turn, before the planner's call, and ran in
+    // this cycle's pass; no leader call was made for it.
+    expect(h.calls().map((c) => c.kind)).toEqual([
+      "command",
+      "planner",
+      "review",
+    ]);
+    const store = h.store();
+    const applied = store
+      .listEvents("001")
+      .filter((e) => e.type === "plan.applied");
+    expect(applied.map((e) => [e.actor, e.payload.tasks])).toEqual([
+      ["ic", ["001-t01"]],
+      ["runtime", []],
+    ]);
+    expect(applied[0]?.payload).toMatchObject({
+      unitId: "001-command",
+      sessionId: "stub-session",
+    });
+    expect(store.listUnits("001")[0]?.sessionId).toBe("stub-session");
+    const types = store.listEvents("001").map((e) => e.type);
+    for (const type of ["unit.continued", "unit.reported"])
+      expect(types).not.toContain(type);
+    store.close();
+    // The planner's window still opens at the last plan, not at the IC's assignment.
+    expect(h.calls()[1]?.prompt).toContain(
+      "## 4. Tasks completed since the last cycle\n  (none)",
+    );
+    h.out.length = 0;
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    const briefing =
+      h.calls().filter((c) => c.kind === "command")[1]?.prompt ?? "";
+    expect(briefing).toContain(
+      "tasks under command, ended with no leader to report them:\n  - task 001-t01 (grep): find delete\n      claims: 001-c001: ",
+    );
+    expect(briefing).toMatch(
+      /\n {6}completed; result: \{"root":"[^"]*","matches":\[\{"file":"a\.txt","line":2,"text":"the delete handler lives here"\}\],"truncated":false\}\n/,
+    );
+    expect(briefing).toContain(
+      "## 4. Tasks completed since the last cycle\n  - 001-t01 (grep, under 001-command)",
+    );
+    expect(h.out).toContain("command turn rejected:");
+    expect(h.out).toContain(
+      '  - Deterministic only: task "read the handler" runs investigate, a session; the IC assigns deterministic work only, and session work goes under a unit',
+    );
+    expect(h.out).toContain(
+      '  - Own unit: task "find delete" is under u-none, not the leader\'s own unit 001-command',
+    );
+    expect(
+      h.out.some((l) =>
+        l.startsWith(
+          '  - Units exist: task "find delete" is under no active unit u-none',
+        ),
+      ),
+    ).toBe(true);
+    const after = h.store();
+    expect(after.listTasks("001")).toHaveLength(1);
+    after.close();
+  });
+
   it("renders the change report and the briefing from the log", () => {
     const store = new Store(":memory:");
     const s = scriptedIncident(store);
@@ -975,6 +1071,114 @@ describe("the IC above the planner", () => {
     expect(
       renderCommandBriefing(store, s.incident, [fakeProvider]),
     ).not.toContain("chars clipped");
+    store.close();
+  });
+
+  it("a task under command that failed or came back insufficient reaches the change report as a leader would read it, and a wide root result is clipped with the task id as the pointer (R4-6)", () => {
+    const store = new Store(":memory:");
+    const s = scriptedIncident(store);
+    const failed = s.task({
+      id: "c-read",
+      capability: "read",
+      objective: "read the handler",
+    });
+    store.setTaskStatus(
+      "i1",
+      failed.id,
+      "failed",
+      "dispatcher",
+      "task.failed",
+      { extra: { reason: "no such file", timedOut: false } },
+    );
+    const interpret = s.task({
+      id: "c-interpret",
+      capability: "interpret",
+      objective: "weigh it",
+      provider: "claude-code",
+      model: "claude-haiku-4-5",
+    });
+    store.setTaskStatus(
+      "i1",
+      interpret.id,
+      "completed",
+      "dispatcher",
+      "task.completed",
+      {
+        result: {
+          outcome: "insufficient",
+          claims: [],
+          findings: null,
+          needed: [{ kind: "observation", what: "the view after a delete" }],
+        },
+      },
+    );
+    const wide = s.task({
+      id: "c-grep",
+      capability: "grep",
+      objective: "find every handler",
+    });
+    store.setTaskStatus(
+      "i1",
+      wide.id,
+      "completed",
+      "dispatcher",
+      "task.completed",
+      {
+        result: {
+          root: "/r",
+          matches: Array.from({ length: 20 }, (_, i) => ({
+            file: "a.ts",
+            line: i,
+            text: "delete()",
+          })),
+          truncated: false,
+        },
+      },
+    );
+    const under = (lines: string[]) =>
+      lines.slice(
+        lines.indexOf(
+          "tasks under command, ended with no leader to report them:",
+        ),
+        lines.indexOf("resource requests:"),
+      );
+    const lines = under(
+      renderChangeReport(
+        store.listEvents("i1"),
+        s.incident,
+        store.listUnits("i1"),
+      ),
+    );
+    expect(lines.slice(0, 7)).toEqual([
+      "tasks under command, ended with no leader to report them:",
+      "  - task c-read (read): read the handler",
+      "      claims: none",
+      "      failed: no such file",
+      "  - task c-interpret (interpret, claude-haiku-4-5): weigh it",
+      "      claims: none",
+      "      completed, insufficient; needed: observation: the view after a delete",
+    ]);
+    // A deterministic result is rendered whole under the cap, since no leader reads the
+    // root's results: the wide grep's fits at the default cap and is cut at a small one.
+    expect(lines[7]).toBe("  - task c-grep (grep): find every handler");
+    expect(lines[9]).toMatch(
+      /^ {6}completed; result: \{"root":"\/r","matches":\[/,
+    );
+    expect(lines.join("\n")).not.toContain("chars clipped");
+    const clipped = under(
+      renderChangeReport(
+        store.listEvents("i1"),
+        s.incident,
+        store.listUnits("i1"),
+        200,
+      ),
+    );
+    expect(clipped.slice(0, 7)).toEqual(lines.slice(0, 7));
+    const block = clipped.slice(7);
+    expect(block.at(-1)).toMatch(
+      /^ {6}\[\+\d+ chars clipped; the full record is task c-grep\]$/,
+    );
+    expect(block.slice(0, -1).join("\n")).toHaveLength(200);
     store.close();
   });
 
@@ -1264,6 +1468,32 @@ describe("the IC above the planner", () => {
       ],
     });
     expect(validateCommand(good, ctx())).toEqual([]);
+    // The assignments are the turn's tasks: a satisfied turn that still assigns work is
+    // refused as a plan would be, and a bad unit is reported once, by "Units exist".
+    expect(
+      validateCommand(
+        command({
+          incidentStatus: "satisfied",
+          assignTasks: [
+            { ...grepTask, unit: "i1-command", objective: "one more look" },
+          ],
+        }),
+        ctx(),
+      ).map((r) => [r.rule, r.reason]),
+    ).toEqual([
+      ["Status is earned", "satisfied while creating 1 task(s)"],
+      ["Status is earned", "satisfied with no observed claim"],
+    ]);
+    expect(
+      validateCommand(
+        command({
+          assignTasks: [
+            { ...grepTask, unit: "u-none", objective: "one more look" },
+          ],
+        }),
+        ctx(),
+      ).map((r) => r.rule),
+    ).toEqual(["Units exist", "Own unit"]);
     const commanded = applyCommand(store, { id: "i1" }, good, 1, {});
     expect(commanded.answered.map((a) => [a.question?.answer, a.unit])).toEqual(
       [

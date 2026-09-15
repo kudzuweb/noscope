@@ -27,7 +27,7 @@ import type {
   UnitProposal,
   Usage,
 } from "./models.js";
-import { PLANNER_RULES } from "./planner.js";
+import { PLANNER_RULES, PLANNER_WARNINGS } from "./planner.js";
 import type { Provider } from "./providers/index.js";
 import { type Store, sumUsage } from "./store.js";
 import { STRIKE_MEMBER_MIN_TOKENS } from "./strike-team.js";
@@ -36,6 +36,7 @@ import { STRIKE_MEMBER_MIN_TOKENS } from "./strike-team.js";
 type BeforeColon<S> = S extends `${infer Name}: ${string}` ? Name : never;
 export type RuleName = BeforeColon<(typeof PLANNER_RULES)[number]>;
 export type LeaderRuleName = BeforeColon<(typeof LEADER_RULES)[number]>;
+type WarningName = BeforeColon<(typeof PLANNER_WARNINGS)[number]>;
 
 export const SPAN_OF_CONTROL = 7;
 
@@ -55,8 +56,11 @@ export type ValidationContext = {
 
 export type Rejection<R = RuleName> = { rule: R; reason: string };
 
+/** What the validator noticed and let through (R4-6): recorded as `plan.warned`, printed by `step`, read by the planner in section 9. */
+type Warning = { rule: WarningName; reason: string };
+
 export type Verdict<R = RuleName> =
-  | { ok: true; plan: ActionPlan }
+  | { ok: true; plan: ActionPlan; warnings: Warning[] }
   | { ok: false; rejections: Rejection<R>[] };
 
 type Rule = (plan: ActionPlan, ctx: ValidationContext) => string[];
@@ -677,6 +681,39 @@ export const RULES: readonly { name: RuleName; check: Rule }[] =
   });
 
 /**
+ * What a plan is warned on and applied with anyway (R4-6): session work under the root,
+ * which runs in a session of its own with no leader turn after it, against the rule that
+ * the IC's digging is assigned to a unit. The planner is told, not refused, since the
+ * work still runs and a rejection cost run 003 its unit.
+ */
+const WARNING_CHECKS: Record<WarningName, Rule> = {
+  "Session work under a unit": (plan, ctx) => {
+    const root = ctx.units.find((u) => u.parentId === null);
+    if (root === undefined) return [];
+    return perRegisteredTask(plan, (t, capability) =>
+      capability.kind === "session" && t.unit === root.id
+        ? [
+            `${label(t)} is session work (${t.capability}) under ${root.id}, the root; it will run in a session of its own with no leader to judge it, so it belongs under a unit`,
+          ]
+        : [],
+    );
+  },
+};
+
+const WARNINGS: readonly { name: WarningName; check: Rule }[] =
+  PLANNER_WARNINGS.map((line) => {
+    const name = line.slice(0, line.indexOf(":")) as WarningName;
+    return { name, check: WARNING_CHECKS[name] };
+  });
+
+/** The warnings a plan draws, none when it is rejected, since only an applied plan's are recorded. */
+function warningsOf(plan: ActionPlan, ctx: ValidationContext): Warning[] {
+  return WARNINGS.flatMap(({ name, check }) =>
+    check(plan, ctx).map((reason) => ({ rule: name, reason })),
+  );
+}
+
+/**
  * The plan rules that read tasks, applied to a leader's assignments as to a plan's; the
  * rest read the situation, the closes or the status, which a leader's turn has none of.
  */
@@ -796,7 +833,7 @@ export function validateLeaderTasks(
     ),
   ];
   return rejections.length === 0
-    ? { ok: true, plan }
+    ? { ok: true, plan, warnings: [] }
     : { ok: false, rejections };
 }
 
@@ -829,7 +866,7 @@ export function validateLeaderTasksAndRecord(
   return verdict;
 }
 
-/** The whole plan passes every rule or is rejected whole, with every failing rule and its reason. */
+/** The whole plan passes every rule or is rejected whole, with every failing rule and its reason; a passing plan carries its warnings. */
 export function validatePlan(
   plan: ActionPlan,
   ctx: ValidationContext,
@@ -838,7 +875,7 @@ export function validatePlan(
     check(plan, ctx).map((reason) => ({ rule: name, reason })),
   );
   return rejections.length === 0
-    ? { ok: true, plan }
+    ? { ok: true, plan, warnings: warningsOf(plan, ctx) }
     : { ok: false, rejections };
 }
 
@@ -862,27 +899,59 @@ export function validationContext(
   };
 }
 
-/** The rules a command turn is held to: it closes units and sets a status, and nothing else the other rules check. */
+/** The rules a command turn is held to: it closes units, assigns tasks under command and sets a status, and nothing else the other rules check. */
 const COMMAND_RULES: readonly RuleName[] = [
   "Units exist",
   "Closing is clean",
   "Status is earned",
 ];
 
-/** The one rule of the IC's own: an answer names a request a waiting unit raised. */
-export type CommandRuleName = "Answers match";
+/** The IC's own rules: an answer names a request a waiting unit raised; an assignment under command is deterministic. */
+export type CommandRuleName = "Answers match" | "Deterministic only";
 
 /**
  * The IC's command turn is held to the rules that cover what it can do, closing units and
  * setting the incident's status, by checking it as a plan that creates nothing (DESIGN.md
- * Step 5), and to one rule of its own: every answer names a waiting unit and an open
- * request that unit raised, as the change report showed it. Returns the failing rules with
- * their reasons; the caller records `command.rejected` and ends the cycle.
+ * Step 5), and to two rules of its own: every answer names a waiting unit and an open
+ * request that unit raised, as the change report showed it; and every task it assigns is
+ * deterministic (R4-6), since session work is a unit's. Its assignments are the plan's
+ * tasks, so "Units exist" and "Status is earned" see them (a turn that assigns work and
+ * declares `satisfied` is refused as a plan would be), and they pass the other task rules
+ * as a leader's do, and "Own unit" against the root. Returns the failing rules with their
+ * reasons; the caller records `command.rejected` and ends the cycle.
  */
 export function validateCommand(
   turn: CommandTurn,
   ctx: ValidationContext,
-): Rejection<RuleName | CommandRuleName>[] {
+): Rejection<RuleName | LeaderRuleName | CommandRuleName>[] {
+  const root = ctx.units.find((u) => u.parentId === null);
+  const assignments: Rejection<RuleName | LeaderRuleName | CommandRuleName>[] =
+    turn.assignTasks.length === 0
+      ? []
+      : [
+          // "Units exist" runs once, over `commandAsPlan` below, so a bad unit is
+          // reported once.
+          ...RULES.filter(
+            (r) => TASK_RULES.includes(r.name) && r.name !== "Units exist",
+          ).flatMap(({ name, check }) =>
+            check(asPlan(turn.assignTasks), ctx).map((reason) => ({
+              rule: name,
+              reason,
+            })),
+          ),
+          ...(root === undefined
+            ? []
+            : LEADER_CHECKS["Own unit"](turn.assignTasks, root, ctx).map(
+                (reason) => ({ rule: "Own unit" as const, reason }),
+              )),
+          ...perRegisteredTask(asPlan(turn.assignTasks), (t, capability) =>
+            capability.kind === "session"
+              ? [
+                  `${label(t)} runs ${t.capability}, a session; the IC assigns deterministic work only, and session work goes under a unit`,
+                ]
+              : [],
+          ).map((reason) => ({ rule: "Deterministic only" as const, reason })),
+        ];
   const answers: Rejection<CommandRuleName>[] = turn.answers.flatMap((a) => {
     const unit = ctx.units.find((u) => u.id === a.unitId);
     if (unit === undefined)
@@ -921,10 +990,12 @@ export function validateCommand(
       reason: `unit ${unitId}'s request "${request}" is answered twice`,
     });
   }
-  const asPlan: ActionPlan = {
+  // The assignments are the plan's tasks, so "Units exist" sees their unit and "Status
+  // is earned" refuses `satisfied` beside them.
+  const commandAsPlan: ActionPlan = {
     createUnits: [],
     closeUnits: turn.closeUnits,
-    createTasks: [],
+    createTasks: turn.assignTasks,
     cancelTasks: [],
     questionsForHuman: turn.questionsForHuman,
     grantRequests: turn.grantRequests,
@@ -943,16 +1014,18 @@ export function validateCommand(
   return [
     ...RULES.filter(({ name }) => COMMAND_RULES.includes(name)).flatMap(
       ({ name, check }) =>
-        check(asPlan, ctx).map((reason) => ({ rule: name, reason })),
+        check(commandAsPlan, ctx).map((reason) => ({ rule: name, reason })),
     ),
     ...answers,
+    ...assignments,
   ];
 }
 
 /**
  * Validate a proposed plan against the store and record the verdict: one `plan.rejected`
- * event per failing rule, with `rule` and `reason` as the planner's next input reads them
- * (DESIGN.md Step 5). Applying a passing plan is PR 11's.
+ * event per failing rule, or one `plan.warned` per warning on a passing plan, each with
+ * `rule` and `reason` as the planner's next input reads them (DESIGN.md Step 5). Applying
+ * a passing plan is PR 11's.
  */
 export function validateAndRecord(
   store: Store,
@@ -965,15 +1038,21 @@ export function validateAndRecord(
     plan,
     validationContext(store, incident, providers),
   );
-  if (!verdict.ok) {
-    store.batch(() => {
+  store.batch(() => {
+    if (verdict.ok)
+      for (const w of verdict.warnings)
+        store.record(incident.id, "plan.warned", actor, {
+          rule: w.rule,
+          reason: w.reason,
+          rationale: plan.rationale,
+        });
+    else
       for (const r of verdict.rejections)
         store.record(incident.id, "plan.rejected", actor, {
           rule: r.rule,
           reason: r.reason,
           rationale: plan.rationale,
         });
-    });
-  }
+  });
   return verdict;
 }

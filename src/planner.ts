@@ -2,7 +2,7 @@ import type { z } from "zod";
 import { recordActivity } from "./activity.js";
 import { listCapabilities } from "./capabilities/index.js";
 import { READ_ONLY_SESSION_COMMANDS } from "./equipment/index.js";
-import { LEADER_ACTOR, openRequestsByUnit } from "./leader.js";
+import { IC_ACTOR, LEADER_ACTOR, openRequestsByUnit } from "./leader.js";
 import {
   ActionPlan,
   type Claim,
@@ -53,6 +53,14 @@ export const PLANNER_RULES = [
   "Closing is clean: a unit closed in this plan is active, has no running task after this plan's cancels, is closed once, is given no new unit or task in the same plan, and its leader has reported since its last task ended or has no session.",
   "Status is earned: satisfied requires every open task completed or cancelled, no new tasks, and at least one observed claim; satisfied or failed raises no question, capability request or grant request; blocked raises at least one.",
   "Inferred links are worked: every inferred link in the situation names what settles it: a task in this plan by its ref, an open task by its id, a question this plan raises by its position, or a reproduce task by its ref or id; every claim id in proven, inferred and keep names a claim in the incident, and every proven claim has basis observed, whichever task observed it.",
+] as const;
+
+/**
+ * What the validator warns on and applies anyway (R4-6), stated beside the rules so the
+ * planner drafts around it; the name before the colon keys the check as a rule's does.
+ */
+export const PLANNER_WARNINGS = [
+  "Session work under a unit: a task to a session-backed capability belongs under a unit with a leader, never under command, the root; one placed under command runs in a session of its own, with no leader to judge it and no leader turn after it, and its result reaches the IC as a task result; the IC's own session runs no task. A deterministic task under command is fine.",
 ] as const;
 
 function clip(value: unknown): string {
@@ -207,7 +215,11 @@ function renderSituation(s: Situation | null): string[] {
 function lastCycleSequence(events: readonly Event[]): number {
   let last = -1;
   for (const e of events)
-    if (e.type === "plan.applied" && e.actor !== LEADER_ACTOR)
+    if (
+      e.type === "plan.applied" &&
+      e.actor !== LEADER_ACTOR &&
+      e.actor !== IC_ACTOR
+    )
       last = e.sequence;
   return last;
 }
@@ -305,6 +317,17 @@ export function renderPlannerInput(
 
   const rejections = recent
     .filter((e) => e.type === "plan.rejected" && e.actor !== LEADER_ACTOR)
+    .map((e) => `${String(e.payload.rule)}: ${String(e.payload.reason)}`);
+  // A plan's warnings are recorded before it is applied, so the last applied plan's sit
+  // before `since`: the window opens at the plan applied before it. When the last cycle
+  // rejected its plan instead, nothing was warned on last cycle, and the window opens at
+  // `since` so the plan before is not repeated.
+  const warnedAfter =
+    rejections.length > 0
+      ? since
+      : lastCycleSequence(events.filter((p) => p.sequence < since));
+  const warnings = events
+    .filter((e) => e.type === "plan.warned" && e.sequence > warnedAfter)
     .map((e) => `${String(e.payload.rule)}: ${String(e.payload.reason)}`);
   const budgetStops = recent
     .filter((e) => e.type === "budget.exceeded")
@@ -457,8 +480,12 @@ export function renderPlannerInput(
     "",
     "## 9. Rules the validator applies",
     ...bullets(PLANNER_RULES),
+    "warned on, and applied anyway:",
+    ...bullets(PLANNER_WARNINGS),
     "rejected last cycle:",
     ...bullets(rejections, "(nothing rejected)"),
+    "warned last cycle:",
+    ...bullets(warnings, "(nothing warned)"),
     "",
     "## 10. Situation from the last cycle",
     ...renderSituation(situation),

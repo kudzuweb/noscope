@@ -93,6 +93,14 @@ export function scriptedIncident(store: Store, id = "i1", at = now()) {
     store.createUnit(u, "runtime");
     return u;
   };
+  /** A unit under command with the root's equipment, for tests of a leader's turns: the root takes none (R4-6). */
+  const led = (id = "u-led"): Unit =>
+    addUnit({
+      id,
+      objective: "the led half",
+      equipment: [...unit.equipment],
+      bashAllowlist: [...unit.bashAllowlist],
+    });
   const task = (overrides: Partial<Task> & Pick<Task, "capability">): Task => {
     const t: Task = {
       id: `t-${overrides.capability}`,
@@ -119,7 +127,7 @@ export function scriptedIncident(store: Store, id = "i1", at = now()) {
     store.createTask(t, "planner");
     return t;
   };
-  return { store, incident, unit, addUnit, task };
+  return { store, incident, unit, addUnit, led, task };
 }
 
 /**

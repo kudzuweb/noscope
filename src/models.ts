@@ -54,6 +54,7 @@ export const EventType = z.enum([
   "claim.rejected",
   "plan.proposed",
   "plan.rejected",
+  "plan.warned",
   "plan.applied",
   "budget.exceeded",
   "question.asked",
@@ -486,7 +487,7 @@ const LeaderReportFields = z.object({
     .array(ResourceRequest)
     .optional()
     .describe(
-      "What you lack and cannot get inside your unit: permission, missing means, or something only a human knows; never a retrievable fact, which you assign a task for. Any request puts your unit in waiting until the IC or Mauria answers, and the report counts as picture-changing; under command none is raised, since the IC raises its lacks in its command turn",
+      "What you lack and cannot get inside your unit: permission, missing means, or something only a human knows; never a retrievable fact, which you assign a task for. Any request puts your unit in waiting until the IC or Mauria answers, and the report counts as picture-changing",
     ),
 });
 
@@ -628,6 +629,12 @@ export const CommandTurn = z.strictObject({
     .default([])
     .describe(
       "The resource requests listed in the change report, each answered; nothing else goes here",
+    ),
+  assignTasks: z
+    .array(TaskProposal)
+    .default([])
+    .describe(
+      "Deterministic tasks to run under command this cycle (grep, read, check_path, git_history: no provider, no model), each naming the root unit as its unit; they run in this cycle's pass, and one that dependsOn a unit's task runs in the pass after that task completes, since the root runs first in each pass; their results open your next change report. Session work is a unit's: a task to a session-backed capability is refused here and belongs in a period objective for the planner to place under a unit",
     ),
   questionsForHuman: z.array(z.string().min(1)),
   capabilityRequests: z.array(

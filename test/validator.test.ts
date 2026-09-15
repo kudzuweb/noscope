@@ -240,7 +240,7 @@ describe("validator", () => {
         investigateTask({ unit: "u-new", dependsOn: ["t-done", "t-running"] }),
       ],
     };
-    expect(verdictOf(plan)).toEqual({ ok: true, plan });
+    expect(verdictOf(plan)).toEqual({ ok: true, plan, warnings: [] });
   });
 
   const failing: [RuleName, ActionPlan][] = [
@@ -984,6 +984,7 @@ describe("validator", () => {
     ).toEqual({
       ok: true,
       plan: { ...empty, incidentStatus: "satisfied" },
+      warnings: [],
     });
     store.close();
   });
@@ -1043,10 +1044,53 @@ describe("validator", () => {
       },
     ]);
     const good = validateAndRecord(store, incident, empty, [fakeProvider]);
-    expect(good).toEqual({ ok: true, plan: empty });
+    expect(good).toEqual({ ok: true, plan: empty, warnings: [] });
     expect(
       store.listEvents("i1").filter((e) => e.type === "plan.rejected"),
     ).toHaveLength(2);
+    store.close();
+  });
+
+  it("Session work under a unit warns on a session task under the root, records plan.warned and applies the plan; a deterministic task under the root and session work under a unit draw nothing (R4-6)", () => {
+    const { store, incident } = seeded();
+    const plan: ActionPlan = {
+      ...empty,
+      createTasks: [
+        grepTask(),
+        investigateTask(),
+        investigateTask({
+          unit: "u-scroll",
+          inputs: { question: "what else moves it?" },
+        }),
+      ],
+      rationale: "read at command",
+    };
+    const verdict = validateAndRecord(store, incident, plan, [fakeProvider]);
+    expect(verdict).toEqual({
+      ok: true,
+      plan,
+      warnings: [
+        {
+          rule: "Session work under a unit",
+          reason:
+            'task "read the scroll handler" is session work (investigate) under i1-command, the root; it will run in a session of its own with no leader to judge it, so it belongs under a unit',
+        },
+      ],
+    });
+    const warned = store
+      .listEvents("i1")
+      .filter((e) => e.type === "plan.warned");
+    expect(warned.map((e) => e.payload)).toEqual([
+      {
+        rule: "Session work under a unit",
+        reason:
+          'task "read the scroll handler" is session work (investigate) under i1-command, the root; it will run in a session of its own with no leader to judge it, so it belongs under a unit',
+        rationale: "read at command",
+      },
+    ]);
+    expect(
+      store.listEvents("i1").filter((e) => e.type === "plan.rejected"),
+    ).toHaveLength(0);
     store.close();
   });
 });

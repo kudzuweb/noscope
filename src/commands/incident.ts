@@ -701,6 +701,8 @@ async function cycle(
     ctx.io.out(`  close unit ${c.unitId}: ${c.reason}`);
   for (const a of turn.answers)
     ctx.io.out(`  answer to ${a.unitId} (${a.request}): ${a.answer}`);
+  for (const t of turn.assignTasks)
+    ctx.io.out(`  assign under command: ${t.capability}: ${t.objective}`);
   for (const q of turn.questionsForHuman) ctx.io.out(`  ask: ${q}`);
   for (const r of turn.capabilityRequests)
     ctx.io.out(`  request capability: ${r.need} (${r.why})`);
@@ -743,6 +745,10 @@ async function cycle(
     ctx.io.out(`  question ${q.id}: ${q.text}`);
   for (const a of commanded.answered)
     for (const line of describeAnswered(a)) ctx.io.out(`  ${line}`);
+  for (const t of commanded.tasks)
+    ctx.io.out(
+      `  task ${t.id} [${t.status}] under ${t.unitId}: ${t.capability}: ${t.objective}`,
+    );
   if (commanded.incidentStatus !== "open") {
     ctx.io.out(`incident ${incident.id} is now ${commanded.incidentStatus}`);
     return { status: commanded.incidentStatus, stopped: null };
@@ -819,6 +825,8 @@ async function cycle(
     return { status: incident.status, stopped: null };
   }
   ctx.io.out("plan approved");
+  for (const w of verdict.warnings)
+    ctx.io.out(`  warned, applied anyway: ${w.rule}: ${w.reason}`);
   const applied = applyPlan(store, current, plan, "runtime", {
     verdict: review.output.verdict,
     corrections,
@@ -852,13 +860,8 @@ async function cycle(
     ctx.io.out(
       `  unit ${r.unitId} reported ${r.report.outcome}${r.report.pictureChanged ? ", picture changed" : ""}: ${r.report.changed.map((c) => c.what).join("; ") || "nothing changed"}${r.report.why === undefined ? "" : `; why: ${r.report.why}`}${r.report.suggestion === undefined ? "" : `; suggestion: ${r.report.suggestion}`}`,
     );
-    const root = r.unitId === `${incident.id}-command`;
     for (const q of r.report.resourceRequests ?? [])
-      ctx.io.out(
-        root
-          ? `    asked for ${q.kind}: ${q.what} (${q.why}); refused, command raises it in its command turn`
-          : `    waits on ${q.kind}: ${q.what} (${q.why})`,
-      );
+      ctx.io.out(`    waits on ${q.kind}: ${q.what} (${q.why})`);
   }
   for (const e of store.listEvents(incident.id).slice(before)) {
     if (e.type === "plan.applied" && e.actor === "leader")

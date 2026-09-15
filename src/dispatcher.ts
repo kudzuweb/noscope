@@ -433,6 +433,10 @@ async function leaderTurn(
   options: DispatchOptions,
   actor: string,
 ): Promise<Turned> {
+  if (listed.parentId === null)
+    throw new Error(
+      `unit ${listed.id} is the root: the IC takes no leader turn (R4-6)`,
+    );
   const provider = getProvider(listed.leader.provider, options.env);
   const refused = refusedSinceLastTurn(
     store.listEvents(incident.id),
@@ -464,7 +468,7 @@ async function leaderTurn(
         unitId: unit.id,
         sessionId: error.sessionId,
         ...unit.leader,
-        seat: unit.parentId === null ? "ic" : "leader",
+        seat: "leader",
         reason: error.message,
         refused,
         ...(error.usage === null ? {} : { usage: error.usage }),
@@ -509,12 +513,9 @@ async function leaderTurn(
   }
   // A report that asks for something the unit cannot get itself changes the picture by
   // definition: the IC must see the unit waiting before the next unit runs. The schema
-  // refuses a report on a continue turn, so a request never rides on one. The root unit
-  // never waits: the IC raises what it lacks in the command turn that follows, so a
-  // request on its leader turn is refused and read back into its next prompt.
+  // refuses a report on a continue turn, so a request never rides on one.
   const requests =
     turn.kind === "report" ? (turn.report?.resourceRequests ?? []) : [];
-  const refusedAtRoot = unit.parentId === null && requests.length > 0;
   if (turn.report !== null && requests.length > 0)
     turn = { ...turn, report: { ...turn.report, pictureChanged: true } };
   const sessionId = outcome.sessionId;
@@ -544,7 +545,7 @@ async function leaderTurn(
     if (turn.discrepancy !== undefined)
       store.record(incident.id, "picture.discrepancy", actor, {
         ...seat,
-        seat: unit.parentId === null ? "ic" : "leader",
+        seat: "leader",
         taskId: cause !== null && "task" in cause ? cause.task.id : null,
         discrepancy: turn.discrepancy,
       });
@@ -584,13 +585,7 @@ async function leaderTurn(
       if (verdict.ok)
         assigned = applyLeaderTasks(store, incident, current, proposals).length;
     }
-    if (refusedAtRoot)
-      store.record(incident.id, "plan.rejected", LEADER_ACTOR, {
-        rule: "Resource requests",
-        reason: `command raises what it lacks in its command turn, not as a leader's resource requests; nothing was raised for: ${requests.map((r) => `${r.kind}: ${r.what}`).join("; ")}`,
-        unitId: unit.id,
-      });
-    else if (requests.length > 0)
+    if (requests.length > 0)
       raiseResourceRequests(store, incident, current, requests, actor);
   });
   return { turn, sessionId, unit: current, assigned };
@@ -607,9 +602,13 @@ async function leaderTurn(
  * resumed since its last report opens with a turn carrying the answers, before any task. A
  * task whose dependencies complete during the pass runs in the same pass when its unit has
  * not yet reported; a unit that has reported is done for the pass, so its dependents wait
- * for the next one. A `waiting` unit is skipped. The pass ends when every unit that ran
- * has reported, when a report says the picture changed (`pictureChanged` names the unit;
- * a report with resource requests always does), or, with `budget.exceeded`, when the
+ * for the next one. A `waiting` unit is skipped. The root is the exception (R4-6): its
+ * leader is the IC, which takes no leader turn, so its runnable tasks run one after
+ * another with no turn between, none inside the IC's session, and its pass ends without a
+ * report once its ready tasks have run; the IC judges their results at its command turn,
+ * where the change report lists them. The pass ends when every unit that ran has
+ * reported, when a report says the picture changed (`pictureChanged` names the unit; a
+ * report with resource requests always does), or, with `budget.exceeded`, when the
  * incident's budget has no room for the next task.
  */
 export async function dispatch(
@@ -693,8 +692,10 @@ export async function dispatch(
       let unit =
         store.listUnits(incident.id).find((u) => u.id === listed.id) ?? listed;
       let ranInUnit = false;
-      if (resumed.has(unit.id)) {
-        // The leader reads the answers to its requests before its unit runs anything.
+      if (resumed.has(unit.id) && unit.parentId !== null) {
+        // The leader reads the answers to its requests before its unit runs anything. The
+        // root takes no turn (R4-6): a waiting root can only come from a store written
+        // before this, and its answers are read at the command turn.
         resumed.delete(unit.id);
         progressed = true;
         const settled = await settle(unit, answered(unit));
@@ -765,6 +766,7 @@ export async function dispatch(
           ending = run.ending;
           unit = run.unit;
         }
+        if (unit.parentId === null) continue;
         const ended = store
           .listTasks(incident.id)
           .find((t) => t.id === next.id);
@@ -776,6 +778,10 @@ export async function dispatch(
         if (settled.stop)
           return { ran, reports, stopped: null, pictureChanged: unit.id };
         if (done.has(unit.id)) break;
+      }
+      if (unit.parentId === null) {
+        done.add(unit.id);
+        continue;
       }
       if (!ranInUnit && owing.has(unit.id)) {
         progressed = true;
