@@ -243,9 +243,10 @@ describe("contracts", () => {
       "incident.briefed",
       "command.transferred",
       "plan.warned",
+      "report.reviewed",
     ])
       expect(EventType.options).toContain(type);
-    expect(EventType.options).toHaveLength(45);
+    expect(EventType.options).toHaveLength(46);
   });
 
   it("an incident briefing is one strict object on ICS 201's lines; a checked need says what the check showed", () => {
@@ -293,6 +294,7 @@ describe("contracts", () => {
     const turn = {
       periodObjectives: ["find the handler"],
       priorities: [],
+      reportVerdicts: [],
       closeUnits: [],
       questionsForHuman: [],
       capabilityRequests: [],
@@ -334,6 +336,98 @@ describe("contracts", () => {
     expect(first.required).toContain("briefingEvaluation");
     const any = jsonSchemaFor(CommandTurn) as { required: string[] };
     expect(any.required).not.toContain("briefingEvaluation");
+  });
+
+  it("a command turn answers each report with one of three verdicts; instructions are required on a revise or reassign and refused on an accepted (R4-2)", () => {
+    const turn = {
+      periodObjectives: ["find the handler"],
+      priorities: [],
+      reportVerdicts: [],
+      closeUnits: [],
+      questionsForHuman: [],
+      capabilityRequests: [],
+      grantRequests: [],
+      incidentStatus: "continue",
+      rationale: "first period",
+    };
+    const verdict = (over: Record<string, unknown>) => ({
+      reportId: "e-1",
+      unitId: "u-a",
+      why: "the work shows it",
+      ...over,
+    });
+    const parsed = CommandTurn.parse({
+      ...turn,
+      reportVerdicts: [
+        verdict({ verdict: "accepted", instructions: "" }),
+        verdict({
+          reportId: "e-2",
+          unitId: "u-b",
+          verdict: "revise",
+          instructions: "read the second handler too",
+        }),
+        verdict({
+          reportId: "e-3",
+          unitId: "u-c",
+          verdict: "reassign",
+          instructions: "found the handler, not the caller; a unit with Bash",
+        }),
+      ],
+    });
+    expect(parsed.reportVerdicts.map((v) => v.verdict)).toEqual([
+      "accepted",
+      "revise",
+      "reassign",
+    ]);
+    const invalid = (over: Record<string, unknown>) =>
+      CommandTurn.safeParse({ ...turn, reportVerdicts: [verdict(over)] });
+    expect(
+      invalid({ verdict: "accepted", instructions: "and more" }).error?.issues,
+    ).toMatchObject([
+      {
+        path: ["reportVerdicts", 0, "instructions"],
+        message: "an accepted report takes no instructions",
+      },
+    ]);
+    for (const kind of ["revise", "reassign"]) {
+      expect(
+        invalid({ verdict: kind, instructions: "" }).error?.issues,
+      ).toMatchObject([
+        {
+          path: ["reportVerdicts", 0, "instructions"],
+          message: `a ${kind} verdict says what to do in its instructions`,
+        },
+      ]);
+      expect(invalid({ verdict: kind, instructions: "  " }).success).toBe(
+        false,
+      );
+    }
+    expect(invalid({ verdict: "rejected", instructions: "" }).success).toBe(
+      false,
+    );
+    expect(
+      invalid({ verdict: "accepted", instructions: "", why: "" }).success,
+    ).toBe(false);
+    expect(
+      invalid({ verdict: "accepted", instructions: "", extra: 1 }).success,
+    ).toBe(false);
+    // The field is required, so the schema the IC answers under asks for it; the turn
+    // schema stays one strict object with no top-level union.
+    expect(
+      CommandTurn.safeParse({ ...turn, reportVerdicts: undefined }).success,
+    ).toBe(false);
+    const schema = jsonSchemaFor(CommandTurn) as {
+      required: string[];
+      properties: { reportVerdicts: { items: { required: string[] } } };
+    };
+    expect(schema.required).toContain("reportVerdicts");
+    expect(schema.properties.reportVerdicts.items.required).toEqual([
+      "reportId",
+      "unitId",
+      "verdict",
+      "instructions",
+      "why",
+    ]);
   });
 
   it("a leader's turn is a report or a continue; a not_met report says why and what to do, and a discrepancy rides on either", () => {

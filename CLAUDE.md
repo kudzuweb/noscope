@@ -11,8 +11,9 @@ ICS is the structure emergency services use to run an incident: one commander, a
 operational period, a tree of units each with a leader and a clear assignment, resources
 typed so everyone means the same thing by a name, and a record of every decision. noscope
 maps it onto agents. The Incident Commander (IC) is a persistent Claude session that sets each
-period's objectives and priorities, reviews the planner's draft, reads the units' reports and
-decides whether the incident is met. The planner is a stateless call that drafts each period's
+period's objectives and priorities, reviews the planner's draft, reviews each unit's report
+against the work behind it (accepting it, sending it back for revision, or reassigning its
+slice to a different unit) and decides whether the incident is met. The planner is a stateless call that drafts each period's
 action plan from the incident file. Every unit has a leader session that runs the unit's tasks
 in order and reports against the unit's objective, and a leader can send a strike team of
 subagents at a task. Tasks run through capabilities (grep, read, investigate, reproduce in a

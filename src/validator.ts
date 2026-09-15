@@ -10,6 +10,7 @@ import {
   LEADER_ACTOR,
   LEADER_RULES,
   openRequests,
+  reportsAwaitingVerdict,
   requestTargetOf,
   unitShare,
   unitsOwingReport,
@@ -24,6 +25,7 @@ import type {
   Task,
   TaskProposal,
   Unit,
+  UnitClose,
   UnitProposal,
   Usage,
 } from "./models.js";
@@ -906,19 +908,80 @@ const COMMAND_RULES: readonly RuleName[] = [
   "Status is earned",
 ];
 
-/** The IC's own rules: an answer names a request a waiting unit raised; an assignment under command is deterministic. */
-export type CommandRuleName = "Answers match" | "Deterministic only";
+/** The IC's own rules: an answer names a request a waiting unit raised; every report in the change report has one verdict; an assignment under command is deterministic. */
+export type CommandRuleName =
+  | "Answers match"
+  | "Reports answered"
+  | "Deterministic only";
+
+/**
+ * The units a command turn closes through its verdicts (R4-2): an accepted or reassigned
+ * report closes its unit, with the verdict as the reason. A unit the turn also names in
+ * `closeUnits` is left out here, so "Closing is clean" does not report it closed twice on
+ * top of "Reports answered" naming the conflict.
+ */
+export function verdictCloses(turn: CommandTurn): UnitClose[] {
+  const named = new Set(turn.closeUnits.map((c) => c.unitId));
+  const closes: UnitClose[] = [];
+  for (const v of turn.reportVerdicts) {
+    if (v.verdict === "revise" || named.has(v.unitId)) continue;
+    named.add(v.unitId);
+    closes.push({ unitId: v.unitId, reason: `${v.verdict}: ${v.why}` });
+  }
+  return closes;
+}
+
+/**
+ * Every report the change report listed since the IC's last accepted turn has exactly one
+ * verdict naming its event id and its unit, and no verdict names a report outside that
+ * window or another unit; a unit accepted or reassigned is not in `closeUnits` as well,
+ * since its verdict closes it.
+ */
+function reportsAnswered(
+  turn: CommandTurn,
+  awaiting: ReadonlyMap<string, Event>,
+): string[] {
+  const reasons: string[] = [];
+  const answered = new Set<string>();
+  const closing = new Set(turn.closeUnits.map((c) => c.unitId));
+  for (const v of turn.reportVerdicts) {
+    const report = awaiting.get(v.reportId);
+    if (report === undefined) {
+      reasons.push(`no report ${v.reportId} awaits a verdict`);
+      continue;
+    }
+    if (report.payload.unitId !== v.unitId)
+      reasons.push(
+        `report ${v.reportId} is unit ${String(report.payload.unitId)}'s, not ${v.unitId}'s`,
+      );
+    if (answered.has(v.reportId))
+      reasons.push(`report ${v.reportId} has two verdicts`);
+    answered.add(v.reportId);
+    if (v.verdict !== "revise" && closing.has(v.unitId))
+      reasons.push(
+        `unit ${v.unitId} is ${v.verdict} and in closeUnits; its verdict closes it`,
+      );
+  }
+  for (const [id, report] of awaiting)
+    if (!answered.has(id))
+      reasons.push(
+        `report ${id} of unit ${String(report.payload.unitId)} has no verdict`,
+      );
+  return reasons;
+}
 
 /**
  * The IC's command turn is held to the rules that cover what it can do, closing units and
  * setting the incident's status, by checking it as a plan that creates nothing (DESIGN.md
- * Step 5), and to two rules of its own: every answer names a waiting unit and an open
- * request that unit raised, as the change report showed it; and every task it assigns is
- * deterministic (R4-6), since session work is a unit's. Its assignments are the plan's
- * tasks, so "Units exist" and "Status is earned" see them (a turn that assigns work and
- * declares `satisfied` is refused as a plan would be), and they pass the other task rules
- * as a leader's do, and "Own unit" against the root. Returns the failing rules with their
- * reasons; the caller records `command.rejected` and ends the cycle.
+ * Step 5), with the units its verdicts close folded into the plan's closes, and to three
+ * rules of its own: every answer names a waiting unit and an open request that unit
+ * raised, as the change report showed it; every report the change report listed has
+ * exactly one verdict (R4-2); and every task it assigns is deterministic (R4-6), since
+ * session work is a unit's. Its assignments are the plan's tasks, so "Units exist" and
+ * "Status is earned" see them (a turn that assigns work and declares `satisfied` is
+ * refused as a plan would be), and they pass the other task rules as a leader's do, and
+ * "Own unit" against the root. Returns the failing rules with their reasons; the caller
+ * records `command.rejected` and ends the cycle.
  */
 export function validateCommand(
   turn: CommandTurn,
@@ -990,11 +1053,22 @@ export function validateCommand(
       reason: `unit ${unitId}'s request "${request}" is answered twice`,
     });
   }
+  const awaiting = new Map(
+    reportsAwaitingVerdict(ctx.events).map((e) => [e.id, e]),
+  );
+  // Only a verdict that names a listed report and its unit closes anything; the rest are
+  // "Reports answered" rejections, not closes for "Units exist" to fail again.
+  const answering: CommandTurn = {
+    ...turn,
+    reportVerdicts: turn.reportVerdicts.filter(
+      (v) => awaiting.get(v.reportId)?.payload.unitId === v.unitId,
+    ),
+  };
   // The assignments are the plan's tasks, so "Units exist" sees their unit and "Status
-  // is earned" refuses `satisfied` beside them.
+  // is earned" refuses `satisfied` beside them; the verdicts' closes are the plan's closes.
   const commandAsPlan: ActionPlan = {
     createUnits: [],
-    closeUnits: turn.closeUnits,
+    closeUnits: [...turn.closeUnits, ...verdictCloses(answering)],
     createTasks: turn.assignTasks,
     cancelTasks: [],
     questionsForHuman: turn.questionsForHuman,
@@ -1017,6 +1091,12 @@ export function validateCommand(
         check(commandAsPlan, ctx).map((reason) => ({ rule: name, reason })),
     ),
     ...answers,
+    ...reportsAnswered(turn, awaiting).map(
+      (reason): Rejection<CommandRuleName> => ({
+        rule: "Reports answered",
+        reason,
+      }),
+    ),
     ...assignments,
   ];
 }

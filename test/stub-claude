@@ -14,7 +14,14 @@
 // remain and a progress report once it says none do. The IC's command turn, recognised by
 // the CommandTurn schema (a `periodObjectives` property), gets NOSCOPE_STUB_COMMAND, or the
 // next entry of NOSCOPE_STUB_COMMANDS (counter file NOSCOPE_STUB_COMMAND_COUNTER), or by
-// default one objective and `continue`; its review, recognised by the ReviewTurn schema (a
+// default one objective and `continue`. A command turn answers every report its briefing
+// lists (R4-2; the change report heads each `  - <unit>, report <event id>: <outcome>`):
+// a turn with no `reportVerdicts`, or
+// an empty list (the typed test helpers' default), gets one per listed report, `accepted`
+// for a `met` report and `revise` with stub instructions otherwise, and a turn whose
+// verdicts omit `reportId` or leave it empty gets each filled with the id of the last
+// report listed for that unit, since a test cannot know the store's UUID. Its review,
+// recognised by the ReviewTurn schema (a
 // `verdict` property), gets NOSCOPE_STUB_REVIEW, or the next entry of NOSCOPE_STUB_REVIEWS
 // (counter file NOSCOPE_STUB_REVIEW_COUNTER), or by default `approve`. A command turn whose
 // schema requires `briefingEvaluation` (the IC's first turn after a transfer of command)
@@ -194,18 +201,40 @@ function nextOf(one, many, counterName, fallback) {
   return fallback();
 }
 
+const listedReports = [...prompt.matchAll(/^  - (\S+), report (\S+): (met|not_met|progress)\b/gm)]
+  .map((m) => ({ unitId: m[1], reportId: m[2], outcome: m[3] }));
+
+const defaultVerdict = (r) =>
+  r.outcome === "met"
+    ? { reportId: r.reportId, unitId: r.unitId, verdict: "accepted", instructions: "", why: "stub: met on the work shown" }
+    : { reportId: r.reportId, unitId: r.unitId, verdict: "revise", instructions: "stub: carry on", why: `stub: ${r.outcome}` };
+
+const withVerdicts = (turn) => ({
+  ...turn,
+  reportVerdicts:
+    turn.reportVerdicts === undefined || turn.reportVerdicts.length === 0
+      ? listedReports.map(defaultVerdict)
+      : turn.reportVerdicts.map((v) =>
+          v.reportId === undefined || v.reportId === ""
+            ? { ...v, reportId: listedReports.filter((r) => r.unitId === v.unitId).at(-1)?.reportId ?? "(no report listed)" }
+            : v,
+        ),
+});
+
 const nextCommand = () => {
-  const turn = nextOf("NOSCOPE_STUB_COMMAND", "NOSCOPE_STUB_COMMANDS", "NOSCOPE_STUB_COMMAND_COUNTER", () => ({
-    periodObjectives: ["pursue the incident objective"],
-    priorities: [],
-    closeUnits: [],
-    answers: [],
-    questionsForHuman: [],
-    capabilityRequests: [],
-    grantRequests: [],
-    incidentStatus: "continue",
-    rationale: "stub command turn",
-  }));
+  const turn = withVerdicts(
+    nextOf("NOSCOPE_STUB_COMMAND", "NOSCOPE_STUB_COMMANDS", "NOSCOPE_STUB_COMMAND_COUNTER", () => ({
+      periodObjectives: ["pursue the incident objective"],
+      priorities: [],
+      closeUnits: [],
+      answers: [],
+      questionsForHuman: [],
+      capabilityRequests: [],
+      grantRequests: [],
+      incidentStatus: "continue",
+      rationale: "stub command turn",
+    })),
+  );
   const evaluates = Array.isArray(schema.required) && schema.required.includes("briefingEvaluation");
   return evaluates && turn.briefingEvaluation === undefined
     ? {

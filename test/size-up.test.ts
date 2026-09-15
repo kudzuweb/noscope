@@ -110,6 +110,7 @@ const findIt: ActionPlan = {
 
 const command = (over: Partial<CommandTurn> = {}): CommandTurn => ({
   periodObjectives: ["find the handler"],
+  reportVerdicts: [],
   priorities: [],
   closeUnits: [],
   answers: [],
@@ -772,7 +773,7 @@ describe("the initial IC and the transfer of command", () => {
       text.slice(text.indexOf("# Your command turn")),
     ).toMatchInlineSnapshot(`
       "# Your command turn for operational period 1
-      First, evaluate the briefing you took command with: for each initial objective and each unit sketched, say in briefingEvaluation whether you accept it, rewrite it or discard it, and why; you are not bound by any of it, and a rewritten or discarded item costs nothing. Then set the period's objectives and priorities, close what is done, answer the resource requests you can, raise for Mauria what only she can supply, and say whether the incident continues."
+      First, evaluate the briefing you took command with: for each initial objective and each unit sketched, say in briefingEvaluation whether you accept it, rewrite it or discard it, and why; you are not bound by any of it, and a rewritten or discarded item costs nothing. Then set the period's objectives and priorities, answer each report the change report lists with a verdict (accepted, revise or reassign), close what is done, answer the resource requests you can, raise for Mauria what only she can supply, and say whether the incident continues."
     `);
     expect(text.startsWith("# Change report\n")).toBe(true);
   });

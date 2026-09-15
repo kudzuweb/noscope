@@ -81,6 +81,7 @@ export const EventType = z.enum([
   "incident.briefed",
   "command.transferred",
   "leader.failed",
+  "report.reviewed",
 ]);
 
 export const Budget = z.object({
@@ -600,9 +601,48 @@ export const BriefingVerdict = z.strictObject({
 });
 
 /**
- * The IC's command turn, at the top of each cycle: the period's objectives and priorities,
- * units to close, answers to what units asked for, what only Mauria can supply, and whether
- * the incident continues. The planner then drafts against the period. Every turn schema is
+ * The IC's verdict on one unit's report (R4-2), named by the report's event id as the
+ * change report heads it: `accepted` closes the unit, its objective met on the work shown;
+ * `revise` keeps the unit and sends the instructions back to its leader (R4-3); `reassign`
+ * closes the unit and hands its slice to a unit of a different shape with the instructions
+ * (R4-4). Instructions are what a revise or reassign is for, so they are required there and
+ * refused on an accepted, enforced after parse since every turn schema is one strict
+ * object.
+ */
+export const ReportVerdict = z
+  .strictObject({
+    reportId: z
+      .string()
+      .min(1)
+      .describe("The report's event id, as the change report heads it"),
+    unitId: z.string().min(1).describe("The unit that reported"),
+    verdict: z.enum(["accepted", "revise", "reassign"]),
+    instructions: z
+      .string()
+      .describe(
+        "For revise: what is missing, for the same leader to finish; for reassign: what the unit found and did not find, for the unit that takes its slice; empty for accepted",
+      ),
+    why: z.string().min(1).describe("Why this verdict, from the work shown"),
+  })
+  .superRefine((v, ctx) => {
+    if (v.verdict === "accepted" && v.instructions !== "")
+      ctx.addIssue({
+        code: "custom",
+        path: ["instructions"],
+        message: "an accepted report takes no instructions",
+      });
+    if (v.verdict !== "accepted" && v.instructions.trim() === "")
+      ctx.addIssue({
+        code: "custom",
+        path: ["instructions"],
+        message: `a ${v.verdict} verdict says what to do in its instructions`,
+      });
+  });
+
+/**
+ * The IC's command turn, at the top of each cycle: a verdict on each report the change
+ * report lists, the period's objectives and priorities, units to close, answers to what
+ * units asked for, what only Mauria can supply, and whether the incident continues. The planner then drafts against the period. Every turn schema is
  * one strict object: the structured-output API refuses a top-level oneOf/anyOf and accepts
  * keys a loose object does not name, so fields that vary by variant are optional and a
  * refinement enforces them after parse (verified on Claude Code 2.1.272, R3-5).
@@ -623,7 +663,16 @@ export const CommandTurn = z.strictObject({
   priorities: z
     .array(z.string().min(1))
     .describe("The incident's priorities, restated or revised for this period"),
-  closeUnits: z.array(UnitClose),
+  reportVerdicts: z
+    .array(ReportVerdict)
+    .describe(
+      "One verdict per unit report the change report lists, each naming the report's event id and its unit: accepted, revise or reassign, with instructions for the last two and a why for each",
+    ),
+  closeUnits: z
+    .array(UnitClose)
+    .describe(
+      "Units to close that did not report this period; a reported unit is closed by accepting or reassigning its report, never here",
+    ),
   answers: z
     .array(ResourceAnswer)
     .default([])
@@ -990,6 +1039,7 @@ export type LeaderTurn = z.infer<typeof LeaderTurn>;
 export type Period = z.infer<typeof Period>;
 export type ResourceAnswer = z.infer<typeof ResourceAnswer>;
 export type CommandTurn = z.infer<typeof CommandTurn>;
+export type ReportVerdict = z.infer<typeof ReportVerdict>;
 export type BriefingVerdict = z.infer<typeof BriefingVerdict>;
 export type IncidentBriefing = z.infer<typeof IncidentBriefing>;
 export type ReviewTurn = z.infer<typeof ReviewTurn>;

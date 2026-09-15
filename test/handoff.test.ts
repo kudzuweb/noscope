@@ -88,6 +88,7 @@ const findIt: ActionPlan = {
 
 const command = (over: Partial<CommandTurn> = {}): CommandTurn => ({
   periodObjectives: ["find the handler"],
+  reportVerdicts: [],
   priorities: ["observation over reading"],
   closeUnits: [],
   answers: [],

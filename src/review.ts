@@ -462,13 +462,14 @@ function icLines(
         | {
             periodObjectives?: unknown;
             closeUnits?: unknown;
+            reportVerdicts?: unknown;
             incidentStatus?: unknown;
           }
         | undefined;
       move =
         e.payload.rejected === true
           ? "command turn rejected"
-          : `set period ${String(e.payload.cycle)}: ${list(turn?.periodObjectives).length} objective(s), ${list(turn?.closeUnits).length} close(s), ${str(turn?.incidentStatus)}`;
+          : `set period ${String(e.payload.cycle)}: ${list(turn?.periodObjectives).length} objective(s), ${list(turn?.closeUnits).length} close(s), ${list(turn?.reportVerdicts).length} verdict(s), ${str(turn?.incidentStatus)}`;
     } else {
       const verdict = str(e.payload.verdict);
       verdicts.set(verdict, (verdicts.get(verdict) ?? 0) + 1);
@@ -477,6 +478,11 @@ function icLines(
     lines.push(
       `  ic ${model ?? "(no model)"}: ${describeUsage(usage, turnCost)}  ${move}${session(str(e.payload.sessionId))}`,
     );
+    // The verdicts a command turn recorded, listed under it (R4-2).
+    if (e.type === "command.turned")
+      for (const v of cycle.events)
+        if (v.type === "report.reviewed")
+          lines.push(`  ${describeReportVerdict(v)}`);
   }
   for (const e of cycle.events)
     if (e.type === "command.rejected")
@@ -588,6 +594,39 @@ function refusalsLine(events: readonly Event[]): string {
   return refusals.length === 0
     ? "refusals: none"
     : `refusals: ${refusals.length}: ${refusals.join(", ")}`;
+}
+
+/** One verdict on a report as `review` lists it (R4-2): the unit, the verdict, its why, and for a revise or reassign its instructions. */
+function describeReportVerdict(e: Event): string {
+  const instructions = str(e.payload.instructions);
+  return `verdict on ${str(e.payload.unitId)}'s report: ${str(e.payload.verdict)}: ${clip(str(e.payload.why))}${instructions === "" ? "" : `; instructions: ${clip(instructions)}`}`;
+}
+
+const REPORT_VERDICT_KINDS = ["accepted", "revise", "reassign"] as const;
+
+/**
+ * The IC's verdicts on the units' reports, counted by kind for the incident and for each
+ * unit that got one (R4-2), the evidence for whether the IC sends work back or hands it on.
+ */
+function reportVerdictLines(events: readonly Event[]): string[] {
+  const byUnit = new Map<string, Map<string, number>>();
+  const total = new Map<string, number>();
+  for (const e of events) {
+    if (e.type !== "report.reviewed") continue;
+    const verdict = str(e.payload.verdict);
+    const unit = byUnit.get(str(e.payload.unitId)) ?? new Map<string, number>();
+    unit.set(verdict, (unit.get(verdict) ?? 0) + 1);
+    byUnit.set(str(e.payload.unitId), unit);
+    total.set(verdict, (total.get(verdict) ?? 0) + 1);
+  }
+  const counts = (m: ReadonlyMap<string, number>) =>
+    REPORT_VERDICT_KINDS.map((k) => `${m.get(k) ?? 0} ${k}`).join(", ");
+  const all = [...total.values()].reduce((n, k) => n + k, 0);
+  if (all === 0) return ["report verdicts: none"];
+  return [
+    `report verdicts: ${all}: ${counts(total)}`,
+    ...[...byUnit].map(([unitId, m]) => `  ${unitId}: ${counts(m)}`),
+  ];
 }
 
 /** How much of the briefing the IC kept: the verdicts on its first accepted command turn that evaluated one, counted by kind. */
@@ -1046,6 +1085,7 @@ export function renderReview(
       ? "ic verdicts: none"
       : `ic verdicts: ${reviews} review(s): ${["approve", "correct", "amend"].map((v) => `${verdicts.get(v) ?? 0} ${v}`).join(", ")}`,
   );
+  lines.push(...reportVerdictLines(events));
   lines.push(briefingKept(events));
   lines.push(refusalsLine(events));
   const transfers = events.filter((e) => e.type === "command.transferred");

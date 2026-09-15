@@ -156,7 +156,14 @@ describe("incident review", () => {
     );
     // The IC's command turn and its review are priced on the root leader's model, before the planner's draft.
     expect(text).toContain(
-      "  ic claude-opus-5: in 1,500 (uncached 1,000 / write 200 / read 300)  out 42  1.5 s  $0.01  set period 1: 1 objective(s), 0 close(s), continue  session stub-session",
+      "  ic claude-opus-5: in 1,500 (uncached 1,000 / write 200 / read 300)  out 42  1.5 s  $0.01  set period 1: 1 objective(s), 0 close(s), 0 verdict(s), continue  session stub-session",
+    );
+    // The stub's second command turn answered the unit's progress report with a revise (R4-2), listed under the turn and counted.
+    expect(text).toContain(
+      "set period 2: 1 objective(s), 0 close(s), 1 verdict(s), continue  session stub-session\n  verdict on 001-u02's report: revise: stub: progress; instructions: stub: carry on\n  ic claude-opus-5: in 1,500 (uncached 1,000 / write 200 / read 300)  out 42  1.5 s  $0.01  reviewed the draft: approve  session stub-session",
+    );
+    expect(text).toContain(
+      "report verdicts: 1: 0 accepted, 1 revise, 0 reassign\n  001-u02: 0 accepted, 1 revise, 0 reassign",
     );
     expect(text).toContain(
       "  ic claude-opus-5: in 1,500 (uncached 1,000 / write 200 / read 300)  out 42  1.5 s  $0.01  reviewed the draft: approve  session stub-session",
@@ -642,7 +649,7 @@ describe("incident review", () => {
     ).toBe(true);
     expect(
       lines.some((l) =>
-        /^ {2}ic claude-opus-5: .* set period 3: 1 objective\(s\), 0 close\(s\), continue$/.test(
+        /^ {2}ic claude-opus-5: .* set period 3: 1 objective\(s\), 0 close\(s\), 0 verdict\(s\), continue$/.test(
           l,
         ),
       ),

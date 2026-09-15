@@ -22,7 +22,7 @@ import type {
   UnitStatus,
 } from "./models.js";
 import { now, type Store } from "./store.js";
-import { stable } from "./validator.js";
+import { stable, verdictCloses } from "./validator.js";
 
 /** What applying a plan changed, by id, so the caller can print it and the dispatcher can pick up the ready tasks. */
 export type Applied = {
@@ -641,7 +641,7 @@ export function applyPlan(
   };
 }
 
-/** What applying a command turn changed: the units closed, the questions raised, the requests answered, the tasks assigned under command, the period set and the incident's status. */
+/** What applying a command turn changed: the units closed (by `closeUnits` and by verdict), the questions raised, the requests answered, the tasks assigned under command, the period set and the incident's status. */
 export type Commanded = {
   closedUnits: string[];
   questions: Question[];
@@ -655,13 +655,17 @@ export type Commanded = {
  * Apply the IC's validated command turn in one transaction: `command.turned` first, carrying
  * the turn, the call's provenance (`extra`: unit, session, model, usage) and the period as
  * its mutation, so it opens the cycle in the log; then `record`, which files the call
- * itself; then units closed, questions and requests recorded, and the incident's status
- * set (DESIGN.md Step 4). The period's number is the cycle. Each answer to a unit's
- * resource request is delivered with `answerRequest` (validated to name an open request of
- * a waiting unit), so the unit resumes in this cycle's dispatch once nothing of its is open.
- * The deterministic tasks the IC assigns under command (R4-6) are created last, with
- * `plan.applied` by the actor `ic` naming the root unit, its session and the task ids, and
- * run in this cycle's dispatch pass as the root's tasks.
+ * itself; then one `report.reviewed` per verdict (the report's event id, the unit, the
+ * verdict, the instructions and the why, with the cycle, actor `ic`; R4-2), the units
+ * closed, by `closeUnits` and by an accepted or reassigned verdict (through the same close
+ * path, the verdict as the reason; a revised unit stays active for R4-3 to brief), then
+ * questions and requests recorded, and the incident's status set (DESIGN.md Step 4). The
+ * period's number is the cycle. Each answer to a unit's resource request is delivered with
+ * `answerRequest` (validated to name an open request of a waiting unit), so the unit
+ * resumes in this cycle's dispatch once nothing of its is open. The deterministic tasks the
+ * IC assigns under command (R4-6) are created last, with `plan.applied` by the actor `ic`
+ * naming the root unit, its session and the task ids, and run in this cycle's dispatch
+ * pass as the root's tasks.
  */
 export function applyCommand(
   store: Store,
@@ -698,6 +702,7 @@ export function applyCommand(
           (ref) => ref,
           now(),
         );
+  const closes = [...turn.closeUnits, ...verdictCloses(turn)];
   store.batch(() => {
     store.setIncidentPeriod(incident.id, period, actor, {
       ...extra,
@@ -707,7 +712,16 @@ export function applyCommand(
       incidentStatus,
     });
     record();
-    for (const c of turn.closeUnits)
+    for (const v of turn.reportVerdicts)
+      store.record(incident.id, "report.reviewed", IC_ACTOR, {
+        reportId: v.reportId,
+        unitId: v.unitId,
+        verdict: v.verdict,
+        instructions: v.instructions,
+        why: v.why,
+        cycle,
+      });
+    for (const c of closes)
       store.closeUnit(incident.id, c.unitId, c.reason, actor);
     recordChannels(store, incident, turn, questions, incidentStatus, actor);
     for (const a of turn.answers) {
@@ -736,7 +750,7 @@ export function applyCommand(
     }
   });
   return {
-    closedUnits: turn.closeUnits.map((c) => c.unitId),
+    closedUnits: closes.map((c) => c.unitId),
     questions,
     answered,
     tasks,
