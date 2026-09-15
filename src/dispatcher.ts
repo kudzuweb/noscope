@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { recordActivity } from "./activity.js";
 import {
   type Capability,
   getCapability,
@@ -15,7 +16,11 @@ import {
   type Task,
   type Usage,
 } from "./models.js";
-import { getProvider, SessionError } from "./providers/index.js";
+import {
+  getProvider,
+  type SessionActivity,
+  SessionError,
+} from "./providers/index.js";
 import { type Store, sumUsage } from "./store.js";
 import { recordClaims, recordSessionResult } from "./verifier.js";
 
@@ -118,11 +123,12 @@ function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** A finished run; `sessionId` is present for a session so its transcript can be found from `task.completed`. */
+/** A finished run; `sessionId` and `activity` are present for a session, so its transcript can be found from `task.completed` and its tool calls are filed under the task. */
 type Outcome = {
   result: unknown;
   usage: Usage;
   sessionId?: string;
+  activity?: SessionActivity;
   record: () => Claim[];
 };
 
@@ -200,6 +206,7 @@ async function runTask(
     result,
     usage: session.usage,
     sessionId: session.sessionId,
+    activity: session.activity,
     record: () =>
       recordSessionResult(store, task, capability, result, session.sessionId),
   };
@@ -282,6 +289,13 @@ export async function dispatch(
       );
       let claims: Claim[] = [];
       store.batch(() => {
+        if (outcome.sessionId !== undefined && outcome.activity !== undefined)
+          recordActivity(store, incident.id, actor, outcome.activity, {
+            sessionId: outcome.sessionId,
+            unitId: next.unitId,
+            taskId: next.id,
+            cycle: null,
+          });
         claims = outcome.record();
         store.setTaskStatus(
           incident.id,
@@ -324,6 +338,13 @@ export async function dispatch(
               ...(capability.kind === "deterministic" ? { costUsd: 0 } : {}),
             };
       store.batch(() => {
+        if (error instanceof SessionError && error.sessionId !== null)
+          recordActivity(store, incident.id, actor, error.activity, {
+            sessionId: error.sessionId,
+            unitId: next.unitId,
+            taskId: next.id,
+            cycle: null,
+          });
         store.setTaskStatus(
           incident.id,
           next.id,

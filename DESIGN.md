@@ -152,7 +152,9 @@ Event types in v0: `incident.created`, `incident.blocked`, `incident.closed`, `u
 `task.created`, `task.ready`, `task.started`, `task.completed`, `task.failed`,
 `task.cancelled`, `task.insufficient`, `claim.asserted`, `claim.verified`, `claim.rejected`,
 `plan.proposed`, `plan.rejected`, `plan.applied`, `task.usage`, `budget.exceeded`,
-`question.asked`, `question.answered`, `grant.requested`, `grant.given`, `capability.requested`.
+`question.asked`, `question.answered`, `grant.requested`, `grant.given`, `capability.requested`,
+`capability.answered`. Round 3 adds `tool.called` and `subagent.ran`, one per tool call a
+session makes and one per subagent it spawns; Step 6 says what each carries.
 
 The file records its schema version in `user_version`. A file at an earlier version is
 migrated in place when opened, one step at a time: version 1 (before `basis`) gives
@@ -239,17 +241,24 @@ provider, and the provider renders the fields onto its own command from them:
 | `resume`, optional (round 3, R3-3) | `--resume <session id>`: the call continues that session for one more structured result, with this call's own prompt and `--json-schema`, and the envelope reports the session's unchanged id and this call's usage alone (verified 2026-09-15 on Claude Code 2.1.272; `spikes/round3/resume.sh` and the live test in `test/providers.test.ts`). A resumed call's usage covers the session's whole context, read from cache or written again: with a prefix over the model's minimum cacheable length the read happens in most runs and not all (Reference table, the usage-per-call row), and on Haiku 4.5 that minimum is 4096 tokens, above a bare session's context, so a short session's calls cache nothing at all. `systemPrompt` on a resumed call is ignored: Claude Code 2.1.272 defaults `--system-prompt-snapshot on`, which records the system prompt on the first request and reuses it on every resume even when a later launch passes different text, so a seat whose role text must change needs a fresh session. A resumed session is found under the project directory of its original `cwd`, so resume with the same `cwd` (unverified; the safe rule). Absent, a fresh session starts. A unit leader's session is what gets resumed (R3-4). | Open: `codex exec` has `resume` in its help, untested here. |
 
 Each provider has a fixed set of isolation flags, so no session inherits Mauria's personal
-setup. Claude Code: `--output-format json`, `--setting-sources ""`,
+setup. Claude Code: `--output-format stream-json --verbose` (print mode refuses the stream
+format without `--verbose`, verified 2026-09-15 on 2.1.272), `--setting-sources ""`,
 `--disable-slash-commands`, `--exclude-dynamic-system-prompt-sections`, which together drop
 a session's context from about 40k tokens to about 3k and keep her CLAUDE.md, skills and
 hooks out; `--bare` is not used because it authenticates only with an API key. Every session
 also runs with `DISABLE_COMPACT=1` in its environment, so auto-compaction never rewrites a
 session between the calls that resume it; a session that reaches the context limit errors
-instead, and the runtime hands off below the limit (R3-9). Sessions are
+instead, and the runtime hands off below the limit (R3-9). The stream is one JSON line per
+message, ending in the same `result` envelope `--output-format json` prints; the provider
+reads the tool calls off it (Step 6) and parses the envelope as before. Sessions are
 not made ephemeral: every planner and task session leaves its transcript under Claude Code's
-project directory for the session's working directory (`~/.claude/projects/<directory with
-slashes as dashes>/<session id>.jsonl`), and the session id is on `plan.proposed`, on
-`task.completed`, `task.failed` and `task.insufficient`, and in every asserted claim's
+project directory for the session's working directory (`<config dir>/projects/<directory
+with every character outside A-Z, a-z and 0-9 as a dash>/<session id>.jsonl`, the config
+dir `~/.claude` unless `CLAUDE_CONFIG_DIR` moves it; a subagent's transcript is
+`<session id>/subagents/agent-<agent id>.jsonl` beside it with an `agent-<agent
+id>.meta.json`), and the session id is on `plan.proposed`, on
+`task.completed`, `task.failed` and `task.insufficient`, on every `tool.called` and
+`subagent.ran`, and in every asserted claim's
 provenance, so a run can
 be read back call by call while the runtime is being refined (Mauria, 2026-09-13). Codex: `--ignore-user-config`,
 `--ignore-rules`, `--ephemeral`, `--json`, verified present in `codex exec --help` on
@@ -367,6 +376,26 @@ since none is known, and a spend summed with such an event in it carries no cost
 figure is never printed that a failed session would have raised. The spend `incident show`
 prints, and a budget counts, is the tasks'; the planner's usage is recorded on
 `plan.proposed` and not counted, a design call on the revisit list.
+
+What the log holds per session, beyond its outcome and usage. Every tool call the session
+makes is a `tool.called` event, written in the task's transaction before its claims: the
+session id, the unit, the task in flight (`taskId`, null on a planner call, which carries
+its `cycle` instead; R3-4's leader sessions may run several tasks and file a call under
+none), `toolUseId`, the tool name, the full input, the result clipped at 4,000 characters
+with `resultChars` saying how long it was, `isError`, `startedAt`, `endedAt` and
+`durationMs` from the two messages' timestamps, and `transcriptPath`, the session's
+transcript as the full record. The `StructuredOutput` call that carries the answer is the
+result, not a tool call, and is not filed. Every subagent the session spawned is a
+`subagent.ran` event read from the subagent's own transcript once the envelope's
+`subagent_stats.spawned` is nonzero: `agentId`, `agentType` and `toolUseId` (from its meta
+file; the `toolUseId` names the `Agent` call's `tool.called`), its model, its usage summed
+once per API message from its assistant records (the transcript repeats a message's usage
+on each of its content blocks), and `toolCalls`, a count; the member's own calls follow as
+`tool.called` events carrying its `agentId`. A subagent's usage is a breakdown of the
+session's, which the envelope already includes, and is never added to `task.usage`. A
+session that fails after making calls still files them, before `task.failed`. `incident
+review` prints each session's calls by tool with errors and time in tools, each subagent
+with its usage and calls, and the run's totals.
 
 The verifier turns results into claims. A deterministic capability's result becomes a `verified`
 claim with the capability and the effective inputs as provenance: the inputs as parsed, with

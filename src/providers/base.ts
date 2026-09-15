@@ -40,11 +40,56 @@ export type SessionRequest = {
   resume?: string;
 };
 
-/** What a provider returns: the structured output, unparsed, with the session id and usage that are its provenance. */
+/**
+ * One tool call a session made: the `tool_use` block and the `tool_result` that answered it.
+ * The result is clipped at the provider's cap; the session's transcript is the full record.
+ */
+export type ToolCall = {
+  toolUseId: string;
+  tool: string;
+  input: unknown;
+  result: string;
+  /** The result's full length before clipping. */
+  resultChars: number;
+  isError: boolean;
+  startedAt: string | null;
+  endedAt: string | null;
+  durationMs: number | null;
+};
+
+/**
+ * One subagent a session spawned, read from its own transcript: its usage is a breakdown of
+ * the session's, never added to it, and `toolUseId` links it to the call that spawned it.
+ */
+export type SubagentRun = {
+  agentId: string;
+  agentType: string | null;
+  model: string | null;
+  toolUseId: string | null;
+  usage: Usage;
+  toolCalls: readonly ToolCall[];
+  transcriptPath: string;
+};
+
+/** What a session did on the way to its output: every tool call and every subagent, with the transcript that holds the rest. */
+export type SessionActivity = {
+  transcriptPath: string | null;
+  toolCalls: readonly ToolCall[];
+  subagents: readonly SubagentRun[];
+};
+
+export const NO_ACTIVITY: SessionActivity = {
+  transcriptPath: null,
+  toolCalls: [],
+  subagents: [],
+};
+
+/** What a provider returns: the structured output, unparsed, with the session id, usage and activity that are its provenance. */
 export type SessionOutcome = {
   sessionId: string;
   output: unknown;
   usage: Usage;
+  activity: SessionActivity;
 };
 
 export type Provider = {
@@ -94,13 +139,15 @@ export function sessionSystemPrompt(role: string): string {
 /**
  * A session that ran but produced no usable outcome: the provider reported an error, or the
  * output did not fit the schema. It carries what the session still spent, so a failed task's
- * usage is recorded against the incident's budget.
+ * usage is recorded against the incident's budget, and what it did, so the log still shows
+ * the tool calls of a session that failed.
  */
 export class SessionError extends Error {
   constructor(
     message: string,
     readonly sessionId: string | null,
     readonly usage: Usage | null,
+    readonly activity: SessionActivity = NO_ACTIVITY,
   ) {
     super(message);
   }

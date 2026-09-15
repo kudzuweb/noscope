@@ -1,7 +1,12 @@
 import type { Provider } from "./base.js";
 import { claudeCodeProvider } from "./claude-code.js";
 
-export type { Provider, SessionRequest } from "./base.js";
+export type {
+  Provider,
+  SessionActivity,
+  SessionRequest,
+  ToolCall,
+} from "./base.js";
 export { SessionError, sessionSystemPrompt } from "./base.js";
 export { claudeCodeProvider } from "./claude-code.js";
 

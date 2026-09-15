@@ -1,22 +1,34 @@
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { jsonSchemaFor, SessionResult } from "../src/models.js";
 import {
   SESSION_PREAMBLE,
+  SessionError,
   type SessionRequest,
   sessionSystemPrompt,
 } from "../src/providers/base.js";
 import {
   CLAUDE_CODE_ISOLATION_FLAGS,
+  claudeCodeProjectsDir,
   claudeCodeProvider,
   parseClaudeCodeResult,
   renderClaudeCodeArgs,
+  TOOL_RESULT_CAP,
 } from "../src/providers/claude-code.js";
 
 const stub = resolve("test/stub-claude");
+/** A stream captured 2026-09-15 from a Haiku session on Claude Code 2.1.272 that ran one Bash echo and one `pinger` subagent, paths normalized to /scratch. */
+const recorded = {
+  stream: readFileSync(resolve("test/fixtures/stream/session.jsonl"), "utf8"),
+  where: {
+    projectsDir: resolve("test/fixtures/stream/projects"),
+    cwd: "/scratch/capture",
+  },
+};
+const SESSION = "452019ed-e3c9-456e-89f9-94b6076bed23";
 
 function request(): SessionRequest {
   return {
@@ -51,7 +63,8 @@ describe("claude code provider", () => {
       "--json-schema",
       JSON.stringify(r.outputSchema),
       "--output-format",
-      "json",
+      "stream-json",
+      "--verbose",
       "--setting-sources",
       "",
       "--disable-slash-commands",
@@ -61,7 +74,7 @@ describe("claude code provider", () => {
       "--add-dir",
       "/tmp/extra",
     ]);
-    expect(CLAUDE_CODE_ISOLATION_FLAGS).toHaveLength(6);
+    expect(CLAUDE_CODE_ISOLATION_FLAGS).toHaveLength(7);
     expect(
       renderClaudeCodeArgs({
         ...r,
@@ -112,6 +125,179 @@ describe("claude code provider", () => {
     expect(SESSION_PREAMBLE).not.toMatch(/\boperation\b/i);
   });
 
+  it("reads a recorded stream: one tool.called per Bash and Agent call, and the subagent linked to its call, with usage from its transcript", () => {
+    const outcome = parseClaudeCodeResult(recorded.stream, recorded.where);
+    expect(outcome.sessionId).toBe(SESSION);
+    expect(outcome.output).toEqual({
+      echoed: "noscope-tool-check",
+      agentReply: "PONG",
+    });
+    expect(outcome.usage).toMatchObject({
+      uncachedInputTokens: 26,
+      cacheWriteTokens: 2096,
+      cacheReadTokens: 25055,
+      outputTokens: 537,
+      costUsd: 0.0117375,
+    });
+    const { activity } = outcome;
+    expect(activity.transcriptPath).toBe(
+      join(recorded.where.projectsDir, "-scratch-capture", `${SESSION}.jsonl`),
+    );
+    // The StructuredOutput call that carried the answer is the result, not a tool call.
+    expect(activity.toolCalls.map((c) => c.tool)).toEqual(["Bash", "Agent"]);
+    const [bash, agent] = activity.toolCalls;
+    expect(bash).toEqual({
+      toolUseId: "toolu_01G6dobYY2nxJXwZMQ2Qwsoe",
+      tool: "Bash",
+      input: {
+        command: "echo noscope-tool-check",
+        description: "Run echo command for noscope-tool-check",
+      },
+      result: "noscope-tool-check",
+      resultChars: 18,
+      isError: false,
+      startedAt: "2026-09-15T06:02:38.268Z",
+      endedAt: "2026-09-15T06:02:38.511Z",
+      durationMs: 243,
+    });
+    expect(agent).toMatchObject({
+      toolUseId: "toolu_01ELnurHZ9WbdKdkTcvriKqg",
+      tool: "Agent",
+      input: { subagent_type: "pinger", prompt: "go" },
+      isError: false,
+    });
+    expect(agent?.result.startsWith("PONG")).toBe(true);
+    expect(agent?.durationMs).toBe(1681);
+    expect(activity.subagents).toHaveLength(1);
+    const [member] = activity.subagents;
+    expect(member).toMatchObject({
+      agentId: "af6c0f2722871e1a1",
+      agentType: "pinger",
+      model: "claude-haiku-4-5-20251001",
+      toolUseId: agent?.toolUseId,
+      toolCalls: [],
+      transcriptPath: join(
+        recorded.where.projectsDir,
+        "-scratch-capture",
+        SESSION,
+        "subagents",
+        "agent-af6c0f2722871e1a1.jsonl",
+      ),
+    });
+    // The transcript's two assistant records are one API message; its usage counts once.
+    expect(member?.usage).toEqual({
+      inputTokens: 672,
+      uncachedInputTokens: 672,
+      cacheWriteTokens: 0,
+      cacheReadTokens: 0,
+      outputTokens: 115,
+      seconds: 1.624,
+    });
+    // Without a transcript location the stream alone is read: calls, no transcript, no members.
+    expect(parseClaudeCodeResult(recorded.stream).activity).toMatchObject({
+      transcriptPath: null,
+      subagents: [],
+    });
+  });
+
+  it("clips a long tool result at the cap and names the transcript as the full record", () => {
+    const long = "x".repeat(TOOL_RESULT_CAP + 500);
+    const stream = [
+      {
+        type: "assistant",
+        timestamp: "2026-09-15T00:00:00.000Z",
+        message: {
+          content: [
+            { type: "tool_use", id: "t1", name: "Read", input: { path: "/a" } },
+          ],
+        },
+      },
+      {
+        type: "user",
+        timestamp: "2026-09-15T00:00:01.000Z",
+        message: {
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "t1",
+              content: [{ type: "text", text: long }, { type: "image" }],
+              is_error: true,
+            },
+          ],
+        },
+      },
+      {
+        type: "assistant",
+        message: {
+          content: [
+            { type: "tool_use", id: "t2", name: "Grep", input: {} },
+            { type: "tool_use", id: "t3", name: "StructuredOutput", input: {} },
+          ],
+        },
+      },
+      {
+        type: "result",
+        subtype: "success",
+        session_id: "s1",
+        structured_output: {},
+        usage: {},
+      },
+    ]
+      .map((l) => JSON.stringify(l))
+      .join("\n");
+    const { activity } = parseClaudeCodeResult(stream, {
+      projectsDir: "/p",
+      cwd: "/Users/x/a.b_c",
+    });
+    expect(activity.transcriptPath).toBe("/p/-Users-x-a-b-c/s1.jsonl");
+    expect(activity.toolCalls).toHaveLength(2);
+    const [read, grep] = activity.toolCalls;
+    expect(read?.result).toHaveLength(TOOL_RESULT_CAP);
+    expect(read?.resultChars).toBe(long.length + "\n[image]".length);
+    expect(read).toMatchObject({ isError: true, durationMs: 1000 });
+    // A call the session never got an answer to keeps no end and an empty result.
+    expect(grep).toMatchObject({
+      tool: "Grep",
+      result: "",
+      endedAt: null,
+      durationMs: null,
+    });
+    expect(claudeCodeProjectsDir({})).toBe(
+      join(homedir(), ".claude", "projects"),
+    );
+    expect(claudeCodeProjectsDir({ CLAUDE_CONFIG_DIR: "/c" })).toBe(
+      "/c/projects",
+    );
+  });
+
+  it("carries the activity on a failed session's error", () => {
+    const stream = [
+      {
+        type: "assistant",
+        message: {
+          content: [{ type: "tool_use", id: "t1", name: "Bash", input: {} }],
+        },
+      },
+      {
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        result: "boom",
+        session_id: "s1",
+      },
+    ]
+      .map((l) => JSON.stringify(l))
+      .join("\n");
+    let caught: unknown;
+    try {
+      parseClaudeCodeResult(stream);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(SessionError);
+    expect((caught as SessionError).activity.toolCalls).toHaveLength(1);
+  });
+
   it("runs the stub binary, sends the prompt on stdin, and parses the outcome and usage", async () => {
     const log = join(mkdtempSync(join(tmpdir(), "noscope-stub-")), "log.json");
     process.env.NOSCOPE_STUB_LOG = log;
@@ -131,6 +317,11 @@ describe("claude code provider", () => {
         outcome: "answered",
         findings: { note: "stub" },
       });
+      expect(outcome.activity).toMatchObject({
+        toolCalls: [],
+        subagents: [],
+      });
+      expect(outcome.activity.transcriptPath).toMatch(/stub-session\.jsonl$/);
       const recorded = JSON.parse(readFileSync(log, "utf8")) as {
         args: string[];
         prompt: string;

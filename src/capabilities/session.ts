@@ -12,6 +12,7 @@ import {
 } from "../models.js";
 import {
   type Provider,
+  type SessionActivity,
   SessionError,
   type SessionRequest,
   sessionSystemPrompt,
@@ -171,11 +172,12 @@ export function buildSessionRequest(
   };
 }
 
-/** A finished session: its output parsed through the capability's schema, with the session id and usage that are its provenance. */
+/** A finished session: its output parsed through the capability's schema, with the session id, usage and activity that are its provenance. */
 export type SessionRun = {
   result: unknown;
   sessionId: string;
   usage: Usage;
+  activity: SessionActivity;
 };
 
 export async function runSession(
@@ -195,10 +197,12 @@ export async function runSession(
       `session ${outcome.sessionId} returned output that does not fit ${capability.name}: ${parsed.error.issues.map((i) => `${i.path.join(".") || "output"} ${i.message}`).join("; ")}`,
       outcome.sessionId,
       outcome.usage,
+      outcome.activity,
     );
   return {
     result: parsed.data,
     sessionId: outcome.sessionId,
     usage: outcome.usage,
+    activity: outcome.activity,
   };
 }

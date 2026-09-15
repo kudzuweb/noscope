@@ -1,0 +1,8 @@
+{
+  "agentType": "pinger",
+  "description": "Pinger test",
+  "toolUseId": "toolu_01ELnurHZ9WbdKdkTcvriKqg",
+  "spawnDepth": 1,
+  "requestShape": "foreground",
+  "requestNonInteractive": true
+}

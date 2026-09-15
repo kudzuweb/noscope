@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import { recordActivity } from "./activity.js";
 import { listCapabilities } from "./capabilities/index.js";
 import {
   ActionPlan,
@@ -442,12 +443,24 @@ export async function proposePlan(
     timeoutSeconds: PLANNER_SECONDS,
   });
   const plan = ActionPlan.parse(outcome.output);
-  store.record(incident.id, "plan.proposed", "planner", {
-    plan,
-    rationale: plan.rationale,
-    sessionId: outcome.sessionId,
-    model,
-    usage: outcome.usage,
+  store.batch(() => {
+    store.record(incident.id, "plan.proposed", "planner", {
+      plan,
+      rationale: plan.rationale,
+      sessionId: outcome.sessionId,
+      model,
+      usage: outcome.usage,
+    });
+    // The planner runs with no tools today; its activity is filed under the cycle it drafted.
+    const cycle = store
+      .listEvents(incident.id)
+      .filter((e) => e.type === "plan.proposed").length;
+    recordActivity(store, incident.id, "planner", outcome.activity, {
+      sessionId: outcome.sessionId,
+      unitId: null,
+      taskId: null,
+      cycle,
+    });
   });
   return { plan, sessionId: outcome.sessionId, usage: outcome.usage };
 }
