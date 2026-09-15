@@ -3083,7 +3083,7 @@ Not exactly to spec, with reasons:
   since basis is what gates and nothing sets `rejected` yet; noted for the PR that first
   sets it.
 
-## R4-10: Unit types: the form, the filled form, the protocol (#PR, merged 2026-09-15)
+## R4-10: Unit types: the form, the filled form, the protocol (#49, merged 2026-09-15)
 
 R4-10 of the round 4 plan, ruled by Mauria on 2026-09-15 (12:31 to 13:34): a unit is a
 type plus a config; the type is the form (the fields a kind of unit fills) and the protocol
@@ -3105,7 +3105,7 @@ the default role text, `reports` (whether the unit files reports the IC answers;
 for command), `rules` (the assignment rules, below), `runsInside` (whether a session task
 runs inside the unit's session), `insideRequest` (the request for one that does),
 `hasWork` (whether the unit has a turn to take this pass beyond a runnable task; the
-dispatcher starts a pass on either) and `unheard` (the endings of earlier passes its
+dispatcher starts a pass on either; a known cost, below) and `unheard` (the endings of earlier passes its
 leader has not heard, carried on the pass's first turn), and
 three pass hooks, `open`, `ending` and `close`, each given a `PassContext` (the store, the
 incident, the active units, cwd, env, actor, providers, and the runtime's `bookkeeping`:
@@ -3114,7 +3114,10 @@ by the dispatcher so a protocol module imports neither the validator nor the run
 which import the registry) and a `PassView` (the unit's runnable tasks not yet attempted,
 the unheard endings of earlier passes, the tasks running in sessions of their own, the
 endings landed and not yet heard, whether the unit ran anything, is done, or the pass has
-halted, and the leader's chain `onLeader`), and answering a `Turned` (the unit as it now
+halted, the leader's chain `onLeader`, and `unit`, the unit as the pass now holds it, which
+a turn queued on the chain reads when the chain reaches it: a task that ran inside the
+session records that session on the unit, and a refusal inside it releases the session,
+between the queuing and the call), and answering a `Turned` (the unit as it now
 stands, the report filed if any, whether the unit is done for the pass, whether the picture
 changed) or null. `TaskEnding`, `Landed`, `Reported`, `describeError` and `leaderRequest`
 (the session request under `roleOf` and the protocol's seat, replacing `leaderRole(seat)`)
@@ -3270,6 +3273,25 @@ Not exactly to spec, with reasons:
   renders only the base form's fields (`UnitProposal` extends `BaseUnitForm`), and the ic
   form's equipment, allowlist and role are filled by its defaults alone, since
   `newCommandUnit` takes the leader only. DESIGN.md's Unit type row says so.
+- Review (PR 49, correctness, 2026-09-15), applied before merge: the base hooks passed
+  the unit they were called with into the turn they queued on the leader's chain, where
+  main's `settle` closure read the pass's `let unit` when the chain reached it; a turn
+  queued behind a task running inside the session then ran with the unit as it was before
+  that task recorded the session, opened a second session with the orientation again and
+  wrote a second `leader.started` (and after R4-7's release of a refused inside session,
+  would have resumed the released one). `PassView.unit()` returns the pass's current
+  unit and every queued `settle` reads it inside the `onLeader` closure; the R4-9 test
+  of a turn queued behind an inside task pins `resume: stub-session` on both turns and
+  one `leader.started`, and the two other R4-9 inside/outside tests pin the
+  `leader.started` count, since the stub's constant session id says nothing about
+  identity. Verified by breaking the fix: the pin fails with `resume: null`.
+- Known cost, no fix (PR 49's correctness review): `hasWork` reads the unit's owed,
+  resumed and revised state from the log per unit per scheduling round, where main
+  computed the three sets once per dispatch. Safe because no unit's answer changes
+  between the dispatch's start and its own pass's start (its `report.reviewed`,
+  `unit.resumed`, `unit.reported` and task endings are written by the IC's turn before
+  dispatch or by its own pass), so the later reads give the sets main had; the cost is
+  three scans of the log per active unit per round, small at an incident's size.
 - For the next type (PR 49's design review): a third type would still touch `Seat` and
   `SEAT_PLACES` in `src/providers/base.ts` (a seat per type's place), the fixed `units`
   columns and `applyPlan`'s field copy in `src/runtime.ts` (a form with other fields has

@@ -621,6 +621,7 @@ export async function dispatch(
     // it has landed or not started; the filter keeps it out either way), the tasks that
     // landed and wait for turns of their own, and the pass's state.
     const view: PassView = {
+      unit: () => unit,
       remaining: () => runnableIn(unit.id),
       hear: () => {
         const heard = unheard;

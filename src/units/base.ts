@@ -1208,11 +1208,13 @@ export const baseUnitType = defineUnitType({
       const events = ctx.store.listEvents(ctx.incident.id);
       const brief = revisedUnits([unit], events).get(unit.id);
       const resumed = resumedUnits([unit], events).has(unit.id);
+      // The unit is read inside the queued call, since the chain may reach it after a
+      // task inside the session has recorded that session on the unit.
       if (brief !== undefined)
         return view.onLeader(() =>
           settle(
             ctx,
-            unit,
+            view.unit(),
             {
               status: "revise",
               brief,
@@ -1226,7 +1228,7 @@ export const baseUnitType = defineUnitType({
         return view.onLeader(() =>
           settle(
             ctx,
-            unit,
+            view.unit(),
             { status: "answered", answers: answered(ctx, unit) },
             view,
           ),
@@ -1238,8 +1240,9 @@ export const baseUnitType = defineUnitType({
     // not the leader has reported this pass. Otherwise the leader hears the ending on a turn
     // of its own, unless it reported already this pass, in which case the ending is
     // recorded and its next turn hears it.
-    ending: async (ctx, unit, ending, view) => {
+    ending: async (ctx, _unit, ending, view) => {
       if (ending.refusals !== undefined) {
+        const unit = view.unit();
         const { report, revision } = reportRefusals(
           ctx,
           unit,
@@ -1259,8 +1262,10 @@ export const baseUnitType = defineUnitType({
         };
       }
       if (view.done()) return null;
+      // Queued behind the task running inside the session: the unit is read when the chain
+      // reaches the turn, so the session that task recorded is the one resumed.
       return view.onLeader(() =>
-        settle(ctx, unit, ending, view, view.running(), view.landed()),
+        settle(ctx, view.unit(), ending, view, view.running(), view.landed()),
       );
     },
     // A unit that ran nothing this pass and owes a report from an earlier one is asked for
@@ -1273,7 +1278,9 @@ export const baseUnitType = defineUnitType({
         ctx.store.listEvents(ctx.incident.id),
       );
       if (!owing.has(unit.id)) return null;
-      const turned = await view.onLeader(() => settle(ctx, unit, OWED, view));
+      const turned = await view.onLeader(() =>
+        settle(ctx, view.unit(), OWED, view),
+      );
       return { ...turned, done: true };
     },
   },

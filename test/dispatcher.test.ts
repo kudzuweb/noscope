@@ -2500,6 +2500,8 @@ describe("dispatcher, parallel dispatch", () => {
     expect(calls[5]?.prompt).toContain("No ready tasks remain in your unit.");
     expect(events.filter((e) => e.type === "unit.continued")).toHaveLength(2);
     expect(events.filter((e) => e.type === "unit.reported")).toHaveLength(1);
+    // One leader session for the three turns (the stub's id is constant, so the count says it).
+    expect(events.filter((e) => e.type === "leader.started")).toHaveLength(1);
     store.close();
   }, 20_000);
 
@@ -2523,6 +2525,11 @@ describe("dispatcher, parallel dispatch", () => {
       ["task", "stub-session", 0],
       ["leader", "stub-session", 0],
     ]);
+    // The stub's session id is constant, so the count of leader.started is what says one
+    // session was opened.
+    expect(
+      store.listEvents("i1").filter((e) => e.type === "leader.started"),
+    ).toHaveLength(1);
     expect(calls[1]?.prompt).toContain(
       "Task t-inv1 (investigate) completed in this session; its result is recorded.",
     );
@@ -2742,6 +2749,15 @@ describe("dispatcher, parallel dispatch", () => {
       (c) => c.kind === "leader",
     );
     expect(turns).toHaveLength(2);
+    // t-out's turn was queued before t-in's first call recorded the session on the unit,
+    // and is asked after it: the turn resumes that session rather than opening a second
+    // (PR 49's correctness review), so the unit has one leader.started.
+    expect(turns[0]?.resume).toBe("stub-session");
+    expect(turns[1]?.resume).toBe("stub-session");
+    expect(
+      store.listEvents("i1").filter((e) => e.type === "leader.started"),
+    ).toHaveLength(1);
+    expect(turns[0]?.prompt).not.toContain("You lead unit");
     expect(turns[0]?.prompt).toContain(
       "Task t-out (investigate) completed. Its result:",
     );

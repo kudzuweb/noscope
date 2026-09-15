@@ -94,14 +94,18 @@ export type PassContext = {
 };
 
 /**
- * What a protocol sees of the dispatcher's pass around a turn: the unit's runnable tasks
- * not yet attempted, the endings of earlier passes its leader has not heard (given once),
+ * What a protocol sees of the dispatcher's pass around a turn: the unit as the pass now
+ * holds it (`unit`: a task that ran inside the leader's session, or a refusal that released
+ * it, changes the session the next call must resume, so a turn queued on the leader's
+ * chain reads it when the chain reaches it, never when it was queued), the unit's runnable
+ * tasks not yet attempted, the endings of earlier passes its leader has not heard (given once),
  * the tasks still running in sessions of their own, the endings landed and not yet heard,
  * whether the unit ran anything this pass, whether it is done, whether the pass has
  * halted (nothing new starts), and the leader's chain, on which a call on the unit's
  * session queues behind the task running inside it.
  */
 export type PassView = {
+  unit: () => Unit;
   remaining: () => Task[];
   hear: () => readonly TaskEnding[];
   running: () => Task[];
