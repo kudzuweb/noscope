@@ -200,4 +200,7 @@ create your own with `CronCreate` if you run unattended.
   unused exports; the Write tool is blocked on files containing exec followed by a paren.
 - `timeout` is not on this machine; a foreground `sleep` is refused; poll with an `until`
   loop in a background command. `roughdraft open` blocks; run it in the background.
-- Subagent reports arrive truncated at 16k; ask for the rest by `SendMessage`.
+- Subagent reports arrive truncated at 16k; ask for the rest by `SendMessage`. And every
+  agent's final text is repeated in the harness's idle notice, so brief agents to send the
+  report by `SendMessage` and end with the single line `report sent`; otherwise every report
+  lands twice (about 75k tokens of copies over round 3's night).
