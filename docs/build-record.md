@@ -2068,7 +2068,7 @@ three hazards on where the precedence hides; the small model as the incoming com
 "a diagnosis with a read-only investigation scope". No fix objective, no fix unit, no
 intended-behavior question, where run 003's two briefings had one of each. The test passes
 the fake provider's model list, as R3-8's live test does, so the briefing named `fake-small`
-rather than a Claude model. One run on one objective; the fourth run (R4-10) is the measure.
+rather than a Claude model. One run on one objective; the fourth run (R4-13, renumbered from R4-10 on 2026-09-15) is the measure.
 
 Not exactly to spec, with reasons:
 
@@ -2413,7 +2413,7 @@ path only.
 Not exactly to spec, with reasons:
 
 - The stream's spelling of the category key is read from the binary's code, not observed
-  on a live refusal: a refusal cannot be provoked deterministically, and R4-10's run is
+  on a live refusal: a refusal cannot be provoked deterministically, and R4-13's run (the fourth run, renumbered from R4-10) is
   where it will be seen. The provider reads every spelling and the transcript, so whichever
   record carries the category reaches the event.
 - A second refusal of the IC ends `step` and `run` with exit 0 and the blocked incident,

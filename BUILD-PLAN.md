@@ -626,9 +626,10 @@ Derived from run 003's write-up in `docs/first-incident.md`, the comparison in
 `docs/instructions-only-run.md`, and Mauria's ruling of 2026-09-15 08:22 CDT, recorded in
 the quipu thread `ics-runtime.md`: the IC reviews a unit's work when its report comes in
 and decides whether the unit is done, goes back for revision, or hands its slice to a
-different unit with instructions built on what it found and did not find. Ten PRs in
+different unit with instructions built on what it found and did not find. Thirteen PRs in
 dependency order, each mergeable on its own, the CLI working after every one; the last
-reruns the first incident. Numbered R4-1 to R4-10 here, with R4-9a, R4-9b and R4-9c added on 2026-09-15; the build record maps each to its
+reruns the first incident. Numbered R4-1 to R4-13 here (R4-10 to R4-12 added on 2026-09-15, the fourth run
+renumbered from R4-10 to R4-13); the build record maps each to its
 GitHub number. The conventions above apply, and the design wins where this plan disagrees
 with it.
 
@@ -651,10 +652,10 @@ independent units and tasks run at the same time.
 | R4-7 | Refusals: the category, and the fallback to Opus 4.8 | none | The provider reads `apiRefusalCategory` from the stream's system line, or from the transcript when the stream lacks it; a refused IC call is retried on `claude-opus-4-8` and the IC stays there for the incident, recorded as a transfer of command. |
 | R4-8 | The size-up scoped to the kind | none | The initial IC's role text ties objectives and questions to the incident kind: a diagnostic objective takes no fix objective, no fix unit and no intended-behavior question. |
 | R4-9 | Parallel dispatch | none | Independent units run their passes concurrently, and independent tasks in their own sessions run at once, under a concurrency cap and the existing stop conditions. |
-| R4-9a | Unit types: the form, the filled form, the protocol | R4-5, R4-7, R4-9 | Every unit names its type; a type is a form (the fields a kind of unit fills) and a protocol (how it uses what is in the box); `base` is today's led unit and `ic` is the root; the dispatcher runs each unit through its type's protocol, with no `parentId === null` guard left. |
-| R4-9b | Saved unit configs | R4-9a | A unit's filled base form, everything but its objective and parent, saved under a name and deployed by name in a plan; the runtime notices a repeated config and offers to save it. |
-| R4-9c | The runtime tag on events | none | Every event carries the noscope commit it was written by, so a briefing can be re-rendered later by checking out that commit and replaying the events before the call; nothing is stored beyond the tag. |
-| R4-10 | Fourth run | all | The first incident rerun with everything above, measured beside runs 001 to 003: the IC's verdicts by kind, what each revise or reassign cost and found, and the wall time parallel dispatch saved. |
+| R4-10 | Unit types: the form, the filled form, the protocol | R4-5, R4-7, R4-9 | Every unit names its type; a type is a form (the fields a kind of unit fills) and a protocol (how it uses what is in the box); `base` is today's led unit and `ic` is the root; the dispatcher runs each unit through its type's protocol, with no `parentId === null` guard left. |
+| R4-11 | Saved unit configs | R4-10 | A unit's filled base form, everything but its objective and parent, saved under a name and deployed by name in a plan; the runtime notices a repeated config and offers to save it. |
+| R4-12 | The runtime tag on events | none | Every event carries the noscope commit it was written by, so a briefing can be re-rendered later by checking out that commit and replaying the events before the call; nothing is stored beyond the tag. |
+| R4-13 | Fourth run | all | The first incident rerun with everything above, measured beside runs 001 to 003: the IC's verdicts by kind, what each revise or reassign cost and found, and the wall time parallel dispatch saved. |
 
 R4-6, R4-7, R4-8 and R4-9 can run in parallel with R4-1 to R4-5.
 ### R4-1: The work behind the report
@@ -810,7 +811,7 @@ Acceptance: a dispatcher test on the stub with two independent units whose stub 
 sleep, asserting overlapping `task.started` and `task.completed` timestamps and the same
 events as the sequential run; a test that a picture-changing report from one unit ends the
 pass while the other's task in flight completes; a test that the cap holds.
-### R4-9a: Unit types: the form, the filled form, the protocol
+### R4-10: Unit types: the form, the filled form, the protocol
 Ruled by Mauria on 2026-09-15 (12:31 to 13:11 CDT), after this round's reviews each listed
 code that exists only because the root is a unit and then has to be told it is not one:
 a unit is defined by a type and a config. The type is the form, the empty fields a kind of
@@ -854,7 +855,7 @@ Acceptance: `grep -n "parentId === null" src/dispatcher.ts src/units/` prints no
 R4-6 and R4-7 dispatcher and IC tests pass with the same events recorded; the planner
 snapshot shows the type on a unit proposal; a replay test on a round 4 store yields `ic`
 on the root and `base` elsewhere and the same `show` output.
-### R4-9b: Saved unit configs
+### R4-11: Saved unit configs
 Scope: a `unit_configs` table holds a saved config: a name, the type, and the filled form
 less `objective` and `parent` (so the leader's model and provider, equipment, Bash
 allowlist and role text), with when and from which unit it was saved. `noscope config
@@ -879,7 +880,7 @@ Acceptance: a run test on the stub where a unit is saved, the next plan names th
 the applied unit carries its fields, and `review` names it; a validator test rejecting an
 unknown config and a config of the wrong type; a test that the third repeat prints the
 offer and the second does not.
-### R4-9c: The runtime tag on events
+### R4-12: The runtime tag on events
 Ruled by Mauria on 2026-09-15 13:39: what a seat received is preserved in the Claude Code
 transcript (every call writes a `prompt_snapshot` record with the full system prompt, and
 the user messages are the transcript; verified on run 003's IC session, and transcripts
@@ -899,7 +900,7 @@ README's build section and `docs/architecture.html`'s store node follow.
 Acceptance: a store test that every event written carries the runtime tag and the
 migration that adds the column reads `null` on old rows; a build test that `dist/` carries the SHA the build ran
 at; `review` on the stub names one runtime.
-### R4-10: Fourth run
+### R4-13: Fourth run
 Scope: the first incident's objective run a fourth time from the same roughdraftplus
 working directory at commit 6a996e8, with the scratch document restored, the same
 constraints and priority as run 003, and the IC on Opus 5 with the Opus 4.8 fallback from
@@ -916,5 +917,5 @@ the selection's origin (open in run 003) was settled.
 None. The two raised while drafting (the IC's model under refusals; who owns the
 situation) were ruled in review on 2026-09-15 and are in R4-7 and R4-5. Ruled in the same
 review: the planner's job after round 4 is the tactics only, drafted as a suggestion for
-the IC. The one raised with R4-9a (whether the root stays a unit) was ruled the same day:
+the IC. The one raised with R4-10 (whether the root stays a unit) was ruled the same day:
 the root stays, as a unit of the `ic` type.

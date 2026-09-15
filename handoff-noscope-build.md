@@ -4,7 +4,7 @@ Refreshed 2026-09-15 13:33 CDT by session noscope-round4 [f7cb98], mid-build, fi
 merged. Written by the successor session; the relay session mauriaparker-91 has stopped.
 
 **First actions, in order:** (1) `/warp-pin title noscope-round4-<n>`. (2) Read this file,
-then `BUILD-PLAN.md` "## Round 4" in full (rows R4-9a and R4-9b are new), then the round 4
+then `BUILD-PLAN.md` "## Round 4" in full (rows R4-10 to R4-12 are new; the fourth run is now R4-13), then the round 4
 entries at the end of `docs/build-record.md`. (3) Run `git -C ~/Documents/Projects/noscope
 status --short`, `git log --oneline -5`, `git worktree list`, `gh pr list --repo
 kudzuweb/noscope`. (4) Spawn your own `quipu` keeper per the quipu instructions and a
@@ -16,7 +16,7 @@ authority to push and merge stands for the round ("go for it. authority stands",
 
 ## 1. GOAL
 
-Build round 4 of `BUILD-PLAN.md` (ten PRs, R4-1 to R4-10): the IC reviews a unit's work and
+Build round 4 of `BUILD-PLAN.md` (thirteen PRs, R4-1 to R4-13; the fourth run is R4-13): the IC reviews a unit's work and
 answers each report with accepted, revise or reassign; the IC owns the situation; session work
 leaves `command`; refusals fall back to Opus 4.8 once and then go to judgment; the size-up is
 scoped to the incident kind; parallel dispatch; then the fourth live run and its write-up.
@@ -52,10 +52,10 @@ Rulings since the 11:50 refresh, all Mauria's, 2026-09-15:
 
 | Ruling | Where it lands |
 |---|---|
-| 12:31 to 13:11: the IC is not a special case of the led unit. A unit is a type plus a config: the type is the form (the fields a kind of unit fills) plus the protocol (how it uses what is in the box, its own module); the config is the filled form. `base` is today's led unit, `ic` the root; a config keeps its type's protocol; recurring configs are saved and deployed by name (ICS resource typing is the planner outfitting a unit; a saved config is its product). Both before the fourth run: "I want the missteps re: the IC fully rectified before the next test." | `BUILD-PLAN.md` rows R4-9a (unit types) and R4-9b (saved unit configs), depending on R4-5, R4-7, R4-9; "type" and "config" are the plan's words, not names the code must use. |
+| 12:31 to 13:11: the IC is not a special case of the led unit. A unit is a type plus a config: the type is the form (the fields a kind of unit fills) plus the protocol (how it uses what is in the box, its own module); the config is the filled form. `base` is today's led unit, `ic` the root; a config keeps its type's protocol; recurring configs are saved and deployed by name (ICS resource typing is the planner outfitting a unit; a saved config is its product). Both before the fourth run: "I want the missteps re: the IC fully rectified before the next test." | `BUILD-PLAN.md` rows R4-10 (unit types) and R4-11 (saved unit configs), depending on R4-5, R4-7, R4-9; "type" and "config" are the plan's words, not names the code must use. |
 | 12:44: round 4's built PRs are not reoriented; they merge as built. | Done for 42, 43, 44. |
 | 12:46: merge permission granted for this build, after the auto-mode classifier refused `gh pr merge` as "Merge Without Review". | `gh pr merge` runs without a prompt now. |
-| Decided by this session at 12:25, shown to Mauria, not reversed: a root task refused twice ends as its `task.failed` with `refusals` under "tasks under command"; command files no report. | Merged in #43; becomes the `ic` protocol's definition under R4-9a. |
+| Decided by this session at 12:25, shown to Mauria, not reversed: a root task refused twice ends as its `task.failed` with `refusals` under "tasks under command"; command files no report. | Merged in #43; becomes the `ic` protocol's definition under R4-10. |
 | Open, asked 13:28: whether to record each session call's rendered prompt as a `call.made` event so what a seat received lives in the database rather than only in Claude Code's transcript. | Not a blocker; add a row if she says yes. |
 
 The builder brief (`scratchpad/builder-brief.md`) carries these rulings. Agents in this
@@ -63,8 +63,8 @@ session: `build-r4-6`, `build-r4-7`, `build-r4-9`, `build-r4-2` (idle, hold cont
 `review43-rebase`, `review44-rebase` (idle), `review45-rebase` (running), `quipu` (the
 keeper; last write af3e14e). Heartbeat cron `53cbb702` hourly at :23.
 
-Not started: R4-3 (revise), R4-4 (reassign), R4-5 (the IC owns the situation), R4-9a,
-R4-9b, in that order after R4-2; R4-10 (the fourth run) last. The one worktree lives under
+Not started: R4-3 (revise), R4-4 (reassign), R4-5 (the IC owns the situation), R4-10,
+R4-11, R4-12, in that order after R4-2; R4-13 (the fourth run) last. The one worktree lives under
 this session's scratchpad `/private/tmp/claude-501/-Users-mauriaparker-Documents-Projects-noscope/5c3f3ef0-a43b-4a43-b0d5-afcbc0e7673c/scratchpad/`;
 a successor recreates any it needs with `git worktree add -b <branch> <path> origin/<branch>`
 and `pnpm install --frozen-lockfile`.
@@ -74,19 +74,19 @@ and `pnpm install --frozen-lockfile`.
 1. PR 45: on `review45-rebase`'s verdict, apply any fix through `build-r4-2`, fill the PR
    body's "## From the review", wait for CI on the head SHA, `gh pr merge 45 --squash
    --delete-branch --match-head-commit <sha>`, pull, `pnpm build`.
-2. Spawn builders for R4-3, R4-4, R4-5, R4-9a, R4-9b in order, one at a time, each on a
+2. Spawn builders for R4-3, R4-4, R4-5, R4-10, R4-11, R4-12 in order, one at a time, each on a
    fresh worktree from main (`git worktree add -b <branch> <path> origin/main`), briefed with
    the builder brief plus its plan block; review each by a subagent; merge. Before R4-5's
-   brief, confirm the brief's situation sentence (already updated). R4-9a and R4-9b get two
+   brief, confirm the brief's situation sentence (already updated). R4-10 and R4-11 get two
    reviewers each (a rewrite).
-3. R4-10: restore `~/.noscope/second-run/document.md` from `document.pristine.md`; from
+3. R4-13: restore `~/.noscope/second-run/document.md` from `document.pristine.md`; from
    `~/Documents/Projects/roughdraftplus` (at `6a996e8`) with `NOSCOPE_DB=~/.noscope/fourth-run.sqlite`,
    `incident create` with run 003's objective, constraints and priority, the IC on Opus 5
    with the R4-7 fallback; step by hand, detached, one cycle at a time (the runner pattern is
    `~/.noscope/third-run/step.sh`); write "## Fourth run" in `docs/first-incident.md` with
    the measures beside runs 001 to 003, the verdicts by kind, what each revise or reassign
    cost and found, and the cycle wall time beside summed task seconds; a build-record entry
-   for R4-10; message `quipu` with the thread and the change.
+   for R4-13; message `quipu` with the thread and the change.
 4. After every merge: refresh section 3 of this file, commit, push; message `quipu`.
 
 ## 5. WORKING AGREEMENTS (standing)
