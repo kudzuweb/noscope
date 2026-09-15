@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { EXIT, run } from "../src/cli.js";
 import type { ActionPlan } from "../src/models.js";
+import { parseClaudeCodeResult } from "../src/providers/claude-code.js";
 import { claudeCodeProvider, SessionError } from "../src/providers/index.js";
 import { Store } from "../src/store.js";
 import { unitProposal } from "./fixtures/models.js";
@@ -145,6 +146,43 @@ describe("a refusal replaces the session", () => {
       contextTokens: 23067,
       costUsd: 0.23066,
     });
+  });
+
+  it("a refusal that exits 0, with or without a typed result, is a SessionError from the stream alone", () => {
+    const system = JSON.stringify({
+      type: "system",
+      subtype: "model_refusal_no_fallback",
+      apiRefusalCategory: "reasoning_extraction",
+      apiRefusalExplanation: refusal.explanation,
+    });
+    const init = JSON.stringify({
+      type: "system",
+      subtype: "init",
+      session_id: "s-refused",
+    });
+    const result = JSON.stringify({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      stop_reason: "refusal",
+      session_id: "s-refused",
+      usage: { input_tokens: 2, cache_creation_input_tokens: 10 },
+    });
+    for (const stdout of [
+      `${init}\n${system}\n${result}\n`,
+      `${init}\n${system}\n`,
+    ]) {
+      let caught: unknown;
+      try {
+        parseClaudeCodeResult(stdout);
+      } catch (error) {
+        caught = error;
+      }
+      if (!(caught instanceof SessionError))
+        throw new Error(`a SessionError, not ${String(caught)}`);
+      expect(caught.refused).toEqual(refusal);
+      expect(caught.sessionId).toBe("s-refused");
+    }
   });
 
   it("the IC's review refused on the resumed session is filed, the session released and replaced, and the fresh session's review stands", {

@@ -890,12 +890,14 @@ async function runOne(
             ...(capability.kind === "deterministic" ? { costUsd: 0 } : {}),
           };
     // The leader's first call failed but its session exists: record it so the turn resumes
-    // it rather than starting one that has read neither the orientation nor the brief.
+    // it rather than starting one that has read neither the orientation nor the brief. A
+    // refused session is not recorded: it would be refused again, and the turn starts fresh.
     const orphaned =
       inside &&
       unit.sessionId === null &&
       error instanceof SessionError &&
-      error.sessionId !== null
+      error.sessionId !== null &&
+      error.refused === null
         ? error.sessionId
         : null;
     store.batch(() => {

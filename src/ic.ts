@@ -716,24 +716,20 @@ async function icCall<T extends object>(
       // session asked the same turn with the full briefing. A call that died before the
       // stream's init line found no session to resume and is replaced the same way.
       if (error.refused !== null && error.sessionId !== null) {
-        fileFailure(
-          {
-            sessionId: error.sessionId,
-            usage: error.usage,
-            activity: error.activity,
-            refused: error.refused,
-          },
-          describe(error),
-        );
-        // A refused handoff call is released by `prepareHandoff`, with its own reason.
-        if (turn !== "handoff")
-          store.setUnitSession(incident.id, unit.id, null, actor, {
-            unitId: unit.id,
-            released: dead,
-            ...unit.leader,
-            reason: `refused: ${error.refused.category}`,
-            refused: error.refused,
-          });
+        const { sessionId, usage, activity, refused } = error;
+        // One transaction for the filing and the release (a batch inside a batch is a savepoint).
+        store.batch(() => {
+          fileFailure({ sessionId, usage, activity, refused }, describe(error));
+          // A refused handoff call is released by `prepareHandoff`, with its own reason.
+          if (turn !== "handoff")
+            store.setUnitSession(incident.id, unit.id, null, actor, {
+              unitId: unit.id,
+              released: dead,
+              ...unit.leader,
+              reason: `refused: ${refused.category}`,
+              refused,
+            });
+        });
       } else if (error.sessionId !== null) throw error;
       // A handoff asks the outgoing session for what it knows; a fresh one knows nothing.
       if (turn === "handoff")
@@ -766,7 +762,7 @@ async function icCall<T extends object>(
     // A fresh session refused too: the message names the category and Claude Code's advice.
     const advice =
       failed?.refused !== null && failed?.refused !== undefined
-        ? ` (${failed.refused.category}${replaced === null ? "" : ", after session " + replaced.sessionId + " was refused and replaced"}; Claude Code's advice is to rephrase the request in a new session or change the model)`
+        ? ` (${failed.refused.category}${replaced === null ? "" : `, after session ${replaced.sessionId} was refused and replaced`}; Claude Code's advice is to rephrase the request in a new session or change the model)`
         : "";
     throw new Error(`the IC: ${reason}${advice}`, { cause: error });
   }

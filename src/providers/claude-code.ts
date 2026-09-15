@@ -535,10 +535,21 @@ export function parseClaudeCodeResult(
   where?: TranscriptLocation,
 ): SessionOutcome {
   const lines = jsonLines(stdout) as StreamLine[];
-  const envelope = [...lines].reverse().find((l) => l.type === "result") as
-    | ResultEnvelope
-    | undefined;
+  // A refusal's result may carry no `type`; it is found by its stop reason, and a refusal
+  // that exits 0 is a refusal all the same.
+  const envelope = [...lines]
+    .reverse()
+    .find(
+      (l) =>
+        l.type === "result" || (l as ResultEnvelope).stop_reason === "refusal",
+    ) as ResultEnvelope | undefined;
+  const refused = refusalOf(lines);
   if (envelope === undefined) {
+    if (refused !== null)
+      throw refusedError(refused, initSessionId(lines), null, {
+        ...NO_ACTIVITY,
+        toolCalls: toolCallsOf(lines),
+      });
     const other = lines.at(-1) as ResultEnvelope | undefined;
     if (other !== undefined)
       throw new Error(`claude returned a ${String(other.type)} message`);
@@ -557,7 +568,6 @@ export function parseClaudeCodeResult(
               ? readSubagents(where, sessionId, canonicalModel(envelope))
               : [],
         };
-  const refused = refusalOf(lines);
   if (refused !== null) throw refusedError(refused, sessionId, usage, activity);
   if (envelope.is_error === true || envelope.subtype !== "success")
     throw new SessionError(
