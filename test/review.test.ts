@@ -14,7 +14,6 @@ const empty: ActionPlan = {
   closeUnits: [],
   createTasks: [],
   cancelTasks: [],
-  claimsToVerify: [],
   questionsForHuman: [],
   grantRequests: [],
   capabilityRequests: [],
@@ -151,7 +150,7 @@ describe("incident review", () => {
     );
     expect(h.out[1]).toMatch(/^2 cycle\(s\) from .* events$/);
     expect(text).toMatch(
-      /cycle 1 {2}\S+ {2}applied open {2}units \+1 -0 {2}tasks \+1 cancelled 0 {2}claimsToVerify 0/,
+      /cycle 1 {2}\S+ {2}applied open {2}units \+1 -0 {2}tasks \+1 cancelled 0$/m,
     );
     expect(text).toContain(
       "planner claude-opus-5: in 1,500 (uncached 1,000 / write 200 / read 300)  out 42  1.5 s  $0.01  session stub-session",
@@ -170,9 +169,7 @@ describe("incident review", () => {
     expect(text).toContain(
       "tasks: 1 ran (1 deterministic, 0 sessions) of 1 created",
     );
-    expect(text).toContain(
-      "claims: 1 verified, 0 asserted, 0 rejected; 0 promoted",
-    );
+    expect(text).toContain("claims: 1 verified, 0 asserted, 0 rejected");
     expect(text).toContain("questions: none");
     expect(h.out.at(-1)).toBe("cost: $0.02");
   });
@@ -286,7 +283,7 @@ describe("incident review", () => {
       /rejected Inputs validate: xy{239} \[\+61 chars, see incident events\]/,
     );
     expect(text).toContain(
-      "cycle 2  2026-09-13T13:03:00.000Z  applied blocked  units +1 -0  tasks +4 cancelled 0  claimsToVerify 1",
+      "cycle 2  2026-09-13T13:03:00.000Z  applied blocked  units +1 -0  tasks +4 cancelled 0",
     );
     // Split, Opus: 100k + 200k + 80k = 380k input at $5/M = 1.90, output 0.25.
     expect(text).toContain(
@@ -330,9 +327,7 @@ describe("incident review", () => {
     expect(text).toContain(
       "tasks: 4 ran (0 deterministic, 4 sessions) of 5 created, 1 failed before running",
     );
-    expect(text).toContain(
-      "claims: 0 verified, 0 asserted, 0 rejected; 1 promoted",
-    );
+    expect(text).toContain("claims: 0 verified, 0 asserted, 0 rejected");
     expect(text).toContain("  asked in cycle 2: does it happen every time?");
     expect(text).toContain("  answered at 2026-09-13T13:17:00.000Z: yes");
     // 0.75+2.15+0.30+2.15+1.00+2.00 = 8.35 low; 10.25+2.15+4.10+2.15+1.00+2.00 = 21.65 high.

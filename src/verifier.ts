@@ -13,9 +13,10 @@ export type ClaimSource =
   | { sessionId: string };
 
 /**
- * Turns a capability's claim proposals into stored claims. A deterministic capability's
- * claims are facts about the machine and enter verified, with the capability and the inputs
- * that ran as provenance; a session's enter asserted, with the session id (DESIGN.md Step 6).
+ * Turns a capability's claim proposals into stored claims. The status names the source and
+ * never changes: a deterministic capability's claims enter verified, with the capability and
+ * the inputs that ran as provenance; a session's enter asserted, with the session id. The
+ * basis says whether the claim was seen, and is what the validator keys on (DESIGN.md Step 6).
  */
 export function recordClaims(
   store: Store,
@@ -61,64 +62,8 @@ export function recordClaims(
   });
   store.batch(() => {
     for (const claim of claims) store.createClaim(claim, actor);
-    if (deterministic)
-      promoteMatching(
-        store,
-        task,
-        claims,
-        source as { inputs: Record<string, unknown> },
-        actor,
-      );
   });
   return claims;
-}
-
-const stable = (value: unknown): string =>
-  JSON.stringify(value, (_k, v: unknown) =>
-    v !== null && typeof v === "object" && !Array.isArray(v)
-      ? Object.fromEntries(
-          Object.entries(v as Record<string, unknown>).sort(([a], [b]) =>
-            a.localeCompare(b),
-          ),
-        )
-      : v,
-  );
-
-/**
- * Promotion (DESIGN.md Step 6): an asserted claim with the same subject, predicate and
- * object as a claim a deterministic run just verified becomes verified, and the
- * `claim.verified` event records which task, inputs and matching claim established it, so
- * the promotion can be audited without re-running anything.
- */
-function promoteMatching(
-  store: Store,
-  task: Task,
-  verified: readonly Claim[],
-  source: { inputs: Record<string, unknown> },
-  actor: string,
-): void {
-  const byFact = new Map(
-    verified.map((c) => [
-      `${c.subject}\u0000${c.predicate}\u0000${stable(c.object)}`,
-      c,
-    ]),
-  );
-  for (const asserted of store.listClaims(task.incidentId)) {
-    if (asserted.status !== "asserted") continue;
-    const match = byFact.get(
-      `${asserted.subject}\u0000${asserted.predicate}\u0000${stable(asserted.object)}`,
-    );
-    if (match === undefined) continue;
-    store.setClaimStatus(task.incidentId, asserted.id, "verified", actor, {
-      promotedBy: {
-        taskId: task.id,
-        capability: match.provenance.capability,
-        inputs: source.inputs,
-        matchingClaimId: match.id,
-        at: match.createdAt,
-      },
-    });
-  }
 }
 
 /**

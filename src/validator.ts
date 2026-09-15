@@ -346,8 +346,8 @@ const CHECKS: Record<RuleName, Rule> = {
     const byId = new Map(ctx.tasks.map((t) => [t.id, t]));
     const refs = taskRefs(plan);
     const allClaims = new Set(ctx.claims.map((c) => c.id));
-    const verified = new Set(
-      ctx.claims.filter((c) => c.status === "verified").map((c) => c.id),
+    const observed = new Set(
+      ctx.claims.filter((c) => c.basis === "observed").map((c) => c.id),
     );
     const named = [
       ...new Set([
@@ -358,10 +358,10 @@ const CHECKS: Record<RuleName, Rule> = {
     ];
     const notProven = plan.situation.proven
       .map((p) => p.claimId)
-      .filter((id) => allClaims.has(id) && !verified.has(id))
+      .filter((id) => allClaims.has(id) && !observed.has(id))
       .map(
         (id) =>
-          `the situation lists claim ${id} as proven, but it is not verified`,
+          `the situation lists claim ${id} as proven, but its basis is inferred, not observed`,
       );
     const referenced = plan.createTasks.flatMap((t) => [
       ...t.evidenceFrom.claims
@@ -382,9 +382,6 @@ const CHECKS: Record<RuleName, Rule> = {
         ),
     ]);
     const cancelling = new Set(plan.cancelTasks);
-    const claims = new Set(
-      ctx.claims.filter((c) => c.status === "asserted").map((c) => c.id),
-    );
     const unmet = (id: string): string | null => {
       if (refs.has(id)) return null;
       const dep = byId.get(id);
@@ -412,9 +409,6 @@ const CHECKS: Record<RuleName, Rule> = {
       ...repeated(plan.cancelTasks).map(
         (id) => `task ${id} is cancelled twice`,
       ),
-      ...plan.claimsToVerify
-        .filter((id) => !claims.has(id))
-        .map((id) => `no asserted claim ${id} to verify`),
       ...named
         .filter((id) => !allClaims.has(id))
         .map((id) => `the situation names no claim ${id}`),
@@ -509,8 +503,8 @@ const CHECKS: Record<RuleName, Rule> = {
       reasons.push(
         `satisfied while creating ${plan.createTasks.length} task(s)`,
       );
-    if (!ctx.claims.some((c) => c.status === "verified"))
-      reasons.push("satisfied with no verified claim");
+    if (!ctx.claims.some((c) => c.basis === "observed"))
+      reasons.push("satisfied with no observed claim");
     return reasons;
   },
 };

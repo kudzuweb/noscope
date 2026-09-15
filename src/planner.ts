@@ -27,11 +27,11 @@ export const PLANNER_SYSTEM_PROMPT = `You are the Planning Section of noscope, a
 
 An incident is any objective Mauria asks to have pursued; it does not mean something went wrong. Around it a temporary organization of units is built and torn down when it is done. Each cycle you draft an action plan; a validator approves it or rejects it whole; tasks then run through capabilities and their results come back to you as claims.
 
-The terms: a unit is a box in the incident's tree that owns a slice of the problem; a task is one assignment, owned by one unit, bound to one capability; a capability is the assignable thing, deterministic (its claims arrive verified) or session-backed (its claims arrive asserted); a claim is a statement with a status of asserted, verified or rejected.
+The terms: a unit is a box in the incident's tree that owns a slice of the problem; a task is one assignment, owned by one unit, bound to one capability; a capability is the assignable thing, deterministic or session-backed; a claim is a statement with a status and a basis. The status names the source and gates nothing: verified means deterministic equipment produced it, asserted means a session did. The basis says whether it was seen: observed means seen in code, in output or in a browser, inferred means reasoned to from what was seen. An observed claim counts as proven whichever source produced it.
 
-You propose structure only. You do not run tools, you do not write, and you never mark your own conclusions true. Read the incident file that follows, in its ten sections, and return one action plan. Section 10 is the situation you wrote last cycle; write this cycle's in the plan: what changed, the hypothesis, the verified claims it rests on, every inferred link with what this plan does to settle it, and the claims to keep in view.
+You propose structure only. You do not run tools, you do not write, and you never mark your own conclusions true. Read the incident file that follows, in its nine sections, and return one action plan. Section 9 is the situation you wrote last cycle; write this cycle's in the plan: what changed, the hypothesis, the observed claims it rests on, every inferred link with what this plan does to settle it, and the claims to keep in view.
 
-When you lack something, use the channel for it: a task to a capability for a fact it can retrieve; a grant request for permission; a capability request for means that do not exist yet; a question for a human only for what only a human knows. A link the repository cannot establish, such as what a running program does after an interaction, is settled by reproducing it (a reproduce task, when section 8 lists one), by a capability request for it when none is listed, or by a question for the human, in the same plan; never by reading more code. A brief to interpret carries the question and the evidence, named by id in evidenceFrom, and not the conclusion you expect: the runtime attaches your hypothesis to every brief, and the session's job is to test that. The rationale says why this plan, and nothing the situation already says. Name a provider and model on every task to a session-backed capability, and none on a task to a deterministic one. A chain of tasks belongs in one plan: give a task a ref and name that ref in the dependsOn of the task that uses its result, and the chain runs in one cycle. Keep every unit at five or fewer direct children. Set incidentStatus to satisfied only when the objective is established by verified claims and nothing is left open.`;
+When you lack something, use the channel for it: a task to a capability for a fact it can retrieve; a grant request for permission; a capability request for means that do not exist yet; a question for a human only for what only a human knows. A link the repository cannot establish, such as what a running program does after an interaction, is settled by reproducing it (a reproduce task, when section 7 lists one), by a capability request for it when none is listed, or by a question for the human, in the same plan; never by reading more code. A brief to interpret carries the question and the evidence, named by id in evidenceFrom, and not the conclusion you expect: the runtime attaches your hypothesis to every brief, and the session's job is to test that. The rationale says why this plan, and nothing the situation already says. Name a provider and model on every task to a session-backed capability, and none on a task to a deterministic one. A chain of tasks belongs in one plan: give a task a ref and name that ref in the dependsOn of the task that uses its result, and the chain runs in one cycle. Keep every unit at five or fewer direct children. Set incidentStatus to satisfied only when the objective is established by observed claims and nothing is left open.`;
 
 /** The rules the validator applies, stated so the planner does not propose what will be rejected (DESIGN.md Step 5). */
 export const PLANNER_RULES = [
@@ -43,11 +43,11 @@ export const PLANNER_RULES = [
   "Span of control: no unit ends the plan with more than 7 direct children, units and tasks combined; target 5.",
   "Effect policy: only read_only capabilities in v0.",
   "Budget respected: a task's budget, where it sets one, fits inside the incident's remaining budget; a session-backed task carries a time bound and, when the incident bounds tokens, a token bound; a deterministic task needs neither.",
-  "Dependencies resolve: every dependsOn names a task in the incident that is completed or still open and not cancelled in this plan, or the ref of a task created in this plan; every cancelTasks names an open task, once; every claimsToVerify names an asserted claim; every evidenceFrom claim exists, and every evidenceFrom task is completed or in the task's dependsOn.",
+  "Dependencies resolve: every dependsOn names a task in the incident that is completed or still open and not cancelled in this plan, or the ref of a task created in this plan; every cancelTasks names an open task, once; every evidenceFrom claim exists, and every evidenceFrom task is completed or in the task's dependsOn.",
   "Model known: every task to a session-backed capability names a provider and a model that provider serves; a task to a deterministic capability names neither.",
   "Closing is clean: a unit closed in this plan is active, has no running task after this plan's cancels, is closed once, and is given no new unit or task in the same plan.",
-  "Status is earned: satisfied requires every open task completed or cancelled, no new tasks, and at least one verified claim; satisfied or failed raises no question, capability request or grant request; blocked raises at least one.",
-  "Inferred links are worked: every inferred link in the situation names what settles it: a task in this plan by its ref, an open task by its id, a question this plan raises by its position, or a reproduce task by its ref or id; every claim id in proven, inferred and keep names a claim in the incident, and every proven claim is verified.",
+  "Status is earned: satisfied requires every open task completed or cancelled, no new tasks, and at least one observed claim; satisfied or failed raises no question, capability request or grant request; blocked raises at least one.",
+  "Inferred links are worked: every inferred link in the situation names what settles it: a task in this plan by its ref, an open task by its id, a question this plan raises by its position, or a reproduce task by its ref or id; every claim id in proven, inferred and keep names a claim in the incident, and every proven claim has basis observed, whichever task observed it.",
 ] as const;
 
 function clip(value: unknown): string {
@@ -100,8 +100,8 @@ function describeInputs(schema: z.ZodType): string {
 }
 
 function claimLine(c: Claim): string {
-  const basis = c.status === "asserted" ? `${c.basis}; ` : "";
-  return `${c.id}: ${c.subject} ${c.predicate} ${clip(c.object)} (${basis}confidence ${c.confidence ?? "n/a"}; evidence ${c.evidence.join(", ") || "none"})`;
+  const source = `from ${c.provenance.capability} task ${c.provenance.taskId}${c.provenance.sessionId === undefined ? "" : `, session ${c.provenance.sessionId}`}`;
+  return `${c.id}: ${c.subject} ${c.predicate} ${clip(c.object)} (${c.status}, ${c.basis}; confidence ${c.confidence ?? "n/a"}; evidence ${c.evidence.join(", ") || "none"}) [${source}]`;
 }
 
 function unitTree(units: readonly Unit[]): string[] {
@@ -197,7 +197,7 @@ function lastCycleSequence(events: readonly Event[]): number {
 }
 
 /**
- * The incident file rendered as the ten labeled sections in the design's order, each in a
+ * The incident file rendered as the nine labeled sections in the design's order, each in a
  * stable form, so the prompt prefix caches across cycles; the situation, which changes
  * every cycle, comes last.
  */
@@ -288,8 +288,8 @@ export function renderPlannerInput(
       .map((c) => [c.name, c.summarize]),
   );
   const collapsed = new Map<string, Claim[]>();
-  const verifiedLines: string[] = [];
-  for (const c of claims.filter((c) => c.status === "verified")) {
+  const claimLines: string[] = [];
+  for (const c of claims) {
     if (
       summarizing.get(c.provenance.capability) === c.predicate &&
       !fresh.has(c.id) &&
@@ -298,7 +298,7 @@ export function renderPlannerInput(
       const group = collapsed.get(c.provenance.taskId) ?? [];
       group.push(c);
       collapsed.set(c.provenance.taskId, group);
-    } else verifiedLines.push(claimLine(c));
+    } else claimLines.push(claimLine(c));
   }
   for (const [taskId, group] of collapsed) {
     const t = taskById.get(taskId);
@@ -312,7 +312,7 @@ export function renderPlannerInput(
       .slice(0, 10)
       .map(([file, n]) => `${file} (${n})`)
       .join(", ");
-    verifiedLines.push(
+    claimLines.push(
       `task ${taskId} (${t?.capability ?? "?"} ${clip(t?.inputs)}): ${group.length} claims across ${files.size} file(s): ${shown}${byCount.length > 10 ? `, and ${byCount.length - 10} more` : ""}`,
     );
   }
@@ -370,32 +370,22 @@ export function renderPlannerInput(
         .map((r) => `${r.need} → ${r.answer}`),
     ),
     "",
-    "## 2. Verified claims",
-    ...bullets(verifiedLines),
+    "## 2. Claims",
+    ...bullets(claimLines),
     "",
-    "## 3. Asserted claims",
-    ...bullets(
-      claims
-        .filter((c) => c.status === "asserted")
-        .map(
-          (c) =>
-            `${claimLine(c)} [from ${c.provenance.capability} task ${c.provenance.taskId}${c.provenance.sessionId === undefined ? "" : `, session ${c.provenance.sessionId}`}]`,
-        ),
-    ),
-    "",
-    "## 4. Unit tree",
+    "## 3. Unit tree",
     ...unitTree(units),
     "",
-    "## 5. Tasks completed since the last cycle",
+    "## 4. Tasks completed since the last cycle",
     ...bullets(completed),
     "",
-    "## 6. Tasks that came back insufficient since the last cycle",
+    "## 5. Tasks that came back insufficient since the last cycle",
     ...bullets(insufficient),
     "",
-    "## 7. Open tasks",
+    "## 6. Open tasks",
     ...bullets(open.map(taskLine)),
     "",
-    "## 8. Capabilities and models",
+    "## 7. Capabilities and models",
     "capabilities, each with the inputs a task to it must carry:",
     ...listCapabilities().flatMap((c) => [
       `  - ${c.name} [${c.kind}, ${c.effect}]: ${c.description}${c.cost.typicalSeconds === undefined ? "" : ` (typical ${c.cost.typicalSeconds}s${c.cost.typicalTokens === undefined ? "" : `, ${c.cost.typicalTokens} tokens`})`}`,
@@ -404,12 +394,12 @@ export function renderPlannerInput(
     "providers and models:",
     ...bullets(providers.map((p) => `${p.name}: ${p.models.join(", ")}`)),
     "",
-    "## 9. Rules the validator applies",
+    "## 8. Rules the validator applies",
     ...bullets(PLANNER_RULES),
     "rejected last cycle:",
     ...bullets(rejections, "(nothing rejected)"),
     "",
-    "## 10. Situation from the last cycle",
+    "## 9. Situation from the last cycle",
     ...renderSituation(situation),
   ];
   return lines.join("\n");

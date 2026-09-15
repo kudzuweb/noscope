@@ -47,7 +47,7 @@ Still proposed rather than ruled, and settled by building them: the storage tabl
 | Equipment | A primitive: a function the runtime calls in-process, a Claude Code built-in tool such as Read, Grep or Bash under an allowlist, or later anything else a capability needs to do its work. Registered by name. Never assigned by the planner. |
 | Capability | The assignable thing: declared equipment plus, when judgment is needed, a headless session with a system prompt; the model comes from each task. A capability with no session is deterministic and produces verified claims; one with a session produces asserted claims. A capability may include other capabilities. Later, a human. |
 | Provider | A program that can run a session: Claude Code first, Codex second, later an HTTP API or a human. A provider maps the session fields onto its own command line and turns its output back into the runtime's result shape. Everything above the session layer is provider-blind. |
-| Claim | A statement about reality with epistemic status `asserted`, `verified` or `rejected`, plus provenance and a basis: `observed` when it was seen in code or in output, `inferred` when it was reasoned to from what was seen. LLM output enters as `asserted`; only deterministic verification promotes it. Confidence means the same on every claim: observed, 0.9 to 1; inferred from code, at most 0.7; runtime behavior not reproduced, at most 0.5. |
+| Claim | A statement about reality with a status, a basis and provenance. The status is a label for the source and gates nothing: `verified` when deterministic equipment produced it, `asserted` when a session did; `rejected` is in the enum and nothing sets it yet. The basis is what the validator keys on: `observed` when it was seen in code, in output or in a browser, `inferred` when it was reasoned to from what was seen; an observed claim counts as proven whichever source produced it, and a status never changes after entry (ruled 2026-09-14: promotion fired in neither live run, and sessions were right about the code 74 of 75 audited times). Confidence means the same on every claim: observed, 0.9 to 1; inferred from code, at most 0.7; runtime behavior not reproduced, at most 0.5. |
 | Event | One append-only record of something that happened, written in the same transaction as the state change it describes. |
 | Action plan | The planner's plan for one cycle: units to create or close, tasks to create or cancel, questions for a human, grant requests, capability requests, incident status. It is proposed by the planner and approved by the validator, and only an approved plan is applied. |
 | Cycle | Observe, organize, validate, dispatch, record, stop. `incident step` runs exactly one. |
@@ -229,7 +229,7 @@ provider, and the provider renders the fields onto its own command from them:
 | Field | Claude Code renders it to | Codex renders it to |
 |---|---|---|
 | `provider` | The choice of column. | The choice of column. |
-| session preamble, fixed in `providers/base.ts` | The first part of `--system-prompt`, identical for every task session on every provider; the planner's call carries its own system prompt in place of it, since it is the Planning Section and not a resource assigned to a task. It orients the session: this is an agentic runtime modeled on the Incident Command System; an incident is any objective Mauria asks to have pursued, not necessarily something gone wrong; a temporary organization of units is built around it and torn down when it is done; the planner drafts an action plan each cycle, a validator approves it, and tasks run through capabilities. Then the mapping of terms, one line each: incident, unit, task, capability, equipment, claim with its statuses, action plan, planner, grant, budget, SOP. Then the session's place: it is a resource assigned to one task inside one unit; the task follows; it reports only against the task's contract; its findings are asserted claims until the runtime verifies them; it cannot change the organization or take on work outside the task; when it lacks something it says so with the outcome `insufficient` and names which kind of thing is missing: a fact a capability could retrieve, permission, means that do not exist yet, or something only a human knows. | Prepended to the prompt, since `codex exec` has no system-prompt flag in its help. |
+| session preamble, fixed in `providers/base.ts` | The first part of `--system-prompt`, identical for every task session on every provider; the planner's call carries its own system prompt in place of it, since it is the Planning Section and not a resource assigned to a task. It orients the session: this is an agentic runtime modeled on the Incident Command System; an incident is any objective Mauria asks to have pursued, not necessarily something gone wrong; a temporary organization of units is built around it and torn down when it is done; the planner drafts an action plan each cycle, a validator approves it, and tasks run through capabilities. Then the mapping of terms, one line each: incident, unit, task, capability, equipment, claim with its statuses, action plan, planner, grant, budget, SOP. Then the session's place: it is a resource assigned to one task inside one unit; the task follows; it reports only against the task's contract; its findings are asserted claims, the status naming it as their source and the basis it gives each saying whether it saw it; it cannot change the organization or take on work outside the task; when it lacks something it says so with the outcome `insufficient` and names which kind of thing is missing: a fact a capability could retrieve, permission, means that do not exist yet, or something only a human knows. | Prepended to the prompt, since `codex exec` has no system-prompt flag in its help. |
 | `system_prompt` | The rest of `--system-prompt`: the capability's own role text, after the preamble. | Prepended to the prompt after the preamble. |
 | `model` | `--model <id>`, always explicit, taken from the task. A capability declares no default. | `-m <model>`, same rule. |
 | `equipment` | `--tools "<list>"` naming the Claude Code built-in tools in the capability's equipment, or `--tools default` when the capability declares `default`. | `-s read-only` bounds what the built-in shell can do; per-tool selection is not in the help and is an open item for this provider. |
@@ -271,8 +271,8 @@ v0 capabilities:
 | `interpret` | none | yes, model named per task; given evidence and nothing else, produces what it implies as asserted claims, or `insufficient` with what it would need |
 | `reproduce` | `playwright_browser` or `claude_in_chrome`, whichever the task's `browser` input names | yes, model named per task; opens a page, performs steps in order and reports what it observed after each, as observed claims; settles a claim about runtime behavior that reading code cannot. Registered `read_only`: browsing a running app can change its data, so an incident that uses it names a scratch copy of the app's data in a constraint |
 
-The four deterministic capabilities exist so the verifier has something to promote claims
-with, and so the planner can ask a precise question without spending a session on it.
+The four deterministic capabilities exist so a fact about the machine can be established
+without spending a session on it, and so the planner can ask a precise question.
 
 A capability may include other capabilities, composed in code. The event log records which
 capabilities every incident used under which unit purposes; a composition that recurs across
@@ -287,15 +287,14 @@ planner-shaped prompt: 3.6k tokens of context and a valid action plan back.
 Input, rendered as labeled sections in a stable order so the prefix caches:
 
 1. The incident file's command picture: objective, constraints, priorities, budget remaining, grants given, questions still unanswered.
-2. Verified claims. A claim with the predicate its capability declares as `summarize` (grep's `matches`, in v0) appears in full only in the cycle after it lands, or when the last situation names it in `proven` or `keep`; the rest of its task's claims collapse to one line per task: the inputs, the claim count, and the files with counts.
-3. Asserted claims, each with its provenance.
-4. The current unit tree with each unit's purpose and status.
-5. Tasks completed since the last cycle, each against its contract, with a session's findings (summary, observations, conclusion, reasoning) in full and a deterministic result clipped.
-6. Tasks that came back `insufficient`, each with what the session said it needed.
-7. Open tasks.
-8. The capability registry, each with its description and the input fields a task to it must carry (name, type, required or default), and for each provider every model it serves with its cost, so every option is on the table and no task is proposed with inputs the capability cannot take.
-9. The rules the validator will apply, so the planner does not propose what will be rejected.
-10. The situation from the last applied plan, as the planner wrote it: what changed, the hypothesis, the verified claims it rests on, the inferred links with what settles each, and the claims to keep in view; "(none)" before the first applied plan. Last, because the provider caches the unchanged front of a prompt and this section changes every cycle.
+2. Claims, each line showing its status and basis and its provenance. A claim with the predicate its capability declares as `summarize` (grep's `matches`, in v0) appears in full only in the cycle after it lands, or when the last situation names it in `proven` or `keep`; the rest of its task's claims collapse to one line per task: the inputs, the claim count, and the files with counts.
+3. The current unit tree with each unit's purpose and status.
+4. Tasks completed since the last cycle, each against its contract, with a session's findings (summary, observations, conclusion, reasoning) in full and a deterministic result clipped.
+5. Tasks that came back `insufficient`, each with what the session said it needed.
+6. Open tasks.
+7. The capability registry, each with its description and the input fields a task to it must carry (name, type, required or default), and for each provider every model it serves with its cost, so every option is on the table and no task is proposed with inputs the capability cannot take.
+8. The rules the validator will apply, so the planner does not propose what will be rejected.
+9. The situation from the last applied plan, as the planner wrote it: what changed, the hypothesis, the observed claims it rests on, the inferred links with what settles each, and the claims to keep in view; "(none)" before the first applied plan. Last, because the provider caches the unchanged front of a prompt and this section changes every cycle.
 
 Output:
 
@@ -305,7 +304,6 @@ const ActionPlan = z.object({
   closeUnits: z.array(UnitClose),                // unit id, with a reason each
   createTasks: z.array(TaskProposal),// ref, unit, capability, objective, inputs, criteria, dependsOn (task ids or refs in this plan), evidenceFrom (claims by id, tasks by id or ref), instructions, provider, model
   cancelTasks: z.array(z.string()),
-  claimsToVerify: z.array(z.string()),           // asserted claim ids worth promoting
   incidentStatus: z.enum(["continue", "blocked", "satisfied", "failed"]),
   questionsForHuman: z.array(z.string()),        // things only Mauria can supply; sets incidentStatus to blocked
   grantRequests: z.array(GrantRequest),          // capability, effect, and the reason it is needed; after v0
@@ -334,7 +332,7 @@ every session is told the same four kinds in its preamble so that an `insufficie
 names which one it hit.
 ### Step 5: the validator
 Every action plan passes all of these or is rejected whole, with each failing rule and its
-reason recorded as a `plan.rejected` event and fed back as input 9 on the next cycle:
+reason recorded as a `plan.rejected` event and fed back as input 8 on the next cycle:
 
 | Rule | Check |
 |---|---|
@@ -346,11 +344,11 @@ reason recorded as a `plan.rejected` event and fed back as input 9 on the next c
 | Span of control | No unit ends the action plan with more than 7 direct children, units and tasks combined. Target is 5. |
 | Effect policy | v0 rejects any capability whose effect is not `read_only`. After v0, a task to a capability whose effect is `writes_local` or `writes_external` passes only with a grant on this incident for that capability. |
 | Budget respected | A task's budget, where it sets one, fits inside the incident's remaining budget. A session-backed task carries a time bound and, when the incident bounds tokens, a token bound. A deterministic task runs no model and needs neither. |
-| Dependencies resolve | Every `dependsOn` names a task in the incident that is completed or still open and not cancelled in this plan, or the ref of a task created in this plan, so the new task can become ready. Every `evidenceFrom` claim exists, and every `evidenceFrom` task is completed or in the task's `dependsOn`, so its result exists when the brief is built. Every `cancelTasks` entry names an open task, once; every `claimsToVerify` entry names an asserted claim. |
+| Dependencies resolve | Every `dependsOn` names a task in the incident that is completed or still open and not cancelled in this plan, or the ref of a task created in this plan, so the new task can become ready. Every `evidenceFrom` claim exists, and every `evidenceFrom` task is completed or in the task's `dependsOn`, so its result exists when the brief is built. Every `cancelTasks` entry names an open task, once. |
 | Model known | Every task to a session-backed capability names a provider and model pair. The known list is every model the provider serves, never a curated subset, so Mauria can ask for whatever she wants and the planner sees every option. For Claude Code the known list is every Anthropic model currently served: `claude-fable-5-1`, `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5`, `claude-fable-5`, `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6`, `claude-sonnet-4-6`; Codex pairs are added when that provider is tested. A task to a deterministic capability has no model field at all, since nothing in it runs a model. |
 | Closing is clean | A unit closed in this plan is active, has no running task after the plan's cancels, is closed once, and is given no new unit or task in the same plan. |
-| Status is earned | `satisfied` requires every open task completed or cancelled, no new tasks in the plan, and at least one verified claim. `satisfied` or `failed` raises no question, capability request or grant request, since a closed incident answers none. `blocked` raises at least one, since nothing else could unblock it. |
-| Inferred links are worked | Every inferred link in the plan's situation names what settles it: a task in this plan by its ref, an open task by its id, a question this plan raises by its position, or a reproduce task by its ref or id. Every claim id the situation names, in `proven`, `inferred` and `keep`, is a claim in the incident, and every `proven` claim is verified (both checked under Dependencies resolve). |
+| Status is earned | `satisfied` requires every open task completed or cancelled, no new tasks in the plan, and at least one claim with basis `observed`, whichever source produced it. `satisfied` or `failed` raises no question, capability request or grant request, since a closed incident answers none. `blocked` raises at least one, since nothing else could unblock it. |
+| Inferred links are worked | Every inferred link in the plan's situation names what settles it: a task in this plan by its ref, an open task by its id, a question this plan raises by its position, or a reproduce task by its ref or id. Every claim id the situation names, in `proven`, `inferred` and `keep`, is a claim in the incident, and every `proven` claim has basis `observed`, whichever task observed it: a session's observation counts, an inference from either source does not (both checked under Dependencies resolve). |
 
 ### Step 6: dispatch, record, verify
 Ready means every dependency is completed. v0 runs ready tasks sequentially. Each
@@ -372,18 +370,17 @@ defaults applied and every path field resolved against the incident's working di
 the record says exactly what ran. Path inputs are declared per capability (`paths`) and
 resolved before the run, and every claim subject is an absolute path (`/abs/file` or
 `/abs/file:line`), so claims about one file from different tasks compare equal and a
-session's assertion can match a later deterministic result. A claim can only enter the store
-as `asserted` or `verified`, and `verified` on entry requires deterministic provenance. A
-deterministic claim enters with basis `observed`; a session names the basis of each of its
-claims, and a result without one does not fit the schema. A
-session-backed capability's result
-becomes `asserted` claims with the session id as provenance; an `insufficient` result becomes
-no claims and an `task.insufficient` event carrying what was needed. Promotion of an asserted
-claim in v0 happens only when a later deterministic result matches it on subject, predicate
-and object; the promotion's `claim.verified` event records the task, its effective inputs,
-the matching verified claim and its time, so a promotion can be audited without rerunning
-anything. The planner asks for it through `claimsToVerify`, naming the asserted claims it
-wants established, and proposes the deterministic task that would establish them.
+session's assertion can be compared with a later deterministic result. A claim can only
+enter the store as `asserted` or `verified`, and `verified` on entry requires deterministic
+provenance. A deterministic claim enters with basis `observed`; a session names the basis of
+each of its claims, and a result without one does not fit the schema. A session-backed
+capability's result becomes `asserted` claims with the session id as provenance; an
+`insufficient` result becomes no claims and an `task.insufficient` event carrying what was
+needed. A claim's status never changes after entry: it says which kind of source produced
+the claim, and the basis says whether that source saw it. Nothing promotes an asserted claim
+to verified, and the validator gates `proven` and `satisfied` on basis `observed` alone
+(Step 5). Rounds 1 and 2 had promotion on a deterministic match, asked for through
+`claimsToVerify`; it fired in neither live run, so it went in round 3.
 ### Step 7: the command surface
 | Command | Does |
 |---|---|

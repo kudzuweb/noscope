@@ -31,7 +31,6 @@ const empty: ActionPlan = {
   closeUnits: [],
   createTasks: [],
   cancelTasks: [],
-  claimsToVerify: [],
   questionsForHuman: [],
   grantRequests: [],
   capabilityRequests: [],
@@ -80,10 +79,13 @@ function investigateTask(over: Partial<TaskProposal> = {}): TaskProposal {
 
 /**
  * An incident with an active unit u-scroll and a closed unit u-done; under u-scroll one
- * completed grep, one running investigate and one failed grep; one asserted and one
- * verified claim.
+ * completed grep, one running investigate and one failed grep; an inferred and an observed
+ * asserted claim, and a verified claim unless `verifiedClaim` is false.
  */
-function seeded(budget: { tokens?: number; seconds?: number } = {}) {
+function seeded(
+  budget: { tokens?: number; seconds?: number } = {},
+  { verifiedClaim = true } = {},
+) {
   const store = new Store(":memory:");
   const s = scriptedIncident(store, "i1", AT);
   s.addUnit({ id: "u-scroll", purpose: "where the scroll position is set" });
@@ -139,20 +141,41 @@ function seeded(budget: { tokens?: number; seconds?: number } = {}) {
   );
   store.createClaim(
     {
-      id: "c-verified",
+      id: "c-seen",
       incidentId: "i1",
-      subject: "/repo/src/a.ts",
-      predicate: "exists",
-      object: true,
-      status: "verified",
+      subject: "/repo/src/a.ts:9",
+      predicate: "calls",
+      object: "scrollTo",
+      status: "asserted",
       basis: "observed",
-      confidence: 1,
-      evidence: [],
-      provenance: { capability: "check_path", taskId: "t-done", inputs: {} },
+      confidence: 0.95,
+      evidence: ["/repo/src/a.ts:9"],
+      provenance: {
+        capability: "investigate",
+        taskId: "t-running",
+        sessionId: "s",
+      },
       createdAt: AT,
     },
     "verifier",
   );
+  if (verifiedClaim)
+    store.createClaim(
+      {
+        id: "c-verified",
+        incidentId: "i1",
+        subject: "/repo/src/a.ts",
+        predicate: "exists",
+        object: true,
+        status: "verified",
+        basis: "observed",
+        confidence: 1,
+        evidence: [],
+        provenance: { capability: "check_path", taskId: "t-done", inputs: {} },
+        createdAt: AT,
+      },
+      "verifier",
+    );
   const incident = { ...s.incident, budget };
   const ctx = () => validationContext(store, incident, [fakeProvider]);
   return { store, incident, ctx };
@@ -203,7 +226,6 @@ describe("validator", () => {
         grepTask({ unit: "u-new", inputs: { root: "src", pattern: "delete" } }),
         investigateTask({ unit: "u-new", dependsOn: ["t-done", "t-running"] }),
       ],
-      claimsToVerify: ["c-asserted"],
     };
     expect(verdictOf(plan)).toEqual({ ok: true, plan });
   });
@@ -357,7 +379,7 @@ describe("validator", () => {
     ).toEqual([]);
   });
 
-  it("Dependencies resolve: a dependency must be able to complete, a cancel must name an open task once, a claim to verify must be asserted", () => {
+  it("Dependencies resolve: a dependency must be able to complete, and a cancel must name an open task once", () => {
     expect(
       reasonsOf({
         ...empty,
@@ -381,9 +403,6 @@ describe("validator", () => {
     expect(
       reasonsOf({ ...empty, cancelTasks: ["t-running", "t-running"] }),
     ).toEqual(["Dependencies resolve: task t-running is cancelled twice"]);
-    expect(reasonsOf({ ...empty, claimsToVerify: ["c-verified"] })).toEqual([
-      "Dependencies resolve: no asserted claim c-verified to verify",
-    ]);
   });
 
   it("Budget respected: a deterministic task needs no budget on a bounded incident, a session task needs a token bound there, and a set budget must fit", () => {
@@ -708,7 +727,13 @@ describe("validator", () => {
         createTasks: [grepTask({ ref: "probe" })],
         questionsForHuman: ["does it happen every time?"],
         situation: situation({
-          proven: [{ claimId: "c-verified", line: "the handler is at a.ts:1" }],
+          proven: [
+            { claimId: "c-verified", line: "a.ts exists" },
+            {
+              claimId: "c-seen",
+              line: "a.ts:9 calls scrollTo, seen by a session",
+            },
+          ],
           inferred: [
             { claimId: "c-asserted", settledBy: { task: "probe" } },
             { claimId: "c-asserted", settledBy: { task: "t-running" } },
@@ -732,14 +757,14 @@ describe("validator", () => {
           ],
           proven: [
             { claimId: "c-none", line: "missing" },
-            { claimId: "c-asserted", line: "not verified" },
+            { claimId: "c-asserted", line: "inferred, not observed" },
           ],
           keep: ["c-none"],
         }),
       }),
     ).toEqual([
       "Dependencies resolve: the situation names no claim c-none",
-      "Dependencies resolve: the situation lists claim c-asserted as proven, but it is not verified",
+      "Dependencies resolve: the situation lists claim c-asserted as proven, but its basis is inferred, not observed",
       "Inferred links are worked: inferred claim c-asserted is settled by task t-none, which is neither a ref in this plan nor an open task",
       "Inferred links are worked: inferred claim c-asserted is settled by task t-running, which is neither a ref in this plan nor an open task",
       "Inferred links are worked: inferred claim c-asserted is settled by task t-done, which is neither a ref in this plan nor an open task",
@@ -747,8 +772,8 @@ describe("validator", () => {
     ]);
   });
 
-  it("Status is earned passes once every task is done and a verified claim exists", () => {
-    const { store, ctx } = seeded();
+  it("Status is earned passes once every task is done and an observed claim exists, verified or not", () => {
+    const { store, ctx } = seeded({}, { verifiedClaim: false });
     store.setTaskStatus(
       "i1",
       "t-running",
@@ -756,11 +781,39 @@ describe("validator", () => {
       "dispatcher",
       "task.completed",
     );
+    expect(ctx().claims.map((c) => c.status)).toEqual(["asserted", "asserted"]);
     expect(
       validatePlan({ ...empty, incidentStatus: "satisfied" }, ctx()),
     ).toEqual({
       ok: true,
       plan: { ...empty, incidentStatus: "satisfied" },
+    });
+    store.close();
+  });
+
+  it("Status is earned refuses satisfied when every claim is inferred", () => {
+    const { store, ctx } = seeded({}, { verifiedClaim: false });
+    store.setTaskStatus(
+      "i1",
+      "t-running",
+      "completed",
+      "dispatcher",
+      "task.completed",
+    );
+    const inferredOnly = {
+      ...ctx(),
+      claims: ctx().claims.filter((c) => c.basis === "inferred"),
+    };
+    expect(
+      validatePlan({ ...empty, incidentStatus: "satisfied" }, inferredOnly),
+    ).toEqual({
+      ok: false,
+      rejections: [
+        {
+          rule: "Status is earned",
+          reason: "satisfied with no observed claim",
+        },
+      ],
     });
     store.close();
   });

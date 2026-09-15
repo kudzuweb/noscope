@@ -14,7 +14,6 @@ const empty: ActionPlan = {
   closeUnits: [],
   createTasks: [],
   cancelTasks: [],
-  claimsToVerify: [],
   questionsForHuman: [],
   grantRequests: [],
   capabilityRequests: [],
@@ -202,7 +201,7 @@ describe("incident run", () => {
     expect(h.out.filter((l) => l === "plan rejected:")).toHaveLength(3);
     expect(
       h.out.some((l) =>
-        l.includes("Status is earned: satisfied with no verified claim"),
+        l.includes("Status is earned: satisfied with no observed claim"),
       ),
     ).toBe(true);
     expect(h.out.at(-1)).toBe(

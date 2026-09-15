@@ -219,13 +219,13 @@ describe("planner", () => {
     store.close();
   });
 
-  it("section 10 carries the last applied plan's situation as the planner wrote it, and (none) before one", () => {
+  it("section 9 carries the last applied plan's situation as the planner wrote it, and (none) before one", () => {
     const store = new Store(":memory:");
     scriptedIncident(store, "i1", AT);
     const incident = store.getIncident("i1");
     if (incident === undefined) throw new Error("no incident");
     expect(renderPlannerInput(store, incident, [fakeProvider])).toContain(
-      "## 10. Situation from the last cycle\n  (none)",
+      "## 9. Situation from the last cycle\n  (none)",
     );
     store.record("i1", "plan.applied", "runtime", {
       rationale: "narrow in",
@@ -242,7 +242,7 @@ describe("planner", () => {
       },
     });
     const text = renderPlannerInput(store, incident, [fakeProvider]);
-    expect(text.split("## 10. Situation from the last cycle\n")[1]).toBe(
+    expect(text.split("## 9. Situation from the last cycle\n")[1]).toBe(
       [
         "changed: the greps landed",
         "hypothesis: focus() scrolls the resting selection",
@@ -289,26 +289,24 @@ describe("planner", () => {
       capability requests answered:
         (none)
 
-      ## 2. Verified claims
-        - c-verified: /repo/src/view.ts:88 matches {"pattern":"scrollTo","text":"el.scrollTo(0, bottom)"} (confidence 1; evidence /repo/src/view.ts:88)
+      ## 2. Claims
+        - c-asserted: /repo/src/view.ts:88 runs_after_delete true (asserted, inferred; confidence 0.7; evidence /repo/src/view.ts:80) [from investigate task t-inv, session sess-1]
+        - c-verified: /repo/src/view.ts:88 matches {"pattern":"scrollTo","text":"el.scrollTo(0, bottom)"} (verified, observed; confidence 1; evidence /repo/src/view.ts:88) [from grep task t-grep]
 
-      ## 3. Asserted claims
-        - c-asserted: /repo/src/view.ts:88 runs_after_delete true (inferred; confidence 0.7; evidence /repo/src/view.ts:80) [from investigate task t-inv, session sess-1]
-
-      ## 4. Unit tree
+      ## 3. Unit tree
         i1-command [active] command: where deletion moves the scroll position
           u-scroll [active] where the scroll position is set after a delete
 
-      ## 5. Tasks completed since the last cycle
+      ## 4. Tasks completed since the last cycle
         - t-grep (grep, under u-scroll): objective "find scrollTo calls"; inputs {"root":"src","pattern":"scrollTo"}; expected "every call site"; criteria ["each match cited"]; result {"matches":1}; claims c-verified
 
-      ## 6. Tasks that came back insufficient since the last cycle
+      ## 5. Tasks that came back insufficient since the last cycle
         - t-interp (interpret): "say why the view scrolls" needed retrievable_fact: the delete handler's body
 
-      ## 7. Open tasks
+      ## 6. Open tasks
         - t-open [ready] under u-scroll: investigate — read the delete handler; inputs {"question":"what does deleteComment do?"}; fake/fake-small; depends on t-grep
 
-      ## 8. Capabilities and models
+      ## 7. Capabilities and models
       capabilities, each with the inputs a task to it must carry:
         - check_path [deterministic, read_only]: Establish whether a path exists and what it is (typical 0.001s)
           inputs: { path: string, required }
@@ -327,7 +325,7 @@ describe("planner", () => {
       providers and models:
         - fake: fake-large, fake-small
 
-      ## 9. Rules the validator applies
+      ## 8. Rules the validator applies
         - Capabilities exist: every task names a registered capability.
         - Units exist: every task's unit and every new unit's parent is an active unit id or the ref of a unit created in this plan; a closed unit takes no new work.
         - No cycles: the tree stays a tree; a unit ref is used once, is not an existing unit id, and does not start with the incident id; a task ref likewise against task ids, and new tasks' dependsOn form no cycle.
@@ -336,15 +334,15 @@ describe("planner", () => {
         - Span of control: no unit ends the plan with more than 7 direct children, units and tasks combined; target 5.
         - Effect policy: only read_only capabilities in v0.
         - Budget respected: a task's budget, where it sets one, fits inside the incident's remaining budget; a session-backed task carries a time bound and, when the incident bounds tokens, a token bound; a deterministic task needs neither.
-        - Dependencies resolve: every dependsOn names a task in the incident that is completed or still open and not cancelled in this plan, or the ref of a task created in this plan; every cancelTasks names an open task, once; every claimsToVerify names an asserted claim; every evidenceFrom claim exists, and every evidenceFrom task is completed or in the task's dependsOn.
+        - Dependencies resolve: every dependsOn names a task in the incident that is completed or still open and not cancelled in this plan, or the ref of a task created in this plan; every cancelTasks names an open task, once; every evidenceFrom claim exists, and every evidenceFrom task is completed or in the task's dependsOn.
         - Model known: every task to a session-backed capability names a provider and a model that provider serves; a task to a deterministic capability names neither.
         - Closing is clean: a unit closed in this plan is active, has no running task after this plan's cancels, is closed once, and is given no new unit or task in the same plan.
-        - Status is earned: satisfied requires every open task completed or cancelled, no new tasks, and at least one verified claim; satisfied or failed raises no question, capability request or grant request; blocked raises at least one.
-        - Inferred links are worked: every inferred link in the situation names what settles it: a task in this plan by its ref, an open task by its id, a question this plan raises by its position, or a reproduce task by its ref or id; every claim id in proven, inferred and keep names a claim in the incident, and every proven claim is verified.
+        - Status is earned: satisfied requires every open task completed or cancelled, no new tasks, and at least one observed claim; satisfied or failed raises no question, capability request or grant request; blocked raises at least one.
+        - Inferred links are worked: every inferred link in the situation names what settles it: a task in this plan by its ref, an open task by its id, a question this plan raises by its position, or a reproduce task by its ref or id; every claim id in proven, inferred and keep names a claim in the incident, and every proven claim has basis observed, whichever task observed it.
       rejected last cycle:
         - Span of control: u-scroll would have 8 children
 
-      ## 10. Situation from the last cycle
+      ## 9. Situation from the last cycle
         (none)"
     `);
   });
@@ -379,7 +377,6 @@ describe("planner", () => {
         },
       ],
       cancelTasks: [],
-      claimsToVerify: [],
       questionsForHuman: [],
       grantRequests: [],
       capabilityRequests: [],
@@ -432,7 +429,7 @@ describe("planner", () => {
       expect(
         sent.prompt.startsWith("# Incident file\n\n## 1. Command picture"),
       ).toBe(true);
-      expect(sent.prompt).toContain("## 9. Rules the validator applies");
+      expect(sent.prompt).toContain("## 8. Rules the validator applies");
     } finally {
       delete process.env.NOSCOPE_STUB_OUTPUT;
       delete process.env.NOSCOPE_STUB_LOG;

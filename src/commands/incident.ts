@@ -331,7 +331,6 @@ async function cycle(
   for (const q of plan.questionsForHuman) ctx.io.out(`  ask: ${q}`);
   for (const r of plan.capabilityRequests)
     ctx.io.out(`  request capability: ${r.need} (${r.why})`);
-  for (const id of plan.claimsToVerify) ctx.io.out(`  verify claim ${id}`);
   ctx.io.out(`  status: ${plan.incidentStatus}`);
   const verdict = validateAndRecord(store, incident, plan, providers);
   if (!verdict.ok) {

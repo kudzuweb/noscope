@@ -423,7 +423,7 @@ describe("dispatcher, from the review", () => {
     store.close();
   });
 
-  it("a deterministic result promotes a matching asserted claim, and the event records how", async () => {
+  it("a matching deterministic claim leaves an asserted claim's status alone: status is a label, not a verdict", async () => {
     const store = new Store(":memory:");
     const { incident, task } = scriptedIncident(store);
     const subject = `${join(tree, "a.txt")}:2`;
@@ -475,22 +475,23 @@ describe("dispatcher, from the review", () => {
     });
     await dispatch(store, incident, { cwd: tree });
     const claims = store.listClaims("i1");
-    expect(claims.find((c) => c.id === "c-guess")?.status).toBe("verified");
+    const match = claims.find(
+      (c) =>
+        c.status === "verified" &&
+        c.subject === subject &&
+        c.predicate === "matches",
+    );
+    expect(match?.provenance.taskId).toBe("t-grep");
+    expect(claims.find((c) => c.id === "c-guess")?.status).toBe("asserted");
     expect(claims.find((c) => c.id === "c-other")?.status).toBe("asserted");
-    const promotion = store
+    const statusChanges = store
       .listEvents("i1")
-      .find(
+      .filter(
         (e) =>
-          e.type === "claim.verified" && e.payload.promotedBy !== undefined,
+          (e.payload.mutation as { kind?: string } | undefined)?.kind ===
+          "claim.status",
       );
-    expect(promotion?.payload).toMatchObject({
-      promotedBy: {
-        taskId: "t-grep",
-        capability: "grep",
-        inputs: { root: tree, pattern: "delete" },
-        matchingClaimId: expect.any(String),
-      },
-    });
+    expect(statusChanges).toEqual([]);
     store.close();
   });
 });
@@ -595,7 +596,6 @@ describe("incident step", () => {
         },
       ],
       cancelTasks: [],
-      claimsToVerify: [],
       questionsForHuman: [],
       grantRequests: [],
       capabilityRequests: [],

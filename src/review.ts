@@ -228,7 +228,6 @@ export function renderReview(
   let applied = 0;
   let rejectedPlans = 0;
   let ruleLines = 0;
-  let promoted = 0;
   let sessionsRan = 0;
   let deterministicRan = 0;
   let failedWithoutRunning = 0;
@@ -256,7 +255,7 @@ export function renderReview(
     let verdict: string;
     if (appliedEvent !== undefined) {
       applied += 1;
-      verdict = `applied ${str(a.incidentStatus)}  units +${list(a.units).length} -${list(a.closedUnits).length}  tasks +${list(a.tasks).length} cancelled ${list(a.cancelledTasks).length}  claimsToVerify ${list(a.claimsToVerify).length}`;
+      verdict = `applied ${str(a.incidentStatus)}  units +${list(a.units).length} -${list(a.closedUnits).length}  tasks +${list(a.tasks).length} cancelled ${list(a.cancelledTasks).length}`;
     } else if (rejections.length > 0) {
       rejectedPlans += 1;
       verdict = `rejected on ${rejections.length} rule line(s)`;
@@ -304,8 +303,6 @@ export function renderReview(
             claim.provenance.sessionId,
           );
       }
-      if (e.type === "claim.verified" && mutationKind(e) === "claim.status")
-        promoted += 1;
     }
     const ranInCycle = new Set<string>();
     for (const e of cycle.events) {
@@ -411,7 +408,7 @@ export function renderReview(
     `tasks: ${sessionsRan + deterministicRan} ran (${deterministicRan} deterministic, ${sessionsRan} sessions) of ${tasks.length} created${failedWithoutRunning === 0 ? "" : `, ${failedWithoutRunning} failed before running`}`,
   );
   lines.push(
-    `claims: ${byStatus("verified")} verified, ${byStatus("asserted")} asserted, ${byStatus("rejected")} rejected; ${promoted} promoted`,
+    `claims: ${byStatus("verified")} verified, ${byStatus("asserted")} asserted, ${byStatus("rejected")} rejected`,
   );
   lines.push(questions.length === 0 ? "questions: none" : "questions:");
   for (const q of questions) lines.push(`  ${q}`);
