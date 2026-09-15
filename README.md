@@ -45,7 +45,7 @@ tokens, not the call's summed input; the IC is never compacted, so this is what 
 below Claude Code's limit.
 `NOSCOPE_LIVE=1` also runs the live tests, which call the real binary: a Haiku session, a
 Haiku leader sending a two-member `pinger` strike team, a Haiku initial IC sizing up this
-checkout read-only and one sizing up the first incident's diagnostic objective, and a
+checkout read-only and one sizing up a diagnostic objective on it, and a
 `reproduce` session that drives Playwright's MCP server, which needs Playwright's Chromium
 installed (`npx playwright install chromium`) and network access for
 `npx --yes @playwright/mcp@latest`.

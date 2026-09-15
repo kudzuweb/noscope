@@ -695,7 +695,7 @@ export const IncidentBriefing = z
       .string()
       .min(1)
       .describe(
-        "What sort of incident this is, in a few words, read from the objective's verb: determine, identify, explain or find is a diagnosis (a bug hunt, a question about a codebase); build, change, fix or add is a build (a feature, a migration)",
+        "What sort of incident this is, in a few words, read from the objective's verb: determine, identify, explain or find, or a question (where, what, why), is a diagnosis (a bug hunt, a question about a codebase); build, change, fix or add is a build (a feature, a migration)",
       ),
     dominantProblem: z
       .string()
@@ -710,7 +710,7 @@ export const IncidentBriefing = z
       .array(z.string().min(1))
       .min(1)
       .describe(
-        "Objectives for the first operational period, as you see them, scoped to the objective's verb: a diagnosis (determine, identify, explain, find) takes no fix objective, since the answer is the cause; a build (build, change, fix, add) takes one",
+        "Objectives for the first operational period, as you see them, scoped to the objective's verb: a diagnosis (determine, identify, explain, find, or a question: where, what, why) takes no fix objective, since the answer is the cause; a build (build, change, fix, add) takes one",
       ),
     initialOrganization: z
       .array(z.string().min(1))

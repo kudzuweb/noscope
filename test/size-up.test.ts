@@ -831,10 +831,10 @@ describe("the initial IC and the transfer of command", () => {
       "A check is one look at whether a thing exists, answers, or is where the objective says it is",
     );
     expect(INITIAL_IC_ROLE).toContain(
-      "An objective that asks to determine, identify, explain or find is answered by the cause or the place it names: it takes no fix objective, no fix unit and no question about what the intended behavior should be, because the answer is the cause",
+      "An objective that asks to determine, identify, explain or find, or asks a question (where, what, why), is a diagnosis, answered by the cause or the place it names: it takes no fix objective, no fix unit and no question about what the intended behavior should be, because the answer is the cause",
     );
     expect(INITIAL_IC_ROLE).toContain(
-      "An objective that asks to build, change, fix or add takes those",
+      "An objective that asks to build, change, fix or add is a build and takes those",
     );
     expect(INITIAL_IC_ROLE).toContain(
       "ask only what no tool could find and the objective does not already settle",
@@ -855,7 +855,7 @@ describe("the initial IC and the transfer of command", () => {
   });
 
   it.skipIf(process.env.NOSCOPE_LIVE !== "1")(
-    "live: a Haiku initial IC sizes up the first incident's diagnostic objective and proposes no fix (R4-8)",
+    "live: a Haiku initial IC sizes up a diagnostic objective on this checkout and proposes no fix (R4-8)",
     { timeout: 400_000 },
     async () => {
       const { incident } = scriptedIncident(new Store(":memory:"));
@@ -863,7 +863,7 @@ describe("the initial IC and the transfer of command", () => {
         {
           ...incident,
           objective:
-            "Determine why Roughdraft scrolls to the bottom comment after a comment is deleted, instead of staying where the deleted comment was, and identify the code path responsible",
+            "Determine why the Incident Commander runs on the model the briefing names rather than --initial-model, and identify the code path that sets the root unit's leader at transfer of command",
           constraints: ["read only; the checkout is not to be changed"],
         },
         {

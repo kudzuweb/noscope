@@ -2016,7 +2016,7 @@ Not exactly to spec, with reasons:
 - Strike teams, lacks at the leader, the handoff and a `not_met` report did not occur; the
   write-up lists them as not exercised.
 
-## R4-8: The size-up scoped to the kind (#PR, merged 2026-09-15)
+## R4-8: The size-up scoped to the kind (#40, merged 2026-09-15)
 
 R4-8 of the round 4 plan. Forced by run 003 (R3-10): both size-ups, on an objective that
 asked to determine a cause and identify a code path, proposed a fix objective ("Implement
@@ -2027,16 +2027,17 @@ at the cost of a question round before it started. Built: prompt text and schema
 descriptions, no mechanism. `INITIAL_IC_ROLE` (`src/size-up.ts`) gains one paragraph: the
 objectives, the units and the questions follow from the kind of incident, and the kind
 follows from the objective's verb; an objective that asks to determine, identify, explain
-or find is answered by the cause or the place it names, so it takes no fix objective, no
-fix unit and no question about what the intended behavior should be, because the answer is
-the cause and the fix is another incident unless the objective asks for it; an objective
-that asks to build, change, fix or add takes those. The question sentence now says a
+or find, or asks a question (where, what, why), is a diagnosis, answered by the cause or
+the place it names, so it takes no fix objective, no fix unit and no question about what
+the intended behavior should be, because the answer is the cause and the fix is another
+incident unless the objective asks for it; an objective that asks to build, change, fix or
+add is a build and takes those. The question sentence now says a
 question for Mauria is only what no tool could find and the objective does not already
 settle; R3-8's "a check is one look" sentence stands. The ask in `renderSizeUpPrompt` says
 the objectives and organization are scoped to the objective's verb and repeats the question
 rule. `IncidentBriefing` keeps every field; four descriptions say the same: `kind` is read
-from the objective's verb (determine, identify, explain, find is a diagnosis; build, change,
-fix, add is a build), `initialObjectives` takes no fix objective on a diagnosis,
+from the objective's verb (determine, identify, explain, find, or a question, is a
+diagnosis; build, change, fix, add is a build), `initialObjectives` takes no fix objective on a diagnosis,
 `initialOrganization` no fix unit, `questionsForHuman` no intended-behavior question and
 only what no tool could find and the objective does not settle. DESIGN.md's Model choices
 row for the initial IC, the preamble row's summary of `INITIAL_IC_ROLE` and the
@@ -2046,30 +2047,31 @@ README's list of live tests follow.
 Tests (`test/size-up.test.ts`): the role pins the "a check is one look" sentence, the
 diagnostic and build sentences and the question rule; the JSON schema sent to the provider
 carries the three scoped descriptions; the rendered ask carries the scoping. A live test
-behind `NOSCOPE_LIVE=1` sizes up the first incident's objective on Haiku against the
-checkout and asserts no initial objective or unit matches fix, implement, remediate or
-patch, and no question mentions intended behavior.
+behind `NOSCOPE_LIVE=1` sizes up a diagnostic objective on Haiku against the checkout it
+runs in ("Determine why the Incident Commander runs on the model the briefing names rather
+than --initial-model, and identify the code path that sets the root unit's leader at
+transfer of command", the first incident's shape on code the size-up can read) and asserts
+no initial objective or unit matches fix, implement, remediate or patch, and no question
+mentions intended behavior.
 
-Observed in the live test (2026-09-15, Claude Code 2.1.272, the noscope checkout, the first
-incident's objective without its path): Haiku made 25 tool calls in about 100 seconds
-looking for Roughdraft in a checkout that does not contain it, then wrote: kind "bug hunt";
-two needs, both unchecked (the Roughdraft codebase, a browser to reproduce); two
-objectives, "find the comment deletion handler and its effects on scroll state" and "find
-where scroll position is managed and what triggers scroll changes"; one unit, "one unit to
-read the deletion handler and scroll management code, leader on claude-haiku-4-5"; no
-questions; four hazards; `claude-sonnet-5` as the incoming commander, "which requires subtle
-judgment about framework behavior and state flow; Sonnet 5 handles this well and remains
-reliable across resumed IC turns". No fix objective, no fix unit, no intended-behavior
-question, where run 003's two briefings had one of each. One run on one objective; the
-fourth run (R4-10) is the measure.
+Observed in the live test (2026-09-15, Claude Code 2.1.272, the noscope checkout): Haiku
+made 19 tool calls in 72 seconds (`Grep`, `Read`, and `ls`, `find` and `grep` through
+Bash), then wrote: kind "diagnosis"; a dominant problem naming `recordTransfer` in `ic.ts`,
+`store.setUnitLeader` and the `unit.leader` mutation, and that `--initial-model` only ever
+routes the size-up; four needs, all checked with the file and lines each check showed;
+three objectives ("Determine where the incident briefing's incomingCommander field is
+written and what value it carries", "Identify the code path from transfer of command
+recording through store mutation application that sets the root unit's leader", "Verify
+that --initial-model only affects the size-up session"); three investigation units, one per
+flow (size-up, transfer, model selection), each a read on the small model; no questions;
+three hazards on where the precedence hides; the small model as the incoming commander,
+"a diagnosis with a read-only investigation scope". No fix objective, no fix unit, no
+intended-behavior question, where run 003's two briefings had one of each. The test passes
+the fake provider's model list, as R3-8's live test does, so the briefing named `fake-small`
+rather than a Claude model. One run on one objective; the fourth run (R4-10) is the measure.
 
 Not exactly to spec, with reasons:
 
-- The live test's objective is the first incident's without its trailing "in
-  ~/Documents/Projects/roughdraftplus", so the test runs on any machine against the
-  checkout it is in; the size-up then cannot find the code, which is why the live briefing's
-  needs are unchecked and why it spent its calls searching. The assertion, that a diagnostic
-  objective draws no fix, does not depend on the code being there.
 - The ask in `renderSizeUpPrompt` changed too, though the plan names only the role text and
   the schema: it is the one place the field list is rendered per call, and its old
   parenthetical on questions ("only what only Mauria knows or may decide") would have
