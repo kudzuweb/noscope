@@ -45,8 +45,9 @@
 // `model_refusal_no_fallback` system line with the stream's snake_case keys
 // (`api_refusal_category`, NOSCOPE_STUB_REFUSE_CATEGORY, default reasoning_extraction; the
 // transcript spells them apiRefusalCategory), a synthetic assistant line with stop_reason
-// refusal and its stop_details, and a result with stop_reason refusal and the call's usage,
-// then exits 1, as Claude Code 2.1.272 did on 2026-09-15. Each
+// refusal and the stop_details the transcript records on it, and a result with stop_reason
+// refusal and the call's usage, then exits 1, on the shape Claude Code 2.1.272 logged on
+// 2026-09-15 (the system line's keys from the binary's serializer, not seen live). Each
 // NOSCOPE_STUB_CALLS line also carries `concurrent`, how many other stub processes on the same
 // log were still running when this one started.
 import {
