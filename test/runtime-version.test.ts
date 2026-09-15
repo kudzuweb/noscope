@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -29,10 +29,18 @@ describe("the runtime tag (R4-12)", () => {
     expect(describeRuntime(checkout)).toBe(dirty ? `${head}-dirty` : head);
   });
 
-  it("is unknown where there is no checkout", () => {
+  it("is unknown where there is no checkout, and inside a checkout whose root is elsewhere", () => {
     expect(describeRuntime(join(tmpdir(), "noscope-no-such-checkout"))).toBe(
       "unknown",
     );
+    // A directory inside this checkout is not a checkout itself, so it is not tagged
+    // with this checkout's HEAD.
+    const nested = mkdtempSync(join(checkout, "node_modules", ".nested-"));
+    try {
+      expect(describeRuntime(nested)).toBe("unknown");
+    } finally {
+      rmSync(nested, { recursive: true });
+    }
   });
 
   it("the build writes the tag beside the compiled module, and the module reads it back", () => {

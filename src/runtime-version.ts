@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 /**
@@ -19,14 +19,26 @@ function git(cwd: string, args: readonly string[]): string | null {
 }
 
 /**
- * The commit `cwd`'s checkout is at, `-dirty` when a tracked file differs from it, and
- * `unknown` when there is no git or no checkout.
+ * The commit the checkout rooted at `cwd` is at, `-dirty` when a tracked file differs
+ * from it, and `unknown` when there is no git or `cwd` is not a checkout's root: a
+ * noscope directory that only sits inside another repository would otherwise be tagged
+ * with that repository's HEAD.
  */
 export function describeRuntime(cwd: string): string {
+  const top = git(cwd, ["rev-parse", "--show-toplevel"]);
+  if (top === null || top === "" || !sameDirectory(top, cwd)) return UNKNOWN;
   const head = git(cwd, ["rev-parse", "HEAD"]);
   if (head === null || head === "") return UNKNOWN;
   const changed = git(cwd, ["status", "--porcelain", "--untracked-files=no"]);
   return changed === null || changed === "" ? head : `${head}-dirty`;
+}
+
+function sameDirectory(a: string, b: string): boolean {
+  try {
+    return realpathSync(a) === realpathSync(b);
+  } catch {
+    return false;
+  }
 }
 
 /** Writes the tag of `checkout` into `dir`'s version file and returns it. */
