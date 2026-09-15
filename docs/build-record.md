@@ -3542,7 +3542,7 @@ Not exactly to spec, with reasons:
   base form's fields in `outfit`, since `base` is the one type a plan may create; a second
   plannable type needs `UnitProposal` built from the registry first.
 
-## R4-13: Fourth run (#PR, merged 2026-09-15)
+## R4-13: Fourth run (#52, merged 2026-09-15)
 
 R4-13 of the round 4 plan, the last row: the first incident's objective run live a fourth
 time with every code row of round 4 merged (PRs 40 to 51, the runtime tag `3b2cd7a` on every

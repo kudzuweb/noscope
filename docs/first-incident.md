@@ -542,7 +542,7 @@ once, so the reproduce was the only session task running and the code unit did n
 period. In period 2 the planner wrote that "the three readings run in parallel", and two of
 the three investigates had no dependency and were ready at the start, but all three ran
 inside the code unit's leader session, which R4-9 keeps sequential: the second started when
-the first ended and the third when the second ended, with a leader turn between each.
+the first ended and the third when the second ended, with continue turns between them.
 
 ### The round-4 changes, cycle by cycle
 
@@ -550,7 +550,7 @@ the first ended and the third when the second ended, with a leader turn between 
 |---|---|---|
 | Size-up | Haiku classified the incident ("diagnosis: a scroll behavior bug hunt"), found `.focus()` at line 1884 in 28 tool calls, sketched a reproduce unit on Haiku and a code unit on Opus 5, recommended Opus 5 with a reason, listed four hazards, and asked two questions about intended behavior. | R4-8 held on objectives and units: no fix objective and no fix unit, where both of run 003's briefings had proposed one. It did not hold on questions: both questions asked what the behavior should be, which the role text says a diagnosis does not need. R4-12 stamped the runtime tag on every event from the first. |
 | 1, the IC's first turn | Opus 5 evaluated the briefing item by item (two accepted, three rewritten, the questions discarded as answered), set four period objectives and three priorities, wrote the situation, assigned two greps and a `git_history` under command, and was rejected: its situation listed four inferred links under claim ids it had invented (`ic-inf-1-focus-triggers-scroll` and three more), and no claim existed yet. | R4-5's situation is the IC's, and the validator's "Situation grounded" rule checked it against the claim table; the turn cost $0.31 and 66 seconds, and the period number did not advance. R4-6's `assignTasks` carried the deterministic work under command. |
-| 2, the resubmitted turn, the draft, the refusal, the pass | The same turn resubmitted with the four links written into the hypothesis and the period objectives, each naming the task ref that settles it. The planner drafted two units, both with Opus 5 leaders: the reproduce unit with one reproduce task, the code unit with an investigate carrying a strike team of two Sonnet 5 readers and an interpret, plus a grep of `node_modules/@tiptap/core` under command that the investigate depended on. The review turn on Opus 5 was refused; Opus 4.8 approved the draft as drafted. Five tasks started at once; the TipTap grep failed in 3 milliseconds (`ENOENT`, no such directory), the other three deterministic tasks landed 157 verified claims, and the reproduce observed the bug twice with the instrumented stack. The reproduce unit's leader reported met, picture changed, and the pass stopped. | R4-7 captured the category from the record (`reasoning_extraction` on `command.failed`, where run 003 recorded `unstated`), retried the review on Opus 4.8 once, recorded the transfer of kind `fallback`, and moved the root unit's leader so every later call stayed there. R4-6 ran the root's deterministic tasks with no leader turn; the planner's rule put the session tasks under led units. R4-9 started the five tasks together. R4-10 created both units as type `base` under the root of type `ic`. R4-1's block under the report, which `incident show` prints with the change report's renderer, shows the reproduce task, its seven claims by id and its 37 tool calls by tool, and the IC's verdict cites those claim ids. The strike team was declared but its task never ran. |
+| 2, the resubmitted turn, the draft, the refusal, the pass | The same turn resubmitted with the four links written into the hypothesis and the period objectives, each naming the task ref that settles it. The planner drafted two units, both with Opus 5 leaders: the reproduce unit with one reproduce task, the code unit with an investigate carrying a strike team of two Sonnet 5 readers and an interpret, plus a grep of `node_modules/@tiptap/core` under command that the investigate depended on. The review turn on Opus 5 was refused; Opus 4.8 approved the draft as drafted. Five tasks started at once; the TipTap grep failed in 4 milliseconds (`ENOENT`, no such directory), the other three deterministic tasks landed 157 verified claims, and the reproduce observed the bug twice with the instrumented stack. The reproduce unit's leader reported met, picture changed, and the pass stopped. | R4-7 captured the category from the record (`reasoning_extraction` on `command.failed`, where run 003 recorded `unstated`), retried the review on Opus 4.8 once, recorded the transfer of kind `fallback`, and moved the root unit's leader so every later call stayed there. R4-6 ran the root's deterministic tasks with no leader turn; the planner's rule put the session tasks under led units. R4-9 started the five tasks together. R4-10 created both units as type `base` under the root of type `ic`. R4-1's block under the report, which `incident show` prints with the change report's renderer, shows the reproduce task, its seven claims by id and its 37 tool calls by tool, and the IC's verdict cites those claim ids. The strike team was declared but its task never ran. |
 | 3, the verdict, the re-cut, the code unit's pass | The IC accepted the reproduce unit's report, citing its claims by id, rewrote the situation with eleven proven claims and one inferred link (the minified-to-source mapping, `001-c163`, at 0.7), and set four period objectives that dropped the TipTap re-read because the running bundle had been observed. The planner cancelled the two stranded tasks and re-cut the code unit as a grep, three investigates and an interpret; the IC corrected one `dependsOn` line, the planner redrafted, the IC approved. The four session tasks ran in the leader's session one after another with a continue turn between each; the leader reported met with the two residuals stated. | R4-2's `accepted` closed the reproduce unit and recorded `report.reviewed`. R4-5's "Inferred links are worked" rule had one link to check, and the plan settled it by the trace task. The review round pre-empted the validator: the "Dependencies resolve" rule that cost run 002 a cycle was caught by the IC before the validator saw the plan. R4-3, R4-4 and R4-11 had no occasion: the verdict was accepted, and two units are one short of the third repeat that prints the offer to save a config. |
 | 4, the closing turn | The IC accepted the code unit's report on its observed claims, wrote a situation with twelve proven claims, no inferred link and fourteen kept, recorded the answer and the two residuals in the period objectives, and set `satisfied`. | R4-2's second `accepted` closed the last unit; the incident closed on the IC's judgment with no planner call. |
 
@@ -573,14 +573,14 @@ Each is a candidate for round 5, with its evidence.
 - **R4-8 stopped the fix and not the questions.** The briefing had no fix objective and no
   fix unit, and still asked two intended-behavior questions (`001-q01`, `001-q02`), which
   blocked the incident until the operator answered as out of scope and the IC discarded them.
-  R4-8's live test (`test/size-up.test.ts`) asserts that no question matches "intended" or
-  "should it" and both of these would have failed it, so the role text's clause on questions
-  did not hold on Haiku in this run.
+  R4-8's live test (`test/size-up.test.ts`) asserts that no question matches "intended", or
+  "should" followed by it, the, deletion or focus, and both of these would have failed it,
+  so the role text's clause on questions did not hold on Haiku in this run.
 - **A grep on a missing root fails silently and strands its dependants.** The planner set the
   TipTap grep's root to `node_modules/@tiptap/core` at the repository root, and roughdraftplus
   is a pnpm workspace: the package is at `packages/app/node_modules/@tiptap/core`, a symlink
   into `node_modules/.pnpm/` (verified by `readlink`, 2026-09-15). The grep failed with
-  `ENOENT` in 3 milliseconds, the investigate and interpret that depended on it stayed
+  `ENOENT` in 4 milliseconds, the investigate and interpret that depended on it stayed
   pending for the whole period with no event saying why, and the code unit did no work until
   the IC read the failure in the change report and the planner cancelled and re-cut. The
   IC's review had praised the grep for reading the installed version and did not check the
@@ -599,11 +599,11 @@ Each is a candidate for round 5, with its evidence.
   call ($0.72) and a second review ($1.16 for 850 output tokens on a 114k context), $2.84
   and 168 seconds in all. An amend that patches by ref would have cost one short turn.
 - **Continue turns are the leader's cost centre.** The code unit's four continue turns
-  produced 74 output tokens each and cost $0.35, $0.03, $0.51 and $0.92 as the session's
-  context grew from 34k to 100k with every investigate it ran inside itself; the last one
-  wrote 91k to cache and read 8.6k, the intermittent cache read from R3-3 again. A leader
-  whose remaining tasks are already sequenced by the plan is being asked, at full context
-  price, whether to continue.
+  produced 74 output tokens each after the first (347) and cost $0.35, $0.03, $0.51 and
+  $0.92 as the session's context grew from 34k to 100k with every investigate it ran inside
+  itself; the last one wrote 91k to cache and read 8.6k, the intermittent cache read from
+  R3-3 again. A leader whose remaining tasks are already sequenced by the plan is being
+  asked, at full context price, whether to continue.
 - **Independent investigates inside a leader do not run at once.** The planner's rule says
   independent tasks run together and the planner wrote that its three readings would; two
   of the three had no dependency and were ready together; all three ran one after another
