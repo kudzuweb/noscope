@@ -621,6 +621,43 @@ function briefingKept(events: readonly Event[]): string {
   return `briefing kept: ${count("accepted")} of ${verdicts.length} item(s) accepted, ${count("rewritten")} rewritten, ${count("discarded")} discarded`;
 }
 
+/**
+ * The cycle's wall time beside what its tasks spent (R4-9): the cycle from the event that
+ * opened it to its last event; the dispatch from the first `task.started` to the last task
+ * ending or leader turn; the tasks' recorded seconds summed; and `parallel`, the sum over
+ * the dispatch span, which is 1.0 when tasks ran one after another and higher when they
+ * overlapped. Nothing when no task ran in the cycle.
+ */
+function wallTimeLine(
+  cycle: Cycle,
+  taskSeconds: number,
+  tasks: number,
+): string | null {
+  if (tasks === 0) return null;
+  const at = (e: Event | undefined) =>
+    e === undefined ? Number.NaN : Date.parse(e.createdAt);
+  const all = [cycle.opened, ...cycle.proposals, ...cycle.events];
+  const cycleSpan = (at(all.at(-1)) - at(cycle.opened)) / 1000;
+  const started = cycle.events.find((e) => e.type === "task.started");
+  const ended = [...cycle.events]
+    .reverse()
+    .find(
+      (e) =>
+        OUTCOME_TYPES.has(e.type) ||
+        e.type === "unit.reported" ||
+        e.type === "unit.continued",
+    );
+  const dispatchSpan = (at(ended) - at(started)) / 1000;
+  const parallel =
+    Number.isFinite(dispatchSpan) && dispatchSpan > 0
+      ? `, parallel ${(taskSeconds / dispatchSpan).toFixed(2)}x`
+      : "";
+  const dispatch = Number.isFinite(dispatchSpan)
+    ? `, dispatch ${dispatchSpan.toFixed(1)} s`
+    : "";
+  return `  wall time: cycle ${cycleSpan.toFixed(1)} s${dispatch}; ${tasks} task(s) summing ${taskSeconds.toFixed(1)} s${parallel}`;
+}
+
 const OUTCOME_TYPES = new Set<Event["type"]>([
   "task.completed",
   "task.failed",
@@ -787,12 +824,14 @@ export function renderReview(
       }
     }
     const ranInCycle = new Set<string>();
+    let taskSeconds = 0;
     for (const e of cycle.events) {
       if (e.type !== "task.usage") continue;
       const taskId = taskIdOf(e);
       ranInCycle.add(taskId);
       const task = taskById.get(taskId);
       const usage = (e.payload.usage ?? {}) as Partial<Usage>;
+      taskSeconds += usage.seconds ?? 0;
       // A retry on the fallback (R4-7) records its model on the usage; the task's own is the plan's.
       const model = str(e.payload.model) || task?.model || null;
       const capability = task?.capability ?? "unknown";
@@ -844,6 +883,8 @@ export function renderReview(
           `    insufficient: ${list(outcome.payload.needed).map(String).join("; ")}`,
         );
     }
+    const wall = wallTimeLine(cycle, taskSeconds, ranInCycle.size);
+    if (wall !== null) lines.push(wall);
     // A leader's turns: every one costs its own call on the unit's leader model; a turn
     // that filed a report is listed with the report's outcome. The turns' own tool calls
     // are filed under the unit with no task, so they are listed once per unit after its

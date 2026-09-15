@@ -170,6 +170,12 @@ describe("incident review", () => {
     expect(text).toMatch(
       /001-t01 grep \(deterministic\): \d+\.\d s {2}completed {2}claims 1 verified$/m,
     );
+    // The cycle's wall time beside the sum of its tasks' seconds (R4-9): the dispatch span
+    // runs from the grep's start to the leader's report, so it is never zero here.
+    expect(text).toMatch(
+      /^ {2}wall time: cycle \d+\.\d s, dispatch \d+\.\d s; 1 task\(s\) summing \d+\.\d s, parallel \d+\.\d\dx$/m,
+    );
+    expect(text.match(/^ {2}wall time:/gm)).toHaveLength(1);
     expect(text).toMatch(/cycle 2 {2}\S+ {2}applied satisfied/);
     expect(text).toMatch(
       /planner\s+claude-opus-5\s+2\s+3,000\s+84\s+3\.0\s+\$0\.02/,
