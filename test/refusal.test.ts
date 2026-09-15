@@ -795,6 +795,11 @@ describe("a refusal replaces the session", () => {
     expect(review).toContain(
       "refusals: 1: leader of 001-u02 reasoning_extraction on claude-haiku-4-5 (session stub-session-3)",
     );
+    // The revision's window opens at the verdict, so the refused brief turn is priced in
+    // it beside the fallback session's two turns and the grep (R4-3).
+    expect(review).toMatch(
+      /^ {2}001-u02 revision 1: 3 turn\(s\), 1 task\(s\), in 26,067 {2}out 84 {2}3\.0 s {2}\$0\.\d\d; progress → progress; changed since the reviewed report: nothing new$/m,
+    );
   });
 
   it("a leader refused on the fallback too has its unit report not_met with both refusals, written by the runtime, and the pass stops on it", {

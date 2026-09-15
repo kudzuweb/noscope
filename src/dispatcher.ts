@@ -517,7 +517,7 @@ function reportRefusals(
   seat: "leader" | "task",
   refusals: readonly RefusedCall[],
   actor: string,
-): LeaderReport {
+): { report: LeaderReport; revision: number } {
   const who =
     seat === "leader" ? "the unit's leader" : "a task session under the unit";
   const report: LeaderReport = {
@@ -538,7 +538,7 @@ function reportRefusals(
     refusals,
     ...(revision === 0 ? {} : { revision }),
   });
-  return report;
+  return { report, revision };
 }
 
 /** The reasons the validator refused this unit's leader's last assignment, since the leader's last turn, for its next prompt; a report the runtime wrote after two refusals is not a turn of the leader's. */
@@ -743,7 +743,7 @@ async function leaderTurn(
   };
   const refusedTwice = (refusals: RefusedCall[]): Turned => {
     const current = { ...unit, sessionId: null };
-    const report = reportRefusals(
+    const { report } = reportRefusals(
       store,
       incident,
       current,
@@ -1304,7 +1304,7 @@ export async function dispatch(
         // with both refusals, picture-changing, and the pass ends for the IC to decide,
         // whether or not the leader has reported this pass.
         if (ending.refusals !== undefined) {
-          const report = reportRefusals(
+          const { report, revision } = reportRefusals(
             store,
             incident,
             unit,
@@ -1312,7 +1312,12 @@ export async function dispatch(
             ending.refusals,
             actor,
           );
-          reports.push({ unitId: unit.id, sessionId: null, report });
+          reports.push({
+            unitId: unit.id,
+            sessionId: null,
+            report,
+            ...(revision === 0 ? {} : { revision }),
+          });
           done.add(unit.id);
           stop({ stopped: null, pictureChanged: unit.id });
           continue;

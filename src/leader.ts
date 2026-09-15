@@ -142,6 +142,10 @@ export const LEADER_TURN_SCHEMA = jsonSchemaFor(LeaderTurn);
 const NO_TASKS_REMAIN =
   "No ready tasks remain in your unit. File your report against the unit's objective.";
 
+/** The same on a revision brief (R4-3): the brief may call for new work, so the leader is asked to assign or report rather than for its report alone. */
+const NO_TASKS_REMAIN_ON_BRIEF =
+  "No ready tasks remain in your unit. Assign tasks for what the instructions say is missing and continue, or file your report against the unit's objective.";
+
 /** What a continuing leader is told about asking for a team on the task that runs next. */
 const STRIKE_TEAM_OFFER =
   "To send a strike team on it, set requestStrikeTeam: each kind with its model, tools, prompt, count and why; the kinds are defined for the call that runs the task.";
@@ -786,7 +790,8 @@ function renderRevisionBrief(
  * many ready tasks remain, which runs next and the team it declares if any, which tasks of
  * the unit are still running in sessions of their own, which have ended in this pass and
  * reach the leader on turns of their own, and what the leader is asked for: its report when
- * nothing remains, nothing runs and nothing is left to hear, otherwise its next move.
+ * nothing remains, nothing runs and nothing is left to hear (on a revision brief, to
+ * assign what the instructions call for or report), otherwise its next move.
  */
 export function renderTurnPrompt(
   cause: TurnCause,
@@ -826,7 +831,9 @@ export function renderTurnPrompt(
         ? "No task of yours is ready to start. Your next move: continue and wait for the running ones, or report now if the picture changed."
         : landed.length > 0
           ? "No task of yours is ready to start and none is running. Your next move: continue to hear the tasks that ended, or report now if the picture changed."
-          : NO_TASKS_REMAIN;
+          : cause.status === "revise"
+            ? NO_TASKS_REMAIN_ON_BRIEF
+            : NO_TASKS_REMAIN;
   return [
     ...came,
     "",

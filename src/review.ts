@@ -636,9 +636,9 @@ function changesOf(report: Event | undefined): string[] {
 }
 
 /**
- * Each revision the IC sent back (R4-3), from its delivery (`unit.revised`, the brief's
- * turn) to the unit's next report: what it cost, the unit's leader turns, refused turns
- * and tasks between the two, priced as the cycles price them, and what changed between
+ * Each revision the IC sent back (R4-3), from its verdict (the `report.reviewed` its
+ * `unit.revised` names) to the unit's next report: what it cost, the unit's leader turns,
+ * refused turns and tasks between the two, priced as the cycles price them, and what changed between
  * the report the IC reviewed and the one that answered it: the outcome, and the changes
  * the answer carries that the reviewed report did not. A revision still open (no report
  * after the brief) says so.
@@ -656,18 +656,24 @@ function revisionLines(
   for (const d of delivered) {
     const unitId = str(d.payload.unitId);
     const reviewed = reportById.get(str(d.payload.reportId));
+    // The window opens at the verdict, not the delivery: a brief turn refused on the
+    // unit's model files `leader.failed` before `unit.revised` is written, and that call
+    // is the revision's too.
+    const start =
+      events.find((e) => e.id === str(d.payload.reviewedId))?.sequence ??
+      d.sequence;
     const answer = events.find(
       (e) =>
         e.type === "unit.reported" &&
         e.payload.unitId === unitId &&
-        e.sequence > d.sequence,
+        e.sequence > start,
     );
     const end = answer?.sequence ?? Number.POSITIVE_INFINITY;
     const totals = emptyTotals();
     let turns = 0;
     let tasksRan = 0;
     for (const e of events) {
-      if (e.sequence <= d.sequence || e.sequence > end) continue;
+      if (e.sequence <= start || e.sequence > end) continue;
       if (
         (e.type === "unit.continued" ||
           e.type === "unit.reported" ||

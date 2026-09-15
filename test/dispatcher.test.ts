@@ -2962,7 +2962,11 @@ describe("dispatcher, revise (R4-3)", () => {
         "Your unit's objective stands.",
       ].join("\n"),
     );
-    expect(prompt).toContain("No ready tasks remain in your unit.");
+    expect(
+      prompt.endsWith(
+        "\nNo ready tasks remain in your unit. Assign tasks for what the instructions say is missing and continue, or file your report against the unit's objective.",
+      ),
+    ).toBe(true);
     const events = store.listEvents("i1");
     const types = events
       .map((e) => e.type)

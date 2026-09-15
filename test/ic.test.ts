@@ -1843,7 +1843,7 @@ describe("the IC above the planner", () => {
         "  - observation over reading",
         "Your unit's objective stands. Assign tasks under your unit for what the instructions say is missing (assignTasks) and continue, or report now if they need no new work; your next report is revision 1.",
         "",
-        "No ready tasks remain in your unit. File your report against the unit's objective.",
+        "No ready tasks remain in your unit. Assign tasks for what the instructions say is missing and continue, or file your report against the unit's objective.",
       ].join("\n"),
     );
     expect(turns[2]?.prompt).toContain("Task 001-t02 (grep) completed.");

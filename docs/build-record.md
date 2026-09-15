@@ -2744,8 +2744,11 @@ first call. `renderTurnPrompt` renders the cause (`renderRevisionBrief`) after t
 endings and before the refused-assignment reasons and the ask: the instructions and why,
 the report reviewed in one line (`describeReviewedReport`), the period objectives and
 priorities (`renderPeriod`), the answers when there are any, and what the leader does
-with it; the ask is then the usual one, so a unit with no task is asked for its report and
-one with tasks is asked to continue or report. `unit.revised` is a new `EventType` (47),
+with it; the ask is then the usual one, except that a unit with no task, nothing running
+and nothing to hear is asked to assign what the instructions call for and continue, or
+file its report (`NO_TASKS_REMAIN_ON_BRIEF`; review finding: the plain ask for a report
+contradicted the brief two lines above), and one with tasks is asked to continue or
+report. `unit.revised` is a new `EventType` (47),
 recorded in the turn's transaction after `leader.started` and before the `unit.continued`
 or `unit.reported` the turn produced, with the seat (unit, session, provider, model),
 `reviewedId`, `reportId`, `instructions` and `revision`; a pass that dies before the
@@ -2753,8 +2756,9 @@ leader answers leaves it unwritten, so the next pass delivers the brief again.
 `revisionOf` counts the unit's revise verdicts from `report.reviewed`; `leaderTurn` and
 `reportRefusals` write it as `revision` on `unit.reported` when it is above zero, so the
 report after the first revise carries `revision: 1` and the runtime's `not_met` for a
-brief refused twice carries the same number. `Dispatched.reports` carries `revision`, and
-`step` prints `reported met (revision 1)`; the change report and `incident show` head the
+brief refused twice carries the same number. `Dispatched.reports` carries `revision` on a
+leader's report and on the runtime's (`reportRefusals` returns the number it wrote; review
+finding), and `step` prints `reported met (revision 1)`; the change report and `incident show` head the
 report `met (revision 1)` (`renderReport`), which keeps the stub's report-line pattern
 intact. `incident review` (`src/review.ts`) lists each delivery in its cycle (`revision 1
 briefed to the leader of <unit> on report <id>: <instructions>`), marks a leader's report
@@ -2762,7 +2766,10 @@ line and the runtime's with the revision, and after the report-verdict counts pr
 `revisions: N` with one line per delivery (`revisionLines`): the unit's turns (its
 `unit.continued`, `unit.reported` and `leader.failed` events) and its tasks' `task.usage`
 between the `unit.revised` and the unit's next `unit.reported`, with their tokens, seconds
-and cost priced as the cycles price them, the outcome of the reviewed report and of the
+and cost priced as the cycles price them (the window opens at the verdict's
+`report.reviewed`, not the delivery, so a brief turn refused on the unit's model, filed
+as `leader.failed` before `unit.revised`, is priced in it; review finding), the outcome
+of the reviewed report and of the
 answer, and the answer's `changed` lines not in the reviewed report; a revision with no
 report after its brief says `not yet reported`. `LEADER_ROLE` gains a paragraph on the
 verdicts and the brief: the unit and its objective stand, the instructions open the next
@@ -2831,8 +2838,9 @@ Not exactly to spec, with reasons:
   `ValidationContext` gains `revised` (the keys of `revisedUnits`, set in
   `validationContext`), "Closing is clean" refuses such a close with `unit X has a
   revision not yet delivered; its leader answers it first`, and `validateCommand` runs
-  the command rules with `revised` blanked, since the IC's next command turn comes after
-  the pass that delivers the brief and its own close stays free. The planner's rule text,
+  the command rules with `revised` blanked, since the IC's close is its own decision and
+  its verdict on the runtime's report for a unit whose brief was refused twice must be
+  able to close the unit. The planner's rule text,
   the planner snapshot and DESIGN.md Step 5's row follow; a validator test pins the
   plan's rejection, the IC's close of the same unit passing, and the close freed once
   `unit.revised` follows.

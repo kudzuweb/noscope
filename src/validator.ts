@@ -54,7 +54,7 @@ export type ValidationContext = {
   usage: Usage;
   /** Units whose leader has a session and has not reported since one of the unit's tasks ended; such a unit cannot close yet. */
   owing: ReadonlySet<string>;
-  /** Units with a revise verdict not yet delivered to their leader (R4-3); a plan cannot close one, while the IC's own `closeUnits` may (`validateCommand` blanks this). */
+  /** Units with a revise verdict not yet delivered to their leader (R4-3); a plan cannot close one, while the IC's own close is its decision (`validateCommand` blanks this). */
   revised: ReadonlySet<string>;
   /** The incident's log, from which a unit's share of the budget is computed. */
   events: readonly Event[];
@@ -1107,8 +1107,9 @@ export function validateCommand(
     },
     rationale: turn.rationale,
   };
-  // The IC's next command turn comes after the pass that delivered its revise, so its
-  // own close of a revised unit is free; the plan drafted in the verdict's cycle is not.
+  // The IC's own close of a revised unit is free: the close is its decision, and its
+  // verdict on the runtime's report for a unit whose brief was refused twice must be
+  // able to close the unit; the plan drafted in the verdict's cycle is not.
   const commandCtx: ValidationContext = { ...ctx, revised: new Set() };
   return [
     ...RULES.filter(({ name }) => COMMAND_RULES.includes(name)).flatMap(
