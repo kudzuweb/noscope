@@ -692,8 +692,10 @@ export async function dispatch(
       let unit =
         store.listUnits(incident.id).find((u) => u.id === listed.id) ?? listed;
       let ranInUnit = false;
-      if (resumed.has(unit.id)) {
-        // The leader reads the answers to its requests before its unit runs anything.
+      if (resumed.has(unit.id) && unit.parentId !== null) {
+        // The leader reads the answers to its requests before its unit runs anything. The
+        // root takes no turn (R4-6): a waiting root can only come from a store written
+        // before this, and its answers are read at the command turn.
         resumed.delete(unit.id);
         progressed = true;
         const settled = await settle(unit, answered(unit));

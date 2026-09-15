@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -2013,6 +2013,43 @@ describe("dispatcher, lacks at the leader", () => {
       "question.asked",
       "unit.waiting",
     ]);
+    store.close();
+  });
+
+  it("a root resumed from waiting, which only a store from before R4-6 can hold, takes no leader turn on its resume", async () => {
+    const store = new Store(":memory:");
+    const { incident, unit } = scriptedIncident(store);
+    // A pre-R4-6 root that raised a request and was answered: `unit.resumed` after its
+    // last turn marks it resumed, which used to open a leader turn with the answers.
+    store.setUnitStatus(
+      incident.id,
+      unit.id,
+      "waiting",
+      "dispatcher",
+      "unit.waiting",
+      { unitId: unit.id, requests: [] },
+    );
+    store.setUnitStatus(
+      incident.id,
+      unit.id,
+      "active",
+      "runtime",
+      "unit.resumed",
+      { unitId: unit.id, questionId: "q1" },
+    );
+    const dir = scratch();
+    const env = scripted(dir, {});
+    const result = await dispatch(store, incident, {
+      cwd: tree,
+      env: { NOSCOPE_CLAUDE_BIN: stub, ...env },
+    });
+    expect(result).toEqual({
+      ran: [],
+      reports: [],
+      stopped: null,
+      pictureChanged: null,
+    });
+    expect(existsSync(env.NOSCOPE_STUB_CALLS as string)).toBe(false);
     store.close();
   });
 
