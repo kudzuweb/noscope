@@ -1340,7 +1340,7 @@ files, or by default one objective and `continue`, and `approve`; `NOSCOPE_STUB_
 lines carry the kinds `command` and `review`. DESIGN.md Vocabulary (action plan, cycle,
 incident file, a new operational period row), the ICS mapping rows for the Incident
 Commander and Planning Section, the action plan and the Planning P, Step 1's layout, Step 2
-(the `period_json` column, the three event types, the version 4 migration), Step 3 (the
+(the `period_json` column, the new event types, the version 5 migration), Step 3 (the
 preamble row), Step 4 (retitled the IC and the planner: the briefing, both schemas, the
 review and the diff, the channel table), Step 5 (the root is never closed; what a command
 turn is held to), Step 6 (the IC's usage and activity), Step 7 (`create`, `show`, `step`,
@@ -1358,7 +1358,7 @@ step with the IC named; a `satisfied` turn with no observed claim and a close of
 are rejected with `command.rejected` and named in the next briefing, a `blocked` turn with
 a question stops before the planner and `answer` reopens the incident, and a `failed` turn
 closes it; the change report and briefing rendered from a scripted log; the two schemas;
-the diff. The models test counts 35 event types; the store test migrates a version 4 file,
+the diff. The models test counts 39 event types; the store test migrates a version 5 file,
 replays the period, and asserts the root session is dropped and a leader's kept; the
 planner snapshot shows the period in section 1; the review test pins the IC lines and the
 verdict counts, and that a log from before the IC shows none; the step test's printout

@@ -322,7 +322,8 @@ export class Store {
             this.db.exec(
               "ALTER TABLE tasks ADD COLUMN strike_team_json TEXT NOT NULL DEFAULT '[]'",
             );
-        // Version 4 incidents had no operational period, and a root unit's session started
+        },
+        // Version 5 incidents had no operational period, and a root unit's session started
         // under R3-4 keeps the leader role text of that build in its snapshotted system
         // prompt (a resumed call keeps the first call's system prompt), so it is released
         // through the log, one `leader.released` per root unit with a session, so that a
@@ -345,7 +346,7 @@ export class Store {
                 unitId: root.id,
                 released: root.session_id,
                 reason:
-                  "the session was started before the IC had its own role text (schema version 4)",
+                  "the session was started before the IC had its own role text (schema version 5)",
               },
               { kind: "unit.session", unitId: root.id, sessionId: null },
             );

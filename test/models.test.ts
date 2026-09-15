@@ -237,7 +237,7 @@ describe("contracts", () => {
       "leader.released",
     ])
       expect(EventType.options).toContain(type);
-    expect(EventType.options).toHaveLength(37);
+    expect(EventType.options).toHaveLength(39);
   });
 
   it("a leader's turn is a report or a continue; a not_met report says why and what to do, and a discrepancy rides on either", () => {
