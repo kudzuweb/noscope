@@ -317,3 +317,106 @@ Each round-2 change was watched for on every cycle. Where one did not happen, th
   1227 s, $6.48; each installs instrumentation and takes screenshots around the steps it is
   there to observe. The brief is small (the first reproduce's first cache write was 57k of
   its 1.39M input), so the size is inferred to come from the session's own tool calls.
+
+## Third run
+
+The same objective run a third time on 2026-09-15 (10:15 to 11:09 UTC), with round 3 merged
+(PRs 28 to 37, then the two fixes the run forced, 38 and 39), from the same roughdraftplus
+working directory at commit 6a996e8, on `NOSCOPE_DB=~/.noscope/third-run.sqlite`, with the
+scratch document restored from its pristine copy before each `create`, the same two
+constraints as run 002, and one priority: "settling by observation over reading". Mauria was
+asleep; the session running the build stepped it by hand and answered the operational
+questions as the operator, saying so in each answer.
+
+The run is two incidents on one database. Incident 001 ran the size-up on Haiku, transferred
+command to Opus 5 as the briefing recommended, and got one good command turn; then the review
+turn, a resumed call carrying the planner's draft, came back from the API with `stop_reason`
+`refusal` (category `reasoning_extraction`: "reverse engineering or duplicating model
+outputs"), and the same session refused every later resume in under a second. The runtime
+retried the flagged session forever, which became PR 38 (a refused session is filed, released
+and replaced once; a second refusal stops the cycle). A fresh Opus 5 session then refused its
+command turn on a prompt that was only the change report and the incident file. Claude
+Code's advice is to change the model, and the design routes the IC's model per incident, so
+incident 002 was created with `--ic-model claude-sonnet-5`, the override recorded on the
+transfer beside the briefing's own recommendation (Haiku). Incident 001 cost $1.11 and is
+kept as the record of the refusal.
+
+### The answer, and how it was reached
+
+The same code path as runs 001 and 002: the rail's Delete button, `deleteComment` in
+`PageCard.tsx`, the bare `.focus()` at line 1884 chained before `removeCommentIds`, TipTap's
+`focus()` defaulting `scrollIntoView` to true and leaving the selection where it was (a caret
+near the document end), and the animation-frame `scrollIntoView` that scrolls the caret to
+five pixels inside the bottom edge of the container. The reproduce observed it twice, with
+two different middle comments deleted from two different positions, both landing at the same
+`scrollTop` (5481) and the same selection offset (14695 of 14695), which the interpret read
+as the landing point being a property of the code path and not of the deleted comment. The
+three other rail actions (`focusComment` and `focusSuggestion`) pass `{ scrollIntoView:
+false }` and `deleteComment` does not.
+
+Two things run 002 had settled this run left open, and said so: the causal claim (002-c021)
+is inferred at 0.65 with the strongest alternative named (a coincident scroll from
+`removeCommentIds` or a layout pass), and the origin of the pre-delete selection at the
+document end (002-c024, inferred at 0.4) was not observed; run 002 had observed the
+mount-time `setContent` at line 1422 mapping it there. The IC declared `satisfied` on the
+reports with those two links open, judging that neither changes the cause or the responsible
+line, which is the same judgment run 002's closing rationale made.
+
+### Measures beside runs 001 and 002
+
+| Measure | Run 001 | Run 002 | Run 003 (incident 002) |
+|---|---|---|---|
+| Cycles | 12 plans, 10 applied, 2 rejected | 8 plans, 7 applied, 1 rejected | 3 command turns, 2 plans drafted, 1 applied, 1 rejected on 5 rule lines |
+| Wall time | 54 min | 63 min | 29 min, plus the 40 min incident 001 spent refused and the two fixes |
+| Events | 632 | 367 | 138 |
+| Planner | 12 calls, 1.09M input, 74k output, $2.40 to $12.72 | 8 calls, 265k input, 84k output, $4.76 | 2 calls, 17k input, 15k output, $0.50 |
+| IC | none | none | 5 calls on Sonnet 5, 277k input (all cache writes), 32k output, $1.28; the last turn's context was 134k, above the 120k handoff threshold, so one more turn would have handed off |
+| Initial IC | none | none | 1 Haiku call, 608k input (mostly cache reads), 68 s, $0.15, 21 tool calls |
+| Sessions | 7, $3.96 to $27.44 | 11, $11.44 | 3 (one reproduce, one investigate, one interpret), $1.99; plus 5 leader turns on the root, $0.94 |
+| Deterministic tasks | 22 | 7 | 2 |
+| Claims | 404 verified, 67 asserted | 162 verified, 86 asserted | 11 verified, 13 asserted |
+| Human channel | 1 question about the bug | 2 questions and 1 capability request about the fixture | 2 questions from the size-up about intended behavior, answered as out of scope by the operator; none from the IC |
+| Total cost at list rates | $6.37 to $40.15 | $16.20 | $4.86, or $5.97 with incident 001 |
+
+### The round-3 changes, cycle by cycle
+
+| Step | What happened | Round 3 under test |
+|---|---|---|
+| Size-up | Haiku classified the incident ("bug hunt: comment deletion scroll behavior"), found `.focus()` at line 1884 in its one look, sketched two units, recommended Haiku as commander with a reason, asked two questions, and listed hazards. In incident 001 the briefing had sketched a `fix_designer` unit and a "implement the fix" objective. | The briefing's shape and the transfer happened as designed; the size-up over-scopes into fixing and asks intended-behavior questions the objective does not need. Its role text should say that a diagnostic objective takes no fix objective and no question about intended behavior. |
+| IC's first turn | Sonnet evaluated the briefing item by item: accepted the reproduction and the trace, rewrote the "confirm the fix would work" objective into establishing what each `.focus()` call site passes, discarded the fix unit and the plan unit citing the operator's answers, and set five period objectives and two priorities. | The evaluation ruling worked: 3 of 5 accepted, 1 rewritten, 1 discarded, each with a why, and the IC was not bound by the Haiku's plan. |
+| Draft 1 and review | The planner drafted one working unit with a Sonnet leader holding five tasks and an interpret at command. The IC amended (small changes to instructions). The validator rejected the amended plan on five Effect-policy lines: the unit's Bash allowlist named `grep`, `rg`, `git log`, `git status`, `git diff`, and the rule compared against the seven-command in-process list. | The review round ran as ruled (draft, verdict, apply). The rejection was the runtime's fault: PR 39 gives sessions their own read-only list and names it in the planner's rule. |
+| IC's second turn | The IC restated the period, noted the rejection and its cause, and added a priority that a new unit's allowlist use only the published list. | The IC read `command.rejected` and steered; a rejected turn did not advance the period number. |
+| Draft 2 and review | The planner put all five tasks directly under `command` and no new unit, "not to be rejected a second time on the allowlist"; the IC approved, calling that a better route than its own. | A validator rejection changed the organization's shape: the planner traded a unit for safety. With PR 39 that pressure is gone. |
+| Dispatch | The reproduce (Sonnet, 34 tool calls, 268 s, $0.59) confirmed the behavior twice; the read and grep landed 11 verified claims; the investigate read the installed TipTap's `focus()`; the interpret produced 13 claims with the causal chain and the alternative. All ran under `command`, so the root leader, which is the IC's own session, took the investigate as an assignment inside itself and was resumed after each task for a turn, then reported "met, picture changed". | Per-task events and costing held for tasks run inside a leader's session. Two findings: with the tasks under `command`, the IC's session did the investigate itself, against the ruling that its digging is assigned; and five leader turns on a 100k context cost $0.94, since each resumed call rewrote the whole context at cache-write rates, as R3-3 measured. |
+| IC's third turn | The IC read the report and declared `satisfied` with a rationale citing the observed claims and holding scope. | The IC's judgment closed the incident; no planner call was needed. |
+
+Not exercised this run: strike teams (no task declared one), lacks at the leader (no
+`insufficient`, no resource request), the handoff (the IC closed one turn before the
+threshold), and a `not_met` report.
+
+### What the run found in the runtime
+
+- **Opus 5 refuses the IC's resumed turns.** Category `reasoning_extraction`, twice on one
+  session and once on a fresh one; the first command turn on a fresh session passed each
+  time. Sonnet 5 ran every turn. The prompts that drew it ask the model to judge and rewrite
+  another model's structured output, which is the IC's job; whether wording can avoid it is
+  open. Fixed in the runtime by PR 38 (a refusal replaces the session, twice stops the
+  cycle); the category was not captured from the stream (review shows `unstated`), only the
+  transcript carried it, which is a gap for PR 38's follow-up.
+- **The effect policy checked the wrong list.** Fixed by PR 39; the planner's rule now names
+  the list.
+- **Tasks under `command` run inside the IC.** The built rule that a leader runs matching
+  tasks inside its own session applies to the root, so a planner that puts session tasks
+  under `command` has the IC do the work. Design call for the revisit list: session-backed
+  tasks under `command` should run in their own sessions, or the planner should be told to
+  put session work under a unit.
+- **Leader turns on a large context are the new cost centre.** Five root-leader turns at
+  60k to 115k context cost $0.94, more than the planner's two calls; the resumed-call cost
+  model from R3-3 (whole context at cache-write rates) held.
+- **The size-up over-scopes.** Both briefings proposed fixing the bug and asked what the
+  intended behavior should be; the IC discarded those items each time, at the cost of a
+  question round before the IC started. The initial IC's role text should tie its objectives
+  and questions to the kind of incident.
+- **Reproduce is still the cost centre per task** ($0.59, 910k input mostly cached, 268 s)
+  but one was enough where run 002 needed five, because the IC's period objectives told the
+  planner exactly what to observe.
