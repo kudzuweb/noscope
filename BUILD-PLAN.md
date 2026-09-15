@@ -2,7 +2,8 @@
 
 Derived from `DESIGN.md` at commit 4d5f68a and `docs/architecture.html`. Fifteen PRs, each
 mergeable on its own, the CLI working after every one; round 2, from the first incident's
-audit, and round 3, the Incident Commander and units with leaders, follow at the end. Every PR targets `main`. The design
+audit, round 3, the Incident Commander and units with leaders, and round 4, the IC reviews
+the work, follow at the end. Every PR targets `main`. The design
 document is the contract; where this plan and it disagree, the design wins and this plan
 gets fixed.
 
@@ -708,3 +709,184 @@ answers whether the IC ever changed the planner's draft and whether any unit's
 `picture_changed` report changed the period. Every design call the run forces goes on the
 revisit list.
 
+## Round 4: the IC reviews the work
+
+Derived from run 003's write-up in `docs/first-incident.md`, the comparison in
+`docs/instructions-only-run.md`, and Mauria's ruling of 2026-09-15 08:22 CDT, recorded in the
+quipu thread `ics-runtime.md`: the IC reviews a unit's work when its report comes in and
+decides whether the unit is done, goes back for revision, or hands its slice to a different
+unit with instructions built on what it found and did not find. Nine PRs in dependency
+order, each mergeable on its own, the CLI working after every one; the last reruns the first
+incident. Numbered R4-1 to R4-9 here; the build record maps each to its GitHub number. The
+conventions above apply, and the design wins where this plan disagrees with it.
+
+What round 4 builds, in one paragraph. When a unit reports, the IC sees the unit's work
+beside the report and answers each report with one of three verdicts: accepted, revise, or
+reassign. A revise sends the IC's instructions back to the same leader as its next
+assignment; a reassign closes the unit and hands its slice to a new unit under an updated
+situation the planner drafts from. Session tasks under `command` stop running inside the
+IC's own session, the refusal category is captured, the size-up stops proposing fixes, and
+independent units and tasks run at the same time.
+
+| PR | Title | Depends on | Delivers, in one line |
+|---|---|---|---|
+| R4-1 | The work behind the report | none | The IC's change report shows, under each report, the unit's tasks and outcomes, the claims it produced with basis and confidence, and its tool calls by count, clipped per task; `incident show` prints the same. |
+| R4-2 | Report verdicts | R4-1 | `CommandTurn` gains one verdict per report (`accepted`, `revise`, `reassign`, each with instructions and a why); a validator rule requires exactly one per reported unit; `accepted` closes the unit; `report.reviewed` is recorded and counted in review. |
+| R4-3 | Revise | R4-2 | A `revise` verdict resumes the unit's leader with the IC's instructions as a revision brief before any task; the leader may assign tasks under its unit and must report again, numbered. |
+| R4-4 | Reassign | R4-2 | A `reassign` verdict closes the unit and records a reassignment (the IC's instructions plus the closed unit's claims by reference) that the planner must give to a new unit, rendered into the planner's input and the new unit's orientation. |
+| R4-5 | Session work leaves `command` | none | A session-backed task under the root unit runs in its own session, never inside the IC's; the planner's rule says session work goes under a unit. |
+| R4-6 | The refusal category from the stream | none | The provider reads `apiRefusalCategory` from the stream's system line, or from the transcript when the stream lacks it, so review names the category. |
+| R4-7 | The size-up scoped to the kind | none | The initial IC's role text ties objectives and questions to the incident kind: a diagnostic objective takes no fix objective, no fix unit and no intended-behavior question. |
+| R4-8 | Parallel dispatch | none | Independent units run their passes concurrently, and independent tasks in their own sessions run at once, under a concurrency cap and the existing stop conditions. |
+| R4-9 | Fourth run | all | The first incident rerun with everything above, measured beside runs 001 to 003: the IC's verdicts by kind, what each revise or reassign cost and found, and the wall time parallel dispatch saved. |
+
+R4-5, R4-6, R4-7 and R4-8 can run in parallel with R4-1 to R4-4.
+
+### R4-1: The work behind the report
+
+Scope: `renderChangeReport` in `src/ic.ts` renders, under each `unit.reported` since the IC
+last acted, the unit's tasks since its previous report (id, capability, objective, outcome,
+and a session result's summary or a deterministic result's line count), the claims those
+tasks produced (id, subject, predicate, basis, confidence), and the unit's tool calls by tool
+name with counts, from `tool.called`. Each task's block is clipped at a size cap
+(`NOSCOPE_REPORT_WORK_CHARS`, default 1,500) with the task id as the pointer to the full
+record, so a report's work adds a bounded amount to the IC's context and the handoff
+threshold stays meaningful. `incident show` prints the same block under each unit's last
+report. The IC role text says the report is the leader's account and the work is what to
+judge it against. DESIGN.md Step 4 (the change report) and Step 7 follow.
+
+Acceptance: a snapshot of a change report with one reported unit showing its two tasks,
+their claims and tool counts; a test that a task over the cap is clipped with its id
+present; `show` prints the block.
+
+### R4-2: Report verdicts
+
+Scope: `CommandTurn` gains `reportVerdicts`, an array of `{ unitId, verdict: "accepted" |
+"revise" | "reassign", instructions, why }`, where `instructions` is required for `revise`
+and `reassign` and must be empty for `accepted` (refinements enforced after parse; strict
+object). A validator rule "Reports answered": every unit whose report appears in the change
+report has exactly one verdict, and no verdict names a unit that did not report. `accepted`
+closes the unit (folded with `closeUnits`, which stays for units the IC closes without a
+report); `revise` and `reassign` are R4-3's and R4-4's. `applyCommand` records
+`report.reviewed` per verdict with the report's event id, the verdict, the instructions and
+the why. The IC role text: a report is accepted when the work shows the unit's objective met
+on observed claims; revised when the same unit is placed to finish it and the instructions
+say what is missing; reassigned when a different shape of unit would do better, with the
+instructions carrying what the first unit found and did not find. `incident review` counts
+verdicts by kind per incident and per unit, and `incident tree` marks each unit's last
+verdict. DESIGN.md Step 4, Step 5 and Step 7 follow.
+
+Acceptance: models tests for the three verdicts and the instruction refinements; validator
+tests for a missing verdict, a verdict on an unreported unit, and two verdicts on one unit;
+a run test on the stub where an accepted report closes the unit and `review` counts it.
+
+### R4-3: Revise
+
+Scope: on a `revise` verdict, the unit stays active and the dispatcher, at the start of the
+next pass, resumes its leader with a revision brief before any task: the IC's instructions,
+the report the IC reviewed, and the period objectives. The leader answers a `LeaderTurn` as
+usual, so it may assign tasks under its unit (R3-6) or report at once; its next report
+carries `revision: N`, counting from 1. A leader with no session (released, refused, or
+replaced) gets a fresh oriented session with the brief. A revise stays in the same period,
+since nothing else changed. `unit.revised` records the verdict's delivery. `incident review`
+lists each revision with its cost and what changed between the reports. DESIGN.md Step 6
+follows.
+
+Acceptance: a run test on the stub where the IC revises, the leader assigns one grep and
+reports again with `revision: 1`, and the IC accepts; a test that a revise on a unit whose
+leader has no session starts a fresh one with the brief.
+
+### R4-4: Reassign
+
+Scope: on a `reassign` verdict, the unit closes (its session demobilized, its tasks
+cancelled) and `applyCommand` records a reassignment: the IC's instructions, the closed
+unit's id and objective, and its claims by id. The planner's input gains a section
+"Reassignments" listing each open reassignment with its instructions and the claims it
+carries; a validator rule "Reassignments taken" requires the plan to create a unit whose
+proposal names the reassignment id (`takes`), or the IC's verdict to have said the slice is
+dropped (`instructions` beginning `drop:`), which closes it. The new unit's orientation
+carries the instructions and the predecessor's claims by reference, so its leader starts
+from what was found. The planner keeps writing the overall situation and folds a reassignment
+into it; the IC does not own the situation in this round. DESIGN.md Step 4, Step 5 and Step 6
+follow.
+
+Acceptance: a run test on the stub where the IC reassigns, the planner's next input shows
+the reassignment, a plan without a taking unit is rejected, a plan with one is applied and the
+new unit's first brief carries the instructions and the claim ids; a `drop:` verdict closes
+the reassignment.
+
+### R4-5: Session work leaves `command`
+
+Scope: `runsInsideLeader` returns false when the unit is the root, so a session-backed task
+under `command` runs in its own session and its result is rendered into the IC's next
+briefing as a task result, not into a leader turn; the IC's own assignments under `command`
+stay deterministic. The planner's rule text says session work belongs under a unit with a
+leader, and the validator warns (not rejects) on a session task under the root. The IC role
+text drops "a task under command runs under you as under any leader" for the sentence that
+its tools are for deterministic tasks. `docs/first-incident.md`'s third-run finding is the
+reason. DESIGN.md Step 6 follows.
+
+Acceptance: a dispatcher test that an investigate under the root runs in its own session and
+the root's session takes no leader turn for it; the planner snapshot shows the rule.
+
+### R4-6: The refusal category from the stream
+
+Scope: `refusalOf` in `src/providers/claude-code.ts` reads `apiRefusalCategory` and
+`apiRefusalExplanation` from the stream's `system` line with `subtype:
+model_refusal_no_fallback`; when the stream carries the refusal only as a `stop_reason`, the
+provider reads the session's transcript under the project directory for the system line and
+takes the category from it. `incident review` names the category. The R3-10a Reference row
+records which of the two carried it on 2.1.272.
+
+Acceptance: a provider test on a stream fixture with the system line, and one with only the
+stop reason plus a transcript fixture, both yielding `reasoning_extraction`.
+
+### R4-7: The size-up scoped to the kind
+
+Scope: `INITIAL_IC_ROLE` in `src/size-up.ts` says that the briefing's objectives, units and
+questions follow from the incident kind and the objective's verb: an objective that asks to
+determine, identify or explain takes no fix objective, no fix unit and no question about
+intended behavior, since the answer is the cause; an objective that asks to build, change or
+fix takes them. The `IncidentBriefing` schema's descriptions say the same. The two size-ups of
+run 003 (both proposed fixes and asked intended-behavior questions on a diagnostic objective)
+are the reason. DESIGN.md's Model choices row for the initial IC follows.
+
+Acceptance: the preamble test pins the sentence; a live test behind `NOSCOPE_LIVE=1` sizes up
+the first incident's objective and asserts no objective or unit mentions a fix.
+
+### R4-8: Parallel dispatch
+
+Scope: `dispatch` runs the passes of units with no dependency between them concurrently,
+each leader session its own process, up to `NOSCOPE_PARALLEL` at a time (default 3); inside
+a unit, tasks with no `dependsOn` between them that run in their own sessions start at once,
+while tasks that run inside the leader's session stay sequential. The pass's stop conditions
+hold across concurrent runs: the first picture-changing report ends the pass and the others
+finish the task in flight; a budget stop prevents new starts. Every event keeps its own
+timestamp, so `incident review` costs each task as before and reports the cycle's wall time
+beside the sum of its tasks' seconds. The planner's rule text says independent tasks run at
+once and dependencies are what serialize them. DESIGN.md Step 6 and the Speed section follow.
+
+Acceptance: a dispatcher test on the stub with two independent units whose stub sessions
+sleep, asserting overlapping `task.started` and `task.completed` timestamps and the same
+events as the sequential run; a test that a picture-changing report from one unit ends the
+pass while the other's task in flight completes; a test that the cap holds.
+
+### R4-9: Fourth run
+
+Scope: the first incident's objective run a fourth time from the same roughdraftplus working
+directory at commit 6a996e8, with the scratch document restored, the same constraints and
+priority as run 003, and the IC on the model Mauria names (Sonnet 5 unless she rules
+otherwise); `incident review 004` recorded beside 001 to 003 in `docs/first-incident.md`
+under a "Fourth run" section with the same measures plus the IC's verdicts by kind, what each
+revise or reassign cost and found, and the cycle wall time beside its tasks' summed seconds.
+
+Acceptance: run 004 reaches `satisfied` with the same code path named, and its write-up
+answers whether the IC revised or reassigned any unit and what that changed, and whether the
+selection's origin (open in run 003) was settled.
+
+### Round 4 open questions
+
+| Question | Blocks |
+|---|---|
+| The IC's model while Opus 5 refuses the runtime's resumed turns. Run 004 runs the IC on Sonnet 5 unless Mauria rules otherwise. | R4-9's setup only. |
+| Whether the IC should own the situation once it writes per-slice reassignments. This round keeps it the planner's. | Nothing in this round; a later round if the fourth run shows the two pictures diverging. |
