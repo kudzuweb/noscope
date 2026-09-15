@@ -1654,7 +1654,7 @@ describe("the IC above the planner", () => {
       /set period 2: 1 objective\(s\), 0 close\(s\), 1 verdict\(s\), continue/,
     );
     expect(review).toContain(
-      "  verdict on 001-u02's report: accepted: the handler is at a.txt:2 on an observed claim",
+      `  verdict on 001-u02's report ${report.id}: accepted: the handler is at a.txt:2 on an observed claim`,
     );
     expect(review).toContain(
       "report verdicts: 1: 1 accepted, 0 revise, 0 reassign\n  001-u02: 1 accepted, 0 revise, 0 reassign",
@@ -1704,8 +1704,9 @@ describe("the IC above the planner", () => {
       ["Reports answered", `report ${b.id} has two verdicts`],
       ["Reports answered", `report ${a.id} of unit u-a has no verdict`],
     ]);
-    // An accepted or reassigned unit is closed by its verdict, so naming it in closeUnits
-    // is the conflict, not a second close; the fold keeps "Closing is clean" quiet on it.
+    // A reported unit is never in closeUnits as well: an accepted or reassigned one is
+    // closed by its verdict (the conflict, not a second close; the fold keeps "Closing is
+    // clean" quiet on it), and a revised one stays.
     expect(
       reasons(
         command({
@@ -1714,18 +1715,24 @@ describe("the IC above the planner", () => {
             verdict({
               reportId: b.id,
               unitId: "u-b",
-              verdict: "reassign",
-              instructions:
-                "found the caller, not the reason; a unit with Bash",
+              verdict: "revise",
+              instructions: "read the caller too",
             }),
           ],
-          closeUnits: [{ unitId: "u-a", reason: "done" }],
+          closeUnits: [
+            { unitId: "u-a", reason: "done" },
+            { unitId: "u-b", reason: "done too" },
+          ],
         }),
       ),
     ).toEqual([
       [
         "Reports answered",
         "unit u-a is accepted and in closeUnits; its verdict closes it",
+      ],
+      [
+        "Reports answered",
+        "unit u-b is revised and in closeUnits; a revised unit stays",
       ],
     ]);
     // The verdict's close is held to "Closing is clean" like any close: a unit still

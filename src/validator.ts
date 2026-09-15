@@ -934,8 +934,8 @@ export function verdictCloses(turn: CommandTurn): UnitClose[] {
 /**
  * Every report the change report listed since the IC's last accepted turn has exactly one
  * verdict naming its event id and its unit, and no verdict names a report outside that
- * window or another unit; a unit accepted or reassigned is not in `closeUnits` as well,
- * since its verdict closes it.
+ * window or another unit; a reported unit is not in `closeUnits` as well: an accepted
+ * or reassigned unit is closed by its verdict, and a revised one stays.
  */
 function reportsAnswered(
   turn: CommandTurn,
@@ -957,9 +957,11 @@ function reportsAnswered(
     if (answered.has(v.reportId))
       reasons.push(`report ${v.reportId} has two verdicts`);
     answered.add(v.reportId);
-    if (v.verdict !== "revise" && closing.has(v.unitId))
+    if (closing.has(v.unitId))
       reasons.push(
-        `unit ${v.unitId} is ${v.verdict} and in closeUnits; its verdict closes it`,
+        v.verdict === "revise"
+          ? `unit ${v.unitId} is revised and in closeUnits; a revised unit stays`
+          : `unit ${v.unitId} is ${v.verdict} and in closeUnits; its verdict closes it`,
       );
   }
   for (const [id, report] of awaiting)

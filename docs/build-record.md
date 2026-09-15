@@ -2623,8 +2623,9 @@ after the last accepted `command.turned`. The change report's "unit reports:" no
 that window (before, the reports since the IC's last turn of any kind, which dropped a
 rejected turn's reports from the retry's briefing). The validator's `validateCommand` gains the rule "Reports answered" (a
 `CommandRuleName` beside "Answers match"): each verdict names a report in the window and
-that report's unit, no report has two verdicts, no report is left without one, and a unit
-accepted or reassigned is not in `closeUnits` as well. The verdicts' closes are folded into the plan the command turn is
+that report's unit, no report has two verdicts, no report is left without one, and no
+reported unit is in `closeUnits` as well (an accepted or reassigned unit is closed by its
+verdict; a revised unit stays). The verdicts' closes are folded into the plan the command turn is
 checked as (`verdictCloses`: accepted and reassigned units, reason `<verdict>: <why>`,
 only for verdicts that name a listed report and its unit, and only for units not already
 in `closeUnits`), so "Units exist" and "Closing is clean" hold them like any close: a unit
@@ -2638,7 +2639,7 @@ revised unit stays active for R4-3 to brief. `Commanded.closedUnits` carries bot
 `report.reviewed` is a new `EventType` (46 now, after R4-6's `plan.warned`). `incident step` prints `verdict on
 <unit>'s report <id>: <verdict>: <why>; instructions: …` under the command turn; `incident
 review` says `N verdict(s)` on the command turn's line, lists each verdict under it with
-its why and instructions, and after the IC-verdict line counts `report verdicts: N: a
+the report id, its why and instructions, and after the IC-verdict line counts `report verdicts: N: a
 accepted, b revise, c reassign` for the incident and one line per unit; `incident tree`
 (and the planner's section 3, which shares `describeLeader`) shows `last report: met,
 accepted`, the IC's last verdict from `lastVerdicts` in `src/tree.ts`. `IC_ROLE` says the

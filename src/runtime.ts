@@ -702,6 +702,8 @@ export function applyCommand(
           (ref) => ref,
           now(),
         );
+  // The turn was validated: every verdict names a listed report and its unit, so the
+  // closes here are the same set the validator folded into "Closing is clean".
   const closes = [...turn.closeUnits, ...verdictCloses(turn)];
   store.batch(() => {
     store.setIncidentPeriod(incident.id, period, actor, {

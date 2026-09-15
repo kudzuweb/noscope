@@ -596,10 +596,10 @@ function refusalsLine(events: readonly Event[]): string {
     : `refusals: ${refusals.length}: ${refusals.join(", ")}`;
 }
 
-/** One verdict on a report as `review` lists it (R4-2): the unit, the verdict, its why, and for a revise or reassign its instructions. */
+/** One verdict on a report as `review` lists it (R4-2): the unit and report id, the verdict, its why, and for a revise or reassign its instructions. */
 function describeReportVerdict(e: Event): string {
   const instructions = str(e.payload.instructions);
-  return `verdict on ${str(e.payload.unitId)}'s report: ${str(e.payload.verdict)}: ${clip(str(e.payload.why))}${instructions === "" ? "" : `; instructions: ${clip(instructions)}`}`;
+  return `verdict on ${str(e.payload.unitId)}'s report ${str(e.payload.reportId)}: ${str(e.payload.verdict)}: ${clip(str(e.payload.why))}${instructions === "" ? "" : `; instructions: ${clip(instructions)}`}`;
 }
 
 const REPORT_VERDICT_KINDS = ["accepted", "revise", "reassign"] as const;

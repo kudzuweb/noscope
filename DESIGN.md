@@ -654,7 +654,7 @@ against the root; and by three rules of its own:
 | Rule | Check |
 |---|---|
 | Answers match | Every answer names a waiting unit and an open request that unit raised, as the change report showed it, and no request is answered twice; a permission request is not answered here, since only a grant answers it. |
-| Reports answered | Every report since the IC's last accepted command turn has exactly one verdict naming its event id and its unit; no verdict names a report outside that window or another unit's report; and a unit accepted or reassigned is not in `closeUnits` as well, since its verdict closes it (R4-2). Command files no report (R4-6), so every report in the window is a unit's, the runtime-authored report of a refused unit (R4-7) included. |
+| Reports answered | Every report since the IC's last accepted command turn has exactly one verdict naming its event id and its unit; no verdict names a report outside that window or another unit's report; and no reported unit is in `closeUnits` as well: an accepted or reassigned unit is closed by its verdict, and a revised unit stays (R4-2). Command files no report (R4-6), so every report in the window is a unit's, the runtime-authored report of a refused unit (R4-7) included. |
 | Deterministic only | A task to a session-backed capability is refused with "the IC assigns deterministic work only, and session work goes under a unit", since the root's tasks run with no leader turn (Step 6) and session work is a unit's (R4-6). |
 
 A failing rule is recorded as `command.rejected` and the cycle ends there (Step 4).
