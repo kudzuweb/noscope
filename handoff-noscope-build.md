@@ -50,6 +50,29 @@ Open, all built, all under review or fixes:
 | #44 R4-9 Parallel dispatch | `pr-parallel-dispatch`, `scratchpad/wt-r4-9` | Built (dispatcher rewrite); reviewer `review44-dispatch` running. Merge third, rebased over 42 and 43; expect dispatcher conflicts. |
 | #45 R4-2 Report verdicts | `pr-report-verdicts`, `scratchpad/wt-r4-2` | Approved by `review45-correctness`; builder `build-r4-2` applying three small fixes (revise-plus-closeUnits refused; a comment on the close invariant; `report <id>` in review's line). At its rebase after 42 and 43: drop command's-own-report handling (the root files no report after R4-6), three-way union on CommandRuleName, asPlan as a function of assignTasks, IC_ROLE paragraph merged, EventType 46, rerun the stub test. Merge fourth. |
 
+Results that arrived at the relay after this refresh (digests; full reports at the paths):
+
+- PR 42 (R4-6) review, `review42-correctness`, request changes; report
+  `scratchpad/review42-report.md`. (1) Validator gap, verified by a scratch run:
+  `commandAsPlan.createTasks` is `[]`, so "Status is earned" never sees `assignTasks` and a
+  `satisfied` turn with a grep passes, leaving the incident satisfied with a ready task; fix
+  `createTasks: turn.assignTasks`, drop the duplicate "Units exist" pass at validator.ts:930,
+  test it. (2) and (3) Root task results render unclipped and an insufficient one reads as
+  "completed: {json}"; on the rebase over R4-1 build the "tasks under command" block from
+  R4-1's `tasksCreated`, `describeEnding` and `clipBlock`, which also removes the `tasks`
+  parameter colliding with R4-1's `workChars`. (4) A root task with `dependsOn` on a unit's
+  task waits a cycle; fix the schema text and IC_ROLE. (5) Guard the `resumed` branch with
+  `unit.parentId !== null` for a legacy waiting root. (6) "warned last cycle" repeats after a
+  rejected plan; narrow or note. (7) DESIGN.md Step 5 to match IC_ROLE on assignTasks as the
+  retrievable-fact path. (8) Rebase hazards: PR 45 (CommandRuleName union, `asPlan` rename,
+  duplicate `IC_ACTOR`: R4-2 declares its own in runtime.ts while R4-6 imports the export from
+  leader.ts); PR 43 (its root branch in `leaderTurn` is unreachable after R4-6's throw, and it
+  files a runtime `unit.reported` on the root for a task refused twice, which contradicts
+  "command files no report": decide to list that refusal under "tasks under command" as a
+  failure); PR 44 (both root insertions must be re-placed in the rewritten `pass()`).
+- PR 45 (R4-2) review: approved, seven non-blocking; the fix list already went to
+  `build-r4-2` (see the table above).
+
 Not started: R4-3 (revise), R4-4 (reassign), R4-5 (the IC owns the situation), in that order
 after R4-2; R4-10 (the fourth run) last. The worktrees live under the scratchpad
 `/private/tmp/claude-501/-Users-mauriaparker/da050f04-42b2-4162-9421-387ea5d066a1/scratchpad/`
