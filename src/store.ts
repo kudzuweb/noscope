@@ -33,10 +33,17 @@ export function now(): string {
 
 /**
  * Bumped whenever a table changes shape. A file at an earlier version is migrated in place,
- * one step at a time (1: claims gain `basis`; 2: tasks gain `evidence_from_json`); a file
- * at a later version is refused.
+ * one step at a time (1: claims gain `basis`; 2: tasks gain `evidence_from_json`; 3: units
+ * gain a leader and `purpose` becomes `objective`); a file at a later version is refused.
  */
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
+
+/**
+ * The leader a unit recorded before units had one is read as: the planner's provider and
+ * model, since the planner was then the only seat above a task, with no equipment and no
+ * session, which is true of it.
+ */
+const LEGACY_LEADER = { provider: "claude-code", model: "claude-opus-5" };
 
 const STATE_TABLES = [
   "incidents",
@@ -63,7 +70,11 @@ CREATE TABLE IF NOT EXISTS units (
   id TEXT PRIMARY KEY,
   incident_id TEXT NOT NULL REFERENCES incidents(id),
   parent_id TEXT REFERENCES units(id),
-  purpose TEXT NOT NULL,
+  objective TEXT NOT NULL,
+  leader_json TEXT NOT NULL,
+  equipment_json TEXT NOT NULL DEFAULT '[]',
+  bash_allowlist_json TEXT NOT NULL DEFAULT '[]',
+  session_id TEXT,
   status TEXT NOT NULL,
   created_at TEXT NOT NULL,
   closed_at TEXT
@@ -145,6 +156,21 @@ function withBasis(value: unknown): unknown {
   };
 }
 
+/** A unit recorded before units had a leader (schema version 3) is read the way the migration reads it. */
+function withLeader(value: unknown): unknown {
+  if (value === null || typeof value !== "object" || "leader" in value)
+    return value;
+  const { purpose, ...unit } = value as { purpose?: unknown };
+  return {
+    objective: purpose,
+    leader: LEGACY_LEADER,
+    equipment: [],
+    bashAllowlist: [],
+    sessionId: null,
+    ...unit,
+  };
+}
+
 /**
  * The state change an event records. Every write names one; replay applies exactly that
  * and nothing else, so the tables are always rebuildable from the events (acceptance 7).
@@ -169,7 +195,15 @@ export const Mutation = z.discriminatedUnion("kind", [
     capabilityRequests: z.array(CapabilityRequest),
     at: Timestamp,
   }),
-  z.object({ kind: z.literal("unit.create"), unit: Unit }),
+  z.object({
+    kind: z.literal("unit.create"),
+    unit: z.preprocess(withLeader, Unit),
+  }),
+  z.object({
+    kind: z.literal("unit.session"),
+    unitId: z.string(),
+    sessionId: z.string(),
+  }),
   z.object({
     kind: z.literal("unit.close"),
     unitId: z.string(),
@@ -241,6 +275,28 @@ export class Store {
             this.db.exec(
               `ALTER TABLE tasks ADD COLUMN evidence_from_json TEXT NOT NULL DEFAULT '{"claims":[],"tasks":[]}'`,
             );
+        },
+        // Version 3 units had a purpose and no leader; the purpose is the objective and the
+        // leader is the legacy one, with no session, so the unit stays readable.
+        3: () => {
+          if (hasColumn("units", "purpose"))
+            this.db.exec(
+              "ALTER TABLE units RENAME COLUMN purpose TO objective",
+            );
+          if (!hasColumn("units", "leader_json"))
+            this.db.exec(
+              `ALTER TABLE units ADD COLUMN leader_json TEXT NOT NULL DEFAULT '${JSON.stringify(LEGACY_LEADER)}'`,
+            );
+          if (!hasColumn("units", "equipment_json"))
+            this.db.exec(
+              "ALTER TABLE units ADD COLUMN equipment_json TEXT NOT NULL DEFAULT '[]'",
+            );
+          if (!hasColumn("units", "bash_allowlist_json"))
+            this.db.exec(
+              "ALTER TABLE units ADD COLUMN bash_allowlist_json TEXT NOT NULL DEFAULT '[]'",
+            );
+          if (!hasColumn("units", "session_id"))
+            this.db.exec("ALTER TABLE units ADD COLUMN session_id TEXT");
         },
       };
       const missing = [...Array(SCHEMA_VERSION - version).keys()]
@@ -389,17 +445,34 @@ export class Store {
     );
   }
 
+  /** The leader's session is recorded on the unit once it has run (`leader.started`), so later calls resume it. */
+  setUnitSession(
+    incidentId: string,
+    unitId: string,
+    sessionId: string,
+    actor: string,
+    extra: Extra = {},
+  ): void {
+    this.write(incidentId, "leader.started", actor, extra, {
+      kind: "unit.session",
+      unitId,
+      sessionId,
+    });
+  }
+
+  /** Closing demobilizes the leader: its session id, when it has one, is on `unit.closed`. */
   closeUnit(
     incidentId: string,
     unitId: string,
     reason: string,
     actor: string,
   ): void {
+    const unit = this.listUnits(incidentId).find((u) => u.id === unitId);
     this.write(
       incidentId,
       "unit.closed",
       actor,
-      { reason },
+      { reason, sessionId: unit?.sessionId ?? null },
       { kind: "unit.close", unitId, at: now() },
     );
   }
@@ -662,19 +735,33 @@ export class Store {
         owned(u.incidentId, `unit ${u.id}`);
         this.db
           .prepare(
-            "INSERT INTO units (id, incident_id, parent_id, purpose, status, created_at, closed_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO units (id, incident_id, parent_id, objective, leader_json, equipment_json, bash_allowlist_json, session_id, status, created_at, closed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           )
           .run(
             u.id,
             u.incidentId,
             u.parentId,
-            u.purpose,
+            u.objective,
+            j(u.leader),
+            j(u.equipment),
+            j(u.bashAllowlist),
+            u.sessionId,
             u.status,
             u.createdAt,
             u.closedAt,
           );
         return;
       }
+      case "unit.session":
+        one(
+          this.db
+            .prepare(
+              "UPDATE units SET session_id = ? WHERE id = ? AND incident_id = ?",
+            )
+            .run(m.sessionId, m.unitId, incidentId),
+          `unit ${m.unitId}`,
+        );
+        return;
       case "unit.close":
         one(
           this.db
@@ -809,7 +896,11 @@ function rowToUnit(r: Row): Unit {
     id: r.id,
     incidentId: r.incident_id,
     parentId: nullable(r.parent_id),
-    purpose: r.purpose,
+    objective: r.objective,
+    leader: p(r.leader_json),
+    equipment: p(r.equipment_json),
+    bashAllowlist: p(r.bash_allowlist_json),
+    sessionId: nullable(r.session_id),
     status: r.status,
     createdAt: r.created_at,
     closedAt: nullable(r.closed_at),

@@ -63,6 +63,10 @@ export const EventType = z.enum([
   "capability.answered",
   "tool.called",
   "subagent.ran",
+  "leader.started",
+  "unit.continued",
+  "unit.reported",
+  "picture.discrepancy",
 ]);
 
 export const Budget = z.object({
@@ -92,11 +96,6 @@ export const Usage = z.object({
   costUsd: z.number().nonnegative().optional(),
 });
 
-export const ProviderModel = z.object({
-  provider: z.string().min(1),
-  model: z.string().min(1),
-});
-
 export const Question = z.object({
   id: z.string().min(1),
   text: z.string().min(1),
@@ -122,11 +121,26 @@ export const Incident = z.object({
   updatedAt: Timestamp,
 });
 
+/**
+ * A unit's leader: the session that holds the unit's objective, runs its tasks and reports
+ * against it (DESIGN.md Step 6). The root unit's leader is the Incident Commander.
+ */
+export const Leader = z.object({
+  provider: z.string().min(1),
+  model: z.string().min(1),
+});
+
 export const Unit = z.object({
   id: z.string().min(1),
   incidentId: z.string().min(1),
   parentId: z.string().nullable(),
-  purpose: z.string().min(1),
+  objective: z.string().min(1),
+  leader: Leader,
+  /** Built-in tool names and external equipment names the leader's session may use, declared as a capability declares them. */
+  equipment: z.array(z.string()),
+  bashAllowlist: z.array(z.string()),
+  /** The leader's session, once it has run; null until the unit first has a ready task. */
+  sessionId: z.string().nullable(),
   status: UnitStatus,
   createdAt: Timestamp,
   closedAt: Timestamp.nullable(),
@@ -223,11 +237,22 @@ export const UnitProposal = z.object({
     .string()
     .min(1)
     .describe("A label the plan uses to refer to this new unit elsewhere"),
-  purpose: z.string().min(1),
+  objective: z.string().min(1),
   parent: z
     .string()
     .min(1)
     .describe("An existing unit id, or the ref of a unit created in this plan"),
+  leader: Leader.describe(
+    "The provider and model of the unit's leader session, which runs the unit's tasks and reports against its objective",
+  ),
+  equipment: z
+    .array(z.string())
+    .describe(
+      "Built-in tool names and external equipment names the leader's session may use; a task whose capability needs no more than this, on the leader's model, runs inside the leader's session",
+    ),
+  bashAllowlist: z
+    .array(z.string())
+    .describe("Commands the leader's read-only Bash may run"),
 });
 
 export const UnitClose = z.object({
@@ -333,7 +358,82 @@ export const ActionPlan = z.strictObject({
   incidentStatus: z.enum(["continue", "blocked", "satisfied", "failed"]),
   situation: Situation,
   rationale: z.string().describe("Why this plan, one paragraph"),
+  discrepancy: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Only when the update received describes a different problem from the one being worked, not a different detail: what differs",
+    ),
 });
+
+// What a unit leader returns after each of its unit's tasks.
+
+/** One thing that is now true that was not, and the claims it rests on. */
+export const ReportChange = z.object({
+  what: z.string().min(1),
+  claims: z.array(z.string()).describe("Claim ids the change rests on"),
+});
+
+export const LeaderReport = z.object({
+  outcome: z.enum(["met", "not_met", "progress"]),
+  changed: z.array(ReportChange),
+  pictureChanged: z
+    .boolean()
+    .describe(
+      "Whether what the unit found changes the picture the incident is working from, so the IC should act before the next unit runs",
+    ),
+  why: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("When the objective is not met: why"),
+  suggestion: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("When the objective is not met: what to do about it"),
+});
+
+/**
+ * A leader's next move: `continue` to the next ready task in its unit, or `report` against
+ * the unit's objective, which ends the unit's pass. One object, not a union, since a provider
+ * takes only an object schema; the kind decides which fields must be filled.
+ */
+export const LeaderTurn = z
+  .object({
+    kind: z.enum(["report", "continue"]),
+    report: LeaderReport.optional(),
+    discrepancy: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "Only when the update received describes a different problem from the one being worked, not a different detail: what differs",
+      ),
+  })
+  .superRefine((t, ctx) => {
+    if (t.kind === "report" && t.report === undefined)
+      ctx.addIssue({
+        code: "custom",
+        path: ["report"],
+        message: "a report turn carries its report",
+      });
+    if (t.report?.outcome === "not_met") {
+      if (t.report.why === undefined)
+        ctx.addIssue({
+          code: "custom",
+          path: ["report", "why"],
+          message: "a not_met report says why",
+        });
+      if (t.report.suggestion === undefined)
+        ctx.addIssue({
+          code: "custom",
+          path: ["report", "suggestion"],
+          message: "a not_met report carries a suggestion",
+        });
+    }
+  });
 
 // What a session returns.
 
@@ -407,11 +507,11 @@ export type EventScope = z.infer<typeof EventScope>;
 export type Budget = z.infer<typeof Budget>;
 export type Cost = z.infer<typeof Cost>;
 export type Usage = z.infer<typeof Usage>;
-export type ProviderModel = z.infer<typeof ProviderModel>;
 export type Question = z.infer<typeof Question>;
 export type CapabilityRequest = z.infer<typeof CapabilityRequest>;
 export type Incident = z.infer<typeof Incident>;
 export type Unit = z.infer<typeof Unit>;
+export type Leader = z.infer<typeof Leader>;
 export type Task = z.infer<typeof Task>;
 export type EvidenceFrom = z.infer<typeof EvidenceFrom>;
 export type Provenance = z.infer<typeof Provenance>;
@@ -425,6 +525,8 @@ export type GrantRequest = z.infer<typeof GrantRequest>;
 export type SopApplication = z.infer<typeof SopApplication>;
 export type ActionPlan = z.infer<typeof ActionPlan>;
 export type Situation = z.infer<typeof Situation>;
+export type LeaderReport = z.infer<typeof LeaderReport>;
+export type LeaderTurn = z.infer<typeof LeaderTurn>;
 export type Settlement = z.infer<typeof Settlement>;
 export type Needed = z.infer<typeof Needed>;
 export type ClaimProposal = z.infer<typeof ClaimProposal>;
