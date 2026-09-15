@@ -139,7 +139,10 @@ describe("incident review", () => {
       findIt,
       { ...empty, incidentStatus: "satisfied", rationale: "found" },
     ]);
-    await run(["incident", "create", "where is the delete handler"], h.ctx);
+    await run(
+      ["incident", "create", "--no-size-up", "where is the delete handler"],
+      h.ctx,
+    );
     expect(await run(["incident", "run", "001"], h.ctx)).toBe(EXIT.ok);
     h.out.length = 0;
     expect(await run(["incident", "review", "001"], h.ctx)).toBe(EXIT.ok);

@@ -222,10 +222,11 @@ function activityLines(
   model: string | null,
   cycle: number,
   leaderOf: string | null = null,
-  seat: "planner" | "ic" = "planner",
+  seat: "planner" | "ic" | "initial_ic" = "planner",
 ): string[] {
   // A task's calls by its id; a leader's turn by its unit with no task and no cycle; the
-  // planner's and the IC's by the cycle, told apart by the IC's `seat`.
+  // planner's and the IC's by the cycle, told apart by the IC's `seat`; the initial IC's
+  // by its seat, under cycle 0.
   const own = (e: Event) =>
     leaderOf !== null
       ? str(e.payload.unitId) === leaderOf &&
@@ -233,7 +234,9 @@ function activityLines(
         e.payload.cycle === null
       : taskId === null
         ? e.payload.cycle === cycle &&
-          (e.payload.seat === "ic") === (seat === "ic")
+          (seat === "initial_ic"
+            ? e.payload.seat === "initial_ic"
+            : (e.payload.seat === "ic") === (seat === "ic"))
         : str(e.payload.taskId) === taskId;
   const lines: string[] = [];
   const calls = events.filter(
@@ -401,6 +404,91 @@ function icLines(
   return lines;
 }
 
+/**
+ * The size-up (R3-8), before any cycle: the initial IC's call with its usage, what the
+ * briefing said in numbers, whom command transferred to and who chose the model, a size-up
+ * that failed, and the initial IC's tool calls.
+ */
+function sizeUpLines(
+  events: readonly Event[],
+  roleTotals: (role: string, model: string | null) => Totals,
+  cost: CostSum,
+): string[] {
+  const lines: string[] = [];
+  let model: string | null = null;
+  for (const e of events) {
+    if (
+      e.type !== "incident.briefed" &&
+      !(e.type === "command.failed" && e.payload.seat === "initial_ic")
+    )
+      continue;
+    model = str(e.payload.model) || null;
+    const usage = (e.payload.usage ?? {}) as Partial<Usage>;
+    const callCost = costOf(usage, model);
+    add(roleTotals("initial_ic", model), usage, callCost);
+    addCost(cost, callCost);
+    if (e.type === "command.failed") {
+      lines.push(
+        `  initial ic ${model ?? "(no model)"}: ${describeUsage(usage, callCost)}  size-up failed: ${clip(str(e.payload.reason))}${session(str(e.payload.sessionId))}`,
+      );
+      continue;
+    }
+    const b = e.payload.briefing as
+      | {
+          kind?: unknown;
+          initialObjectives?: unknown;
+          initialOrganization?: unknown;
+          questionsForHuman?: unknown;
+          incomingCommander?: { provider?: unknown; model?: unknown };
+        }
+      | undefined;
+    lines.push(
+      `  initial ic ${model ?? "(no model)"}: ${describeUsage(usage, callCost)}  briefed: ${str(b?.kind) || "(no kind)"}, ${list(b?.initialObjectives).length} objective(s), ${list(b?.initialOrganization).length} unit(s) sketched, ${list(b?.questionsForHuman).length} question(s), recommended ${str(b?.incomingCommander?.provider)}/${str(b?.incomingCommander?.model)}${session(str(e.payload.sessionId))}`,
+    );
+  }
+  for (const e of events)
+    if (e.type === "command.transferred" && e.payload.kind === "initial")
+      lines.push(
+        `  command transferred (${str(e.payload.kind)}) to ${str((e.payload.incoming as { provider?: unknown } | undefined)?.provider)}/${str((e.payload.incoming as { model?: unknown } | undefined)?.model)}, chosen by ${str(e.payload.chosenBy)}`,
+      );
+  if (lines.length > 0)
+    lines.push(
+      ...activityLines(events, null, model, 0, null, "initial_ic").map(
+        (l) => `${l} (initial ic)`,
+      ),
+    );
+  return lines;
+}
+
+/** How much of the briefing the IC kept: the verdicts on its first accepted command turn that evaluated one, counted by kind. */
+function briefingKept(events: readonly Event[]): string {
+  const briefed = events.some((e) => e.type === "incident.briefed");
+  const failed = events.some(
+    (e) => e.type === "command.failed" && e.payload.seat === "initial_ic",
+  );
+  const evaluated = events.find(
+    (e) =>
+      e.type === "command.turned" &&
+      e.payload.rejected !== true &&
+      Array.isArray(
+        (e.payload.turn as { briefingEvaluation?: unknown } | undefined)
+          ?.briefingEvaluation,
+      ),
+  );
+  if (evaluated === undefined)
+    return briefed
+      ? "briefing kept: not evaluated yet"
+      : failed
+        ? "briefing: none (the size-up failed)"
+        : "briefing: none (no size-up)";
+  const verdicts = list(
+    (evaluated.payload.turn as { briefingEvaluation: unknown[] })
+      .briefingEvaluation,
+  ).map((v) => str((v as { verdict?: unknown }).verdict));
+  const count = (kind: string) => verdicts.filter((v) => v === kind).length;
+  return `briefing kept: ${count("accepted")} of ${verdicts.length} item(s) accepted, ${count("rewritten")} rewritten, ${count("discarded")} discarded`;
+}
+
 const OUTCOME_TYPES = new Set<Event["type"]>([
   "task.completed",
   "task.failed",
@@ -460,6 +548,23 @@ export function renderReview(
     );
   } else lines.push("no cycle has run");
   lines.push("");
+
+  const sizedUp = sizeUpLines(events, roleTotals, cost);
+  if (sizedUp.length > 0) {
+    const briefed = events.find((e) => e.type === "incident.briefed");
+    lines.push(
+      `size-up  ${(briefed ?? events.find((e) => e.type === "command.failed"))?.createdAt ?? ""}`,
+    );
+    lines.push(...sizedUp);
+    for (const e of events)
+      if (e.type === "question.asked" && e.payload.seat === "initial_ic")
+        for (const q of list(e.payload.questions)) {
+          const text = str((q as { text?: unknown }).text);
+          questions.push(`asked in the size-up: ${text}`);
+          lines.push(`  question: ${text}`);
+        }
+    lines.push("");
+  }
 
   for (const cycle of runCycles) {
     // A leader's assignment lands mid-pass as its own `plan.applied` or `plan.rejected`,
@@ -726,6 +831,7 @@ export function renderReview(
       ? "ic verdicts: none"
       : `ic verdicts: ${reviews} review(s): ${["approve", "correct", "amend"].map((v) => `${verdicts.get(v) ?? 0} ${v}`).join(", ")}`,
   );
+  lines.push(briefingKept(events));
   lines.push(
     `tasks: ${sessionsRan + deterministicRan} ran (${deterministicRan} deterministic, ${sessionsRan} sessions) of ${tasks.length} created${failedWithoutRunning === 0 ? "" : `, ${failedWithoutRunning} failed before running`}`,
   );

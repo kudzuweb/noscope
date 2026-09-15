@@ -12,6 +12,7 @@ import {
   Grant,
   Incident,
   IncidentStatus,
+  Leader,
   Period,
   Question,
   StrikeTeam,
@@ -222,6 +223,12 @@ export const Mutation = z.discriminatedUnion("kind", [
     kind: z.literal("unit.status"),
     unitId: z.string(),
     status: UnitStatus.exclude(["closed"]),
+  }),
+  z.object({
+    kind: z.literal("unit.leader"),
+    unitId: z.string(),
+    /** The unit's leader changed: how a transfer of command routes the root unit's model (`command.transferred`). */
+    leader: Leader,
   }),
   z.object({
     kind: z.literal("unit.close"),
@@ -561,6 +568,27 @@ export class Store {
     });
   }
 
+  /**
+   * The unit's leader is set from a transfer of command (`command.transferred`, R3-8): the
+   * root unit is created on a placeholder model and the briefing's incoming commander, or
+   * `--ic-model`, replaces it before the IC's first call, through the log so a replay routes
+   * it the same way.
+   */
+  setUnitLeader(
+    incidentId: string,
+    unitId: string,
+    leader: Leader,
+    actor: string,
+    type: EventType,
+    extra: Extra = {},
+  ): void {
+    this.write(incidentId, type, actor, extra, {
+      kind: "unit.leader",
+      unitId,
+      leader,
+    });
+  }
+
   /** Closing demobilizes the leader: its session id, when it has one, is on `unit.closed`. */
   closeUnit(
     incidentId: string,
@@ -897,6 +925,16 @@ export class Store {
               "UPDATE units SET status = ? WHERE id = ? AND incident_id = ? AND status != 'closed'",
             )
             .run(m.status, m.unitId, incidentId),
+          `unit ${m.unitId}`,
+        );
+        return;
+      case "unit.leader":
+        one(
+          this.db
+            .prepare(
+              "UPDATE units SET leader_json = ? WHERE id = ? AND incident_id = ?",
+            )
+            .run(j(m.leader), m.unitId, incidentId),
           `unit ${m.unitId}`,
         );
         return;

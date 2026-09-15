@@ -52,8 +52,8 @@ function statusAfter(turn: {
       : "open";
 }
 
-/** New questions numbered after the incident's, from the texts a plan or a command turn raises. */
-function newQuestions(
+/** New questions numbered after the incident's, from the texts a plan, a command turn or the initial IC's briefing raises. */
+export function newQuestions(
   incident: Incident,
   texts: readonly string[],
 ): Question[] {

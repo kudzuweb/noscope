@@ -1,22 +1,26 @@
 import { parseArgs } from "node:util";
+import { z } from "zod";
+import { recordActivity } from "../activity.js";
 import { listCapabilities } from "../capabilities/index.js";
 import { type Context, EXIT, type Handler } from "../context.js";
 import { dispatch } from "../dispatcher.js";
 import { READ_ONLY_COMMANDS } from "../equipment/index.js";
-import { commandTurn, reviewTurn } from "../ic.js";
+import { briefingOf, commandTurn, recordTransfer, reviewTurn } from "../ic.js";
 import { IC_MODEL, IC_PROVIDER, openRequestsByUnit } from "../leader.js";
 import {
   type ActionPlan,
   Budget,
   type Event,
   type Incident,
+  IncidentBriefing,
   type IncidentStatus,
+  type Leader,
   Situation,
   type StrikeTeam,
   type Unit,
 } from "../models.js";
 import { proposePlan } from "../planner.js";
-import { getProvider } from "../providers/index.js";
+import { getProvider, SessionError } from "../providers/index.js";
 import { renderReview } from "../review.js";
 import {
   type Answered,
@@ -24,8 +28,10 @@ import {
   applyCommand,
   applyPlan,
   holdsOn,
+  newQuestions,
   planDiff,
 } from "../runtime.js";
+import { INITIAL_MODEL, sizeUp } from "../size-up.js";
 import { cycleOf, now, resolveDbPath, Store, sumUsage } from "../store.js";
 import { describeStrikeTeam } from "../strike-team.js";
 import { renderTree } from "../tree.js";
@@ -45,6 +51,25 @@ function nextIncidentId(store: Store): string {
   return String(store.listIncidents().length + 1).padStart(3, "0");
 }
 
+/** A reason in one sentence: a schema failure names its issues rather than dumping them. */
+function describeFailure(error: unknown): string {
+  if (error instanceof z.ZodError)
+    return `the briefing did not fit its schema: ${error.issues.map((i) => `${i.path.join(".") || "value"} ${i.message}`).join("; ")}`;
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * The incident and its root unit, then the size-up (R3-8): the initial IC on a cheap model
+ * reads the objective and the runtime's findings with read-only tools and writes the
+ * incident briefing, recorded as `incident.briefed` with its activity; command then
+ * transfers to the IC proper on the model the briefing names, or `--ic-model`, as
+ * `command.transferred` with the briefing as its document and the root unit's leader as
+ * its mutation. A question in the briefing blocks the incident before the IC starts, the
+ * way a plan's does. `--no-size-up` creates the incident on `--ic-model` (default Opus 5)
+ * with no briefing, so the IC's first turn carries no evaluation. A size-up that fails is
+ * filed as `command.failed` under the seat `initial_ic`; the incident stands, unbriefed,
+ * and the command exits 1.
+ */
 export const create: Handler = async (args, ctx) => {
   let parsed: ReturnType<typeof parseArgs>;
   try {
@@ -57,7 +82,9 @@ export const create: Handler = async (args, ctx) => {
         priority: { type: "string", multiple: true, default: [] },
         "budget-tokens": { type: "string" },
         "budget-seconds": { type: "string" },
-        "ic-model": { type: "string", default: IC_MODEL },
+        "ic-model": { type: "string" },
+        "initial-model": { type: "string", default: INITIAL_MODEL },
+        "no-size-up": { type: "boolean", default: false },
       },
     });
   } catch (error) {
@@ -87,14 +114,23 @@ export const create: Handler = async (args, ctx) => {
     );
     return EXIT.usage;
   }
-  const icModel = String(parsed.values["ic-model"]);
   const icProvider = getProvider(IC_PROVIDER, ctx.env);
-  if (!icProvider.models.includes(icModel)) {
-    ctx.io.err(
-      `noscope incident create: --ic-model ${icModel} is not a model ${IC_PROVIDER} serves (${icProvider.models.join(", ")})`,
-    );
-    return EXIT.usage;
-  }
+  const override =
+    parsed.values["ic-model"] === undefined
+      ? null
+      : String(parsed.values["ic-model"]);
+  const initialModel = String(parsed.values["initial-model"]);
+  const skipSizeUp = parsed.values["no-size-up"] === true;
+  for (const [flag, model] of [
+    ["--ic-model", override],
+    ["--initial-model", skipSizeUp ? null : initialModel],
+  ] as const)
+    if (model !== null && !icProvider.models.includes(model)) {
+      ctx.io.err(
+        `noscope incident create: ${flag} ${model} is not a model ${IC_PROVIDER} serves (${icProvider.models.join(", ")})`,
+      );
+      return EXIT.usage;
+    }
   const store = openStore(ctx);
   try {
     const at = now();
@@ -111,14 +147,15 @@ export const create: Handler = async (args, ctx) => {
       createdAt: at,
       updatedAt: at,
     };
-    // The root unit's leader is the Incident Commander, on the model `--ic-model` names
-    // until the size-up routes it (R3-8); it holds the read-only built-ins and nothing else.
+    // The root unit's leader is the Incident Commander: on `--ic-model` or the default until
+    // the size-up's transfer of command routes it; it holds the read-only built-ins and
+    // nothing else.
     const command: Unit = {
       id: `${id}-command`,
       incidentId: id,
       parentId: null,
       objective: "command: holds the objective and the current plan",
-      leader: { provider: IC_PROVIDER, model: icModel },
+      leader: { provider: IC_PROVIDER, model: override ?? IC_MODEL },
       equipment: ["Read", "Grep", "Glob", "Bash"],
       bashAllowlist: [...READ_ONLY_COMMANDS],
       sessionId: null,
@@ -130,9 +167,160 @@ export const create: Handler = async (args, ctx) => {
       store.createIncident(incident, ACTOR);
       store.createUnit(command, "runtime");
     });
+    if (skipSizeUp) {
+      ctx.io.out(
+        `incident ${id} created: ${objective} (IC ${IC_PROVIDER}/${command.leader.model})`,
+      );
+      return EXIT.ok;
+    }
+    ctx.io.out(`incident ${id} created: ${objective}`);
+    const initial: Leader = { provider: IC_PROVIDER, model: initialModel };
+    const place = (sessionId: string) => ({
+      sessionId,
+      unitId: command.id,
+      taskId: null,
+      cycle: 0,
+      seat: "initial_ic" as const,
+    });
+    // The session's answer is parsed inside the same try, so a briefing that does not fit
+    // its schema is filed with its call the way `icCall` files an IC turn: the session that
+    // answered first, then a failed session that returned an id.
+    let sized: Awaited<ReturnType<typeof sizeUp>> | null = null;
+    let briefing: IncidentBriefing;
+    try {
+      sized = await sizeUp(incident, {
+        cwd: ctx.cwd,
+        env: ctx.env,
+        ...initial,
+        providers: [icProvider],
+      });
+      briefing = IncidentBriefing.parse(sized.output);
+    } catch (error) {
+      const reason = describeFailure(error);
+      const failed =
+        sized !== null
+          ? {
+              sessionId: sized.sessionId,
+              usage: sized.usage,
+              activity: sized.activity,
+            }
+          : error instanceof SessionError && error.sessionId !== null
+            ? {
+                sessionId: error.sessionId,
+                usage: error.usage,
+                activity: error.activity,
+              }
+            : null;
+      if (failed !== null)
+        store.batch(() => {
+          store.record(id, "command.failed", "runtime", {
+            unitId: command.id,
+            sessionId: failed.sessionId,
+            ...initial,
+            seat: "initial_ic",
+            turn: "size-up",
+            cycle: 0,
+            reason,
+            ...(failed.usage === null ? {} : { usage: failed.usage }),
+          });
+          recordActivity(
+            store,
+            id,
+            "runtime",
+            failed.activity,
+            place(failed.sessionId),
+          );
+        });
+      ctx.io.err(
+        `noscope incident create: the size-up failed: ${reason}; incident ${id} stands with no briefing, and the IC on ${IC_PROVIDER}/${command.leader.model} takes command without one`,
+      );
+      return EXIT.failed;
+    }
+    // The IC's model: `--ic-model` over the briefing's recommendation, and the default when
+    // the briefing names a pair the provider does not serve.
+    const recommended = briefing.incomingCommander;
+    const served =
+      recommended.provider === IC_PROVIDER &&
+      icProvider.models.includes(recommended.model);
+    const incoming: Leader =
+      override !== null
+        ? { provider: IC_PROVIDER, model: override }
+        : served
+          ? { provider: recommended.provider, model: recommended.model }
+          : { provider: IC_PROVIDER, model: IC_MODEL };
+    const chosenBy =
+      override !== null
+        ? "--ic-model"
+        : served
+          ? "the briefing"
+          : "the default";
+    const reason =
+      override !== null
+        ? `the briefing recommended ${recommended.provider}/${recommended.model}: ${recommended.why}`
+        : served
+          ? recommended.why
+          : `the briefing recommended ${recommended.provider}/${recommended.model}, which ${IC_PROVIDER} does not serve`;
+    const questions = newQuestions(incident, briefing.questionsForHuman);
+    store.batch(() => {
+      store.record(id, "incident.briefed", "runtime", {
+        unitId: command.id,
+        sessionId: sized.sessionId,
+        ...initial,
+        seat: "initial_ic",
+        cycle: 0,
+        usage: sized.usage,
+        cwd: ctx.cwd,
+        findings: sized.findings,
+        briefing,
+      });
+      recordActivity(
+        store,
+        id,
+        "runtime",
+        sized.activity,
+        place(sized.sessionId),
+      );
+      recordTransfer(store, id, {
+        kind: "initial",
+        unitId: command.id,
+        outgoingSessionId: sized.sessionId,
+        outgoing: initial,
+        incomingSessionId: null,
+        incoming,
+        document: briefing,
+        chosenBy,
+        reason,
+      });
+      if (questions.length > 0) {
+        store.setIncidentQuestions(id, questions, "runtime", "question.asked", {
+          questions,
+          seat: "initial_ic",
+        });
+        store.setIncidentStatus(id, "blocked", "runtime", "incident.blocked", {
+          rationale: `the initial IC's briefing raised ${questions.length} question(s) for Mauria`,
+        });
+      }
+    });
     ctx.io.out(
-      `incident ${id} created: ${objective} (IC ${IC_PROVIDER}/${icModel})`,
+      `size-up by ${initial.provider}/${initial.model} (session ${sized.sessionId}): ${briefing.kind}`,
     );
+    ctx.io.out(`  dominant problem: ${briefing.dominantProblem}`);
+    for (const need of briefing.obviouslyNeeded)
+      ctx.io.out(
+        `  needed: ${need.what} (${need.checked ? `checked: ${need.finding ?? ""}` : "not checked"})`,
+      );
+    for (const o of briefing.initialObjectives)
+      ctx.io.out(`  initial objective: ${o}`);
+    for (const u of briefing.initialOrganization) ctx.io.out(`  unit: ${u}`);
+    for (const h of briefing.hazards) ctx.io.out(`  hazard: ${h}`);
+    for (const q of questions) ctx.io.out(`  question ${q.id}: ${q.text}`);
+    ctx.io.out(
+      `command transferred to ${incoming.provider}/${incoming.model}, chosen by ${chosenBy}: ${reason}`,
+    );
+    if (questions.length > 0)
+      ctx.io.out(
+        `incident ${id} is blocked on ${questions.length} question(s) before the IC starts; answer with noscope incident answer ${id} "..."`,
+      );
     return EXIT.ok;
   } finally {
     store.close();
@@ -211,6 +399,24 @@ function renderIncidentFile(
     lines.push("period priorities:");
     for (const p of incident.period.priorities) lines.push(`  - ${p}`);
     if (incident.period.priorities.length === 0) lines.push("  (none)");
+  }
+  const briefed = briefingOf(events);
+  const transfer = events
+    .filter(
+      (e) => e.type === "command.transferred" && e.payload.kind === "initial",
+    )
+    .at(-1);
+  if (briefed !== null) {
+    const incoming = transfer?.payload.incoming as
+      | { provider?: unknown; model?: unknown }
+      | undefined;
+    lines.push(
+      `briefing: ${briefed.briefing.kind}, by the initial IC on ${String(briefed.event.payload.model)}: ${briefed.briefing.dominantProblem}`,
+    );
+    if (transfer !== undefined)
+      lines.push(
+        `command transferred to ${String(incoming?.provider)}/${String(incoming?.model)}, chosen by ${String(transfer.payload.chosenBy)}`,
+      );
   }
   lines.push(
     `budget: tokens ${incident.budget.tokens ?? "unlimited"}, seconds ${incident.budget.seconds ?? "unlimited"}; spent tokens ${usage.tokens}, seconds ${usage.seconds.toFixed(1)}${spent.costUsd === undefined ? "" : `, task cost $${spent.costUsd.toFixed(2)} at list price`}`,
@@ -412,6 +618,8 @@ async function cycle(
   );
   if (turn.discrepancy !== undefined)
     ctx.io.out(`  discrepancy: ${turn.discrepancy}`);
+  for (const v of turn.briefingEvaluation ?? [])
+    ctx.io.out(`  briefing: ${v.verdict} ${v.item}: ${v.why}`);
   for (const o of turn.periodObjectives) ctx.io.out(`  objective: ${o}`);
   for (const p of turn.priorities) ctx.io.out(`  priority: ${p}`);
   for (const c of turn.closeUnits)

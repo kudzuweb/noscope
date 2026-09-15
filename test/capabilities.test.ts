@@ -293,7 +293,7 @@ describe("deterministic capabilities", () => {
     const db = `${mkdtempSync(join(tmpdir(), "noscope-cli-"))}/db.sqlite`;
     const out: string[] = [];
     const io = { out: (l: string) => out.push(l), err: () => {} };
-    await run(["incident", "create", "x"], {
+    await run(["incident", "create", "--no-size-up", "x"], {
       io,
       cwd: tree,
       env: { NOSCOPE_DB: db },

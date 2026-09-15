@@ -4,9 +4,12 @@ import {
   ActionPlan,
   Claim,
   ClaimProposal,
+  CommandTurn,
   EventType,
+  FirstCommandTurn,
   Grant,
   Incident,
+  IncidentBriefing,
   jsonSchemaFor,
   LeaderTurn,
   SessionResult,
@@ -237,9 +240,99 @@ describe("contracts", () => {
       "leader.released",
       "unit.waiting",
       "unit.resumed",
+      "incident.briefed",
+      "command.transferred",
     ])
       expect(EventType.options).toContain(type);
-    expect(EventType.options).toHaveLength(41);
+    expect(EventType.options).toHaveLength(43);
+  });
+
+  it("an incident briefing is one strict object on ICS 201's lines; a checked need says what the check showed", () => {
+    const briefing = {
+      kind: "bug hunt",
+      dominantProblem: "a view scrolls after a delete",
+      obviouslyNeeded: [
+        { what: "the repository", checked: true, finding: "git: a repository" },
+        { what: "a browser", checked: false },
+      ],
+      initialObjectives: ["find the handler"],
+      initialOrganization: ["one unit to read the code, on claude-haiku-4-5"],
+      questionsForHuman: [],
+      hazards: ["the scratch document may be stale"],
+      incomingCommander: {
+        provider: "claude-code",
+        model: "claude-opus-5",
+        why: "the read is subtle",
+      },
+    };
+    expect(IncidentBriefing.parse(briefing)).toEqual(briefing);
+    expect(() =>
+      IncidentBriefing.parse({
+        ...briefing,
+        obviouslyNeeded: [{ what: "the repository", checked: true }],
+      }),
+    ).toThrow(/what the check showed/);
+    expect(() =>
+      IncidentBriefing.parse({ ...briefing, initialObjectives: [] }),
+    ).toThrow(/initialObjectives/);
+    expect(() => IncidentBriefing.parse({ ...briefing, extra: true })).toThrow(
+      /extra/,
+    );
+    const schema = jsonSchemaFor(IncidentBriefing) as {
+      type: string;
+      additionalProperties: boolean;
+      required: string[];
+    };
+    expect(schema.type).toBe("object");
+    expect(schema.additionalProperties).toBe(false);
+    expect(schema.required).toContain("incomingCommander");
+  });
+
+  it("a command turn may carry the briefing's evaluation, and the first turn after a transfer must", () => {
+    const turn = {
+      periodObjectives: ["find the handler"],
+      priorities: [],
+      closeUnits: [],
+      questionsForHuman: [],
+      capabilityRequests: [],
+      grantRequests: [],
+      incidentStatus: "continue",
+      rationale: "first period",
+    };
+    expect(CommandTurn.parse(turn).briefingEvaluation).toBeUndefined();
+    const evaluated = {
+      ...turn,
+      briefingEvaluation: [
+        {
+          item: "find the handler",
+          verdict: "accepted",
+          why: "it is the objective",
+        },
+        {
+          item: "one unit to read the code",
+          verdict: "rewritten",
+          why: "two units, one per package",
+        },
+      ],
+    };
+    expect(CommandTurn.parse(evaluated).briefingEvaluation).toHaveLength(2);
+    expect(() => FirstCommandTurn.parse(turn)).toThrow(/briefingEvaluation/);
+    expect(() =>
+      FirstCommandTurn.parse({ ...turn, briefingEvaluation: [] }),
+    ).toThrow(/briefingEvaluation/);
+    expect(FirstCommandTurn.parse(evaluated).briefingEvaluation).toHaveLength(
+      2,
+    );
+    expect(() =>
+      CommandTurn.parse({
+        ...turn,
+        briefingEvaluation: [{ item: "x", verdict: "ignored", why: "y" }],
+      }),
+    ).toThrow(/verdict/);
+    const first = jsonSchemaFor(FirstCommandTurn) as { required: string[] };
+    expect(first.required).toContain("briefingEvaluation");
+    const any = jsonSchemaFor(CommandTurn) as { required: string[] };
+    expect(any.required).not.toContain("briefingEvaluation");
   });
 
   it("a leader's turn is a report or a continue; a not_met report says why and what to do, and a discrepancy rides on either", () => {
