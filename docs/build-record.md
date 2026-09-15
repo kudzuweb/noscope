@@ -2483,7 +2483,13 @@ pass's first turn whatever its cause (`renderTurnPrompt`'s `unheard` argument, r
 before the cause as "Since your last turn these tasks also ended:" with `renderEnding`),
 so a unit with a runnable task next pass hears them on the turn after that task, and a
 unit with nothing to run hears them on its owed turn: `TurnCause` gains `{ status:
-"owing" }` in place of `null`, carrying nothing itself. A report
+"owing" }` in place of `null`, carrying nothing itself. The runtime's report after two
+refusals (`writtenBy: "runtime"`, R4-7) is not a turn: `endedSinceLastTurn` and
+`refusedSinceLastTurn` skip it when placing the cutoff, so the endings and validator
+reasons a leader never read survive it and ride on its next real turn (a new task, or
+the IC's revise once R4-3 lands); `unitsOwingReport` still counts it as the report it is,
+so the dispatcher does not ask a refused seat again on its own, and the change report
+lists those endings under the runtime report meanwhile. A report
 whose `pictureChanged` is true, or a budget stop, sets the pass's halt: no pass and no
 task starts after it, every run in flight finishes and lands, and a task that lands after
 the halt still gets its leader's turn (the leader hears the ending; nothing starts from
@@ -2498,10 +2504,12 @@ landing), so concurrent starts cannot overrun the budget together and a reservat
 stops an incident, since `incident run` ends on any stop and the planner reads
 `budget.exceeded` as the budget having stopped the pass. A pass with a deferred start and
 nothing of its own in flight waits on that promise rather than ending. A leader that
-cannot answer, or a run that throws past `runOne`, sets the halt, and the
-error is thrown once every pass has landed its runs, so nothing writes to the store after
-`dispatch` returns. `failInterrupted` keeps its job, since a pass lands every run before it
-returns. `Dispatched.ran` is in landing order. `LEADER_ROLE` says tasks in sessions of
+cannot answer, or a run that throws past `runOne`, sets the halt (the rejection callback
+itself, so a pass mid-turn when the run threw cannot start a task on its next sweep), and
+the error is thrown once every pass has landed its runs, so nothing writes to the store
+after `dispatch` returns. `failInterrupted` keeps its job, since a pass lands every run
+before it returns. `Dispatched.ran` is in landing order. `LEADER_ROLE` says tasks in
+sessions of
 their own start at once and `dependsOn` is what serializes; the report's `pictureChanged`
 description and the role text say the IC acts before anything new starts, not before the
 next unit; the planner's preamble says independent tasks run at once across units and
@@ -2552,10 +2560,12 @@ behind the first, and the turn after the fast one lists the slow one as still ru
 asks the leader to continue or report rather than for its report; two tasks inside the
 leader's session run one at a time, each followed by its turn; a leader that reports while
 its own task runs leaves the task to land without a turn, and the next pass's owed turn
-renders that ending before asking for the report; a task that landed after its unit
-reported, whose completion made a dependent runnable, reaches the leader on the next
-pass's first turn, the one on the dependent's ending, and nothing is owed after that
-report; a task that landed while a turn was queued behind a slow inside task is listed on
+renders that ending before asking for the report; a runtime report after two refusals
+(t-dep refused on its model and the fallback in pass 2, `NOSCOPE_STUB_REFUSE`) leaves
+t-slow's and t-dep's endings unheard, and a third pass with a new task carries both on
+that task's turn; a task that landed after its unit reported, whose completion made a
+dependent runnable, reaches the leader on the next pass's first turn, the one on the
+dependent's ending, and nothing is owed after that report; a task that landed while a turn was queued behind a slow inside task is listed on
 that turn as ended already, not running, and gets its own turn next; a task in flight is
 held against the budget, so a second unit's task that fits by spend but not by reservation
 waits for the landing and is then stopped on what is spent, with one `budget.exceeded`

@@ -712,7 +712,11 @@ tasks that landed after it reported) ride on the first turn of its unit's next p
 whatever that turn is for, rendered before it as each ending renders; a unit that owes a
 report (a task ended after the last report) and has nothing to run is asked for it at the
 start of the next pass even with no task, the turn creating the session if none exists,
-so a result never goes unread. Every turn is one call on the leader's session, recorded as
+so a result never goes unread by the leader whose next turn comes. The report the runtime
+writes for a unit after two refusals (R4-7) is not a turn of the leader's and moves that
+cutoff for nothing, so the endings it passed over ride on the leader's next real turn,
+with a new task or the IC's revise; until then the IC reads them in the change report
+under that report. Every turn is one call on the leader's session, recorded as
 `unit.reported` (with the report) or `unit.continued`, each with the unit, the session id,
 the leader's provider and model and the call's usage; `leader.started` records the session
 on the unit at its first call, with the `cwd` it was launched from, whether that call was a

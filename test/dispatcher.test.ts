@@ -10,10 +10,17 @@ import { dispatch } from "../src/dispatcher.js";
 import { renderChangeReport } from "../src/ic.js";
 import {
   answeredRequestsOf,
+  endedSinceLastTurn,
   runsInsideLeader,
   unitsOwingReport,
 } from "../src/leader.js";
-import type { ActionPlan, Event, Task, TaskProposal } from "../src/models.js";
+import type {
+  ActionPlan,
+  Event,
+  Task,
+  TaskProposal,
+  Unit,
+} from "../src/models.js";
 import { applyPlan, raiseResourceRequests } from "../src/runtime.js";
 import { Store } from "../src/store.js";
 import { citesMember } from "../src/strike-team.js";
@@ -2635,6 +2642,79 @@ describe("dispatcher, parallel dispatch", () => {
         store.listEvents("i1"),
       ),
     ).toEqual(new Set());
+    store.close();
+  }, 20_000);
+
+  it("a runtime report after two refusals is not a turn: the endings the leader never heard ride on its next real turn, in a later pass", async () => {
+    const store = new Store(":memory:");
+    const { incident, task, addUnit } = scriptedIncident(store);
+    addUnit({ id: "u-a", objective: "the first half" });
+    task({
+      id: "t-fast",
+      capability: "grep",
+      unitId: "u-a",
+      inputs: { root: ".", pattern: "delete" },
+      status: "ready",
+    });
+    task(investigate("t-slow", "u-a", { objective: "slow: run investigate" }));
+    task(
+      investigate("t-dep", "u-a", { dependsOn: ["t-slow"], status: "pending" }),
+    );
+    const dir = scratch();
+    // Pass 1 makes two stub calls (t-slow's session and the turn on t-fast, in either
+    // order); pass 2's t-dep is calls 3 and 4, its own model and then the fallback.
+    const env = stubEnv(dir, {
+      NOSCOPE_STUB_SLEEP_MS: "1500",
+      NOSCOPE_STUB_SLEEP_IF: "slow:",
+      NOSCOPE_STUB_CALL_COUNTER: join(dir, "ordinal"),
+      NOSCOPE_STUB_REFUSE: "3,4",
+      NOSCOPE_STUB_TURN: JSON.stringify({
+        kind: "report",
+        report: { outcome: "progress", changed: [], pictureChanged: false },
+      }),
+    });
+    const first = await dispatch(store, incident, { cwd: tree, env });
+    expect(first.ran.map((r) => r.taskId)).toEqual(["t-fast", "t-slow"]);
+    // Pass 2: t-dep is refused on both models; the runtime files the unit's report and
+    // no leader turn happens, so t-slow's ending is still unheard.
+    const second = await dispatch(store, incident, { cwd: tree, env });
+    expect(second.pictureChanged).toBe("u-a");
+    expect(second.ran.map((r) => [r.taskId, r.status])).toEqual([
+      ["t-dep", "failed"],
+    ]);
+    expect(second.reports.map((r) => [r.unitId, r.sessionId])).toEqual([
+      ["u-a", null],
+    ]);
+    const runtimeReport = store
+      .listEvents("i1")
+      .filter((e) => e.type === "unit.reported")
+      .at(-1);
+    expect(runtimeReport?.payload.writtenBy).toBe("runtime");
+    expect(
+      endedSinceLastTurn(
+        store.listUnits("i1").find((u) => u.id === "u-a") as Unit,
+        store.listTasks("i1"),
+        store.listEvents("i1"),
+      ).map((e) => [e.task.id, e.status]),
+    ).toEqual([
+      ["t-slow", "completed"],
+      ["t-dep", "failed"],
+    ]);
+    // Pass 3, with a new task to run: its turn carries both endings before its own.
+    task(investigate("t-late", "u-a"));
+    const third = await dispatch(store, incident, { cwd: tree, env });
+    expect(third.ran.map((r) => r.taskId)).toEqual(["t-late"]);
+    expect(third.reports.map((r) => r.unitId)).toEqual(["u-a"]);
+    const turns = readCalls(join(dir, "calls")).filter(
+      (c) => c.kind === "leader",
+    );
+    expect(turns).toHaveLength(2);
+    expect(turns[1]?.prompt).toContain(
+      "Since your last turn these tasks also ended:\nTask t-slow (investigate) completed. Its result:\n  summary: a.txt\nTask t-dep (investigate) failed: refused on ",
+    );
+    expect(turns[1]?.prompt).toContain(
+      "\n\nTask t-late (investigate) completed. Its result:",
+    );
     store.close();
   }, 20_000);
 

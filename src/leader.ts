@@ -528,9 +528,11 @@ export type TurnCause =
 
 /**
  * The endings a unit's leader has not heard: tasks of the unit that completed or failed
- * after the leader's last turn (`unit.reported` or `unit.continued`). Empty when every
- * ending reached a turn. A completed task ran inside the leader when `runsInsideLeader`
- * says its capability, model and equipment put it there.
+ * after the leader's last turn (`unit.reported` or `unit.continued`). A report the runtime
+ * wrote on the leader's behalf after two refusals (`writtenBy: "runtime"`, R4-7) is not a
+ * turn and moves nothing. Empty when every ending reached a turn. A completed task ran
+ * inside the leader when `runsInsideLeader` says its capability, model and equipment put
+ * it there.
  */
 export function endedSinceLastTurn(
   unit: Unit,
@@ -542,7 +544,8 @@ export function endedSinceLastTurn(
   for (const e of events)
     if (
       (e.type === "unit.reported" || e.type === "unit.continued") &&
-      e.payload.unitId === unit.id
+      e.payload.unitId === unit.id &&
+      e.payload.writtenBy !== "runtime"
     )
       lastTurn = e.sequence;
   const ended: TaskEnding[] = [];

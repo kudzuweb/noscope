@@ -534,7 +534,7 @@ function reportRefusals(
   return report;
 }
 
-/** The reasons the validator refused this unit's leader's last assignment, since the leader's last turn, for its next prompt. */
+/** The reasons the validator refused this unit's leader's last assignment, since the leader's last turn, for its next prompt; a report the runtime wrote after two refusals is not a turn of the leader's. */
 function refusedSinceLastTurn(
   events: readonly Event[],
   unitId: string,
@@ -542,7 +542,10 @@ function refusedSinceLastTurn(
   const reasons: string[] = [];
   for (const e of events) {
     if (e.payload.unitId !== unitId) continue;
-    if (e.type === "unit.continued" || e.type === "unit.reported")
+    if (
+      (e.type === "unit.continued" || e.type === "unit.reported") &&
+      e.payload.writtenBy !== "runtime"
+    )
       reasons.length = 0;
     if (e.type === "plan.rejected" && e.actor === LEADER_ACTOR)
       reasons.push(`${String(e.payload.rule)}: ${String(e.payload.reason)}`);
@@ -1189,7 +1192,9 @@ export async function dispatch(
           noteLanding();
         },
         (error: unknown) => {
+          // Nothing new starts anywhere from this moment, whatever pass is mid-turn.
           crashed ??= error;
+          stop({ stopped: null, pictureChanged: null });
           reserved.delete(next.id);
           inFlight.delete(next.id);
           wake?.();
