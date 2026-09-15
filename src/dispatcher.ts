@@ -887,7 +887,8 @@ function parallelLimit(env: NodeJS.ProcessEnv): number {
  * of the other that has not ended (`dependsOn`, either way round). Related units run one at
  * a time in tree order, as every unit did before R4-9; a parent and a child are related
  * only through their tasks. A dependency already completed, failed or cancelled orders
- * nothing.
+ * nothing. Read from the store's tasks before each scheduling round, so a task a leader
+ * assigns mid-pass counts.
  */
 function relatedUnits(
   units: readonly Unit[],
@@ -965,7 +966,6 @@ export async function dispatch(
   const eventsAtStart = store.listEvents(incident.id);
   const owing = unitsOwingReport(units, tasksAtStart, eventsAtStart);
   const resumed = resumedUnits(units, eventsAtStart);
-  const related = relatedUnits(units, tasksAtStart);
   let halt: Pick<Dispatched, "stopped" | "pictureChanged"> | null = null;
   const stop = (why: Pick<Dispatched, "stopped" | "pictureChanged">) => {
     halt ??= why;
@@ -1296,6 +1296,9 @@ export async function dispatch(
 
   const passes = new Map<string, Promise<void>>();
   for (;;) {
+    // Related units are read afresh each round: a task a leader assigned mid-pass with a
+    // cross-unit dependency relates its units from the next round on.
+    const related = relatedUnits(units, store.listTasks(incident.id));
     if (halt === null && failed === undefined)
       for (const listed of units) {
         if (passes.size >= parallel) break;

@@ -2449,9 +2449,10 @@ R4-9 of the round 4 plan. Built: `dispatch` in `src/dispatcher.ts` runs the pass
 unrelated units at once and, inside a unit, starts every runnable task that is not inside
 the leader's session together. Two units are related when a task of one that has not ended
 names, in `dependsOn`, a task of the other that has not ended, either way round
-(`relatedUnits`, computed once at the start of the pass; a dependency already completed,
-failed or cancelled orders nothing, and a parent and a child are related only through
-their tasks). A unit's pass starts when the unit has something to do (a resumed leader to
+(`relatedUnits`, read from the store's tasks before each scheduling round, so a task a
+leader assigns mid-pass with a cross-unit dependency relates its units from the next
+round on; a dependency already completed, failed or cancelled orders nothing, and a
+parent and a child are related only through their tasks). A unit's pass starts when the unit has something to do (a resumed leader to
 brief, a runnable task, a report owed), no unit related to it is mid-pass, and fewer than
 `NOSCOPE_PARALLEL` passes are running: a positive whole number read from the command's
 environment (`options.env`, `process.env` when absent), 3 when unset, refused otherwise
