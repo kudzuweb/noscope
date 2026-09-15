@@ -21,7 +21,7 @@ import {
   planDiff,
   raiseResourceRequests,
 } from "../src/runtime.js";
-import { Store } from "../src/store.js";
+import { now, Store } from "../src/store.js";
 import { validateCommand, validationContext } from "../src/validator.js";
 import {
   fakeProvider,
@@ -408,8 +408,8 @@ describe("the IC above the planner", () => {
           `  - 001-u02, report ${reported?.id}: not_met, picture changed; changed: the handler is not in a.txt (claims none); why: the tree has no handler; suggestion: look elsewhere`,
           "    work since its previous report:",
           "      task 001-t01 (grep): find delete",
-          "        completed; result: 11 line(s) of JSON, in the task record",
           `        claims: 001-c001: ${join(tree, "a.txt")}:2 matches (observed, confidence 1.00)`,
+          "        completed; result: 11 line(s) of JSON, in the task record",
           "      tool calls: none",
           "resource requests:",
           "  (none)",
@@ -822,11 +822,11 @@ describe("the IC above the planner", () => {
       `  - u-a, report ${first.id}: met; changed: the handler is found (claims u-a-c-grep, u-a-c-inv)`,
       "    work since its previous report:",
       "      task u-a-grep (grep): find the delete handler",
-      "        completed; result: 10 line(s) of JSON, in the task record",
       "        claims: u-a-c-grep: /r/a.ts:2 matches (observed, confidence 1.00)",
+      "        completed; result: 10 line(s) of JSON, in the task record",
       "      task u-a-investigate (investigate, claude-haiku-4-5): explain the scroll",
-      "        completed, answered; summary: the handler resets the scroll",
       "        claims: u-a-c-inv: /r/a.ts:2 scrolls_on_delete (inferred, confidence 0.70)",
+      "        completed, answered; summary: the handler resets the scroll",
       "      tool calls: Read 2, Grep 1",
     ]);
     // The IC acts; the unit's next report shows only what ended after its first: a failed
@@ -913,11 +913,11 @@ describe("the IC above the planner", () => {
       `  - u-a, report ${second?.id}: not_met, picture changed; changed: nothing; why: the file is gone; suggestion: reproduce it`,
       "    work since its previous report:",
       "      task u-a-read (read): read the handler",
+      "        claims: none",
       "        failed: no such file",
-      "        claims: none",
       "      task u-a-interpret (interpret, claude-haiku-4-5): weigh it",
-      "        completed, insufficient; needed: observation: the view after a delete",
       "        claims: none",
+      "        completed, insufficient; needed: observation: the view after a delete",
       "      tool calls: Glob 1",
     ]);
     store.close();
@@ -942,7 +942,7 @@ describe("the IC above the planner", () => {
     expect(grep).toBeGreaterThan(0);
     expect(investigate).toBeGreaterThan(grep);
     // The grep's block fits; the investigate's is cut at the cap and points at its task.
-    expect(lines[grep + 2]).toBe(
+    expect(lines[grep + 1]).toBe(
       "        claims: u-a-c-grep: /r/a.ts:2 matches (observed, confidence 1.00)",
     );
     const block = lines.slice(
@@ -975,6 +975,103 @@ describe("the IC above the planner", () => {
     expect(
       renderCommandBriefing(store, s.incident, [fakeProvider]),
     ).not.toContain("chars clipped");
+    store.close();
+  });
+
+  it("a long summary never clips the claims: they come first and the summary is cut, and a wide grep lists its claims past the first three by id (R4-1)", () => {
+    const store = new Store(":memory:");
+    const s = scriptedIncident(store);
+    s.addUnit({ id: "u-a", objective: "find the scroll" });
+    const at = now();
+    const claim = (
+      id: string,
+      taskId: string,
+      session: boolean,
+    ): Parameters<Store["createClaim"]>[0] => ({
+      id,
+      incidentId: "i1",
+      subject: `/r/${id}.ts:1`,
+      predicate: session ? "causes" : "matches",
+      object: { text: "x".repeat(200) },
+      status: session ? "asserted" : "verified",
+      basis: session ? "inferred" : "observed",
+      confidence: session ? 0.6 : 1,
+      evidence: [`/r/${id}.ts:1`],
+      provenance: session
+        ? { capability: "interpret", taskId, sessionId: "s-i" }
+        : { capability: "grep", taskId, inputs: {} },
+      createdAt: at,
+    });
+    // Run 003's shape: an interpret with a 3,000-character summary and several claims.
+    const interpret = s.task({
+      id: "u-a-interpret",
+      unitId: "u-a",
+      capability: "interpret",
+      objective: "weigh it",
+      provider: "claude-code",
+      model: "claude-haiku-4-5",
+    });
+    for (let i = 1; i <= 6; i++)
+      store.createClaim(claim(`c-i${i}`, interpret.id, true), "dispatcher");
+    store.setTaskStatus(
+      "i1",
+      interpret.id,
+      "completed",
+      "dispatcher",
+      "task.completed",
+      {
+        result: {
+          outcome: "answered",
+          claims: [],
+          findings: { conclusion: "y".repeat(3000) },
+          needed: [],
+        },
+      },
+    );
+    const grep = s.task({
+      id: "u-a-grep",
+      unitId: "u-a",
+      capability: "grep",
+      objective: "find every handler",
+    });
+    for (let i = 1; i <= 6; i++)
+      store.createClaim(claim(`c-g${i}`, grep.id, false), "verifier");
+    store.setTaskStatus(
+      "i1",
+      grep.id,
+      "completed",
+      "dispatcher",
+      "task.completed",
+      {
+        result: { root: "/r", matches: [] },
+      },
+    );
+    store.record("i1", "unit.reported", "dispatcher", {
+      unitId: "u-a",
+      sessionId: "s-leader",
+      report: { outcome: "met", changed: [], pictureChanged: false },
+    });
+    const lines = renderChangeReport(
+      store.listEvents("i1"),
+      s.incident,
+      store.listUnits("i1"),
+    );
+    const block = lines.slice(
+      lines.indexOf(
+        "      task u-a-interpret (interpret, claude-haiku-4-5): weigh it",
+      ),
+      lines.indexOf("      task u-a-grep (grep): find every handler"),
+    );
+    expect(block[1]).toBe(
+      `        claims: ${[1, 2, 3, 4, 5, 6].map((i) => `c-i${i}: /r/c-i${i}.ts:1 causes (inferred, confidence 0.60)`).join("; ")}`,
+    );
+    expect(block[2]).toBe(
+      `        completed, answered; summary: ${"y".repeat(300)}…`,
+    );
+    expect(block.at(-1)).not.toMatch(/chars clipped/);
+    expect(lines).toContain(
+      "        claims: c-g1: /r/c-g1.ts:1 matches (observed, confidence 1.00); c-g2: /r/c-g2.ts:1 matches (observed, confidence 1.00); c-g3: /r/c-g3.ts:1 matches (observed, confidence 1.00); and 3 more, observed at confidence 1.00: c-g4, c-g5, c-g6",
+    );
     store.close();
   });
 

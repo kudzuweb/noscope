@@ -228,11 +228,18 @@ function tasksCreated(events: readonly Event[]): Map<string, Task> {
   return tasks;
 }
 
+/** A session result's summary is clipped to this many characters under a report: the incident file carries the findings in full, and the block's cap is for the claims. */
+const SUMMARY_CHARS = 300;
+
+/** The text cut at `SUMMARY_CHARS` with an ellipsis, or whole when it fits. */
+const clipSummary = (text: string): string =>
+  text.length <= SUMMARY_CHARS ? text : `${text.slice(0, SUMMARY_CHARS)}…`;
+
 /**
  * What a task came to, in one line: a session result's outcome and its summary (the
  * conclusion, or the observation count, when the capability's findings carry no summary),
- * a deterministic result's size in lines of JSON, or the failure's reason. The result
- * itself stays in the task record.
+ * clipped at `SUMMARY_CHARS`, a deterministic result's size in lines of JSON, or the
+ * failure's reason. The result itself stays in the task record.
  */
 function describeEnding(task: Task, ended: Event): string {
   if (ended.type === "task.failed")
@@ -257,9 +264,9 @@ function describeEnding(task: Task, ended: Event): string {
   };
   const summary =
     typeof f.summary === "string"
-      ? f.summary
+      ? clipSummary(f.summary)
       : typeof f.conclusion === "string"
-        ? f.conclusion
+        ? clipSummary(f.conclusion)
         : Array.isArray(f.observations)
           ? `${f.observations.length} observation(s), in the task record`
           : "(no summary)";
@@ -279,6 +286,22 @@ function describeClaim(c: Claim): string {
   return `${c.id}: ${c.subject} ${c.predicate} (${c.basis}, confidence ${c.confidence === null ? "none" : c.confidence.toFixed(2)})`;
 }
 
+/** A deterministic task's claims past this many are listed by id only: they are observed at confidence 1 by construction, one per match, and a wide grep would otherwise fill the block. */
+const DETERMINISTIC_CLAIMS_SHOWN = 3;
+
+/**
+ * A task's claims in one line: none, each in full, or for a deterministic task with many
+ * the first few in full and the rest by id, so the block's cap falls on a session's
+ * claims (whose basis and confidence are what the IC judges) and not on a match list.
+ */
+function describeClaims(task: Task, claims: readonly Claim[]): string {
+  if (claims.length === 0) return "none";
+  if (task.model !== null || claims.length <= DETERMINISTIC_CLAIMS_SHOWN)
+    return claims.map(describeClaim).join("; ");
+  const rest = claims.slice(DETERMINISTIC_CLAIMS_SHOWN);
+  return `${claims.slice(0, DETERMINISTIC_CLAIMS_SHOWN).map(describeClaim).join("; ")}; and ${rest.length} more, observed at confidence 1.00: ${rest.map((c) => c.id).join(", ")}`;
+}
+
 /** A task's block clipped at the cap, the pointer naming the task so the IC can find the full record. */
 function clipBlock(lines: readonly string[], taskId: string, cap: number) {
   const text = lines.join("\n");
@@ -292,10 +315,11 @@ function clipBlock(lines: readonly string[], taskId: string, cap: number) {
 /**
  * The work behind one report (R4-1), for the IC to judge the leader's account against:
  * the unit's tasks that ended since its previous report (or since the incident began), in
- * the order they ended, each with its capability, objective, how it ended and what it
- * came to, and the claims it produced (id, subject, predicate, basis, confidence), the
- * task's block clipped at `cap` characters with the task id as the pointer to the full
- * record; then the unit's tool calls in that window by tool name with counts, the tasks'
+ * the order they ended, each with its capability, objective, the claims it produced (id,
+ * subject, predicate, basis, confidence; the claims before the ending, so the block's cap
+ * falls on a summary's tail and never on the claims) and how it ended and what it came
+ * to, the task's block clipped at `cap` characters with the task id as the pointer to the
+ * full record; then the unit's tool calls in that window by tool name with counts, the tasks'
  * and the leader's own turns' (a task's calls are filed under it, a turn's under the
  * unit with no task and no cycle; the IC's own calls under the root carry a cycle and
  * are not the root unit's work as a leader). A bounded amount of text per task, so a
@@ -360,8 +384,8 @@ function renderReportWork(
       return clipBlock(
         [
           `      task ${task.id} (${task.capability}${task.model === null ? "" : `, ${task.model}`}): ${task.objective}`,
+          `        claims: ${describeClaims(task, claims)}`,
           `        ${describeEnding(task, event)}`,
-          `        claims: ${claims.length === 0 ? "none" : claims.map(describeClaim).join("; ")}`,
         ],
         task.id,
         cap,

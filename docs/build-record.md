@@ -2077,7 +2077,7 @@ Not exactly to spec, with reasons:
   parenthetical on questions ("only what only Mauria knows or may decide") would have
   contradicted the role.
 
-## R4-1: The work behind the report (#PR, merged 2026-09-15)
+## R4-1: The work behind the report (#41, merged 2026-09-15)
 
 R4-1 of the round 4 plan. Built: the IC's change report shows the work behind every
 report, so the IC judges the leader's account against what the unit did. `renderReport` in
@@ -2086,12 +2086,18 @@ unit id and the report's event id (the id R4-2's verdicts answer it by), the rep
 before (outcome, picture changed, what changed on which claims, why and suggestion), then
 "work since its previous report": the unit's tasks whose `task.completed` or `task.failed`
 lies between the unit's previous `unit.reported` and this one, in the order they ended,
-each as `task <id> (<capability>, <model>): <objective>`, a line for what it came to (a
-session result's `completed, answered; summary: …`, the findings' `conclusion` or
-observation count when they carry no summary, `completed, insufficient; needed: …`; a
-deterministic result's `completed; result: N line(s) of JSON, in the task record`;
-`failed: <reason>`), and `claims:` as `id: subject predicate (basis, confidence)` with the
-object left to the incident file's claims section; then `tool calls:` by tool name with
+each as `task <id> (<capability>, <model>): <objective>`, then `claims:` as `id: subject
+predicate (basis, confidence)` with the object left to the incident file's claims section
+(a deterministic task's claims past the first three are listed by id only, since they are
+observed at confidence 1 by construction and a wide grep would fill the block), then a
+line for what it came to (a session result's `completed, answered; summary: …`, the
+findings' `conclusion` or observation count when they carry no summary, the summary or
+conclusion cut at 300 characters with an ellipsis since the file carries the findings;
+`completed, insufficient; needed: …`; a deterministic result's `completed; result: N
+line(s) of JSON, in the task record`; `failed: <reason>`). The claims come before the
+ending so the block's cap falls on a summary's tail and never on the claims (run 003's
+interpret task carried a 2,390-character summary and 13 claims, which the first cut of
+this PR clipped whole). Then `tool calls:` by tool name with
 counts from the `tool.called` events in that window filed under those tasks or under the
 unit's own leader turns (no task, no cycle; the IC's own calls under the root carry a
 cycle and are not counted as the root's work). Each task's block is clipped at
@@ -2106,14 +2112,16 @@ renderer needs no store. `incident show` prints "unit reports, the last of each 
 the work behind it" after the situation, one block per unit that has reported, clipped at
 the same cap from the command's environment. `IC_ROLE` says a report is the leader's
 account, the work beneath it is what to judge the account against, a change is as good as
-the claims under it, and a clipped block's task id is carried in full by the file's claims
-and tasks. DESIGN.md Step 4 (the change report's contents) and Step 7 (`show`), the
+the claims under it, a clipped block names its task id, and the file's claims section
+carries each claim with its object clipped. DESIGN.md Step 4 (the change report's contents) and Step 7 (`show`), the
 architecture page's IC node and step 1, and the README's environment list follow. Tests:
 a snapshot of the change report with one reported unit showing a grep and an investigate,
 their claims and `Read 2, Grep 1`, then a second report on the same unit showing only a
 failed read and an insufficient interpret with the leader turn's `Glob 1`; a task over the
 cap clipped with the pointer naming its id, the block before it exactly the cap, the
-environment variable's parsing and the briefing reading it from the env; `show` printing
+environment variable's parsing and the briefing reading it from the env; run 003's shape,
+a 3,000-character summary over six claims at the default cap, with every claim id present
+and the summary cut; a grep with six claims listing three and the rest by id; `show` printing
 the block and clipping under `NOSCOPE_REPORT_WORK_CHARS`. The `reportedUnit` fixture in
 `test/fixtures/models.ts` scripts the unit, its two tasks, claims, tool calls and report,
 and `scriptedIncident` now returns its store.
@@ -2131,4 +2139,8 @@ Not exactly to spec, with reasons:
   read's is one text field); the claims under the task carry its substance.
 - A claim's object is not rendered at all, not even clipped to one line, since the plan
   block lists five fields and the incident file's claims section, which the IC reads in
-  the same briefing, carries every object in full in the cycle it lands.
+  the same briefing, carries each claim with its object clipped in the cycle it lands.
+- A session result's summary is cut at 300 characters and a deterministic task's claims
+  past the first three are ids only, neither in the plan block: the per-task cap is for
+  the claims the IC judges by, and run 003's interpret summary and grep match lists would
+  otherwise take the whole block.

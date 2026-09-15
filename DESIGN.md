@@ -360,14 +360,17 @@ rejected, and the spend since then (every usage any seat recorded after the IC's
 turn, summed). Each report is headed by its unit's id and the report's event id, the id a
 verdict answers it by, and carries the work behind it (R4-1), so the IC judges the
 leader's account against what the unit did: the unit's tasks that ended since its previous
-report (id, capability and model, objective, how it ended, and what it came to: a session
-result's outcome and summary, or its conclusion or observation count when the findings
-carry no summary, or what an insufficient result needed; a deterministic result's size in
-lines of JSON; a failure's reason), the claims each task produced (id, subject, predicate,
-basis, confidence; never the object, which the file's claims section carries), and the
-unit's tool calls in that window by tool name with counts, the tasks' and the leader's own
-turns'. Each task's block is clipped at `NOSCOPE_REPORT_WORK_CHARS` characters (default
-1,500) with the task id as the pointer to the full record, so a report adds a bounded
+report (id, capability and model, objective; then the claims the task produced, id,
+subject, predicate, basis and confidence, never the object, which the file's claims
+section carries clipped, a deterministic task's claims past the first three by id only;
+then how it ended and what it came to: a session result's outcome and summary, or its
+conclusion or observation count when the findings carry no summary, cut at 300 characters
+since the file carries the findings, or what an insufficient result needed; a
+deterministic result's size in lines of JSON; a failure's reason), and the unit's tool
+calls in that window by tool name with counts, the tasks' and the leader's own turns'.
+Each task's block is clipped at `NOSCOPE_REPORT_WORK_CHARS` characters (default 1,500)
+with the task id as the pointer to the full record, the claims placed before the ending
+so the cap falls on a summary's tail and never on the claims, so a report adds a bounded
 amount to the IC's context and the handoff threshold stays meaningful. The IC's first
 briefing on an incident says so. When a transfer of command
 is pending, the briefing carries the transfer's document after the change report: for the
