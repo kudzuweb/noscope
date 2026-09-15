@@ -2565,8 +2565,9 @@ renders that ending before asking for the report; a runtime report after two ref
 t-slow's and t-dep's endings unheard, and a third pass with a new task carries both on
 that task's turn; a task that landed after its unit reported, whose completion made a
 dependent runnable, reaches the leader on the next pass's first turn, the one on the
-dependent's ending, and nothing is owed after that report; a task that landed while a turn was queued behind a slow inside task is listed on
-that turn as ended already, not running, and gets its own turn next; a task in flight is
+dependent's ending, and nothing is owed after that report; a task that landed while a
+turn was queued behind a slow inside task is listed on that turn as ended already, not
+running, and gets its own turn next; a task in flight is
 held against the budget, so a second unit's task that fits by spend but not by reservation
 waits for the landing and is then stopped on what is spent, with one `budget.exceeded`
 after the first task's `task.completed`, while the first's leader still hears it; two
