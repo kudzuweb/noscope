@@ -51,13 +51,6 @@ const empty: ActionPlan = {
   capabilityRequests: [],
   applySops: [],
   incidentStatus: "continue",
-  situation: {
-    changed: "test",
-    hypothesis: "test",
-    proven: [],
-    inferred: [],
-    keep: [],
-  },
   rationale: "scripted",
 };
 
@@ -89,6 +82,13 @@ const findIt: ActionPlan = {
 const command = (over: Partial<CommandTurn> = {}): CommandTurn => ({
   periodObjectives: ["find the handler"],
   reportVerdicts: [],
+  situation: {
+    changed: "test",
+    hypothesis: "test",
+    proven: [],
+    inferred: [],
+    keep: [],
+  },
   priorities: ["observation over reading"],
   closeUnits: [],
   answers: [],

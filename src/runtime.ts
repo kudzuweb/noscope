@@ -138,8 +138,8 @@ const PLAN_ARRAYS = [
  * How the applied plan differs from the draft, structurally: each array field compared as
  * sets of items under a key-sorted JSON serialization, so a reordered item is no change
  * and an edited one shows as removed and added; every other field (`incidentStatus`,
- * `situation`, `rationale`, `discrepancy`) is named in `changed` when its serialization
- * differs. Empty when the IC approved the draft as drafted.
+ * `rationale`, `discrepancy`) is named in `changed` when its serialization differs.
+ * Empty when the IC approved the draft as drafted.
  */
 export function planDiff(draft: ActionPlan, applied: ActionPlan): PlanDiff {
   const arrays: PlanDiff["arrays"] = {};
@@ -155,7 +155,7 @@ export function planDiff(draft: ActionPlan, applied: ActionPlan): PlanDiff {
     if (added.length + removed.length > 0) arrays[field] = { added, removed };
   }
   const changed = (
-    ["incidentStatus", "situation", "rationale", "discrepancy"] as const
+    ["incidentStatus", "rationale", "discrepancy"] as const
   ).filter((field) => stable(draft[field]) !== stable(applied[field]));
   return { arrays, changed };
 }
@@ -644,7 +644,6 @@ export function applyPlan(
     recordChannels(store, incident, plan, questions, incidentStatus, actor);
     store.record(incident.id, "plan.applied", actor, {
       rationale: plan.rationale,
-      situation: plan.situation,
       units: units.map((u) => u.id),
       closedUnits: plan.closeUnits.map((c) => c.unitId),
       tasks: tasks.map((t) => t.id),

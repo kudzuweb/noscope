@@ -386,24 +386,53 @@ export const SopApplication = z.object({
   angles: z.array(z.string()),
 });
 
-/** What settles an inferred link: a task (id in the incident, or ref in this plan), a question this plan raises (1-based position in questionsForHuman), or a reproduce task. */
+/**
+ * What settles an inferred link (R4-5): a task, by an open task's id or by the ref the IC
+ * wants this period's plan to give the task that settles it; a reproduce task the same
+ * way; or deferred, with why, which is a decision recorded rather than a link left out.
+ */
 export const Settlement = z.union([
-  z.object({ task: z.string().min(1) }),
-  z.object({ question: z.number().int().positive() }),
-  z.object({ reproduce: z.string().min(1) }),
+  z.object({
+    task: z
+      .string()
+      .min(1)
+      .describe(
+        "An open task's id, or the ref the plan is to give the task that settles the link",
+      ),
+  }),
+  z.object({
+    reproduce: z
+      .string()
+      .min(1)
+      .describe(
+        "A reproduce task, by an open task's id or the ref the plan is to give it",
+      ),
+  }),
+  z.object({
+    deferred: z
+      .string()
+      .min(1)
+      .describe(
+        "Why this link is not worked this period: a decision recorded, not an omission",
+      ),
+  }),
 ]);
 
 /**
- * The planner's own picture, written each cycle and read back the next: what changed, the
- * current explanation, the observed claims it rests on, the inferred links and what settles
- * each, and the claims to keep in view. The rationale says why this plan; this says where
- * the incident stands.
+ * The IC's picture of the incident (R4-5; the planner's until then), written on every
+ * command turn and read by every seat: what changed, the current explanation, the observed
+ * claims it rests on, the inferred links and what settles each, and the claims to keep in
+ * view. The planner drafts the tactics that work it and the validator holds the plan to
+ * its inferred links. A reassignment is written into the slice it concerns rather than
+ * listed apart.
  */
 export const Situation = z.object({
   changed: z
     .string()
     .min(1)
-    .describe("What changed since the last cycle, one paragraph"),
+    .describe(
+      "What changed since your last turn, one paragraph; on the first turn, what the briefing established",
+    ),
   hypothesis: z
     .string()
     .min(1)
@@ -415,11 +444,13 @@ export const Situation = z.object({
         line: z.string().min(1).describe("The claim in one line"),
       }),
     )
-    .describe("The observed claims the hypothesis rests on"),
+    .describe(
+      "The observed claims the hypothesis rests on; a claim with basis inferred is refused here",
+    ),
   inferred: z
     .array(z.object({ claimId: z.string().min(1), settledBy: Settlement }))
     .describe(
-      "Every link the hypothesis needs that no claim observed, each with what this plan does to settle it",
+      "Every link the hypothesis needs that no claim observed, each with what settles it: a task this period's plan must carry (by an open task's id or the ref the plan is to give it), or deferred with why",
     ),
   keep: z
     .array(z.string())
@@ -440,8 +471,11 @@ export const ActionPlan = z.strictObject({
     ),
   applySops: z.array(SopApplication),
   incidentStatus: z.enum(["continue", "blocked", "satisfied", "failed"]),
-  situation: Situation,
-  rationale: z.string().describe("Why this plan, one paragraph"),
+  rationale: z
+    .string()
+    .describe(
+      "Why this plan, one paragraph: how it works the IC's situation, and the priority that chose between plans",
+    ),
   discrepancy: z
     .string()
     .min(1)
@@ -652,8 +686,10 @@ export const ReportVerdict = z
 
 /**
  * The IC's command turn, at the top of each cycle: a verdict on each report the change
- * report lists, the period's objectives and priorities, units to close, answers to what
- * units asked for, what only Mauria can supply, and whether the incident continues. The planner then drafts against the period. Every turn schema is
+ * report lists, the situation (R4-5), the period's objectives and priorities, units to
+ * close, answers to what units asked for, what only Mauria can supply, and whether the
+ * incident continues. The planner then drafts the tactics against the period and the
+ * situation, as a suggestion for the IC. Every turn schema is
  * one strict object: the structured-output API refuses a top-level oneOf/anyOf and accepts
  * keys a loose object does not name, so fields that vary by variant are optional and a
  * refinement enforces them after parse (verified on Claude Code 2.1.272, R3-5).
@@ -679,6 +715,9 @@ export const CommandTurn = z.strictObject({
     .describe(
       "One verdict per unit that reported, naming the unit and the event id of its last report the change report lists (an earlier report of the same unit is marked as answered through the last and takes none): accepted, revise or reassign, with instructions for the last two and a why for each",
     ),
+  situation: Situation.describe(
+    "Your situation, the picture every seat works from this period (R4-5): what changed, the hypothesis, the observed claims it rests on, every inferred link with the task that settles it or deferred with why, and the claims to keep in view; a reassignment updates the slice it concerns",
+  ),
   closeUnits: z
     .array(UnitClose)
     .describe(
@@ -691,7 +730,7 @@ export const CommandTurn = z.strictObject({
           .string()
           .min(1)
           .describe(
-            "An open reassignment's id, as the incident file's section 11 lists it",
+            "An open reassignment's id, as the incident file lists it under your situation in section 10",
           ),
         why: z.string().min(1),
       }),

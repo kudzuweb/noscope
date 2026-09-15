@@ -64,13 +64,6 @@ const empty: ActionPlan = {
   capabilityRequests: [],
   applySops: [],
   incidentStatus: "continue",
-  situation: {
-    changed: "test",
-    hypothesis: "test",
-    proven: [],
-    inferred: [],
-    keep: [],
-  },
   rationale: "scripted",
 };
 
@@ -102,6 +95,13 @@ const findIt: ActionPlan = {
 const command = (over: Partial<CommandTurn> = {}): CommandTurn => ({
   periodObjectives: ["find the handler"],
   reportVerdicts: [],
+  situation: {
+    changed: "test",
+    hypothesis: "test",
+    proven: [],
+    inferred: [],
+    keep: [],
+  },
   priorities: ["observation over reading"],
   closeUnits: [],
   answers: [],
@@ -192,6 +192,8 @@ describe("the IC above the planner", () => {
       "IC command turn for period 1 (session stub-session): first period",
       "  objective: find the handler",
       "  priority: observation over reading",
+      "  situation changed: test",
+      "  hypothesis: test",
       "  status: continue",
       "plan drafted (session stub-session): grep for the handler",
       "  create unit find under 001-command (leader claude-code/claude-haiku-4-5): locate the delete handler",
@@ -1915,7 +1917,7 @@ describe("the IC above the planner", () => {
     );
   });
 
-  it("a run on the stub: the IC reassigns, the unit closes with its pending task cancelled, the planner's next input lists the reassignment, a plan without a taking unit is rejected, a plan with one is applied and the new unit's first brief carries the instructions and the claim ids, and review counts it (R4-4)", {
+  it("a run on the stub: the IC reassigns, the unit closes with its pending task cancelled, the planner's next input carries the reassignment in the IC's situation with its id open, a plan without a taking unit is rejected, a plan with one is applied and the new unit's first brief carries the instructions and the claim ids, and review counts it (R4-4)", {
     timeout: 60_000,
   }, async () => {
     const instructions =
@@ -1965,6 +1967,15 @@ describe("the IC above the planner", () => {
               why: "a reader would do better than another grep",
             },
           ],
+          // The reassignment is written into the slice it concerns (R4-5), not listed apart.
+          situation: {
+            changed:
+              "the grep found the handler at a.txt:2 but not its caller; that slice is reassigned (001-r01) to a unit that reads the file",
+            hypothesis: "the handler is at a.txt:2",
+            proven: [],
+            inferred: [],
+            keep: ["001-c001"],
+          },
           rationale: "reassign",
         }),
         command({ rationale: "the retry" }),
@@ -2014,18 +2025,26 @@ describe("the IC above the planner", () => {
     expect(h.out).toContain(
       "  - Reassignments taken: reassignment 001-r01, the slice of closed unit 001-u02, is not taken: no new unit names it in takes",
     );
-    const section = (prompt: string) =>
-      prompt.split("## 11. Reassignments\n")[1] ?? "";
+    // Section 10 is the IC's situation, the reassignment written into its slice, and ends
+    // with the ids still open; there is no section 11 (R4-5).
+    const openLine = (ids: string) =>
+      `reassignments open, each taken by a new unit in this plan naming its id in takes: ${ids}`;
     const planners = h.calls().filter((c) => c.kind === "planner");
-    expect(section(planners[0]?.prompt ?? "")).toBe("  (none)");
-    expect(section(planners[1]?.prompt ?? "")).toBe(
+    expect(planners[0]?.prompt).toContain(openLine("(none)"));
+    expect(planners[1]?.prompt).toContain(
       [
-        `  - 001-r01: from unit 001-u02 (objective: locate the delete handler), closed in cycle 2 on report ${report.id}`,
-        `    instructions: ${instructions}`,
-        "    why: a reader would do better than another grep",
-        "    claims: 001-c001",
+        "## 10. The IC's situation",
+        "changed: the grep found the handler at a.txt:2 but not its caller; that slice is reassigned (001-r01) to a unit that reads the file",
+        "hypothesis: the handler is at a.txt:2",
+        "proven:",
+        "  (none)",
+        "inferred:",
+        "  (none)",
+        "keep: 001-c001",
+        openLine("001-r01 from unit 001-u02"),
       ].join("\n"),
     );
+    expect(planners[1]?.prompt).not.toContain("## 11.");
     const second = h.store();
     const events = second.listEvents("001");
     const reassigned = events.find((e) => e.type === "unit.reassigned");
@@ -2071,8 +2090,8 @@ describe("the IC above the planner", () => {
     expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
     expect(h.err).toEqual([]);
     expect(
-      section(h.calls().filter((c) => c.kind === "planner")[2]?.prompt ?? ""),
-    ).toContain("  - 001-r01: from unit 001-u02");
+      h.calls().filter((c) => c.kind === "planner")[2]?.prompt ?? "",
+    ).toContain(openLine("001-r01 from unit 001-u02"));
     expect(h.out).toContain(
       "  create unit reader under 001-command (leader claude-code/claude-haiku-4-5): read the delete handler (takes reassignment 001-r01)",
     );
@@ -2125,6 +2144,142 @@ describe("the IC above the planner", () => {
     );
     expect(review).toContain(
       `reassignments: 1\n  001-r01 from 001-u02 in cycle 2: 1 claim(s); taken by 001-u03; instructions: ${instructions}`,
+    );
+  });
+
+  it("a run on the stub: the IC's situation carries one inferred link settled by a ref, the planner's draft without that ref is rejected, the next settles it and is applied, and show prints the situation under the period (R4-5)", {
+    timeout: 60_000,
+  }, async () => {
+    const situation = {
+      changed:
+        "the grep found a.txt:2; whether it is the only handler is not seen",
+      hypothesis: "a.txt:2 is the handler",
+      proven: [{ claimId: "001-c001", line: "a.txt:2 matches delete" }],
+      inferred: [
+        { claimId: "001-c001", settledBy: { task: "probe" } },
+        {
+          claimId: "001-c001",
+          settledBy: { deferred: "the caller is next period's question" },
+        },
+      ],
+      keep: [],
+    };
+    const h = harness(
+      [
+        findIt,
+        { ...empty, rationale: "nothing settles the link" },
+        {
+          ...empty,
+          createTasks: [
+            {
+              ...grepTask,
+              ref: "probe",
+              unit: "001-u02",
+              objective: "find every handler",
+              inputs: { root: ".", pattern: "handler" },
+            },
+          ],
+          rationale: "probe settles the link the IC named",
+        },
+      ],
+      [
+        command(),
+        command({
+          reportVerdicts: [
+            {
+              reportId: "",
+              unitId: "001-u02",
+              verdict: "revise",
+              instructions: "run the probe the plan gives you",
+              why: "one match is not the whole picture",
+            },
+          ],
+          situation,
+          rationale: "second period",
+        }),
+        command({ situation, rationale: "the retry" }),
+      ],
+      [],
+    );
+    await run(
+      ["incident", "create", "--no-size-up", "where is the delete handler"],
+      h.ctx,
+    );
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    // Cycle 2: the IC writes the link; the draft leaves it unworked and is rejected.
+    h.out.length = 0;
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    expect(h.err).toEqual([]);
+    expect(h.out).toContain(
+      "  situation changed: the grep found a.txt:2; whether it is the only handler is not seen",
+    );
+    expect(h.out).toContain("plan rejected:");
+    expect(h.out).toContain(
+      "  - Inferred links are worked: the IC's situation has inferred claim 001-c001 settled by task probe, which is neither a ref in this plan nor an open task",
+    );
+    const planners = h.calls().filter((c) => c.kind === "planner");
+    expect(planners[1]?.prompt).toContain(
+      [
+        "## 10. The IC's situation",
+        "changed: the grep found a.txt:2; whether it is the only handler is not seen",
+        "hypothesis: a.txt:2 is the handler",
+        "proven:",
+        "  - 001-c001: a.txt:2 matches delete",
+        "inferred:",
+        "  - 001-c001, settled by task probe",
+        "  - 001-c001, deferred: the caller is next period's question",
+        "keep: (none)",
+      ].join("\n"),
+    );
+    // Cycle 3: the draft gives the task the ref the IC named, and is applied.
+    h.out.length = 0;
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    expect(h.err).toEqual([]);
+    expect(h.out).toContain("plan approved");
+    expect(h.out).toContain(
+      "  task 001-t02 [ready] under 001-u02: grep: find every handler",
+    );
+    const store = h.store();
+    const turned = store
+      .listEvents("001")
+      .filter(
+        (e) => e.type === "command.turned" && e.payload.rejected !== true,
+      );
+    expect(
+      turned.map((e) => (e.payload.turn as { situation?: unknown }).situation),
+    ).toEqual([
+      {
+        changed: "test",
+        hypothesis: "test",
+        proven: [],
+        inferred: [],
+        keep: [],
+      },
+      situation,
+      situation,
+    ]);
+    const applied = store
+      .listEvents("001")
+      .filter((e) => e.type === "plan.applied" && e.actor === "runtime");
+    expect(applied.every((e) => e.payload.situation === undefined)).toBe(true);
+    store.close();
+    h.out.length = 0;
+    expect(await run(["incident", "show", "001"], h.ctx)).toBe(EXIT.ok);
+    expect(h.out.join("\n")).toContain(
+      [
+        "period priorities:",
+        "  - observation over reading",
+        "situation, the IC's:",
+        "  changed: the grep found a.txt:2; whether it is the only handler is not seen",
+        "  hypothesis: a.txt:2 is the handler",
+        "  proven:",
+        "    - 001-c001: a.txt:2 matches delete",
+        "  inferred:",
+        "    - 001-c001, settled by task probe",
+        "    - 001-c001, deferred: the caller is next period's question",
+        "  keep: (none)",
+        "  reassignments open, each taken by a new unit in this plan naming its id in takes: (none)",
+      ].join("\n"),
     );
   });
 

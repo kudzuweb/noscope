@@ -14,6 +14,7 @@ import {
   describeRefusedCall,
   endedSinceLastTurn,
   fallbackModel,
+  icSituation,
   LEADER_ACTOR,
   LEADER_TURN_SCHEMA,
   leaderRequest,
@@ -37,7 +38,6 @@ import {
   type LeaderReport,
   LeaderTurn,
   SessionResult,
-  Situation,
   type Task,
   type Unit,
   type Usage,
@@ -262,17 +262,7 @@ const NO_USAGE: Usage = {
   seconds: 0,
 };
 
-/** The last applied plan's situation, if a plan has been applied and carried one; a leader's `plan.applied` carries none and is skipped. */
-function lastSituation(events: readonly Event[]): Situation | null {
-  let last: unknown;
-  for (const e of events)
-    if (e.type === "plan.applied" && e.payload.situation !== undefined)
-      last = e.payload.situation;
-  const parsed = Situation.safeParse(last);
-  return parsed.success ? parsed.data : null;
-}
-
-/** What a session reads beyond its task: the objective, the situation, the hierarchy, and the claims and results the task names in evidenceFrom. */
+/** What a session reads beyond its task: the objective, the IC's situation (R4-5), the hierarchy, and the claims and results the task names in evidenceFrom. */
 function briefContext(
   store: Store,
   incident: Incident,
@@ -284,7 +274,7 @@ function briefContext(
   return {
     objective: incident.objective,
     ...(incident.period === undefined ? {} : { period: incident.period }),
-    situation: lastSituation(store.listEvents(incident.id)),
+    situation: icSituation(store.listEvents(incident.id)),
     units,
     claims: store.listClaims(incident.id).filter((c) => claims.has(c.id)),
     results: store.listTasks(incident.id).filter((t) => tasks.has(t.id)),
@@ -314,7 +304,7 @@ function orientation(
   return [
     ...renderLeaderOrientation(
       incident,
-      lastSituation(events),
+      icSituation(events),
       unit,
       units,
       beforeBrief,

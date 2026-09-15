@@ -6,6 +6,7 @@ import { LEADER_RULES } from "../src/leader.js";
 import type {
   ActionPlan,
   CommandTurn,
+  Situation,
   TaskProposal,
   Unit,
 } from "../src/models.js";
@@ -53,6 +54,13 @@ const empty: ActionPlan = {
   capabilityRequests: [],
   applySops: [],
   incidentStatus: "continue",
+  rationale: "test",
+};
+
+const turn: CommandTurn = {
+  periodObjectives: ["finish"],
+  priorities: [],
+  reportVerdicts: [],
   situation: {
     changed: "test",
     hypothesis: "test",
@@ -60,6 +68,13 @@ const empty: ActionPlan = {
     inferred: [],
     keep: [],
   },
+  closeUnits: [],
+  answers: [],
+  assignTasks: [],
+  questionsForHuman: [],
+  capabilityRequests: [],
+  grantRequests: [],
+  incidentStatus: "continue",
   rationale: "test",
 };
 
@@ -716,20 +731,12 @@ describe("validator", () => {
             "unit u-scroll has a revision not yet delivered; its leader answers it first",
         },
       ]);
-    const turn: CommandTurn = {
-      periodObjectives: ["finish"],
-      priorities: [],
-      reportVerdicts: [],
+    const closingTurn: CommandTurn = {
+      ...turn,
       closeUnits: [{ unitId: "u-scroll", reason: "the IC changed its mind" }],
-      answers: [],
-      assignTasks: [],
-      questionsForHuman: [],
-      capabilityRequests: [],
-      grantRequests: [],
-      incidentStatus: "continue",
       rationale: "close it",
     };
-    expect(validateCommand(turn, ctx())).toEqual([]);
+    expect(validateCommand(closingTurn, ctx())).toEqual([]);
     store.record("i1", "unit.revised", "dispatcher", {
       unitId: "u-scroll",
       sessionId: "s-lead",
@@ -986,60 +993,115 @@ describe("validator", () => {
     ]);
   });
 
-  it("Inferred links are worked: a ref, an open task, a question in this plan or a reproduce task settles a link; anything else, or a claim the incident lacks, is refused", () => {
-    const situation = (over: Partial<ActionPlan["situation"]>) => ({
-      ...empty.situation,
-      ...over,
+  it("Inferred links are worked: every inferred link in the IC's situation is settled by a ref in this plan, an open task, a reproduce task the same way, or deferred with a why; a link left unsettled rejects the plan", () => {
+    const { store, ctx } = seeded();
+    const situation = (inferred: Situation["inferred"]): Situation => ({
+      changed: "the IC's",
+      hypothesis: "a.ts handles deletion",
+      proven: [{ claimId: "c-seen", line: "a.ts:9 calls scrollTo" }],
+      inferred,
+      keep: [],
+    });
+    const turned = (inferred: Situation["inferred"]) =>
+      store.record("i1", "command.turned", "runtime", {
+        cycle: 1,
+        turn: { ...turn, situation: situation(inferred) },
+      });
+    const reasonsWith = (plan: ActionPlan) => {
+      const verdict = validatePlan(plan, ctx());
+      return verdict.ok
+        ? []
+        : verdict.rejections.map((r) => `${r.rule}: ${r.reason}`);
+    };
+    // No situation yet: nothing to settle.
+    expect(reasonsWith(empty)).toEqual([]);
+    turned([
+      { claimId: "c-asserted", settledBy: { task: "probe" } },
+      { claimId: "c-asserted", settledBy: { task: "t-running" } },
+      { claimId: "c-asserted", settledBy: { reproduce: "probe" } },
+      {
+        claimId: "c-asserted",
+        settledBy: { deferred: "the browser is not available this period" },
+      },
+    ]);
+    expect(
+      reasonsWith({ ...empty, createTasks: [grepTask({ ref: "probe" })] }),
+    ).toEqual([]);
+    // A rejected turn's situation is not the IC's; the last accepted one stands.
+    store.record("i1", "command.turned", "runtime", {
+      cycle: 2,
+      rejected: true,
+      turn: {
+        ...turn,
+        situation: situation([
+          { claimId: "c-asserted", settledBy: { task: "never" } },
+        ]),
+      },
     });
     expect(
-      reasonsOf({
-        ...empty,
-        createTasks: [grepTask({ ref: "probe" })],
-        questionsForHuman: ["does it happen every time?"],
-        situation: situation({
-          proven: [
-            { claimId: "c-verified", line: "a.ts exists" },
-            {
-              claimId: "c-seen",
-              line: "a.ts:9 calls scrollTo, seen by a session",
-            },
-          ],
-          inferred: [
-            { claimId: "c-asserted", settledBy: { task: "probe" } },
-            { claimId: "c-asserted", settledBy: { task: "t-running" } },
-            { claimId: "c-asserted", settledBy: { question: 1 } },
-            { claimId: "c-asserted", settledBy: { reproduce: "probe" } },
-          ],
-          keep: ["c-verified"],
-        }),
-      }),
+      reasonsWith({ ...empty, createTasks: [grepTask({ ref: "probe" })] }),
     ).toEqual([]);
-    expect(
-      reasonsOf({
-        ...empty,
-        cancelTasks: ["t-running"],
-        situation: situation({
-          inferred: [
-            { claimId: "c-asserted", settledBy: { task: "t-none" } },
-            { claimId: "c-asserted", settledBy: { task: "t-running" } },
-            { claimId: "c-asserted", settledBy: { task: "t-done" } },
-            { claimId: "c-asserted", settledBy: { question: 1 } },
-          ],
-          proven: [
-            { claimId: "c-none", line: "missing" },
-            { claimId: "c-asserted", line: "inferred, not observed" },
-          ],
-          keep: ["c-none"],
-        }),
-      }),
-    ).toEqual([
-      "Dependencies resolve: the situation names no claim c-none",
-      "Dependencies resolve: the situation lists claim c-asserted as proven, but its basis is inferred, not observed",
-      "Inferred links are worked: inferred claim c-asserted is settled by task t-none, which is neither a ref in this plan nor an open task",
-      "Inferred links are worked: inferred claim c-asserted is settled by task t-running, which is neither a ref in this plan nor an open task",
-      "Inferred links are worked: inferred claim c-asserted is settled by task t-done, which is neither a ref in this plan nor an open task",
-      "Inferred links are worked: inferred claim c-asserted is settled by question 1, but this plan raises 0",
+    turned([
+      { claimId: "c-asserted", settledBy: { task: "t-none" } },
+      { claimId: "c-asserted", settledBy: { task: "t-running" } },
+      { claimId: "c-asserted", settledBy: { reproduce: "t-done" } },
     ]);
+    expect(reasonsWith({ ...empty, cancelTasks: ["t-running"] })).toEqual([
+      "Inferred links are worked: the IC's situation has inferred claim c-asserted settled by task t-none, which is neither a ref in this plan nor an open task",
+      "Inferred links are worked: the IC's situation has inferred claim c-asserted settled by task t-running, which is neither a ref in this plan nor an open task",
+      "Inferred links are worked: the IC's situation has inferred claim c-asserted settled by reproduce task t-done, which is neither a ref in this plan nor an open task",
+    ]);
+    store.close();
+  });
+
+  it("Situation grounded: the IC's situation names claims the incident has and calls proven only what was observed", () => {
+    const { store, ctx } = seeded();
+    const grounded: CommandTurn = {
+      ...turn,
+      situation: {
+        changed: "the IC's",
+        hypothesis: "a.ts handles deletion",
+        proven: [
+          { claimId: "c-verified", line: "a.ts exists" },
+          {
+            claimId: "c-seen",
+            line: "a.ts:9 calls scrollTo, seen by a session",
+          },
+        ],
+        inferred: [{ claimId: "c-asserted", settledBy: { task: "probe" } }],
+        keep: ["c-verified"],
+      },
+    };
+    expect(validateCommand(grounded, ctx())).toEqual([]);
+    const ungrounded: CommandTurn = {
+      ...turn,
+      situation: {
+        changed: "the IC's",
+        hypothesis: "a.ts handles deletion",
+        proven: [
+          { claimId: "c-none", line: "missing" },
+          { claimId: "c-asserted", line: "inferred, not observed" },
+        ],
+        inferred: [{ claimId: "c-gone", settledBy: { task: "probe" } }],
+        keep: ["c-none"],
+      },
+    };
+    expect(validateCommand(ungrounded, ctx())).toEqual([
+      {
+        rule: "Situation grounded",
+        reason: "the situation names no claim c-none",
+      },
+      {
+        rule: "Situation grounded",
+        reason: "the situation names no claim c-gone",
+      },
+      {
+        rule: "Situation grounded",
+        reason:
+          "the situation lists claim c-asserted as proven, but its basis is inferred, not observed",
+      },
+    ]);
+    store.close();
   });
 
   it("Status is earned passes once every task is done and an observed claim exists, verified or not", () => {

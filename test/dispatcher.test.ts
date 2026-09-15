@@ -382,7 +382,7 @@ describe("dispatcher", () => {
     store.close();
   });
 
-  it("a session's brief carries the incident objective, the situation, and the claims and results the task names in evidenceFrom", async () => {
+  it("a session's brief carries the incident objective, the IC's situation, and the claims and results the task names in evidenceFrom", async () => {
     const { readFileSync } = await import("node:fs");
     const store = new Store(":memory:");
     const { incident, task } = scriptedIncident(store);
@@ -424,14 +424,17 @@ describe("dispatcher", () => {
         result: { matches: 2 },
       },
     );
-    store.record("i1", "plan.applied", "runtime", {
-      rationale: "next",
-      situation: {
-        changed: "the grep landed",
-        hypothesis: "the handler is the one",
-        proven: [{ claimId: claim.id, line: "the handler is at a.ts:1" }],
-        inferred: [],
-        keep: [],
+    // The IC's situation (R4-5) is what the brief carries.
+    store.record("i1", "command.turned", "runtime", {
+      cycle: 1,
+      turn: {
+        situation: {
+          changed: "the grep landed",
+          hypothesis: "the handler is the one",
+          proven: [{ claimId: claim.id, line: "the handler is at a.ts:1" }],
+          inferred: [],
+          keep: [],
+        },
       },
     });
     const said = task({
@@ -1349,13 +1352,6 @@ describe("dispatcher, unit leaders", () => {
         capabilityRequests: [],
         applySops: [],
         incidentStatus: "continue",
-        situation: {
-          changed: "nothing yet",
-          hypothesis: "a declared team can be sent",
-          proven: [],
-          inferred: [],
-          keep: [],
-        },
         rationale: "the live strike-team check",
       };
       const [created] = applyPlan(store, incident, plan).tasks;
@@ -3102,13 +3098,6 @@ describe("incident step", () => {
       capabilityRequests: [],
       applySops: [],
       incidentStatus: "continue",
-      situation: {
-        changed: "test",
-        hypothesis: "test",
-        proven: [],
-        inferred: [],
-        keep: [],
-      },
       rationale: "grep first",
     };
     out.length = 0;
@@ -3118,6 +3107,8 @@ describe("incident step", () => {
     expect(out).toEqual([
       "IC command turn for period 1 (session stub-session): stub command turn",
       "  objective: pursue the incident objective",
+      "  situation changed: stub: nothing yet",
+      "  hypothesis: stub hypothesis",
       "  status: continue",
       "plan drafted (session stub-session): grep first",
       "  create unit find under 001-command (leader claude-code/claude-haiku-4-5): locate the handler",
@@ -3141,24 +3132,17 @@ describe("incident step", () => {
       await withStubOutput(bad, () => run(["incident", "step", "001"], ctx)),
     ).toBe(EXIT.ok);
     // The IC's default verdict on the report the last step filed (R4-2): the stub revises a progress report.
-    expect(out[2]).toMatch(
+    expect(out[4]).toMatch(
       /^ {2}verdict on 001-u02's report [0-9a-f-]{36}: revise: stub: progress; instructions: stub: carry on$/,
     );
-    expect(out[8]).toBe("plan rejected:");
-    expect(out[9]).toMatch(/^ {2}- Units exist: /);
+    expect(out[10]).toBe("plan rejected:");
+    expect(out[11]).toMatch(/^ {2}- Units exist: /);
     out.length = 0;
     const done: ActionPlan = {
       ...plan,
       createUnits: [],
       createTasks: [],
       incidentStatus: "satisfied",
-      situation: {
-        changed: "test",
-        hypothesis: "test",
-        proven: [],
-        inferred: [],
-        keep: [],
-      },
       rationale: "found it",
     };
     expect(
