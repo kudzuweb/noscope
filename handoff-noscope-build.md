@@ -42,39 +42,49 @@ builder is most likely to widen by accident:
 | "Leader" for unit heads, "IC" for the root's; "chief" is an ICS Section Chief and is not used. | "Chief" or "commander" for a unit's session. |
 | No second incident of another kind this round. | An R3-10 second half. |
 
-## 3. STATE (as of this refresh, 2026-09-15 02:45 CDT)
+## 3. STATE (as of this refresh, 2026-09-15 05:15 CDT)
 
-Origin main is `bb32bc9`, pushed; local main equals it; clean; no worktrees; no open PRs;
-`dist/` built from it. Merged tonight: R3-0 (#28, 01:07), R3-2 (#30, 01:14), R3-3 (#29,
-02:38), R3-1 (#31, 02:44). Each carries its build-record entry and the review's findings.
-Next is R3-4 (unit leaders), then R3-5 and R3-6 in parallel with R3-7.
+Origin main is `b1573cc`, pushed; local main equals it; clean; no worktrees; no open PRs;
+`dist/` built from it. Ten of eleven merged tonight, in this order: R3-0 (#28), R3-2 (#30),
+R3-3 (#29), R3-1 (#31), R3-4 (#32), R3-5 (#35), R3-7 (#33), R3-6 (#34), R3-8 (#37), R3-9
+(#36). Each carries its build-record entry and its reviews' findings. What remains is R3-10,
+the third live run of the first incident, and then the two write-ups (the run's, and
+Mauria's instructions-only analysis of this session).
 
-Facts the merged PRs established that the later PRs rest on (all verified live on Claude
-Code 2.1.272, 2026-09-15, recorded in DESIGN.md):
-- A resumed call's cache read is intermittent (14 of 24 runs read, the rest rewrote the
-  whole context), so a resumed call is budgeted at the whole context at cache-write rates.
-- `systemPrompt` on a resumed call is ignored (`--system-prompt-snapshot on` by default):
-  a seat whose role text must change needs a fresh session. Resume with the original cwd.
-- `--strict-mcp-config` is now an isolation flag on every session; without it Mauria's
-  claude.ai connectors loaded into headless sessions.
-- A killed session still files the tool calls its stream carried, before `task.failed`.
-- Subagent transcripts carry a dated model id; the provider canonicalizes it for pricing.
-- `--output-format stream-json` needs `--verbose` in print mode.
+Facts the merged PRs established, all verified live on Claude Code 2.1.272 on 2026-09-15
+and recorded in DESIGN.md's Reference table or the Step they belong to:
+- A resumed call's cache read is intermittent, so a resumed call is budgeted at the whole
+  context at cache-write rates; `Usage.contextTokens` (the last assistant message's context)
+  is the real context of a session, and the envelope's input figure sums across API turns.
+- `systemPrompt` on a resumed call is ignored: a seat whose role text must change needs a
+  fresh session (the migration released every R3-4 root session for this reason).
+- `--strict-mcp-config` is an isolation flag on every session (Mauria's connectors loaded
+  otherwise). A killed session files its tool calls before `task.failed`.
+- The structured-output API refuses a top-level oneOf; every turn schema is one strict
+  object with a required-nullable sub-object; an unstrict schema let Haiku flatten a report.
+- In print mode the Bash allowlist is a floor: unlisted read-only commands run, writes and
+  out-of-directory paths are denied regardless, so the read-only effect policy holds.
+- Rulings this session made as IC during reviews (recorded in the quipu as the session's,
+  not Mauria's): a dead leader session is replaced by a fresh one with the dead id recorded;
+  a unit with no budget share in a bounded dimension has share zero; the IC assigns tasks
+  under command like any leader; a rejected command turn does not advance the period; the
+  root never enters waiting from a leader turn; an answer given twice is a rejected turn.
 
-The R3-0 spike scripts live in `spikes/round3/`. The two live-run databases are unchanged
-(`~/.noscope/first-incident.sqlite`, `~/.noscope/second-run.sqlite`). A heartbeat cron in
-the writing session (hourly at :13) resumes the run after a usage window; it dies with
-that session, so a successor creates its own with `CronCreate`.
+R3-10 setup: roughdraftplus at `6a996e8` (other sessions' uncommitted files in `.context/`
+and a handoff file are untracked there; the run is read-only and does not touch them);
+Roughdraft 0.1.10 serves `~/.noscope/second-run/document.md` at
+`http://localhost:7373/?path=%2FUsers%2Fmauriaparker%2F.noscope%2Fsecond-run%2Fdocument.md`;
+restore it from `document.pristine.md` before the run. Database for the run:
+`NOSCOPE_DB=~/.noscope/third-run.sqlite`. The `create` runs the Haiku size-up and the
+transfer; every `step` is one eight-step cycle; run each detached with a log.
 
-Mauria asked at 01:29 for one more deliverable after the build: an `incident review`-style
-analysis of this session's own transcript (this session as IC, subagents as tasks: per PR,
-per subagent, tokens, cache split, seconds, cost, verdicts, questions), compared with runs
-001 and 002, as a write-up under `docs/` of an instructions-only run. Transcript:
-`~/.claude/projects/-Users-mauriaparker/da050f04-42b2-4162-9421-387ea5d066a1.jsonl` and its
-`subagents/` directory.
+Mauria's added deliverable (01:29): an `incident review`-style analysis of this session's
+own transcript as an instructions-only run, compared with runs 001 and 002, under `docs/`.
+Transcript: `~/.claude/projects/-Users-mauriaparker/da050f04-42b2-4162-9421-387ea5d066a1.jsonl`
+and its `subagents/` directory (builders `build-r3-N`, reviewers `reviewNN-*`).
 
-Quipu: origin main `a3a3077` plus the keeper's progress commits, pushed as they land. Papercuts:
-pc-7e69f7, pc-92ef05, pc-4aa4d5 (WebFetch's summarizer invented a docs heading).
+Quipu: the keeper's progress commits are pushed as they land. Papercuts: pc-7e69f7,
+pc-92ef05, pc-4aa4d5.
 
 ## 4. NEXT STEPS, IN ORDER
 
