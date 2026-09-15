@@ -461,9 +461,10 @@ function renderReportWork(
 
 /**
  * A unit's report as the IC reads it: one line headed by the unit id and the report's
- * event id (the id a verdict answers it by), with the outcome, whether the picture
- * changed, what changed on which claims, and for `not_met` the why and suggestion; then
- * the work behind it (`renderReportWork`).
+ * event id (the id a verdict answers it by), with the outcome, the revision number when
+ * the report answers a revise verdict (R4-3), whether the picture changed, what changed on
+ * which claims, and for `not_met` the why and suggestion; then the work behind it
+ * (`renderReportWork`).
  */
 export function renderReport(
   events: readonly Event[],
@@ -486,7 +487,7 @@ export function renderReport(
     )
     .join("; ");
   return [
-    `  - ${str(report.payload.unitId)}, report ${report.id}: ${str(r?.outcome)}${r?.pictureChanged === true ? ", picture changed" : ""}; changed: ${changed || "nothing"}${typeof r?.why === "string" ? `; why: ${r.why}` : ""}${typeof r?.suggestion === "string" ? `; suggestion: ${r.suggestion}` : ""}`,
+    `  - ${str(report.payload.unitId)}, report ${report.id}: ${str(r?.outcome)}${typeof report.payload.revision === "number" ? ` (revision ${report.payload.revision})` : ""}${r?.pictureChanged === true ? ", picture changed" : ""}; changed: ${changed || "nothing"}${typeof r?.why === "string" ? `; why: ${r.why}` : ""}${typeof r?.suggestion === "string" ? `; suggestion: ${r.suggestion}` : ""}`,
     ...renderReportWork(events, report, cap),
   ];
 }

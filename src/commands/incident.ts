@@ -933,7 +933,7 @@ async function cycle(
     );
   for (const r of reports) {
     ctx.io.out(
-      `  unit ${r.unitId} reported ${r.report.outcome}${r.report.pictureChanged ? ", picture changed" : ""}: ${r.report.changed.map((c) => c.what).join("; ") || "nothing changed"}${r.report.why === undefined ? "" : `; why: ${r.report.why}`}${r.report.suggestion === undefined ? "" : `; suggestion: ${r.report.suggestion}`}`,
+      `  unit ${r.unitId} reported ${r.report.outcome}${r.revision === undefined ? "" : ` (revision ${r.revision})`}${r.report.pictureChanged ? ", picture changed" : ""}: ${r.report.changed.map((c) => c.what).join("; ") || "nothing changed"}${r.report.why === undefined ? "" : `; why: ${r.report.why}`}${r.report.suggestion === undefined ? "" : `; suggestion: ${r.report.suggestion}`}`,
     );
     for (const q of r.report.resourceRequests ?? [])
       ctx.io.out(`    waits on ${q.kind}: ${q.what} (${q.why})`);

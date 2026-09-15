@@ -2722,3 +2722,113 @@ Not exactly to spec, with reasons:
   revise), so every existing multi-cycle test keeps its meaning without each scripting
   verdicts on ids it cannot know; a test that wants a particular verdict scripts it with
   `reportId: ""` and the unit id.
+
+## R4-3: Revise (#PR, merged 2026-09-15)
+
+R4-3 of the round 4 plan, on R4-2's verdicts and R4-9's pass. Built: a `revise` verdict
+reaches the unit's leader as a revision brief, the first turn of the unit's next pass,
+before any task. `revisedUnits` in `src/leader.ts` finds every active unit whose last
+`report.reviewed` with verdict `revise` is later than its last `unit.revised`, and builds
+the brief (`RevisionBrief`: the `report.reviewed` event's id, the report's id and the
+report itself from its `unit.reported` event, the instructions, the why, and the revision
+number); `dispatch` in `src/dispatcher.ts` reads it beside `resumedUnits` and
+`unitsOwingReport`, counts it as work for the pass (`hasWork`), and `pass` opens such a
+unit with `settle` on a `TurnCause` of its own, `{ status: "revise", brief, period,
+answers }`, ahead of the resumed-unit turn (a unit that resumed from `waiting` on the same
+command turn, the IC having answered its requests while revising its report, reads the
+answers on the same turn rather than on a second one). The turn goes through `leaderTurn`
+as any turn: the session is resumed when the unit has one, and a unit with none (its
+session released after a refusal, or the runtime's report after two refusals) gets a fresh
+session opened with the orientation, as the existing `orientation` path already did for a
+first call. `renderTurnPrompt` renders the cause (`renderRevisionBrief`) after the unheard
+endings and before the refused-assignment reasons and the ask: the instructions and why,
+the report reviewed in one line (`describeReviewedReport`), the period objectives and
+priorities (`renderPeriod`), the answers when there are any, and what the leader does
+with it; the ask is then the usual one, so a unit with no task is asked for its report and
+one with tasks is asked to continue or report. `unit.revised` is a new `EventType` (47),
+recorded in the turn's transaction after `leader.started` and before the `unit.continued`
+or `unit.reported` the turn produced, with the seat (unit, session, provider, model),
+`reviewedId`, `reportId`, `instructions` and `revision`; a pass that dies before the
+leader answers leaves it unwritten, so the next pass delivers the brief again.
+`revisionOf` counts the unit's revise verdicts from `report.reviewed`; `leaderTurn` and
+`reportRefusals` write it as `revision` on `unit.reported` when it is above zero, so the
+report after the first revise carries `revision: 1` and the runtime's `not_met` for a
+brief refused twice carries the same number. `Dispatched.reports` carries `revision`, and
+`step` prints `reported met (revision 1)`; the change report and `incident show` head the
+report `met (revision 1)` (`renderReport`), which keeps the stub's report-line pattern
+intact. `incident review` (`src/review.ts`) lists each delivery in its cycle (`revision 1
+briefed to the leader of <unit> on report <id>: <instructions>`), marks a leader's report
+line and the runtime's with the revision, and after the report-verdict counts prints
+`revisions: N` with one line per delivery (`revisionLines`): the unit's turns (its
+`unit.continued`, `unit.reported` and `leader.failed` events) and its tasks' `task.usage`
+between the `unit.revised` and the unit's next `unit.reported`, with their tokens, seconds
+and cost priced as the cycles price them, the outcome of the reviewed report and of the
+answer, and the answer's `changed` lines not in the reviewed report; a revision with no
+report after its brief says `not yet reported`. `LEADER_ROLE` gains a paragraph on the
+verdicts and the brief: the unit and its objective stand, the instructions open the next
+turn, the leader assigns what is missing or reports at once, and the next report is
+numbered. DESIGN.md Step 2 (the event and the `revision` field), Step 4 (the revise
+sentence), Step 6 (the brief in the pass) and Step 7 (the review row), and the
+architecture page's dispatch step follow.
+
+Tests: a stub run (`test/ic.test.ts`) where the leader reports `progress` in cycle 1, the
+IC revises with instructions, cycle 2's pass resumes the leader's session with the brief
+before any task (the prompt pinned: the instructions, the why, the reviewed report, period
+2's objectives and priorities, the ask for a report), the leader assigns one grep and
+continues, reports `met` on its ending with `revision: 1` (`step`'s line, the
+`unit.reported` payloads, `unit.revised`'s payload and its place between `report.reviewed`
+and `unit.continued`), the unit stays active, cycle 3's change report heads the report
+`met (revision 1)`, the IC accepts and the unit closes, and `review` lists the delivery,
+the numbered report, the verdict counts and the revision's line with its two turns, one
+task, cost and the change added; a dispatcher test (`test/dispatcher.test.ts`) where a
+unit with no session, the runtime's `not_met` report and a revise verdict on it gets one
+fresh call with no `--resume`, opening with the orientation and carrying the brief, its
+events after the verdict being `leader.started`, `unit.revised`, `unit.reported` with
+`revision: 1`, its session recorded, and a second pass doing nothing; a `renderTurnPrompt`
+test pinning a revise cause with answers and an unheard ending, in that order. The models
+test pins the event count at 47. Two R4-7 tests and two R3-9 handoff tests changed with
+the behavior: in each, cycle 1's leader reported `progress`, the stub's IC revised it, and
+cycle 2 now opens the unit with the brief, so the refused call in the R4-7 tests is the
+brief's turn (the fallback session takes the brief, continues, and reports after the
+grep, three calls where there were two, the report marked `(revision 1)`), and the
+handoff tests' cycle-2 call list ends with the leader's brief turn.
+
+Not exactly to spec, with reasons:
+
+- The brief is a turn cause of its own, delivered as the unit's first turn of the pass,
+  with the unheard endings of earlier passes rendered before it as `renderTurnPrompt`
+  renders them on every first turn, rather than after it: the endings are what the leader
+  has not yet heard about its own work, the brief is what the IC concluded from that work,
+  and keeping the existing order means one rendering path for every first turn. The
+  refused-assignment reasons and the ask follow it as on any turn.
+- `revision` is counted from `report.reviewed` events with verdict `revise` on the unit,
+  not stored on the unit: the verdicts are the record of how many times the IC sent the
+  unit back, the count needs no schema change on `units` and no mutation, and a replay
+  gives the same number. It is written on `unit.reported` beside `report`, not inside the
+  `LeaderReport` schema, since the leader does not count its own revisions and the report
+  schema stays the leader's.
+- `unit.revised` is written with the turn that read the brief, not when the verdict is
+  applied: the plan block says it records the verdict's delivery, and delivery is the
+  leader having read it; a pass that dies between the verdict and the leader's answer
+  delivers the brief again on the next pass, since the verdict is then still later than
+  the last `unit.revised`.
+- A unit that resumed from `waiting` and was revised on the same command turn reads the
+  answers on the brief's turn rather than on a separate resumed turn first: two turns for
+  one moment would cost a call and split what the IC said in one place.
+- The period objectives in the brief are the incident's current period, the one the
+  verdict's command turn opened; `dispatch` reads `incident.period` from the incident
+  `step` re-reads after `applyCommand`.
+- The stub needed no change: a revise verdict is scripted as R4-2 built it (`reportId:
+  ""` with the unit, or the default `revise` on a report that is not `met`), and the
+  leader's second report is the next entry of `NOSCOPE_STUB_TURNS`.
+- The stub's default verdict (`revise` on any report not `met`) now costs a leader turn
+  per cycle for a unit that keeps reporting `progress`, since each revise is delivered;
+  the four tests named above absorbed it. A test that wants a unit left alone after a
+  `progress` report scripts an `accepted` verdict.
+- Not built, noted for a follow-up: nothing stops a plan, or a later command turn's
+  `closeUnits`, from closing a revised unit before its brief is delivered (a pass halted
+  by another unit's picture-changing report can leave one undelivered); "Closing is
+  clean" does not count an undelivered revise as a report owed, and the planner's tree
+  shows the unit as `last report: progress, revise`. Adding a reason there would also
+  refuse the IC's own later close, which is its decision to make, so the rule is left
+  for a ruling.

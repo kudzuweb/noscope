@@ -11,6 +11,7 @@ import { renderChangeReport } from "../src/ic.js";
 import {
   answeredRequestsOf,
   endedSinceLastTurn,
+  renderTurnPrompt,
   runsInsideLeader,
   unitsOwingReport,
 } from "../src/leader.js";
@@ -2837,6 +2838,220 @@ describe("dispatcher, parallel dispatch", () => {
       'NOSCOPE_PARALLEL must be a positive whole number of unit passes, not "0"',
     );
     store.close();
+  });
+});
+
+describe("dispatcher, revise (R4-3)", () => {
+  type Call = { kind: string; resume: string | null; prompt: string };
+  const scratch = () => mkdtempSync(join(tmpdir(), "noscope-revise-"));
+  const readCalls = (log: string): Call[] =>
+    readFileSync(log, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l) as Call);
+  const stubEnv = (dir: string, env: Record<string, string> = {}) => ({
+    NOSCOPE_CLAUDE_BIN: stub,
+    NOSCOPE_STUB_CALLS: join(dir, "calls"),
+    NOSCOPE_STUB_TURN_COUNTER: join(dir, "turns"),
+    NOSCOPE_STUB_SESSION_COUNTER: join(dir, "sessions"),
+    ...env,
+  });
+  /** A unit that reported on a session since released (the runtime's report after two refusals leaves it so, as does a refused resume), then a revise verdict on that report. */
+  const revisedWithoutSession = (store: Store) => {
+    const { incident, task, addUnit, unit: root } = scriptedIncident(store);
+    addUnit({ id: "u-a", objective: "the first half" });
+    task({
+      id: "t-old",
+      capability: "grep",
+      unitId: "u-a",
+      inputs: { root: ".", pattern: "delete" },
+      status: "completed",
+    });
+    const report = {
+      outcome: "not_met",
+      changed: [],
+      pictureChanged: true,
+      why: "the leader was refused twice",
+      suggestion: "the IC decides",
+    };
+    store.record(incident.id, "unit.reported", "runtime", {
+      unitId: "u-a",
+      sessionId: null,
+      provider: "claude-code",
+      model: "claude-haiku-4-5",
+      report,
+      writtenBy: "runtime",
+      refusals: [],
+    });
+    const reported = store
+      .listEvents(incident.id)
+      .find((e) => e.type === "unit.reported");
+    if (reported === undefined) throw new Error("the unit reported");
+    store.setIncidentPeriod(
+      incident.id,
+      { number: 2, objectives: ["place the handler"], priorities: [] },
+      "runtime",
+      { turn: null, cycle: 2 },
+    );
+    store.record(incident.id, "report.reviewed", "ic", {
+      reportId: reported.id,
+      unitId: "u-a",
+      verdict: "revise",
+      instructions: "try the same objective on your own model",
+      why: "the refusal was the session's, not the objective's",
+      cycle: 2,
+    });
+    const reviewed = store
+      .listEvents(incident.id)
+      .find((e) => e.type === "report.reviewed");
+    if (reviewed === undefined) throw new Error("the report was reviewed");
+    const current = store.getIncident(incident.id);
+    if (current === undefined) throw new Error("the incident exists");
+    return { incident: current, root, reported, reviewed };
+  };
+
+  it("a revise on a unit whose leader has no session starts a fresh oriented session with the brief, records unit.revised on that turn, and the report answering it carries revision 1", async () => {
+    const store = new Store(":memory:");
+    const { incident, reported, reviewed } = revisedWithoutSession(store);
+    expect(store.listUnits("i1").find((u) => u.id === "u-a")?.sessionId).toBe(
+      null,
+    );
+    const dir = scratch();
+    const env = stubEnv(dir, {
+      NOSCOPE_STUB_TURN: JSON.stringify({
+        kind: "report",
+        report: {
+          outcome: "met",
+          changed: [{ what: "the handler is at a.txt:2", claims: [] }],
+          pictureChanged: false,
+        },
+      }),
+    });
+    const passed = await dispatch(store, incident, { cwd: tree, env });
+    expect(passed.ran).toEqual([]);
+    expect(passed.reports).toEqual([
+      {
+        unitId: "u-a",
+        sessionId: "stub-session-1",
+        revision: 1,
+        report: {
+          outcome: "met",
+          changed: [{ what: "the handler is at a.txt:2", claims: [] }],
+          pictureChanged: false,
+        },
+      },
+    ]);
+    const calls = readCalls(join(dir, "calls"));
+    expect(calls.map((c) => [c.kind, c.resume])).toEqual([["leader", null]]);
+    // A fresh session: the orientation first, then the brief, then the ask for a report.
+    const prompt = calls[0]?.prompt ?? "";
+    expect(prompt.startsWith("Incident objective: ")).toBe(true);
+    expect(prompt).toContain(
+      "You lead unit u-a. Your unit's objective: the first half",
+    );
+    expect(prompt).toContain(
+      [
+        `The IC reviewed your report ${reported.id} and sent it back for revision 1. Its instructions:`,
+        "  try the same objective on your own model",
+        "Why: the refusal was the session's, not the objective's",
+        "The report it reviewed: not_met, picture changed; changed: nothing; why: the leader was refused twice; suggestion: the IC decides",
+        "Operational period 2 objectives:",
+        "  - place the handler",
+        "Priorities this period:",
+        "  (none)",
+        "Your unit's objective stands.",
+      ].join("\n"),
+    );
+    expect(prompt).toContain("No ready tasks remain in your unit.");
+    const events = store.listEvents("i1");
+    const types = events
+      .map((e) => e.type)
+      .slice(events.findIndex((e) => e.type === "report.reviewed") + 1);
+    expect(types).toEqual(["leader.started", "unit.revised", "unit.reported"]);
+    expect(events.find((e) => e.type === "unit.revised")?.payload).toEqual({
+      unitId: "u-a",
+      sessionId: "stub-session-1",
+      provider: "claude-code",
+      model: "claude-haiku-4-5",
+      reviewedId: reviewed.id,
+      reportId: reported.id,
+      instructions: "try the same objective on your own model",
+      revision: 1,
+    });
+    expect(events.at(-1)?.payload).toMatchObject({
+      unitId: "u-a",
+      sessionId: "stub-session-1",
+      revision: 1,
+    });
+    expect(store.listUnits("i1").find((u) => u.id === "u-a")?.sessionId).toBe(
+      "stub-session-1",
+    );
+    // Delivered: the next pass has nothing to do for the unit.
+    const again = await dispatch(store, incident, { cwd: tree, env });
+    expect(again.reports).toEqual([]);
+    expect(readCalls(join(dir, "calls"))).toHaveLength(1);
+    store.close();
+  }, 20_000);
+
+  it("a revise delivered together with the unit's resumed answers rides on one turn, and the unheard endings of an earlier pass come before it", () => {
+    const task: Task = {
+      id: "t-x",
+      incidentId: "i1",
+      unitId: "u-a",
+      capability: "grep",
+      objective: "find delete",
+      inputs: {},
+      expectedOutput: "",
+      completionCriteria: [],
+      evidenceRequired: [],
+      dependsOn: [],
+      evidenceFrom: { claims: [], tasks: [] },
+      provider: null,
+      model: null,
+      instructions: "",
+      budget: {},
+      strikeTeam: [],
+      status: "failed",
+      result: null,
+      createdAt: "2026-09-15T00:00:00.000Z",
+      completedAt: null,
+    };
+    const prompt = renderTurnPrompt(
+      {
+        status: "revise",
+        brief: {
+          reviewedId: "rv-1",
+          reportId: "rp-1",
+          report: null,
+          instructions: "read the file the grep found",
+          why: "a match is not a handler",
+          revision: 2,
+        },
+        period: undefined,
+        answers: ["which file matters → the first one"],
+      },
+      [{ task, status: "failed", reason: "no such root" }],
+      1,
+      task,
+    );
+    expect(prompt).toBe(
+      [
+        "Since your last turn these tasks also ended:",
+        "Task t-x (grep) failed: no such root",
+        "",
+        "The IC reviewed your report rp-1 and sent it back for revision 2. Its instructions:",
+        "  read the file the grep found",
+        "Why: a match is not a handler",
+        "The report it reviewed: (not in the log)",
+        "Your unit's resource requests were answered and it is active again:",
+        "  - which file matters → the first one",
+        "Your unit's objective stands. Assign tasks under your unit for what the instructions say is missing (assignTasks) and continue, or report now if they need no new work; your next report is revision 2.",
+        "",
+        "1 ready task(s) remain in your unit. Your next move: continue to the next, or report now if the picture changed.",
+        "Next: task t-x (grep): find delete",
+        "To send a strike team on it, set requestStrikeTeam: each kind with its model, tools, prompt, count and why; the kinds are defined for the call that runs the task.",
+      ].join("\n"),
+    );
   });
 });
 

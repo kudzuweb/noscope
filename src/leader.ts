@@ -12,7 +12,9 @@ import {
   type Event,
   type Incident,
   jsonSchemaFor,
+  type LeaderReport,
   LeaderTurn,
+  type Period,
   type Question,
   type Situation,
   type StrikeTeam,
@@ -98,6 +100,8 @@ Report what changed, not what you did: each item in changed is something now tru
 
 A lack is resolved by the nearest seat that can. A retrievable fact is yours to get: assign a task for it in assignTasks, under your own unit, to a capability your unit holds, inside your unit's budget, and it runs in this pass; a task of yours that came back insufficient for a retrievable fact is yours to resolve the same way. Permission, missing means and something only a human knows go up as resourceRequests on your report, each with what and why: your unit then waits until Mauria answers, its pending tasks stay pending, the other units keep running, and the report counts as picture-changing so the IC sees it at once. Assignments are checked by the validator's rules on tasks and by these:
 ${LEADER_RULES.map((r) => `- ${r}`).join("\n")}
+
+The IC answers every report of yours with a verdict. A revise sends your report back with instructions saying what is missing: your unit and its objective stand, the instructions open your next turn as a revision brief with the report the IC reviewed and the period objectives, and you answer as on any turn, assigning tasks under your unit for what is missing and continuing, or reporting at once when the instructions need no new work. Your next report is numbered as a revision, and the IC judges it against the same objective.
 
 You cannot change the organization above or beside you: no new units, no tasks outside your unit, no budget beyond your unit's, no change to the incident's objective. What you lack and cannot get goes in your report.
 
@@ -288,6 +292,87 @@ export function resumedUnits(
       )
       .map((u) => u.id),
   );
+}
+
+/**
+ * A revise verdict as the leader reads it (R4-3): the `report.reviewed` event that carries
+ * it, the report it reviewed (by id, and the report itself when the log has it), the IC's
+ * instructions and why, and which revision it asks for, counting from 1.
+ */
+export type RevisionBrief = {
+  reviewedId: string;
+  reportId: string;
+  report: LeaderReport | null;
+  instructions: string;
+  why: string;
+  revision: number;
+};
+
+/**
+ * Units with a revise verdict not yet delivered (R4-3): the unit's last `report.reviewed`
+ * with verdict `revise` is later than its last `unit.revised`. Dispatch opens such a unit's
+ * pass with a turn carrying the brief, before any task, and records `unit.revised` on that
+ * turn, so a pass that dies before the leader answers delivers it again. The brief's
+ * revision number is `revisionOf` at that verdict.
+ */
+export function revisedUnits(
+  units: readonly Unit[],
+  events: readonly Event[],
+): Map<string, RevisionBrief> {
+  const reports = new Map<string, Event>();
+  const lastRevise = new Map<string, Event>();
+  const lastDelivered = new Map<string, number>();
+  const revisions = new Map<string, number>();
+  for (const e of events) {
+    if (e.type === "unit.reported") reports.set(e.id, e);
+    if (typeof e.payload.unitId !== "string") continue;
+    if (e.type === "report.reviewed" && e.payload.verdict === "revise") {
+      lastRevise.set(e.payload.unitId, e);
+      revisions.set(
+        e.payload.unitId,
+        (revisions.get(e.payload.unitId) ?? 0) + 1,
+      );
+    }
+    if (e.type === "unit.revised")
+      lastDelivered.set(e.payload.unitId, e.sequence);
+  }
+  const revised = new Map<string, RevisionBrief>();
+  for (const u of units) {
+    const verdict = lastRevise.get(u.id);
+    if (
+      u.status !== "active" ||
+      verdict === undefined ||
+      verdict.sequence <= (lastDelivered.get(u.id) ?? -1)
+    )
+      continue;
+    const reportId = String(verdict.payload.reportId ?? "");
+    revised.set(u.id, {
+      reviewedId: verdict.id,
+      reportId,
+      report: (reports.get(reportId)?.payload.report as LeaderReport) ?? null,
+      instructions: String(verdict.payload.instructions ?? ""),
+      why: String(verdict.payload.why ?? ""),
+      revision: revisions.get(u.id) ?? 1,
+    });
+  }
+  return revised;
+}
+
+/**
+ * Which revision a unit's next report is (R4-3): the number of revise verdicts the IC has
+ * given the unit, counted from `report.reviewed`, so the report answering the first revise
+ * carries `revision: 1`; 0 before any, and then no `revision` is written on the report.
+ */
+export function revisionOf(events: readonly Event[], unitId: string): number {
+  let n = 0;
+  for (const e of events)
+    if (
+      e.type === "report.reviewed" &&
+      e.payload.unitId === unitId &&
+      e.payload.verdict === "revise"
+    )
+      n += 1;
+  return n;
 }
 
 /** One request a unit still waits on: its kind, the text the IC answers it by (`request` on a `ResourceAnswer`), why, and for a question its id. */
@@ -558,14 +643,21 @@ export type TaskEnding =
 
 /**
  * Why the leader is asked for a move: a task ended, its unit resumed with the answers to its
- * requests, or the unit owes a report from an earlier pass. The endings its leader has not
- * yet heard (tasks that ended after its last turn: a pass that died, or tasks still in
- * flight when the leader reported) travel beside the cause on the first turn of a pass,
- * whatever the cause is.
+ * requests, the IC sent its report back for revision (R4-3: the brief, the period the
+ * verdict opened, and the answers when the unit resumed at the same time), or the unit owes
+ * a report from an earlier pass. The endings its leader has not yet heard (tasks that ended
+ * after its last turn: a pass that died, or tasks still in flight when the leader reported)
+ * travel beside the cause on the first turn of a pass, whatever the cause is.
  */
 export type TurnCause =
   | TaskEnding
   | { status: "answered"; answers: readonly string[] }
+  | {
+      status: "revise";
+      brief: RevisionBrief;
+      period: Period | undefined;
+      answers: readonly string[];
+    }
   | { status: "owing" };
 
 /**
@@ -648,12 +740,49 @@ function renderEnding(ending: TaskEnding): string[] {
   ];
 }
 
+/** The report the IC reviewed, in one line, as the leader wrote it. */
+function describeReviewedReport(report: LeaderReport): string {
+  const changed = report.changed
+    .map(
+      (c) =>
+        `${c.what} (claims ${c.claims.length > 0 ? c.claims.join(", ") : "none"})`,
+    )
+    .join("; ");
+  return `${report.outcome}${report.pictureChanged ? ", picture changed" : ""}; changed: ${changed || "nothing"}${report.why === undefined ? "" : `; why: ${report.why}`}${report.suggestion === undefined ? "" : `; suggestion: ${report.suggestion}`}`;
+}
+
+/**
+ * The revision brief (R4-3), the first thing a revised unit's leader reads in the pass
+ * after the verdict: the IC's instructions and why, the report the IC reviewed, the period
+ * objectives the verdict opened, the answers to the unit's requests when it resumed at the
+ * same time, and what the leader does with it.
+ */
+function renderRevisionBrief(
+  cause: Extract<TurnCause, { status: "revise" }>,
+): string[] {
+  const { brief } = cause;
+  return [
+    `The IC reviewed your report ${brief.reportId} and sent it back for revision ${brief.revision}. Its instructions:`,
+    `  ${brief.instructions}`,
+    `Why: ${brief.why}`,
+    `The report it reviewed: ${brief.report === null ? "(not in the log)" : describeReviewedReport(brief.report)}`,
+    ...renderPeriod(cause.period),
+    ...(cause.answers.length === 0
+      ? []
+      : [
+          "Your unit's resource requests were answered and it is active again:",
+          ...cause.answers.map((a) => `  - ${a}`),
+        ]),
+    `Your unit's objective stands. Assign tasks under your unit for what the instructions say is missing (assignTasks) and continue, or report now if they need no new work; your next report is revision ${brief.revision}.`,
+  ];
+}
+
 /**
  * The user message of a turn: the endings the leader has not heard from earlier passes
  * (`unheard`, on the first turn of a pass, each rendered as an ending is), then what the
  * turn is for (the last task's ending, with its insufficiency and what the leader does
- * about each kind when it came back insufficient; the answers when the unit resumed; that
- * a report is owed), any assignment the validator refused since the last turn, then how
+ * about each kind when it came back insufficient; the answers when the unit resumed; the
+ * revision brief when the IC sent its report back, R4-3; that a report is owed), any assignment the validator refused since the last turn, then how
  * many ready tasks remain, which runs next and the team it declares if any, which tasks of
  * the unit are still running in sessions of their own, which have ended in this pass and
  * reach the leader on turns of their own, and what the leader is asked for: its report when
@@ -682,6 +811,7 @@ export function renderTurnPrompt(
       "Your unit's resource requests were answered and it is active again:",
       ...cause.answers.map((a) => `  - ${a}`),
     );
+  else if (cause.status === "revise") came.push(...renderRevisionBrief(cause));
   else came.push(...renderEnding(cause));
   if (rejections.length > 0)
     came.push(

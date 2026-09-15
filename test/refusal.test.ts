@@ -713,8 +713,10 @@ describe("a refusal replaces the session", () => {
   it("a leader's turn refused on its resumed session is filed as leader.failed, the leader moved to the fallback, and the fresh session's turn on it stands", {
     timeout: 60_000,
   }, async () => {
-    // Cycle 1: command, planner, review, leader (fresh, reports). Cycle 2 adds a grep to
-    // the same unit: command, planner, review, then the leader resumed (call 8) is refused.
+    // Cycle 1: command, planner, review, leader (fresh, reports progress; the stub's IC
+    // revises it). Cycle 2 adds a grep to the same unit: command, planner, review, then
+    // the leader resumed for the revision brief (call 8) is refused; the fresh session
+    // on the fallback takes the brief, continues, and reports after the grep.
     const second: ActionPlan = {
       ...empty,
       createTasks: [grep("001-u02", "remove")],
@@ -727,12 +729,13 @@ describe("a refusal replaces the session", () => {
     expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
     expect(h.err).toEqual([]);
     expect(h.out).toContain(
-      "  unit 001-u02 reported progress: nothing changed",
+      "  unit 001-u02 reported progress (revision 1): nothing changed",
     );
     const calls = h.calls();
     expect(calls.slice(7).map((c) => [c.kind, c.resume, modelOf(c)])).toEqual([
       ["leader", "stub-session-3", "claude-haiku-4-5"],
       ["leader", null, "claude-opus-4-8"],
+      ["leader", "stub-session-5", "claude-opus-4-8"],
     ]);
     const store = h.store();
     const events = store.listEvents("001");
@@ -787,7 +790,7 @@ describe("a refusal replaces the session", () => {
       /^ {2}leader of 001-u02 claude-haiku-4-5: in 23,067 .* turn failed \(refused: reasoning_extraction\), leader moved to claude-opus-4-8 {2}session stub-session-3$/m,
     );
     expect(review).toMatch(
-      /^ {2}leader of 001-u02 claude-opus-4-8: .* reported progress, 0 change\(s\) {2}session stub-session-5$/m,
+      /^ {2}leader of 001-u02 claude-opus-4-8: .* reported progress \(revision 1\), 0 change\(s\) {2}session stub-session-5$/m,
     );
     expect(review).toContain(
       "refusals: 1: leader of 001-u02 reasoning_extraction on claude-haiku-4-5 (session stub-session-3)",
@@ -809,7 +812,7 @@ describe("a refusal replaces the session", () => {
     expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
     expect(h.err).toEqual([]);
     expect(h.out).toContain(
-      "  unit 001-u02 reported not_met, picture changed: nothing changed; why: the unit's leader was refused by the API on claude-haiku-4-5 (reasoning_extraction, session stub-session-3) and then on the fallback claude-opus-4-8 (reasoning_extraction, session stub-session-5): " +
+      "  unit 001-u02 reported not_met (revision 1), picture changed: nothing changed; why: the unit's leader was refused by the API on claude-haiku-4-5 (reasoning_extraction, session stub-session-3) and then on the fallback claude-opus-4-8 (reasoning_extraction, session stub-session-5): " +
         `${refusal.explanation}; no seat retries beyond the one fallback; suggestion: the IC decides: another model for the seat, a different unit for the slice, or drop the slice`,
     );
     expect(h.out).toContain(
@@ -865,7 +868,7 @@ describe("a refusal replaces the session", () => {
     expect(await run(["incident", "review", "001"], h.ctx)).toBe(EXIT.ok);
     const review = h.out.join("\n");
     expect(review).toContain(
-      "  runtime for 001-u02: reported not_met on the leader's behalf, picture changed, after refusal on claude-haiku-4-5 (reasoning_extraction, session stub-session-3) and on claude-opus-4-8 (reasoning_extraction, session stub-session-5)",
+      "  runtime for 001-u02: reported not_met (revision 1) on the leader's behalf, picture changed, after refusal on claude-haiku-4-5 (reasoning_extraction, session stub-session-3) and on claude-opus-4-8 (reasoning_extraction, session stub-session-5)",
     );
     expect(review).toContain(
       "refusals: 2: leader of 001-u02 reasoning_extraction on claude-haiku-4-5 (session stub-session-3), leader of 001-u02 reasoning_extraction on claude-opus-4-8 (session stub-session-5)",
@@ -882,7 +885,7 @@ describe("a refusal replaces the session", () => {
     expect(runtimeReport?.payload.writtenBy).toBe("runtime");
     const briefing = h.calls()[9]?.prompt ?? "";
     expect(briefing).toContain(
-      `  - 001-u02, report ${runtimeReport?.id}: not_met, picture changed; changed: nothing; why: the unit's leader was refused by the API on claude-haiku-4-5`,
+      `  - 001-u02, report ${runtimeReport?.id}: not_met (revision 1), picture changed; changed: nothing; why: the unit's leader was refused by the API on claude-haiku-4-5`,
     );
   });
 

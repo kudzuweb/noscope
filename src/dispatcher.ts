@@ -21,6 +21,8 @@ import {
   renderLeaderOrientation,
   renderTurnPrompt,
   resumedUnits,
+  revisedUnits,
+  revisionOf,
   runsInsideLeader,
   type TaskEnding,
   type TurnCause,
@@ -68,11 +70,12 @@ type Ran = {
   reason?: string;
 };
 
-/** A report a unit's leader filed during the pass; the session is null when the runtime wrote it on the leader's behalf after two refusals (R4-7). */
+/** A report a unit's leader filed during the pass; the session is null when the runtime wrote it on the leader's behalf after two refusals (R4-7); `revision` is set when the report answers a revise verdict (R4-3). */
 type Reported = {
   unitId: string;
   sessionId: string | null;
   report: LeaderReport;
+  revision?: number;
 };
 
 /**
@@ -497,6 +500,8 @@ type Turned = {
   sessionId: string | null;
   unit: Unit;
   assigned: number;
+  /** Which revision the report is, when it answers a revise verdict (R4-3). */
+  revision: number;
 };
 
 /**
@@ -523,6 +528,7 @@ function reportRefusals(
     suggestion:
       "the IC decides: another model for the seat, a different unit for the slice, or drop the slice",
   };
+  const revision = revisionOf(store.listEvents(incident.id), unit.id);
   store.record(incident.id, "unit.reported", actor, {
     unitId: unit.id,
     sessionId: null,
@@ -530,6 +536,7 @@ function reportRefusals(
     report,
     writtenBy: "runtime",
     refusals,
+    ...(revision === 0 ? {} : { revision }),
   });
   return report;
 }
@@ -619,7 +626,8 @@ function declareRequestedTeam(
 
 /**
  * Ask the unit's leader for its next move: the endings it has not heard from earlier passes
- * (`unheard`, on a pass's first turn), the last task's ending, how many ready tasks remain
+ * (`unheard`, on a pass's first turn), the last task's ending or the IC's revision brief
+ * (R4-3; delivered on this turn, recorded as `unit.revised` with the turn), how many ready tasks remain
  * and which runs next, which tasks of the unit are still running and which have ended and
  * reach it on turns of their own, under the `LeaderTurn` schema. The first call creates the
  * session and opens with the orientation; `leader.started` records its id on the unit,
@@ -627,7 +635,8 @@ function declareRequestedTeam(
  * before its init line) is replaced: a fresh session is oriented and asked the same turn,
  * and its `leader.started` names the dead session and the reason; a session the API
  * refused is replaced the same way on the fallback model, once (R4-7). Every turn is recorded,
- * `unit.reported` with the report or `unit.continued`, each with the call's usage, a
+ * `unit.reported` with the report (and `revision`, the count of revise verdicts on the
+ * unit, when the report answers one) or `unit.continued`, each with the call's usage, a
  * `discrepancy` becomes `picture.discrepancy`, and a `requestStrikeTeam` is declared on
  * the next task or refused. A leader that cannot answer otherwise ends the pass. In the
  * same transaction: tasks the leader assigns are validated and applied under its unit
@@ -654,10 +663,9 @@ async function leaderTurn(
       `unit ${listed.id} is the root: the IC takes no leader turn (R4-6)`,
     );
   const provider = getProvider(listed.leader.provider, options.env);
-  const refused = refusedSinceLastTurn(
-    store.listEvents(incident.id),
-    listed.id,
-  );
+  const events = store.listEvents(incident.id);
+  const refused = refusedSinceLastTurn(events, listed.id);
+  const revision = revisionOf(events, listed.id);
   const ask = (unit: Unit) =>
     provider.run(
       leaderRequest(
@@ -748,6 +756,7 @@ async function leaderTurn(
       sessionId: null,
       unit: current,
       assigned: 0,
+      revision,
     };
   };
   try {
@@ -823,6 +832,15 @@ async function leaderTurn(
         ...(fallbackFrom === null ? {} : { fallbackFrom }),
       });
     recordActivity(store, incident.id, actor, outcome.activity, place);
+    // The brief reached the leader on this call: the verdict is delivered (R4-3).
+    if (cause.status === "revise")
+      store.record(incident.id, "unit.revised", actor, {
+        ...seat,
+        reviewedId: cause.brief.reviewedId,
+        reportId: cause.brief.reportId,
+        instructions: cause.brief.instructions,
+        revision: cause.brief.revision,
+      });
     if (turn.discrepancy !== undefined)
       store.record(incident.id, "picture.discrepancy", actor, {
         ...seat,
@@ -835,6 +853,7 @@ async function leaderTurn(
         ...seat,
         report: turn.report,
         usage: outcome.usage,
+        ...(revision === 0 ? {} : { revision }),
       });
     else
       store.record(incident.id, "unit.continued", actor, {
@@ -869,7 +888,7 @@ async function leaderTurn(
     if (requests.length > 0)
       raiseResourceRequests(store, incident, current, requests, actor);
   });
-  return { turn, sessionId, unit: current, assigned };
+  return { turn, sessionId, unit: current, assigned, revision };
 }
 
 /** Unit passes run at once: `NOSCOPE_PARALLEL`, a positive whole number, 3 when unset. */
@@ -917,8 +936,8 @@ function relatedUnits(
 
 /**
  * Run the units to their reports (DESIGN.md Step 6), unrelated units at once. A unit's pass
- * starts when it has something to do (a resumed leader to brief, a runnable task, a report
- * owed), no unit it is related to (`relatedUnits`) is mid-pass, and fewer than
+ * starts when it has something to do (a resumed leader to brief, a revise to deliver, a
+ * runnable task, a report owed), no unit it is related to (`relatedUnits`) is mid-pass, and fewer than
  * `NOSCOPE_PARALLEL` passes are running; related units keep tree order. In a unit, every
  * runnable task not yet attempted starts at once, each in process or in a session of its
  * own, except that tasks inside the leader's session run one at a time, each followed by
@@ -933,7 +952,12 @@ function relatedUnits(
  * leader has not heard (`endedSinceLastTurn`), ride on the first turn of the unit's next
  * pass whatever that turn is for, so a result never goes unread. A unit with nothing left
  * to run, nothing running and nothing left to hear is asked for its report; a unit resumed
- * since its last report opens with a turn carrying the answers, before any task. A task whose dependencies complete during
+ * since its last report opens with a turn carrying the answers, before any task, and a
+ * unit whose report the IC sent back (R4-3) opens with a turn carrying the revision brief
+ * (the instructions, the report reviewed, the period objectives, the answers too when it
+ * resumed at the same time), on a fresh oriented session when its leader has none, with
+ * `unit.revised` recorded on that turn; the leader answers as on any turn and its next
+ * report carries `revision`. A task whose dependencies complete during
  * the pass runs in the same pass when its unit has not yet reported; a unit that has
  * reported is done for the pass, so its dependents wait for the next one. A `waiting` unit
  * is skipped. The root is the exception (R4-6): its leader is the IC, which takes no leader
@@ -969,6 +993,7 @@ export async function dispatch(
   const eventsAtStart = store.listEvents(incident.id);
   const owing = unitsOwingReport(units, tasksAtStart, eventsAtStart);
   const resumed = resumedUnits(units, eventsAtStart);
+  const revised = revisedUnits(units, eventsAtStart);
   let halt: Pick<Dispatched, "stopped" | "pictureChanged"> | null = null;
   const stop = (why: Pick<Dispatched, "stopped" | "pictureChanged">) => {
     halt ??= why;
@@ -1029,6 +1054,7 @@ export async function dispatch(
         unitId: unit.id,
         sessionId: turned.sessionId,
         report: turned.turn.report,
+        ...(turned.revision === 0 ? {} : { revision: turned.revision }),
       });
       done.add(unit.id);
       return { unit: turned.unit, stop: turned.turn.report.pictureChanged };
@@ -1044,7 +1070,7 @@ export async function dispatch(
       done.add(unit.id);
     return { unit: turned.unit, stop: false };
   };
-  const answered = (unit: Unit): TurnCause => {
+  const answered = (unit: Unit): Extract<TurnCause, { status: "answered" }> => {
     const current = store.getIncident(incident.id);
     return {
       status: "answered",
@@ -1058,7 +1084,10 @@ export async function dispatch(
   };
   const owed: TurnCause = { status: "owing" };
   const hasWork = (unitId: string) =>
-    resumed.has(unitId) || owing.has(unitId) || runnableIn(unitId).length > 0;
+    revised.has(unitId) ||
+    resumed.has(unitId) ||
+    owing.has(unitId) ||
+    runnableIn(unitId).length > 0;
 
   const pass = async (listed: Unit): Promise<void> => {
     let unit =
@@ -1206,7 +1235,26 @@ export async function dispatch(
       return "started";
     };
     try {
-      if (resumed.has(unit.id) && unit.parentId !== null) {
+      const brief = revised.get(unit.id);
+      if (brief !== undefined) {
+        // The IC sent the unit's report back (R4-3): the leader reads the brief before its
+        // unit runs anything, on a fresh session when it has none; a unit that resumed at
+        // the same time reads its answers on the same turn. A revise never targets the
+        // root, since command files no report (R4-6).
+        revised.delete(unit.id);
+        const answers = resumed.has(unit.id) ? answered(unit).answers : [];
+        resumed.delete(unit.id);
+        const settled = await onLeader(() =>
+          settle(
+            unit,
+            { status: "revise", brief, period: incident.period, answers },
+            hear(),
+          ),
+        );
+        unit = settled.unit;
+        if (settled.stop) stop({ stopped: null, pictureChanged: unit.id });
+        if (done.has(unit.id)) return;
+      } else if (resumed.has(unit.id) && unit.parentId !== null) {
         // The leader reads the answers to its requests before its unit runs anything. The
         // root takes no turn (R4-6): a waiting root can only come from a store written
         // before this, and its answers are read at the command turn.
