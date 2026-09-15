@@ -194,6 +194,16 @@ const taskIdOf = (e: Event): string =>
   str(e.payload.taskId) ||
   str((e.payload.mutation as { taskId?: unknown } | undefined)?.taskId);
 const session = (id: string): string => (id === "" ? "" : `  session ${id}`);
+/** The unit a `unit.created` event deployed from a saved config (R4-11), with the config's name; null for any other event or a unit filled by hand. */
+function configDeployed(e: Event): { unitId: string; config: string } | null {
+  if (mutationKind(e) !== "unit.create") return null;
+  const unit = (
+    e.payload.mutation as { unit?: { id?: unknown; config?: unknown } }
+  ).unit;
+  return typeof unit?.config === "string"
+    ? { unitId: str(unit.id), config: unit.config }
+    : null;
+}
 
 /** One cycle of the log: the event that opened it, the planner's drafts in it (one, or two after a correction), and everything else. */
 type Cycle = {
@@ -859,6 +869,7 @@ export function renderReview(
   let sentUp = 0;
   let failedWithoutRunning = 0;
   const questions: string[] = [];
+  const fromConfigs: string[] = [];
 
   lines.push(
     `review of incident ${incident.id} [${incident.status}]  ${incident.objective}`,
@@ -1107,6 +1118,14 @@ export function renderReview(
       turnedUnits.set(unitId, model);
     }
     for (const e of cycle.events) {
+      // A unit deployed from a saved config (R4-11) is named with the config it came from.
+      const deployed = configDeployed(e);
+      if (deployed !== null) {
+        fromConfigs.push(`${deployed.unitId} from ${deployed.config}`);
+        lines.push(
+          `  unit ${deployed.unitId} deployed from saved config ${deployed.config}`,
+        );
+      }
       if (e.type === "plan.applied" && e.actor === IC_ACTOR)
         lines.push(
           `  IC assigned ${list(e.payload.tasks).length} task(s) under command: ${list(e.payload.tasks).map(String).join(", ")}`,
@@ -1238,6 +1257,9 @@ export function renderReview(
   lines.push(`leader turns: ${leaderTurns} (${reported} reports)`);
   for (const [unitId, unitReports] of reportsByUnit)
     lines.push(`  ${unitId}: ${unitReports.join("; ")}`);
+  lines.push(
+    `units from saved configs: ${fromConfigs.length}${fromConfigs.length === 0 ? "" : ` (${fromConfigs.join(", ")})`}`,
+  );
   // Each declared config against what ran under it: members, their spend (a breakdown of
   // the task's, priced on the member's model), and the claims that cite a member.
   const configs = teamConfigs(events);

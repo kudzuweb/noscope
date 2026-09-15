@@ -2,6 +2,13 @@ import { parseArgs } from "node:util";
 import { z } from "zod";
 import { recordActivity } from "../activity.js";
 import { listCapabilities } from "../capabilities/index.js";
+import {
+  describeForm,
+  formKey,
+  matchingConfig,
+  savedFormOf,
+  unsavedRepeats,
+} from "../configs.js";
 import { type Context, EXIT, type Handler } from "../context.js";
 import { dispatch } from "../dispatcher.js";
 import {
@@ -35,6 +42,7 @@ import {
   type IncidentStatus,
   type Leader,
   type StrikeTeam,
+  type Unit,
 } from "../models.js";
 import { proposePlan, renderSituation } from "../planner.js";
 import { getProvider, SessionError } from "../providers/index.js";
@@ -54,7 +62,7 @@ import { INITIAL_MODEL, sizeUp } from "../size-up.js";
 import { cycleOf, now, resolveDbPath, Store, sumUsage } from "../store.js";
 import { describeStrikeTeam } from "../strike-team.js";
 import { renderTree } from "../tree.js";
-import { commandUnitOf, newCommandUnit } from "../units/index.js";
+import { commandUnitOf, getUnitType, newCommandUnit } from "../units/index.js";
 import {
   validateAndRecord,
   validateCommand,
@@ -643,6 +651,42 @@ export const tree: Handler = async (args, ctx) => {
   }
 };
 
+/**
+ * The offer to save a repeated config (R4-11): after a plan is applied, each new unit
+ * filled by hand is compared with every unit in the file, across incidents, and when the
+ * same filled form has now appeared three times or more unsaved, and no saved config
+ * matches it, `step` prints the offer with the command that saves it. Nothing is saved
+ * here; one offer per distinct form, naming the first new unit that carries it.
+ */
+function saveOffers(
+  store: Store,
+  incidentId: string,
+  created: readonly Unit[],
+): string[] {
+  const all = store.listAllUnits();
+  const configs = store.listUnitConfigs();
+  const offered = new Set<string>();
+  const lines: string[] = [];
+  for (const u of created) {
+    if (u.config !== null || !(getUnitType(u.type)?.plannable ?? false))
+      continue;
+    if (matchingConfig(configs, u) !== undefined) continue;
+    const form = savedFormOf(u);
+    const key = formKey(u.type, form);
+    if (offered.has(key)) continue;
+    const repeats = unsavedRepeats(all, u);
+    if (repeats < SAVE_OFFER_REPEATS) continue;
+    offered.add(key);
+    lines.push(
+      `  unit ${u.id}'s config (${u.type}: ${describeForm(form)}) has now been filled by hand ${repeats} times across this file's incidents and is not saved; to deploy it by name from the next plan on, save it: noscope config save ${incidentId} ${u.id} <name>`,
+    );
+  }
+  return lines;
+}
+
+/** How many times the same filled form appears unsaved before `step` offers to save it. */
+const SAVE_OFFER_REPEATS = 3;
+
 /** What one cycle came to: the incident's status afterwards, and a budget stop if the pass ended on one. */
 type CycleOutcome = { status: IncidentStatus; stopped: string | null };
 
@@ -921,9 +965,11 @@ async function cycle(
   for (const u of applied.units) {
     const takes = applied.taken.find((t) => t.unitId === u.id);
     ctx.io.out(
-      `  unit ${u.id} created under ${u.parentId}: ${u.objective}${takes === undefined ? "" : ` (takes reassignment ${takes.reassignmentId})`}`,
+      `  unit ${u.id} created under ${u.parentId}${u.config === null ? "" : ` from saved config ${u.config}`}: ${u.objective}${takes === undefined ? "" : ` (takes reassignment ${takes.reassignmentId})`}`,
     );
   }
+  for (const line of saveOffers(store, incident.id, applied.units))
+    ctx.io.out(line);
   for (const id of applied.closedUnits) ctx.io.out(`  unit ${id} closed`);
   for (const t of applied.tasks)
     ctx.io.out(
