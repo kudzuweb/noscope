@@ -305,34 +305,61 @@ async function runTask(
 /** What a turn came to: the leader's move, the session it ran on, and the unit as it now stands (the session recorded on the first call). */
 type Turned = { turn: LeaderTurn; sessionId: string; unit: Unit };
 
+/** A resumed call that died before the stream's init line: the provider found no session to resume. */
+function couldNotResume(error: unknown, unit: Unit): error is SessionError {
+  return (
+    error instanceof SessionError &&
+    error.sessionId === null &&
+    unit.sessionId !== null
+  );
+}
+
 /**
  * Ask the unit's leader for its next move: the last task's ending and how many ready tasks
  * remain, under the `LeaderTurn` schema. The first call creates the session and opens with
- * the orientation; `leader.started` records its id on the unit. Every turn is recorded,
- * `unit.reported` with the report or `unit.continued`, each with the call's usage, and a
- * `discrepancy` becomes `picture.discrepancy`. A leader that cannot answer ends the pass.
+ * the orientation; `leader.started` records its id on the unit, with the cwd it was
+ * launched from. A session that cannot be resumed (the call died before its init line) is
+ * replaced: a fresh session is oriented and asked the same turn, and its `leader.started`
+ * names the dead session and the reason. Every turn is recorded, `unit.reported` with the
+ * report or `unit.continued`, each with the call's usage, and a `discrepancy` becomes
+ * `picture.discrepancy`. A leader that cannot answer otherwise ends the pass.
  */
 async function leaderTurn(
   store: Store,
   incident: Incident,
-  unit: Unit,
+  listed: Unit,
   units: readonly Unit[],
   ending: TaskEnding | null,
   remaining: number,
   options: DispatchOptions,
   actor: string,
 ): Promise<Turned> {
-  const provider = getProvider(unit.leader.provider, options.env);
-  const prompt = [
-    ...orientation(store, incident, unit, units),
-    renderTurnPrompt(ending, remaining),
-  ].join("\n");
+  const provider = getProvider(listed.leader.provider, options.env);
+  const ask = (unit: Unit) =>
+    provider.run(
+      leaderRequest(
+        unit,
+        [
+          ...orientation(store, incident, unit, units),
+          renderTurnPrompt(ending, remaining),
+        ].join("\n"),
+        LEADER_TURN_SCHEMA,
+        options.cwd,
+      ),
+    );
+  let unit = listed;
+  let replaced: { sessionId: string; reason: string } | null = null;
   let outcome: Awaited<ReturnType<typeof provider.run>>;
   let turn: LeaderTurn;
   try {
-    outcome = await provider.run(
-      leaderRequest(unit, prompt, LEADER_TURN_SCHEMA, options.cwd),
-    );
+    try {
+      outcome = await ask(unit);
+    } catch (error) {
+      if (!couldNotResume(error, unit) || unit.sessionId === null) throw error;
+      replaced = { sessionId: unit.sessionId, reason: error.message };
+      unit = { ...unit, sessionId: null };
+      outcome = await ask(unit);
+    }
     turn = LeaderTurn.parse(outcome.output);
   } catch (error) {
     throw new Error(`leader of unit ${unit.id}: ${describe(error)}`, {
@@ -349,7 +376,13 @@ async function leaderTurn(
   const seat = { unitId: unit.id, sessionId, ...unit.leader };
   store.batch(() => {
     if (unit.sessionId === null)
-      store.setUnitSession(incident.id, unit.id, sessionId, actor, seat);
+      store.setUnitSession(incident.id, unit.id, sessionId, actor, {
+        ...seat,
+        cwd: options.cwd,
+        ...(replaced === null
+          ? {}
+          : { replaced: replaced.sessionId, reason: replaced.reason }),
+      });
     recordActivity(store, incident.id, actor, outcome.activity, place);
     if (turn.discrepancy !== undefined)
       store.record(incident.id, "picture.discrepancy", actor, {
@@ -382,7 +415,8 @@ async function leaderTurn(
  * `task.failed` with the reason and the usage the run still spent; its ending then reaches
  * the leader, which continues to the next task or reports. A unit with nothing left to run
  * and no report is asked for one. A task whose dependencies complete during the pass runs
- * in the same pass, whichever unit completed them. The pass ends when every unit that ran
+ * in the same pass when its unit has not yet reported; a unit that has reported is done for
+ * the pass, so its dependents wait for the next one. The pass ends when every unit that ran
  * has reported, when a report says the picture changed (`pictureChanged` names the unit),
  * or, with `budget.exceeded`, when the incident's budget has no room for the next task.
  */
@@ -558,9 +592,12 @@ async function runOne(
   actor: string,
   ran: Ran[],
 ): Promise<{ ending: TaskEnding; unit: Unit }> {
+  // A session is bounded by its request's timeout, which kills the process and files its
+  // calls under the session id; a dispatcher-side timer would fail the task while that
+  // process still ran and the leader's next call would find its session in use.
   const bound =
-    next.budget.seconds ??
-    (capability.kind === "session" ? SESSION_SECONDS : undefined);
+    capability.kind === "deterministic" ? next.budget.seconds : undefined;
+  const inside = runsInsideLeader(capability, next, unit);
   store.setTaskStatus(incident.id, next.id, "running", actor, "task.started");
   const running: Task = { ...next, status: "running" };
   const started = Date.now();
@@ -582,6 +619,7 @@ async function runOne(
           unitId: unit.id,
           sessionId: started,
           ...unit.leader,
+          cwd: options.cwd,
         });
       if (outcome.sessionId !== undefined && outcome.activity !== undefined)
         recordActivity(store, incident.id, actor, outcome.activity, {
@@ -635,7 +673,23 @@ async function runOne(
             // A deterministic run costs nothing; a session that failed before answering cost something unknown.
             ...(capability.kind === "deterministic" ? { costUsd: 0 } : {}),
           };
+    // The leader's first call failed but its session exists: record it so the turn resumes
+    // it rather than starting one that has read neither the orientation nor the brief.
+    const orphaned =
+      inside &&
+      unit.sessionId === null &&
+      error instanceof SessionError &&
+      error.sessionId !== null
+        ? error.sessionId
+        : null;
     store.batch(() => {
+      if (orphaned !== null)
+        store.setUnitSession(incident.id, unit.id, orphaned, actor, {
+          unitId: unit.id,
+          sessionId: orphaned,
+          ...unit.leader,
+          cwd: options.cwd,
+        });
       if (error instanceof SessionError && error.sessionId !== null)
         recordActivity(store, incident.id, actor, error.activity, {
           sessionId: error.sessionId,
@@ -671,6 +725,9 @@ async function runOne(
       claims: 0,
       reason,
     });
-    return { ending: { task: next, status: "failed", reason }, unit };
+    return {
+      ending: { task: next, status: "failed", reason },
+      unit: orphaned === null ? unit : { ...unit, sessionId: orphaned },
+    };
   }
 }

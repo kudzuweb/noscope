@@ -27,13 +27,30 @@ export const IC_PROVIDER = "claude-code";
 /** A turn is one structured call with no task of its own; it gets the planner's bound. */
 const LEADER_TURN_SECONDS = 300;
 
+/** The role text as a unit leader reads it; the IC's differs in its first sentence and in who decides on a not_met report. */
 export const LEADER_ROLE = `Your role: unit leader. You own your unit's objective and direct its tasks, in order, until you can report against it.
 
-Report what changed, not what you did: each item in changed is something now true that was not, naming the claim ids it rests on; a change with no claims behind it is a claim of its own and counts for less. Outcome met means the unit's objective is established by observed claims; not_met means it cannot be met as set, and then why and suggestion are required, because the IC, who has more perspective, decides what happens next; progress means the unit has more to run or more to say. Set pictureChanged, and report rather than continue, the moment an outcome changes the picture the incident is working from: the IC acts on it before the next unit runs. You will be able to send a strike team of subagents for a job; when you do, you choose its kind, model, tools and count.
+Report what changed, not what you did: each item in changed is something now true that was not, naming the claim ids it rests on; a change with no claims behind it is a claim of its own and counts for less. Outcome met means the unit's objective is established by observed claims; not_met means it cannot be met as set, and then why and suggestion are required, because the IC, who has more perspective, decides what happens next; progress means the unit has more to run or more to say. Set pictureChanged, and report rather than continue, the moment an outcome changes the picture the incident is working from: the IC acts on it before the next unit runs.
 
 You cannot change the organization above or beside you: no new units, no tasks outside your unit, no change to the incident's objective. What you lack goes in your report.
 
 discrepancy is for one thing only: the update you received describes a different problem from the one you have been working, as if you believed you were fighting a fire and the update describes a hurricane. Say what differs. A different detail, a wrong line number, a claim you disagree with, is not a discrepancy; it goes in your report or your next task.`;
+
+/**
+ * The role text per seat: the root unit's leader is the Incident Commander, so it is named
+ * as such and a not_met report under command goes to Mauria; the machinery is otherwise the
+ * unit leader's until R3-7 gives the IC its own turns.
+ */
+export function leaderRole(seat: "leader" | "ic"): string {
+  if (seat === "leader") return LEADER_ROLE;
+  return LEADER_ROLE.replace(
+    "Your role: unit leader.",
+    "Your role: Incident Commander, leader of command.",
+  ).replace(
+    "because the IC, who has more perspective, decides what happens next",
+    "because Mauria decides what happens next",
+  );
+}
 
 export const LEADER_TURN_SCHEMA = jsonSchemaFor(LeaderTurn);
 
@@ -44,8 +61,10 @@ const NO_TASKS_REMAIN =
 /**
  * Whether a task runs inside its unit's leader session: a session-backed capability on the
  * leader's provider and model whose equipment and Bash allowlist the leader already holds
- * (`default` covers every built-in tool). Anything else runs in a session of its own, or in
- * process, and its result reaches the leader on its next turn.
+ * (`default` covers every built-in tool). A capability that picks one piece of external
+ * equipment per task (`equipmentSelect`) never does, since the leader's session attaches
+ * all of its equipment. Anything else runs in a session of its own, or in process, and its
+ * result reaches the leader on its next turn.
  */
 export function runsInsideLeader(
   capability: Capability,
@@ -53,6 +72,7 @@ export function runsInsideLeader(
   unit: Unit,
 ): boolean {
   if (capability.kind !== "session") return false;
+  if (capability.session.equipmentSelect !== undefined) return false;
   if (
     task.provider !== unit.leader.provider ||
     task.model !== unit.leader.model
@@ -68,9 +88,10 @@ export function runsInsideLeader(
 }
 
 /**
- * Units whose leader owes a report: a session exists and one of the unit's tasks ended
- * after its last report. Dispatch asks such a unit for a report even when it has nothing
- * left to run, and the validator refuses to close it until it has (DESIGN.md Step 5).
+ * Units whose leader owes a report: one of the unit's tasks ended after its last report.
+ * Dispatch asks such a unit for a report even when it has nothing left to run (the turn
+ * creates the session if none exists), and the validator refuses to close it until it has
+ * (DESIGN.md Step 5).
  */
 export function unitsOwingReport(
   units: readonly Unit[],
@@ -96,7 +117,6 @@ export function unitsOwingReport(
       .filter(
         (u) =>
           u.status === "active" &&
-          u.sessionId !== null &&
           (lastEnded.get(u.id) ?? -1) > (lastReport.get(u.id) ?? -1),
       )
       .map((u) => u.id),
@@ -177,12 +197,10 @@ export function leaderRequest(
   cwd: string,
   timeoutSeconds = LEADER_TURN_SECONDS,
 ): SessionRequest {
+  const seat = unit.parentId === null ? "ic" : "leader";
   return {
     model: unit.leader.model,
-    systemPrompt: sessionSystemPrompt(
-      LEADER_ROLE,
-      unit.parentId === null ? "ic" : "leader",
-    ),
+    systemPrompt: sessionSystemPrompt(leaderRole(seat), seat),
     prompt,
     ...resolveEquipment(unit.equipment),
     bashAllowlist: unit.bashAllowlist,

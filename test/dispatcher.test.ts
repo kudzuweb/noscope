@@ -3,9 +3,11 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+import { getCapability } from "../src/capabilities/index.js";
 import { defineCapability } from "../src/capabilities/registry.js";
 import { EXIT, run } from "../src/cli.js";
 import { dispatch } from "../src/dispatcher.js";
+import { runsInsideLeader, unitsOwingReport } from "../src/leader.js";
 import type { ActionPlan } from "../src/models.js";
 import { Store } from "../src/store.js";
 import { scriptedIncident, unitProposal } from "./fixtures/models.js";
@@ -281,19 +283,33 @@ describe("dispatcher", () => {
     }
     const events = store.listEvents("i1");
     const failedAt = events.findIndex((e) => e.type === "task.failed");
-    expect(events.map((e) => e.type).slice(failedAt - 1, failedAt + 2)).toEqual(
-      ["tool.called", "task.failed", "task.usage"],
+    expect(events.map((e) => e.type).slice(failedAt - 3, failedAt + 2)).toEqual(
+      [
+        "task.started",
+        "leader.started",
+        "tool.called",
+        "task.failed",
+        "task.usage",
+      ],
     );
     expect(events.find((e) => e.type === "tool.called")?.payload).toMatchObject(
       { taskId: "t-inv", tool: "Grep", sessionId: "stub-session" },
     );
-    // The failed call was the leader's first, so no session was recorded and the turn started one.
+    // The failed call was the leader's first and its session exists, so the session is
+    // recorded in the task's transaction and the turn resumes it.
     expect(events.map((e) => e.type).slice(failedAt + 1)).toEqual([
       "task.usage",
-      "leader.started",
       "tool.called",
       "unit.reported",
     ]);
+    expect(
+      events.find((e) => e.type === "leader.started")?.payload,
+    ).toMatchObject({
+      unitId: "i1-command",
+      sessionId: "stub-session",
+      cwd: tree,
+    });
+    expect(store.listUnits("i1")[0]?.sessionId).toBe("stub-session");
     expect(events.find((e) => e.type === "task.failed")?.payload).toMatchObject(
       { sessionId: "stub-session" },
     );
@@ -503,7 +519,7 @@ describe("dispatcher", () => {
     ]);
     expect(
       prompt.includes(
-        `\n\nIncident objective: ${incident.objective}\nCurrent hypothesis: the handler is the one\nEstablished so far:\n  - ${claim.id}: the handler is at a.ts:1\n\nYour unit: i1-command (command, the root), leader claude-code/claude-haiku-4-5: command: where deletion moves the scroll position\nReports to: Mauria, the Agency Administrator, through the planner and the incident file\nBelow it: no units\n\nObjective:`,
+        `\n\nIncident objective: ${incident.objective}\nCurrent hypothesis: the handler is the one\nEstablished so far:\n  - ${claim.id}: the handler is at a.ts:1\n\nYour unit: i1-command (command, the root), leader claude-code/claude-haiku-4-5: command: where deletion moves the scroll position\nReports to: Mauria, the Agency Administrator; your reports go into the incident file\nBelow it: no units\n\nObjective:`,
       ),
     ).toBe(true);
     // The leader's turn resumed the session and needed no orientation.
@@ -834,7 +850,10 @@ describe("dispatcher, unit leaders", () => {
     expect(calls[0]?.prompt).toContain("2 ready task(s) remain in your unit.");
     const leaderSystem =
       calls[0]?.args[calls[0].args.indexOf("--system-prompt") + 1];
-    expect(leaderSystem).toContain("Your role: unit leader.");
+    // The root unit's leader is the IC: its seat paragraph and its role text say so.
+    expect(leaderSystem).toContain(
+      "Your role: Incident Commander, leader of command.",
+    );
     expect(leaderSystem).toContain("you are the Incident Commander");
     // The investigate ran as the leader's turn: its brief, the capability's schema, the leader's tools.
     expect(calls[1]?.prompt).toContain("Your next task follows");
@@ -966,6 +985,141 @@ describe("dispatcher, unit leaders", () => {
     expect(calls[0]?.prompt).toContain(
       "Your unit has not reported since its last task ended.",
     );
+    store.close();
+  });
+
+  it("a session task inside the leader that runs past its bound is killed by the provider, files its calls and its session id, and the turn waits for it", async () => {
+    const store = new Store(":memory:");
+    const { incident, task } = scriptedIncident(store);
+    task({
+      id: "t-inv",
+      capability: "investigate",
+      inputs: { question: "slow?" },
+      provider: "claude-code",
+      model: "claude-haiku-4-5",
+      budget: { seconds: 1 },
+      status: "ready",
+    });
+    const log = callsLog();
+    process.env.NOSCOPE_STUB_CALLS = log;
+    process.env.NOSCOPE_STUB_SLEEP_MS = "8000";
+    process.env.NOSCOPE_STUB_TOOLS = JSON.stringify([
+      { tool: "Grep", input: { pattern: "slow" }, result: "a.txt:1" },
+    ]);
+    let dispatched: Awaited<ReturnType<typeof dispatch>>;
+    try {
+      dispatched = await dispatch(store, incident, stubbed);
+    } finally {
+      delete process.env.NOSCOPE_STUB_CALLS;
+      delete process.env.NOSCOPE_STUB_SLEEP_MS;
+      delete process.env.NOSCOPE_STUB_TOOLS;
+    }
+    expect(dispatched.ran[0]).toMatchObject({
+      taskId: "t-inv",
+      status: "failed",
+      // The stub exits 143 from its SIGTERM handler; the real binary dies on the signal.
+      reason: expect.stringMatching(/^claude exited (143|on a signal)/),
+    });
+    const events = store.listEvents("i1");
+    const failed = events.find((e) => e.type === "task.failed");
+    expect(failed?.payload).toMatchObject({
+      sessionId: "stub-session",
+      timedOut: false,
+    });
+    expect(
+      events.filter(
+        (e) => e.type === "tool.called" && e.payload.taskId === "t-inv",
+      ),
+    ).toHaveLength(1);
+    const calls = readCalls(log) as (Call & { concurrent: number })[];
+    expect(calls.map((c) => [c.kind, c.resume, c.concurrent])).toEqual([
+      ["task", null, 0],
+      ["leader", "stub-session", 0],
+    ]);
+    store.close();
+  }, 20_000);
+
+  it("a leader session that cannot be resumed is replaced: a fresh session is oriented and asked the same turn, and leader.started names the dead one", async () => {
+    const store = new Store(":memory:");
+    const { incident, task } = scriptedIncident(store);
+    store.setUnitSession("i1", "i1-command", "dead-session", "dispatcher", {
+      unitId: "i1-command",
+      sessionId: "dead-session",
+    });
+    task({
+      id: "t-grep",
+      capability: "grep",
+      inputs: { root: ".", pattern: "delete" },
+      status: "ready",
+    });
+    const log = callsLog();
+    process.env.NOSCOPE_STUB_CALLS = log;
+    process.env.NOSCOPE_STUB_RESUME_FAIL = "dead-session";
+    let dispatched: Awaited<ReturnType<typeof dispatch>>;
+    try {
+      dispatched = await dispatch(store, incident, stubbed);
+    } finally {
+      delete process.env.NOSCOPE_STUB_CALLS;
+      delete process.env.NOSCOPE_STUB_RESUME_FAIL;
+    }
+    expect(dispatched.reports.map((r) => [r.unitId, r.sessionId])).toEqual([
+      ["i1-command", "stub-session"],
+    ]);
+    const calls = readCalls(log);
+    expect(calls.map((c) => [c.kind, c.resume])).toEqual([
+      ["leader", "dead-session"],
+      ["leader", null],
+    ]);
+    expect(calls[1]?.prompt).toMatch(/^Incident objective: /);
+    expect(calls[1]?.prompt).toContain("Task t-grep (grep) completed.");
+    const started = store
+      .listEvents("i1")
+      .filter((e) => e.type === "leader.started");
+    expect(started).toHaveLength(2);
+    expect(started[1]?.payload).toMatchObject({
+      unitId: "i1-command",
+      sessionId: "stub-session",
+      replaced: "dead-session",
+      reason: expect.stringMatching(
+        /No conversation found with session ID: dead-session/,
+      ),
+      cwd: tree,
+    });
+    expect(store.listUnits("i1")[0]?.sessionId).toBe("stub-session");
+    store.close();
+  });
+
+  it("a task on a capability that picks its equipment per task never runs inside the leader, and a unit with no session still owes a report", () => {
+    const reproduce = getCapability("reproduce");
+    const store = new Store(":memory:");
+    const { unit, task } = scriptedIncident(store);
+    const t = task({
+      id: "t-see",
+      capability: "reproduce",
+      inputs: {
+        browser: "playwright_browser",
+        url: "http://localhost/",
+        steps: ["open"],
+        observe: ["it"],
+      },
+      provider: "claude-code",
+      model: "claude-haiku-4-5",
+    });
+    if (reproduce === undefined) throw new Error("reproduce is registered");
+    expect(
+      runsInsideLeader(reproduce, t, {
+        ...unit,
+        equipment: ["playwright_browser", "claude_in_chrome"],
+      }),
+    ).toBe(false);
+    store.setTaskStatus("i1", "t-see", "failed", "dispatcher", "task.failed");
+    expect(
+      unitsOwingReport(
+        store.listUnits("i1"),
+        store.listTasks("i1"),
+        store.listEvents("i1"),
+      ),
+    ).toEqual(new Set(["i1-command"]));
     store.close();
   });
 

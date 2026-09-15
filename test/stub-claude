@@ -14,10 +14,42 @@
 // JSON line appended per call: its kind (planner, leader, task), the resumed id, args and prompt.
 // NOSCOPE_STUB_FAIL and NOSCOPE_STUB_EXIT leave a leader's turn alone, so a test of a failing
 // task session still gets its leader's turn; NOSCOPE_STUB_LEADER_FAIL fails the turn instead.
-// A --resume call answers with the id it was given as session_id, as the real binary does.
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+// NOSCOPE_STUB_SLEEP_MS makes a task call sleep that long after its tool lines, before the
+// envelope, so a bound can kill it. A --resume call answers with the id it was given as
+// session_id, as the real binary does; NOSCOPE_STUB_RESUME_FAIL names a session id whose
+// resume exits 1 before any output, as the binary does for a session it cannot find. Each
+// NOSCOPE_STUB_CALLS line also carries `concurrent`, how many other stub processes on the same
+// log were still running when this one started.
+import {
+  appendFileSync,
+  existsSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { basename, dirname, join } from "node:path";
 
 const args = process.argv.slice(2);
+const calls = process.env.NOSCOPE_STUB_CALLS;
+const lock = calls ? join(dirname(calls), `${basename(calls)}.lock.${process.pid}`) : null;
+let concurrent = 0;
+if (calls && lock) {
+  concurrent = readdirSync(dirname(calls)).filter((f) =>
+    f.startsWith(`${basename(calls)}.lock.`),
+  ).length;
+  writeFileSync(lock, "");
+  const unlock = () => {
+    try {
+      rmSync(lock);
+    } catch {}
+  };
+  process.on("exit", unlock);
+  process.on("SIGTERM", () => {
+    unlock();
+    process.exit(143);
+  });
+}
 const prompt = readFileSync(0, "utf8");
 if (process.env.NOSCOPE_STUB_LOG)
   writeFileSync(
@@ -31,16 +63,21 @@ const sessionId = resumed === -1 ? "stub-session" : args[resumed + 1];
 const isPlanner = systemPrompt.startsWith("You are the Planning Section");
 const schema = JSON.parse(args[args.indexOf("--json-schema") + 1] ?? "{}");
 const isLeaderTurn = Array.isArray(schema.properties?.kind?.enum) && schema.properties.kind.enum.includes("report");
-if (process.env.NOSCOPE_STUB_CALLS)
+if (calls)
   appendFileSync(
-    process.env.NOSCOPE_STUB_CALLS,
+    calls,
     `${JSON.stringify({
       kind: isPlanner ? "planner" : isLeaderTurn ? "leader" : "task",
       resume: resumed === -1 ? null : args[resumed + 1],
+      concurrent,
       args,
       prompt,
     })}\n`,
   );
+if (resumed !== -1 && process.env.NOSCOPE_STUB_RESUME_FAIL === sessionId) {
+  process.stderr.write(`No conversation found with session ID: ${sessionId}\n`);
+  process.exit(1);
+}
 
 function nextTurn() {
   if (process.env.NOSCOPE_STUB_TURNS) {
@@ -137,5 +174,13 @@ if (process.env.NOSCOPE_STUB_EXIT && !isLeaderTurn) {
   process.stdout.write(`${lines.map((l) => JSON.stringify(l)).join("\n")}\n`);
   process.exit(Number(process.env.NOSCOPE_STUB_EXIT));
 }
-lines.push(envelope);
-process.stdout.write(`${lines.map((l) => JSON.stringify(l)).join("\n")}\n`);
+const sleepMs = isLeaderTurn ? 0 : Number(process.env.NOSCOPE_STUB_SLEEP_MS ?? 0);
+if (sleepMs > 0) {
+  process.stdout.write(`${lines.map((l) => JSON.stringify(l)).join("\n")}\n`);
+  setTimeout(() => {
+    process.stdout.write(`${JSON.stringify(envelope)}\n`);
+  }, sleepMs);
+} else {
+  lines.push(envelope);
+  process.stdout.write(`${lines.map((l) => JSON.stringify(l)).join("\n")}\n`);
+}
