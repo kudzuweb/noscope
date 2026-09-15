@@ -2962,7 +2962,7 @@ Not exactly to spec, with reasons:
   `cancelTasks` cancelled already did; and an accepted verdict leaves the closed unit's
   pending tasks pending while a reassign cancels them. Both are noted for a later PR.
 
-## R4-5: The IC owns the situation (#PR, merged 2026-09-15)
+## R4-5: The IC owns the situation (#48, merged 2026-09-15)
 
 R4-5 of the round 4 plan, on R4-4's reassignments, folding its section 11. Built: the IC
 writes the situation, ruled by Mauria in review on 2026-09-15 ("i want the IC to own it
@@ -3075,4 +3075,10 @@ Not exactly to spec, with reasons:
   the block does not ask for, so the operator reads the picture the cycle runs on without
   `show`; the tests that pin `step`'s output line by line moved their indices.
 - `renderSituation` is exported from `src/planner.ts` for `show`, which had its own copy of
-  the rendering; one rendering now, with the open-reassignments line in both places.
+  the rendering; one rendering now, with the open-reassignments line in both places, worded
+  "in this plan" for the planner and "in the next plan" for `show`, and "(none)" said and
+  indented by the caller (PR 48's review).
+- Follow-up, from PR 48's review (finding 5, pre-existing under "Dependencies resolve"): a
+  claim with status `rejected` and basis `observed` passes "Situation grounded" in `proven`,
+  since basis is what gates and nothing sets `rejected` yet; noted for the PR that first
+  sets it.

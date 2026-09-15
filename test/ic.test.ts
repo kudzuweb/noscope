@@ -2278,7 +2278,7 @@ describe("the IC above the planner", () => {
         "    - 001-c001, settled by task probe",
         "    - 001-c001, deferred: the caller is next period's question",
         "  keep: (none)",
-        "  reassignments open, each taken by a new unit in this plan naming its id in takes: (none)",
+        "  reassignments open, each taken by a new unit in the next plan naming its id in takes: (none)",
       ].join("\n"),
     );
   });

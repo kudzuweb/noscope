@@ -96,7 +96,7 @@ describe("incident run", () => {
     expect(await run(["incident", "show", "001"], shown.ctx)).toBe(EXIT.ok);
     // The IC's situation prints under the period (R4-5), the stub's default one here.
     expect(shown.out.join("\n")).toContain(
-      "period priorities:\n  (none)\nsituation, the IC's:\n  changed: stub: nothing yet\n  hypothesis: stub hypothesis\n  proven:\n    (none)\n  inferred:\n    (none)\n  keep: (none)\n  reassignments open, each taken by a new unit in this plan naming its id in takes: (none)",
+      "period priorities:\n  (none)\nsituation, the IC's:\n  changed: stub: nothing yet\n  hypothesis: stub hypothesis\n  proven:\n    (none)\n  inferred:\n    (none)\n  keep: (none)\n  reassignments open, each taken by a new unit in the next plan naming its id in takes: (none)",
     );
     const claims = store.listClaims("001");
     expect(claims).toHaveLength(1);

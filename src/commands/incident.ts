@@ -428,9 +428,12 @@ function renderIncidentFile(
   // The IC's situation from its last accepted command turn (R4-5), the picture every seat
   // works from this period, with the reassignments still open under it.
   lines.push("situation, the IC's:");
+  const situation = icSituation(events);
+  if (situation === null) lines.push("  (none)");
   for (const line of renderSituation(
-    icSituation(events),
+    situation,
     openReassignments(events),
+    "in the next plan",
   ))
     lines.push(`  ${line}`);
   const briefed = briefingOf(events);
