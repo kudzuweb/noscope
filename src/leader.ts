@@ -19,7 +19,11 @@ import {
   type Unit,
   type Usage,
 } from "./models.js";
-import { type SessionRequest, sessionSystemPrompt } from "./providers/index.js";
+import {
+  type Refusal,
+  type SessionRequest,
+  sessionSystemPrompt,
+} from "./providers/index.js";
 import { describeStrikeTeam } from "./strike-team.js";
 import { renderHierarchy, renderPeriod } from "./tree.js";
 
@@ -32,6 +36,39 @@ import { renderHierarchy, renderPeriod } from "./tree.js";
 /** The root unit's leader when nothing routes it: an incident created with `--no-size-up`, or a briefing that names a model the provider does not serve; `incident create --ic-model` overrides both the default and the briefing. */
 export const IC_MODEL = "claude-opus-5";
 export const IC_PROVIDER = "claude-code";
+
+/**
+ * The model a refused seat is retried on, once (R4-7; DESIGN.md Step 6): the IC's
+ * replacement session, a unit leader's, or a task's own retry. `NOSCOPE_IC_FALLBACK_MODEL`
+ * overrides the default, `claude-opus-4-8`; refused when it names a model the provider
+ * does not serve, so a misspelt override fails the retry loudly rather than the API.
+ */
+const IC_FALLBACK_MODEL = "claude-opus-4-8";
+
+export function fallbackModel(
+  env: NodeJS.ProcessEnv = {},
+  provider: { name: string; models: readonly string[] },
+): string {
+  const raw = env.NOSCOPE_IC_FALLBACK_MODEL;
+  const model = raw === undefined || raw === "" ? IC_FALLBACK_MODEL : raw;
+  if (!provider.models.includes(model))
+    throw new Error(
+      `NOSCOPE_IC_FALLBACK_MODEL ${model} is not a model ${provider.name} serves (${provider.models.join(", ")})`,
+    );
+  return model;
+}
+
+/** One call the API refused, as a transfer, a report or a question names it: the seat's model, its session and the refusal. */
+export type RefusedCall = {
+  model: string;
+  sessionId: string | null;
+  refused: Refusal;
+};
+
+/** A refused call in one clause: the model, the category, the session. */
+export function describeRefusedCall(call: RefusedCall): string {
+  return `${call.model} (${call.refused.category}${call.sessionId === null ? "" : `, session ${call.sessionId}`})`;
+}
 
 /** A turn is one structured call with no task of its own; it gets the planner's bound. */
 const LEADER_TURN_SECONDS = 300;

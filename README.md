@@ -46,6 +46,10 @@ below Claude Code's limit.
 `NOSCOPE_REPORT_WORK_CHARS` is the size, in characters, at which each task's block under a
 unit's report in the IC's change report (and in `incident show`) is clipped, the task id
 left as the pointer to the full record (default 1500).
+`NOSCOPE_IC_FALLBACK_MODEL` is the model a seat the API refused is retried on, once
+(default `claude-opus-4-8`): the IC's replacement session, a unit leader's, or a task's own
+retry; refused on it too, a unit reports `not_met` for the IC to decide and the IC's own
+refusal blocks the incident on a question that `incident answer <id> "<model>"` resolves.
 `NOSCOPE_LIVE=1` also runs the live tests, which call the real binary: a Haiku session, a
 Haiku leader sending a two-member `pinger` strike team, a Haiku initial IC sizing up this
 checkout read-only and one sizing up a diagnostic objective on it, and a

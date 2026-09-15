@@ -1,6 +1,12 @@
 import { z } from "zod";
 import { recordActivity } from "./activity.js";
-import { leaderRequest, openRequests } from "./leader.js";
+import {
+  describeRefusedCall,
+  fallbackModel,
+  leaderRequest,
+  openRequests,
+  type RefusedCall,
+} from "./leader.js";
 import {
   type ActionPlan,
   Claim,
@@ -13,6 +19,7 @@ import {
   IncidentBriefing,
   jsonSchemaFor,
   type Leader,
+  type Question,
   ReviewTurn,
   Task,
   type Unit,
@@ -26,6 +33,7 @@ import {
   type SessionActivity,
   SessionError,
 } from "./providers/index.js";
+import { fallbackTransferred, newQuestions } from "./runtime.js";
 import { cycleOf, type Store } from "./store.js";
 
 // The Incident Commander is the root unit's leader: one persistent session, briefed with
@@ -593,10 +601,13 @@ type TransferCore = {
 };
 
 /**
- * A transfer of command's payload, one event type for both kinds (R3-8, R3-9): `initial`
- * is the size-up's transfer, whose incoming model was chosen by the briefing, `--ic-model`
- * or the default; `handoff` is the context-threshold handoff, which says what context size
- * triggered it against what threshold.
+ * A transfer of command's payload, one event type for every kind (R3-8, R3-9, R4-7):
+ * `initial` is the size-up's transfer, whose incoming model was chosen by the briefing,
+ * `--ic-model` or the default; `handoff` is the context-threshold handoff, which says what
+ * context size triggered it against what threshold; `fallback` is a change of the IC's
+ * model after the API refused its call, to the fallback model by the runtime or to the
+ * model Mauria's answer named, with the refusals as its reason and no document (the
+ * successor is briefed with the full file, and evaluates nothing).
  */
 export type Transfer =
   | (TransferCore & { kind: "initial"; chosenBy: string; reason: string })
@@ -605,6 +616,13 @@ export type Transfer =
       contextTokens: number;
       threshold: number;
       document: HandoffDocument;
+    })
+  | (TransferCore & {
+      kind: "fallback";
+      chosenBy: "runtime" | "answer";
+      reason: string;
+      refusals: RefusedCall[];
+      document: null;
     });
 
 /** A handoff in flight (R3-9): the transfer as the outgoing session left it, its incoming session null until the successor's first call names it. */
@@ -642,7 +660,7 @@ export function recordTransfer(
  * `briefingEvaluation` (the field is optional there), has run on that session: the
  * successor evaluates the document once, on whichever call was its first, and a review
  * that skipped the field leaves the next command turn to evaluate under the schema that
- * requires it.
+ * requires it. A fallback transfer (R4-7) hands over no document and is never pending.
  */
 export function pendingTransfer(events: readonly Event[]): Event | null {
   let accepted = -1;
@@ -658,7 +676,9 @@ export function pendingTransfer(events: readonly Event[]): Event | null {
       Array.isArray(e.payload.briefingEvaluation)
     )
       turnedOn.add(str(e.payload.sessionId));
-    if (e.type === "command.transferred") transfer = e;
+    // A fallback transfer hands over no document, so there is nothing to evaluate.
+    if (e.type === "command.transferred" && e.payload.kind !== "fallback")
+      transfer = e;
   }
   if (transfer === null) return null;
   const incoming = transfer.payload.incomingSessionId;
@@ -905,6 +925,65 @@ class OutgoingSessionLost extends Error {
 }
 
 /**
+ * The IC's call was refused on its model and on the fallback (R4-7): the incident is
+ * blocked on a question naming both, and the cycle ends here. `incident answer` with a
+ * model name resumes the IC on that model.
+ */
+export class IcRefused extends Error {
+  constructor(
+    readonly question: Question,
+    readonly refusals: readonly RefusedCall[],
+  ) {
+    super(
+      `the IC was refused on ${refusals.map(describeRefusedCall).join(" and on ")}; the incident is blocked on question ${question.id}, answered with the model to resume the IC on`,
+    );
+  }
+}
+
+/**
+ * Block the incident on the IC's refusals (R4-7): the question naming them is asked
+ * (`question.asked` with `icRefusals`), the incident is blocked (`incident.blocked` with
+ * the same, which `icModelHold` reads until a transfer of command follows), and the error
+ * that ends the cycle is returned for the caller to throw.
+ */
+export function blockOnRefusals(
+  store: Store,
+  incidentId: string,
+  refusals: readonly RefusedCall[],
+  models: readonly string[],
+  actor: string,
+): IcRefused {
+  const current = store.getIncident(incidentId);
+  if (current === undefined) throw new Error(`incident ${incidentId} vanished`);
+  const question = newQuestions(current, [
+    renderRefusalQuestion(refusals, models),
+  ])[0] as Question;
+  store.batch(() => {
+    store.setIncidentQuestions(
+      incidentId,
+      [...current.questions, question],
+      actor,
+      "question.asked",
+      { questions: [question], icRefusals: refusals },
+    );
+    store.setIncidentStatus(incidentId, "blocked", actor, "incident.blocked", {
+      rationale: `the IC was refused on ${refusals.map(describeRefusedCall).join(" and on ")}`,
+      icRefusals: refusals,
+    });
+  });
+  return new IcRefused(question, refusals);
+}
+
+/** The question the IC's refusals raise for Mauria: both refusals, and that the answer names the model to resume on. */
+function renderRefusalQuestion(
+  refusals: readonly RefusedCall[],
+  models: readonly string[],
+): string {
+  const last = refusals.at(-1);
+  return `The IC was refused by the API on ${refusals.map(describeRefusedCall).join(" and then on the fallback ")}${last === undefined || last.refused.explanation === "" ? "" : `: ${last.refused.explanation}`} Which model should the IC resume on? Answer with one of ${models.join(", ")}; an answer naming none keeps the incident blocked and asks again.`;
+}
+
+/**
  * One call on the IC's session: the root unit's leader request with the prompt built for
  * the unit as it stands (a fresh session gets what a resumed one already read) and the
  * schema, resumed once the session exists. A session that cannot be resumed (the call
@@ -920,6 +999,15 @@ class OutgoingSessionLost extends Error {
  * the seat. After a handoff (`prepareHandoff`), the first call on the fresh session also
  * files `command.transferred` before its `leader.started`, in both paths. The handoff
  * call itself never replaces a lost session, since a fresh one has nothing to hand off.
+ *
+ * A call the API refused (R3-10a, R4-7) is filed, its session released when it was
+ * resumed, and, once per incident, command transfers to the fallback model
+ * (`command.transferred` of kind `fallback`, the refusal as its reason, the root unit's
+ * leader changed so every later IC call stays there) and a fresh session on it is asked
+ * the same turn; the fresh session's `leader.started` names the refused session and the
+ * model it fell back from. Refused on the fallback too, or refused after the fallback has
+ * already been tried, the incident is blocked on a question naming the refusals
+ * (`IcRefused`), and only an answer naming a model resumes it.
  */
 async function icCall<T extends object>(
   store: Store,
@@ -941,16 +1029,19 @@ async function icCall<T extends object>(
     );
   let unit = listed;
   let replaced: { sessionId: string; reason: string } | null = null;
+  let fallbackFrom: string | null = null;
   let outcome: Awaited<ReturnType<typeof provider.run>> | null = null;
   let output: T;
   // The session's first call: after a handoff, the transfer is recorded the moment the
-  // successor's id is known, whether or not it answered, then the session goes on the unit.
+  // successor's id is known, whether or not it answered, then the session goes on the
+  // unit. The handoff's incoming leader is the unit's as it now stands, so a successor
+  // that fell back keeps the fallback model.
   const started = (sessionId: string, extra: Record<string, unknown>) => {
     if (handoff !== null)
       recordTransfer(
         store,
         incident.id,
-        { ...handoff, incomingSessionId: sessionId },
+        { ...handoff, incomingSessionId: sessionId, incoming: unit.leader },
         actor,
       );
     store.setUnitSession(incident.id, unit.id, sessionId, actor, {
@@ -961,6 +1052,7 @@ async function icCall<T extends object>(
       ...(replaced === null
         ? {}
         : { replaced: replaced.sessionId, reason: replaced.reason }),
+      ...(fallbackFrom === null ? {} : { fallbackFrom }),
       ...extra,
     });
   };
@@ -969,7 +1061,7 @@ async function icCall<T extends object>(
   // session goes on the unit when this was its first call.
   const fileFailure = (
     failed: {
-      sessionId: string;
+      sessionId: string | null;
       usage: Usage | null;
       activity: SessionActivity;
       refused: Refusal | null;
@@ -988,6 +1080,7 @@ async function icCall<T extends object>(
         ...(failed.refused === null ? {} : { refused: failed.refused }),
         ...(failed.usage === null ? {} : { usage: failed.usage }),
       });
+      if (failed.sessionId === null) return;
       // A refused fresh session is not put on the unit: there is nothing to resume in it.
       if (unit.sessionId === null && failed.refused === null)
         started(failed.sessionId, { failed: true });
@@ -999,42 +1092,98 @@ async function icCall<T extends object>(
         seat: "ic",
       });
     });
+  // A refused call: filed with the refusal, and its session released with the category
+  // when it was resumed (a refused session stays refused on every later call, seen
+  // 2026-09-15). A refused handoff call is released by `prepareHandoff`, with its own reason.
+  const fileRefusal = (error: SessionError, refused: Refusal): RefusedCall => {
+    const dead = unit.sessionId;
+    store.batch(() => {
+      fileFailure(
+        {
+          sessionId: error.sessionId,
+          usage: error.usage,
+          activity: error.activity,
+          refused,
+        },
+        describe(error),
+      );
+      if (dead !== null && turn !== "handoff")
+        store.setUnitSession(incident.id, unit.id, null, actor, {
+          unitId: unit.id,
+          released: dead,
+          ...unit.leader,
+          reason: `refused: ${refused.category}`,
+          refused,
+        });
+    });
+    return { model: unit.leader.model, sessionId: error.sessionId, refused };
+  };
+  // Refused on the fallback too, or after the fallback was already tried: the incident is
+  // blocked on a question naming the refusals, and the cycle ends.
+  const block = (refusals: RefusedCall[]): IcRefused =>
+    blockOnRefusals(store, incident.id, refusals, provider.models, actor);
   try {
     try {
       outcome = await ask(unit);
     } catch (error) {
+      if (!(error instanceof SessionError)) throw error;
       const dead = unit.sessionId;
-      if (!(error instanceof SessionError) || dead === null) throw error;
-      // A refused resumed call: the session stays refused on every later call (seen
-      // 2026-09-15), so it is filed, released with the category, and replaced by a fresh
-      // session asked the same turn with the full briefing. A call that died before the
-      // stream's init line found no session to resume and is replaced the same way.
-      if (error.refused !== null && error.sessionId !== null) {
-        const { sessionId, usage, activity, refused } = error;
-        // One transaction for the filing and the release (a batch inside a batch is a savepoint).
-        store.batch(() => {
-          fileFailure({ sessionId, usage, activity, refused }, describe(error));
-          // A refused handoff call is released by `prepareHandoff`, with its own reason.
-          if (turn !== "handoff")
-            store.setUnitSession(incident.id, unit.id, null, actor, {
-              unitId: unit.id,
-              released: dead,
-              ...unit.leader,
-              reason: `refused: ${refused.category}`,
-              refused,
-            });
-        });
-      } else if (error.sessionId !== null) throw error;
-      // A handoff asks the outgoing session for what it knows; a fresh one knows nothing.
-      if (turn === "handoff")
-        throw new OutgoingSessionLost(dead, error.message);
-      replaced = { sessionId: dead, reason: error.message };
-      unit = { ...unit, sessionId: null };
-      outcome = await ask(unit);
+      if (error.refused !== null) {
+        const first = fileRefusal(error, error.refused);
+        if (turn === "handoff" && dead !== null)
+          throw new OutgoingSessionLost(dead, error.message);
+        // Once per incident: a refusal on the IC's model transfers command to the fallback.
+        const fallback = fallbackModel(options.env, provider);
+        if (
+          unit.leader.model === fallback ||
+          fallbackTransferred(store.listEvents(incident.id))
+        )
+          throw block([first]);
+        const incoming: Leader = { ...unit.leader, model: fallback };
+        recordTransfer(
+          store,
+          incident.id,
+          {
+            kind: "fallback",
+            unitId: unit.id,
+            outgoingSessionId: error.sessionId ?? dead ?? "",
+            outgoing: unit.leader,
+            incomingSessionId: null,
+            incoming,
+            document: null,
+            chosenBy: "runtime",
+            reason: `refused on ${describeRefusedCall(first)}`,
+            refusals: [first],
+          },
+          actor,
+        );
+        if (error.sessionId !== null)
+          replaced = { sessionId: error.sessionId, reason: error.message };
+        fallbackFrom = unit.leader.model;
+        unit = { ...unit, sessionId: null, leader: incoming };
+        try {
+          outcome = await ask(unit);
+        } catch (again) {
+          if (again instanceof SessionError && again.refused !== null)
+            throw block([first, fileRefusal(again, again.refused)]);
+          throw again;
+        }
+      } else {
+        // A call that died before the stream's init line found no session to resume and
+        // is replaced by a fresh session asked the same turn with the full briefing.
+        if (dead === null || error.sessionId !== null) throw error;
+        // A handoff asks the outgoing session for what it knows; a fresh one knows nothing.
+        if (turn === "handoff")
+          throw new OutgoingSessionLost(dead, error.message);
+        replaced = { sessionId: dead, reason: error.message };
+        unit = { ...unit, sessionId: null };
+        outcome = await ask(unit);
+      }
     }
     output = parse(outcome.output);
   } catch (error) {
-    if (error instanceof OutgoingSessionLost) throw error;
+    if (error instanceof OutgoingSessionLost || error instanceof IcRefused)
+      throw error;
     const reason = describe(error);
     const failed =
       outcome !== null
@@ -1053,12 +1202,7 @@ async function icCall<T extends object>(
             }
           : null;
     if (failed !== null) fileFailure(failed, reason);
-    // A fresh session refused too: the message names the category and Claude Code's advice.
-    const advice =
-      failed?.refused !== null && failed?.refused !== undefined
-        ? ` (${failed.refused.category}${replaced === null ? "" : `, after session ${replaced.sessionId} was refused and replaced`}; Claude Code's advice is to rephrase the request in a new session or change the model)`
-        : "";
-    throw new Error(`the IC: ${reason}${advice}`, { cause: error });
+    throw new Error(`the IC: ${reason}`, { cause: error });
   }
   const sessionId = outcome.sessionId;
   const provenance = {

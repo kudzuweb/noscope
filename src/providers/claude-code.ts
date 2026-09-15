@@ -496,8 +496,7 @@ function streamRefusal(lines: readonly StreamLine[]): Refusal | null {
     text(system?.api_refusal_explanation) ??
     text(system?.apiRefusalExplanation) ??
     text(stopDetails?.explanation);
-  if (category !== null)
-    return { category, explanation: explanation ?? "" };
+  if (category !== null) return { category, explanation: explanation ?? "" };
   const refusedResult =
     system !== undefined ||
     stopDetails !== undefined ||
