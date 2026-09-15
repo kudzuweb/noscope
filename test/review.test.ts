@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { EXIT, run } from "../src/cli.js";
 import type { ActionPlan, Event, Incident, Task } from "../src/models.js";
 import { renderReview } from "../src/review.js";
+import { cycleOf } from "../src/store.js";
 import { unitProposal } from "./fixtures/models.js";
 
 const tree = resolve("test/fixtures/tree");
@@ -547,5 +548,95 @@ describe("incident review", () => {
     const none = renderReview({ ...incident, status: "open" }, [], [], []);
     expect(none[1]).toBe("no cycle has run");
     expect(none.at(-1)).toBe("cost: $0.00");
+  });
+
+  it("numbers the cycles of an incident migrated under the IC the way cycleOf does: drafts before the first command turn, then command turns, a rejected or failed turn as the period it attempted", () => {
+    const usage = {
+      inputTokens: 1,
+      outputTokens: 1,
+      seconds: 1,
+      costUsd: 0.01,
+    };
+    const events = [
+      event(1, "plan.proposed", { usage, model: "claude-opus-5" }),
+      event(2, "plan.applied", { incidentStatus: "open" }),
+      event(3, "plan.proposed", { usage, model: "claude-opus-5" }),
+      event(4, "plan.rejected", { rule: "Units exist", reason: "x" }),
+      event(5, "command.turned", {
+        usage,
+        model: "claude-opus-5",
+        cycle: 3,
+        rejected: true,
+        turn: {
+          periodObjectives: ["a"],
+          closeUnits: [],
+          incidentStatus: "satisfied",
+        },
+      }),
+      event(6, "command.rejected", { rule: "Status is earned", reason: "y" }),
+      event(7, "command.failed", {
+        usage,
+        model: "claude-opus-5",
+        cycle: 3,
+        turn: "command",
+        reason: "the answer did not fit its schema",
+      }),
+      event(8, "command.turned", {
+        usage,
+        model: "claude-opus-5",
+        cycle: 3,
+        incidentStatus: "open",
+        turn: {
+          periodObjectives: ["a"],
+          closeUnits: [],
+          incidentStatus: "continue",
+        },
+      }),
+      event(9, "plan.proposed", {
+        usage,
+        model: "claude-opus-5",
+        redraft: false,
+      }),
+      event(10, "plan.reviewed", {
+        usage,
+        model: "claude-opus-5",
+        cycle: 3,
+        verdict: "approve",
+      }),
+      event(11, "plan.applied", {
+        incidentStatus: "open",
+        verdict: "approve",
+        corrections: null,
+      }),
+    ];
+    expect(cycleOf(events)).toBe(3);
+    const lines = renderReview({ ...incident, status: "open" }, events, [], []);
+    expect(lines[1]).toMatch(/^5 cycle\(s\) from/);
+    expect(lines.filter((l) => l.startsWith("cycle "))).toEqual([
+      expect.stringMatching(/^cycle 1 {2}\S+ {2}applied open {2}units/),
+      expect.stringMatching(/^cycle 2 {2}\S+ {2}rejected on 1 rule line\(s\)$/),
+      expect.stringMatching(/^cycle 3 {2}\S+ {2}command turn rejected$/),
+      expect.stringMatching(/^cycle 3 {2}\S+ {2}command turn failed$/),
+      expect.stringMatching(
+        /^cycle 3 {2}\S+ {2}applied open {2}ic approve {2}units/,
+      ),
+    ]);
+    expect(lines).toContain(
+      "plans: 3 drafted in 5 cycle(s), 2 applied, 1 rejected (1 rule lines)",
+    );
+    expect(
+      lines.some((l) =>
+        /^ {2}ic claude-opus-5: .* command turn failed: the answer did not fit/.test(
+          l,
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      lines.some((l) =>
+        /^ {2}ic claude-opus-5: .* set period 3: 1 objective\(s\), 0 close\(s\), continue$/.test(
+          l,
+        ),
+      ),
+    ).toBe(true);
   });
 });

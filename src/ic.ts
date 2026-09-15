@@ -37,13 +37,21 @@ function commandUnit(store: Store, incidentId: string): Unit {
   return unit;
 }
 
-/** The sequence of the IC's last turn, a command turn or a review; -1 before its first. */
-function lastActed(events: readonly Event[]): number {
-  let last = -1;
+/** The IC's last turn, a command turn or a review, or null before its first. */
+function lastActed(events: readonly Event[]): Event | null {
+  let last: Event | null = null;
   for (const e of events)
-    if (e.type === "command.turned" || e.type === "plan.reviewed")
-      last = e.sequence;
+    if (e.type === "command.turned" || e.type === "plan.reviewed") last = e;
   return last;
+}
+
+/** The change report's heading names its window: the turn the IC last took, or that this is its first. */
+function changeReportHeading(last: Event | null): string {
+  if (last === null) return "# Change report";
+  const period = String(last.payload.cycle);
+  if (last.type === "command.turned")
+    return `# Change report since your command turn for period ${period}`;
+  return `# Change report since your review of period ${period}'s ${last.payload.redraft === true ? "redraft" : "draft"}`;
 }
 
 function bullets(items: readonly string[], empty = "(none)"): string[] {
@@ -83,16 +91,19 @@ function spendSince(events: readonly Event[], since: number): Usage {
 }
 
 /**
- * What changed since the IC last acted, rendered first in its briefing: discrepancies
- * raised (first, so the IC reconciles them or sends them up), every unit report with its
- * why and suggestion and whether the picture changed, every question answered and
- * capability provided, the rules its last turn failed, and the spend since then.
+ * What changed since the IC last acted, rendered first in its briefing under a heading that
+ * names the window: discrepancies raised below the IC (first, so the IC reconciles them or
+ * sends them up), every unit report with its why and suggestion and whether the picture
+ * changed, the resource requests units sent up (R3-6 fills them; the heading is here so
+ * `answers` has its source), every question answered and capability provided, the rules
+ * its last turn failed, and the spend since then.
  */
 export function renderChangeReport(events: readonly Event[]): string[] {
-  const since = lastActed(events);
+  const last = lastActed(events);
+  const since = last?.sequence ?? -1;
   const recent = events.filter((e) => e.sequence > since);
   const discrepancies = recent
-    .filter((e) => e.type === "picture.discrepancy")
+    .filter((e) => e.type === "picture.discrepancy" && e.payload.seat !== "ic")
     .map(
       (e) =>
         `${str(e.payload.seat)}${str(e.payload.unitId) === "" ? "" : ` of ${str(e.payload.unitId)}`}: ${str(e.payload.discrepancy)}`,
@@ -128,14 +139,16 @@ export function renderChangeReport(events: readonly Event[]): string[] {
     .map((e) => `${str(e.payload.rule)}: ${str(e.payload.reason)}`);
   const spend = spendSince(events, since);
   return [
-    "# Change report since you last acted",
-    ...(since === -1
+    changeReportHeading(last),
+    ...(last === null
       ? ["This is your first turn on this incident; nothing has run yet."]
       : []),
     "discrepancies raised:",
     ...bullets(discrepancies),
     "unit reports:",
     ...bullets(reports),
+    "resource requests:",
+    ...bullets([]),
     "questions answered:",
     ...bullets(answered),
     "capabilities provided:",
@@ -144,6 +157,19 @@ export function renderChangeReport(events: readonly Event[]): string[] {
       ? []
       : ["your last command turn was rejected on:", ...bullets(rejected)]),
     `spend since then: tokens ${spend.inputTokens + spend.outputTokens}, seconds ${spend.seconds.toFixed(1)}${spend.costUsd === undefined ? "" : `, cost $${spend.costUsd.toFixed(2)} at list price`}`,
+  ];
+}
+
+/** The change report, then the incident file as the planner reads it (the same ten sections): what the IC reads before any ask. */
+function renderBriefingBody(
+  store: Store,
+  incident: Incident,
+  providers: readonly Provider[],
+): string[] {
+  return [
+    ...renderChangeReport(store.listEvents(incident.id)),
+    "",
+    renderPlannerInput(store, incident, providers),
   ];
 }
 
@@ -157,24 +183,34 @@ export function renderCommandBriefing(
   incident: Incident,
   providers: readonly Provider[],
 ): string {
-  const events = store.listEvents(incident.id);
   return [
-    ...renderChangeReport(events),
+    ...renderBriefingBody(store, incident, providers),
     "",
-    renderPlannerInput(store, incident, providers),
-    "",
-    `# Your command turn for operational period ${cycleOf(events) + 1}`,
-    "Set the period's objectives and priorities, close what is done, answer what you can, raise for Mauria what only she can supply, and say whether the incident continues.",
+    `# Your command turn for operational period ${cycleOf(store.listEvents(incident.id)) + 1}`,
+    "Set the period's objectives and priorities, close what is done, answer the resource requests you can, raise for Mauria what only she can supply, and say whether the incident continues.",
   ].join("\n");
 }
 
-/** The user message of a review: the draft, and after a redraft the corrections it answers. */
+/**
+ * The user message of a review: the draft, and after a redraft the corrections it answers.
+ * A session that has not read the file (a fresh one, after the command turn's session was
+ * lost) gets the briefing first, so it never reviews blind.
+ */
 function renderReviewPrompt(
   draft: ActionPlan,
   cycle: number,
   corrections: string | null,
+  briefing: string[] | null,
 ): string {
   return [
+    ...(briefing === null
+      ? []
+      : [
+          "Your session was started fresh, so the incident file follows before the draft.",
+          "",
+          ...briefing,
+          "",
+        ]),
     corrections === null
       ? `# The planner's draft for operational period ${cycle}`
       : `# The planner's redraft for operational period ${cycle}, against your corrections`,
@@ -184,7 +220,7 @@ function renderReviewPrompt(
       : ["", "Your corrections were:", corrections]),
     "",
     corrections === null
-      ? "Review it against the period objectives and priorities: approve it, correct it once with text the planner redrafts against, or amend it and return the whole plan."
+      ? "Review it against the period objectives and priorities: approve it, correct it once with text the planner redrafts against, or amend it and return the whole plan. Correct when the planner must re-plan, since it holds the file's refs and tasks; amend when the change is small and exact."
       : "Review it against the period objectives and priorities: approve it, or amend it and return the whole plan.",
   ].join("\n");
 }
@@ -214,20 +250,25 @@ export type IcOptions = {
 };
 
 /**
- * One call on the IC's session: the root unit's leader request with the prompt and the
- * schema, resumed once the session exists. A session that cannot be resumed (the call died
- * before the stream's init line) is replaced the way a leader's is. Nothing is written
- * here: `record` files the call, the session on the unit at its first call
- * (`leader.started`), the activity under the cycle with `seat: "ic"`, and a `discrepancy`
- * as `picture.discrepancy`, and the caller runs it after the event that records the turn,
- * so the turn's event opens the cycle in the log. An IC that cannot answer ends the cycle
- * with an error naming the seat.
+ * One call on the IC's session: the root unit's leader request with the prompt built for
+ * the unit as it stands (a fresh session gets what a resumed one already read) and the
+ * schema, resumed once the session exists. A session that cannot be resumed (the call
+ * died before the stream's init line) is replaced the way a leader's is. Nothing is
+ * written for a call that answered: `record` files it, the session on the unit at its
+ * first call (`leader.started`), the activity under the cycle with `seat: "ic"`, and a
+ * `discrepancy` as `picture.discrepancy`, and the caller runs it after the event that
+ * records the turn, so the turn's event opens the cycle in the log. A call that failed
+ * (the provider's error, or an output that does not fit) is filed at once as
+ * `command.failed` with its session id and whatever usage the provider returned, the
+ * session recorded on the unit when it was the first, so R3-9's context sum and review see
+ * it and no paid session is orphaned; then the cycle ends with an error naming the seat.
  */
 async function icCall<T extends { discrepancy?: string | undefined }>(
   store: Store,
   incident: Incident,
+  turn: "command" | "review",
   cycle: number,
-  prompt: string,
+  prompt: (unit: Unit) => string,
   schema: Record<string, unknown>,
   parse: (output: unknown) => T,
   options: IcOptions,
@@ -237,12 +278,23 @@ async function icCall<T extends { discrepancy?: string | undefined }>(
   const provider = getProvider(listed.leader.provider, options.env);
   const ask = (unit: Unit) =>
     provider.run(
-      leaderRequest(unit, prompt, schema, options.cwd, IC_TURN_SECONDS),
+      leaderRequest(unit, prompt(unit), schema, options.cwd, IC_TURN_SECONDS),
     );
   let unit = listed;
   let replaced: { sessionId: string; reason: string } | null = null;
-  let outcome: Awaited<ReturnType<typeof provider.run>>;
+  let outcome: Awaited<ReturnType<typeof provider.run>> | null = null;
   let output: T;
+  const started = (sessionId: string, extra: Record<string, unknown>) =>
+    store.setUnitSession(incident.id, unit.id, sessionId, actor, {
+      unitId: unit.id,
+      sessionId,
+      ...unit.leader,
+      cwd: options.cwd,
+      ...(replaced === null
+        ? {}
+        : { replaced: replaced.sessionId, reason: replaced.reason }),
+      ...extra,
+    });
   try {
     try {
       outcome = await ask(unit);
@@ -260,7 +312,44 @@ async function icCall<T extends { discrepancy?: string | undefined }>(
     }
     output = parse(outcome.output);
   } catch (error) {
-    throw new Error(`the IC: ${describe(error)}`, { cause: error });
+    const reason = describe(error);
+    const failed =
+      outcome !== null
+        ? {
+            sessionId: outcome.sessionId,
+            usage: outcome.usage,
+            activity: outcome.activity,
+          }
+        : error instanceof SessionError && error.sessionId !== null
+          ? {
+              sessionId: error.sessionId,
+              usage: error.usage,
+              activity: error.activity,
+            }
+          : null;
+    if (failed !== null)
+      store.batch(() => {
+        store.record(incident.id, "command.failed", actor, {
+          unitId: unit.id,
+          sessionId: failed.sessionId,
+          ...unit.leader,
+          seat: "ic",
+          turn,
+          cycle,
+          reason,
+          ...(failed.usage === null ? {} : { usage: failed.usage }),
+        });
+        if (unit.sessionId === null)
+          started(failed.sessionId, { failed: true });
+        recordActivity(store, incident.id, actor, failed.activity, {
+          sessionId: failed.sessionId,
+          unitId: unit.id,
+          taskId: null,
+          cycle,
+          seat: "ic",
+        });
+      });
+    throw new Error(`the IC: ${reason}`, { cause: error });
   }
   const sessionId = outcome.sessionId;
   const provenance = {
@@ -270,14 +359,7 @@ async function icCall<T extends { discrepancy?: string | undefined }>(
     usage: outcome.usage,
   };
   const record = () => {
-    if (unit.sessionId === null)
-      store.setUnitSession(incident.id, unit.id, sessionId, actor, {
-        ...provenance,
-        cwd: options.cwd,
-        ...(replaced === null
-          ? {}
-          : { replaced: replaced.sessionId, reason: replaced.reason }),
-      });
+    if (unit.sessionId === null) started(sessionId, {});
     recordActivity(store, incident.id, actor, outcome.activity, {
       sessionId,
       unitId: unit.id,
@@ -314,8 +396,9 @@ export function commandTurn(
   return icCall(
     store,
     incident,
+    "command",
     cycleOf(store.listEvents(incident.id)) + 1,
-    renderCommandBriefing(store, incident, providers),
+    () => renderCommandBriefing(store, incident, providers),
     COMMAND_TURN_SCHEMA,
     (o) => CommandTurn.parse(o),
     options,
@@ -324,14 +407,17 @@ export function commandTurn(
 
 /**
  * The IC's review of a draft (step 4): the draft is the user message on the resumed
- * session, which read the file in the command turn. The first read may approve, correct or
- * amend; a read of the redraft may only approve or amend, and the schema the provider
- * receives says so. `plan.reviewed` records the verdict, the corrections, and the amended
- * plan when there is one, with the call's provenance, and the call is filed after it.
+ * session, which read the file in the command turn; a session with no id (lost since the
+ * command turn, or started fresh by a handoff) is briefed first. The first read may
+ * approve, correct or amend; a read of the redraft may only approve or amend, and the
+ * schema the provider receives says so. `plan.reviewed` records the verdict, the
+ * corrections, and the amended plan when there is one, with the call's provenance, and the
+ * call is filed after it.
  */
 export async function reviewTurn(
   store: Store,
   incident: Incident,
+  providers: readonly Provider[],
   draft: ActionPlan,
   corrections: string | null,
   options: IcOptions,
@@ -341,8 +427,17 @@ export async function reviewTurn(
   const call = await icCall(
     store,
     incident,
+    "review",
     cycle,
-    renderReviewPrompt(draft, cycle, corrections),
+    (unit) =>
+      renderReviewPrompt(
+        draft,
+        cycle,
+        corrections,
+        unit.sessionId === null
+          ? renderBriefingBody(store, incident, providers)
+          : null,
+      ),
     redraft ? FINAL_REVIEW_TURN_SCHEMA : REVIEW_TURN_SCHEMA,
     (o): ReviewTurn =>
       redraft ? FinalReviewTurn.parse(o) : ReviewTurn.parse(o),

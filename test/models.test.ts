@@ -232,7 +232,9 @@ describe("contracts", () => {
       "strike_team.rejected",
       "command.turned",
       "command.rejected",
+      "command.failed",
       "plan.reviewed",
+      "leader.released",
     ])
       expect(EventType.options).toContain(type);
     expect(EventType.options).toHaveLength(37);

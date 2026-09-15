@@ -71,7 +71,9 @@ export const EventType = z.enum([
   "strike_team.rejected",
   "command.turned",
   "command.rejected",
+  "command.failed",
   "plan.reviewed",
+  "leader.released",
 ]);
 
 export const Budget = z.object({
@@ -303,7 +305,7 @@ export const UnitProposal = z.object({
     .describe("Commands the leader's read-only Bash may run"),
 });
 
-export const UnitClose = z.object({
+export const UnitClose = z.strictObject({
   unitId: z.string().min(1),
   reason: z.string().min(1),
 });
@@ -344,7 +346,7 @@ export const TaskProposal = z.object({
     ),
 });
 
-export const GrantRequest = z.object({
+export const GrantRequest = z.strictObject({
   capability: z.string().min(1),
   effect: Effect,
   reason: z.string().min(1),
@@ -530,7 +532,7 @@ const DISCREPANCY = z
   );
 
 /** The IC's answer to a resource request a unit sent up, when the IC can answer it itself (the requests arrive with R3-6). */
-export const ResourceAnswer = z.object({
+export const ResourceAnswer = z.strictObject({
   unitId: z.string().min(1).describe("The unit that raised the request"),
   request: z.string().min(1).describe("The request, as the unit stated it"),
   answer: z.string().min(1),
@@ -539,9 +541,12 @@ export const ResourceAnswer = z.object({
 /**
  * The IC's command turn, at the top of each cycle: the period's objectives and priorities,
  * units to close, answers to what units asked for, what only Mauria can supply, and whether
- * the incident continues. The planner then drafts against the period.
+ * the incident continues. The planner then drafts against the period. Every turn schema is
+ * one strict object: the structured-output API refuses a top-level oneOf/anyOf and accepts
+ * keys a loose object does not name, so fields that vary by variant are optional and a
+ * refinement enforces them after parse (verified on Claude Code 2.1.272, R3-5).
  */
-export const CommandTurn = z.object({
+export const CommandTurn = z.strictObject({
   periodObjectives: z
     .array(z.string().min(1))
     .min(1)
@@ -555,7 +560,9 @@ export const CommandTurn = z.object({
   answers: z
     .array(ResourceAnswer)
     .default([])
-    .describe("Resource requests from units that the IC can answer itself"),
+    .describe(
+      "The resource requests listed in the change report, each answered; nothing else goes here",
+    ),
   questionsForHuman: z.array(z.string().min(1)),
   capabilityRequests: z.array(CapabilityRequest.omit({ answer: true })),
   grantRequests: z.array(GrantRequest),
@@ -569,45 +576,69 @@ export const CommandTurn = z.object({
 /**
  * The IC's review of the planner's draft: approve it, correct it (the planner redrafts
  * once against the corrections), or amend it directly. After a redraft only approve and
- * amend remain (`FinalReviewTurn`), so a cycle has at most two planner calls.
+ * amend remain (`FinalReviewTurn`, which has no `corrections` field), so a cycle has at
+ * most two planner calls. One strict object per read; the refinement ties the optional
+ * fields to their verdicts.
  */
 function reviewTurn<const V extends readonly ["approve", ...string[]]>(
   verdicts: V,
 ) {
-  return z
-    .object({
-      verdict: z.enum(verdicts),
-      corrections: z
-        .string()
-        .min(1)
-        .optional()
-        .describe(
-          "With verdict correct: what the planner must change, as text it redrafts against",
-        ),
-      plan: ActionPlan.optional().describe(
-        "With verdict amend: the whole plan as amended, which is applied in place of the draft",
+  return z.strictObject({
+    verdict: z.enum(verdicts),
+    corrections: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "With verdict correct: what the planner must change, as text it redrafts against",
       ),
-      rationale: z.string().describe("Why this verdict, one paragraph"),
-      discrepancy: DISCREPANCY,
-    })
-    .superRefine((t, ctx) => {
-      if (t.verdict === "correct" && t.corrections === undefined)
-        ctx.addIssue({
-          code: "custom",
-          path: ["corrections"],
-          message: "a correct verdict carries its corrections",
-        });
-      if (t.verdict === "amend" && t.plan === undefined)
-        ctx.addIssue({
-          code: "custom",
-          path: ["plan"],
-          message: "an amend verdict carries the amended plan",
-        });
+    plan: ActionPlan.optional().describe(
+      "With verdict amend: the whole plan as amended, which is applied in place of the draft",
+    ),
+    rationale: z.string().describe("Why this verdict, one paragraph"),
+    discrepancy: DISCREPANCY,
+  });
+}
+
+/** A verdict carries exactly what it needs: corrections with correct, the plan with amend, neither otherwise. */
+function verdictFields(
+  t: { verdict: string; corrections?: string | undefined; plan?: unknown },
+  ctx: z.RefinementCtx,
+): void {
+  if (t.verdict === "correct" && t.corrections === undefined)
+    ctx.addIssue({
+      code: "custom",
+      path: ["corrections"],
+      message: "a correct verdict carries its corrections",
+    });
+  if (t.verdict !== "correct" && t.corrections !== undefined)
+    ctx.addIssue({
+      code: "custom",
+      path: ["corrections"],
+      message: "only a correct verdict carries corrections",
+    });
+  if (t.verdict === "amend" && t.plan === undefined)
+    ctx.addIssue({
+      code: "custom",
+      path: ["plan"],
+      message: "an amend verdict carries the amended plan",
+    });
+  if (t.verdict !== "amend" && t.plan !== undefined)
+    ctx.addIssue({
+      code: "custom",
+      path: ["plan"],
+      message: "only an amend verdict carries a plan",
     });
 }
 
-export const ReviewTurn = reviewTurn(["approve", "correct", "amend"]);
-export const FinalReviewTurn = reviewTurn(["approve", "amend"]);
+export const ReviewTurn = reviewTurn([
+  "approve",
+  "correct",
+  "amend",
+]).superRefine(verdictFields);
+export const FinalReviewTurn = reviewTurn(["approve", "amend"])
+  .omit({ corrections: true })
+  .superRefine(verdictFields);
 
 // What a session returns.
 

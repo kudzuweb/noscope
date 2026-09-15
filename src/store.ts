@@ -214,7 +214,8 @@ export const Mutation = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("unit.session"),
     unitId: z.string(),
-    sessionId: z.string(),
+    /** Null releases the session: the unit's next call starts fresh (`leader.released`). */
+    sessionId: z.string().nullable(),
   }),
   z.object({
     kind: z.literal("unit.close"),
@@ -323,14 +324,31 @@ export class Store {
             );
         // Version 4 incidents had no operational period, and a root unit's session started
         // under R3-4 keeps the leader role text of that build in its snapshotted system
-        // prompt (a resumed call keeps the first call's system prompt), so it is dropped:
-        // the IC's first turn starts a fresh session under the IC's own role text.
+        // prompt (a resumed call keeps the first call's system prompt), so it is released
+        // through the log, one `leader.released` per root unit with a session, so that a
+        // replay does not restore it: the IC's first turn starts a fresh session under the
+        // IC's own role text.
         5: () => {
           if (!hasColumn("incidents", "period_json"))
             this.db.exec("ALTER TABLE incidents ADD COLUMN period_json TEXT");
-          this.db.exec(
-            "UPDATE units SET session_id = NULL WHERE parent_id IS NULL",
-          );
+          const roots = this.db
+            .prepare(
+              "SELECT id, incident_id, session_id FROM units WHERE parent_id IS NULL AND session_id IS NOT NULL",
+            )
+            .all() as { id: string; incident_id: string; session_id: string }[];
+          for (const root of roots)
+            this.write(
+              root.incident_id,
+              "leader.released",
+              "migration",
+              {
+                unitId: root.id,
+                released: root.session_id,
+                reason:
+                  "the session was started before the IC had its own role text (schema version 4)",
+              },
+              { kind: "unit.session", unitId: root.id, sessionId: null },
+            );
         },
       };
       const missing = [...Array(SCHEMA_VERSION - version).keys()]
@@ -494,19 +512,30 @@ export class Store {
     );
   }
 
-  /** The leader's session is recorded on the unit once it has run (`leader.started`), so later calls resume it. */
+  /**
+   * The leader's session is recorded on the unit once it has run (`leader.started`), so
+   * later calls resume it; null releases it (`leader.released`), so the next call starts
+   * fresh, which is how a root session is dropped through the log (the version 4
+   * migration, R3-9's handoff).
+   */
   setUnitSession(
     incidentId: string,
     unitId: string,
-    sessionId: string,
+    sessionId: string | null,
     actor: string,
     extra: Extra = {},
   ): void {
-    this.write(incidentId, "leader.started", actor, extra, {
-      kind: "unit.session",
-      unitId,
-      sessionId,
-    });
+    this.write(
+      incidentId,
+      sessionId === null ? "leader.released" : "leader.started",
+      actor,
+      extra,
+      {
+        kind: "unit.session",
+        unitId,
+        sessionId,
+      },
+    );
   }
 
   /** Closing demobilizes the leader: its session id, when it has one, is on `unit.closed`. */
@@ -1061,16 +1090,26 @@ function rowToGrant(r: Row): Grant {
   });
 }
 
+/** Whether an event opens a cycle: an accepted IC command turn, or, before the first command turn, a planner draft, which was then the cycle's first call. */
+export function opensCycle(e: Event, seenCommandTurn: boolean): boolean {
+  if (e.type === "command.turned") return e.payload.rejected !== true;
+  return e.type === "plan.proposed" && !seenCommandTurn;
+}
+
 /**
- * The number of the cycle the log is in: one per IC command turn (`command.turned`), and
- * for a log from before the IC one per planner draft (`plan.proposed`), which was then the
- * cycle's first call. Zero before the first.
+ * The number of the cycle the log is in: one per accepted IC command turn, plus, for an
+ * incident that ran before the IC, one per planner draft before the first command turn. A
+ * rejected command turn does not advance it, so the next briefing asks for the same
+ * period. Zero before the first.
  */
 export function cycleOf(events: readonly Event[]): number {
-  const turned = events.filter((e) => e.type === "command.turned").length;
-  return turned > 0
-    ? turned
-    : events.filter((e) => e.type === "plan.proposed").length;
+  let cycles = 0;
+  let seen = false;
+  for (const e of events) {
+    if (opensCycle(e, seen)) cycles += 1;
+    if (e.type === "command.turned") seen = true;
+  }
+  return cycles;
 }
 
 /**

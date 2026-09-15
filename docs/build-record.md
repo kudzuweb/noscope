@@ -1285,7 +1285,7 @@ Not exactly to spec, with reasons:
   than being refused, since `--agents` is keyed by name and a later definition is what the
   leader asked for; the event carries the whole resulting list.
 
-## R3-7: The IC above the planner (#PR, merged 2026-09-15)
+## R3-7: The IC above the planner (#33, merged 2026-09-15)
 
 R3-7 of the round 3 plan. Built: the root unit's leader, the Incident Commander, has its
 own two schemas and the cycle runs through it. `src/ic.ts` renders the IC's briefing, the
@@ -1405,6 +1405,30 @@ Not exactly to spec, with reasons:
 - Review's "plans:" line now reads "N drafted in M cycle(s)", since a cycle can hold two
   drafts.
 - An IC that cannot answer (a failed session, or an output that does not fit, which is
-  what a second `correct` is) ends the step with exit 1 naming the IC, after the events
-  written so far; the period it set stands and the next step opens a new command turn. Its
-  usage for that call is not recorded, as a leader's is not.
+  what a second `correct` is) ends the step with exit 1 naming the IC; the call is filed
+  first as `command.failed` (session id, which turn, cycle, reason, the usage the provider
+  returned) and a first call's session goes on the unit (`leader.started` with `failed`),
+  so R3-9's context sum and `incident review` see it and no paid session is orphaned. The
+  period it set stands and the next step opens a new command turn.
+- From the review (PR 33): every turn schema is `z.strictObject`, including `UnitClose` and
+  `GrantRequest`, which the plan shares; `FinalReviewTurn` omits `corrections` before its
+  refinement, and the refinement also refuses a `plan` without `amend` and `corrections`
+  without `correct`, so only an amend verdict's plan is ever applied. A review on a session
+  with no id (lost since the command turn, or fresh after a handoff) is briefed with the
+  change report and the file before the draft: `icCall` takes a prompt builder that sees
+  the unit as it stands. The IC's `leader.started` carries no usage and the change report
+  skips the IC's own discrepancies, so a turn that ends the cycle is not reported back to
+  the IC as news. The migration releases a root session through the log (`leader.released`,
+  the `unit.session` mutation with a null id; `setUnitSession` takes null), so a replay
+  drops it too, and R3-9 drops a session the same way. `cycleOf` counts the drafts before
+  the first command turn plus the accepted command turns, so a migrated incident keeps its
+  numbering and a rejected turn does not advance the period; review cuts on the same
+  openers and lists a rejected or failed command turn as the period it attempted. The
+  change report's heading names its window (the command turn or the review it follows),
+  renders a `resource requests:` heading with `(none)` for R3-6 to fill, and the role text
+  says `answers` is for those and nothing else, that the IC's tools are for a task under
+  command and not its turns, and that `satisfied` is refused while a task is open.
+- For R3-9: a handoff between the command turn (step 2) and the review (step 4) must
+  re-brief the incoming session before the draft; `reviewTurn` already does so for a
+  session with no id, so releasing the root session (`setUnitSession` with null) before
+  the review is the whole mechanism.

@@ -708,18 +708,51 @@ describe("store", () => {
       ["u-command", null],
       ["u1", "leader-session"],
     ]);
-    s2.setIncidentPeriod(
+    // The release is logged, so a store rebuilt from the events does not restore the
+    // old-role session; the leader's stays.
+    const released = s2.listEvents("i1").at(-1);
+    expect(released?.type).toBe("leader.released");
+    expect(released?.actor).toBe("migration");
+    expect(released?.payload).toMatchObject({
+      unitId: "u-command",
+      released: "old-ic-session",
+      mutation: { kind: "unit.session", unitId: "u-command", sessionId: null },
+    });
+    const replayed = new Store(":memory:");
+    replayed.replay(s2.listEvents("i1"));
+    expect(replayed.listUnits("i1").map((u) => [u.id, u.sessionId])).toEqual([
+      ["u-command", null],
+      ["u1", "leader-session"],
+    ]);
+    replayed.close();
+    // Reopening a migrated file writes no second release.
+    s2.close();
+    const s3 = new Store(path);
+    expect(
+      s3.listEvents("i1").filter((e) => e.type === "leader.released"),
+    ).toHaveLength(1);
+    s3.close();
+    const s2b = new Store(path);
+    // A release through the store's own method, R3-9's way to drop a root session.
+    s2b.setUnitSession("i1", "u1", null, "runtime", { reason: "handoff" });
+    expect(
+      s2b.listUnits("i1").find((u) => u.id === "u1")?.sessionId,
+    ).toBeNull();
+    expect(s2b.listEvents("i1").at(-1)?.type).toBe("leader.released");
+    s2b.close();
+    const s4 = new Store(path);
+    s4.setIncidentPeriod(
       "i1",
       { number: 1, objectives: ["find the handler"], priorities: [] },
       "runtime",
       { rationale: "first period" },
     );
-    expect(s2.getIncident("i1")?.period).toEqual({
+    expect(s4.getIncident("i1")?.period).toEqual({
       number: 1,
       objectives: ["find the handler"],
       priorities: [],
     });
-    const turned = s2.listEvents("i1").at(-1);
+    const turned = s4.listEvents("i1").at(-1);
     expect(turned?.type).toBe("command.turned");
     expect(turned?.payload).toMatchObject({
       rationale: "first period",
@@ -727,12 +760,12 @@ describe("store", () => {
     });
     // The period replays with the rest: a fresh store rebuilt from the log carries it.
     const rebuilt = new Store(":memory:");
-    rebuilt.replay(s2.listEvents("i1"));
+    rebuilt.replay(s4.listEvents("i1"));
     expect(rebuilt.getIncident("i1")?.period?.objectives).toEqual([
       "find the handler",
     ]);
     rebuilt.close();
-    s2.close();
+    s4.close();
   });
 
   it("replays a unit recorded before units had a leader, and a unit's session and its report events", () => {

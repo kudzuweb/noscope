@@ -8,6 +8,7 @@ import {
   type ActionPlan,
   CommandTurn,
   FinalReviewTurn,
+  jsonSchemaFor,
   type ReviewTurn as Review,
   ReviewTurn,
 } from "../src/models.js";
@@ -125,6 +126,9 @@ function harness(
   };
 }
 
+const str = (value: unknown): string =>
+  typeof value === "string" ? value : "";
+
 const schemaOf = (c: Call) =>
   JSON.parse(c.args[c.args.indexOf("--json-schema") + 1] ?? "{}") as {
     properties: Record<string, { enum?: string[] }>;
@@ -195,7 +199,7 @@ describe("the IC above the planner", () => {
     const briefing = calls[0]?.prompt ?? "";
     expect(
       briefing.startsWith(
-        "# Change report since you last acted\nThis is your first turn on this incident; nothing has run yet.\n",
+        "# Change report\nThis is your first turn on this incident; nothing has run yet.\n",
       ),
     ).toBe(true);
     expect(briefing).toContain("\n# Incident file\n");
@@ -379,11 +383,13 @@ describe("the IC above the planner", () => {
     expect(
       second.startsWith(
         [
-          "# Change report since you last acted",
+          "# Change report since your review of period 1's draft",
           "discrepancies raised:",
           "  - leader of 001-u02: this tree is not the application",
           "unit reports:",
           "  - 001-u02: not_met, picture changed; changed: the handler is not in a.txt (claims none); why: the tree has no handler; suggestion: look elsewhere",
+          "resource requests:",
+          "  (none)",
           "questions answered:",
           "  (none)",
           "capabilities provided:",
@@ -496,7 +502,113 @@ describe("the IC above the planner", () => {
     expect(store.listEvents("001").some((e) => e.type === "plan.applied")).toBe(
       false,
     );
+    // The failed read is filed with its usage, under the cycle, as a review turn.
+    const failed = store
+      .listEvents("001")
+      .find((e) => e.type === "command.failed");
+    expect(failed?.payload).toMatchObject({
+      unitId: "001-command",
+      sessionId: "stub-session",
+      model: "claude-opus-5",
+      seat: "ic",
+      turn: "review",
+      cycle: 1,
+      usage: { inputTokens: 1500, outputTokens: 42 },
+    });
+    expect(str(failed?.payload.reason)).toMatch(/^the answer did not fit/);
     store.close();
+    h.out.length = 0;
+    expect(await run(["incident", "review", "001"], h.ctx)).toBe(EXIT.ok);
+    const review = h.out.join("\n");
+    expect(review).toMatch(/^cycle 1 {2}\S+ {2}review turn failed$/m);
+    expect(review).toMatch(
+      /^ {2}ic claude-opus-5: in 1,500 .* review turn failed: the answer did not fit/m,
+    );
+    expect(review).toMatch(/ic\s+claude-opus-5\s+3\s+4,500/);
+  });
+
+  it("a command turn whose session fails is filed as command.failed with its session on the unit, and a review on a lost session is re-briefed", {
+    timeout: 60_000,
+  }, async () => {
+    const failing = harness([findIt], [command()], []);
+    failing.ctx.env.NOSCOPE_STUB_LEADER_FAIL = "1";
+    await run(
+      ["incident", "create", "where is the delete handler"],
+      failing.ctx,
+    );
+    expect(await run(["incident", "step", "001"], failing.ctx)).toBe(
+      EXIT.failed,
+    );
+    expect(failing.err.at(-1)).toMatch(
+      /^noscope incident step: the IC: claude session failed/,
+    );
+    const store = failing.store();
+    const events = store.listEvents("001");
+    expect(events.map((e) => e.type)).toEqual([
+      "incident.created",
+      "unit.created",
+      "command.failed",
+      "leader.started",
+    ]);
+    expect(events[2]?.payload).toMatchObject({
+      sessionId: "stub-session",
+      turn: "command",
+      cycle: 1,
+      seat: "ic",
+    });
+    expect(events[3]?.payload).toMatchObject({
+      failed: true,
+      sessionId: "stub-session",
+    });
+    expect(store.listUnits("001")[0]?.sessionId).toBe("stub-session");
+    store.close();
+    failing.out.length = 0;
+    expect(await run(["incident", "review", "001"], failing.ctx)).toBe(EXIT.ok);
+    expect(failing.out.join("\n")).toMatch(
+      /^cycle 1 {2}\S+ {2}command turn failed$/m,
+    );
+
+    // The command turn starts the session; every resume of it then dies before its init
+    // line, so the review is answered by a fresh session that is briefed before the draft.
+    const h = harness(
+      [findIt],
+      [command()],
+      [{ verdict: "approve", rationale: "fine" }],
+    );
+    h.ctx.env.NOSCOPE_STUB_RESUME_FAIL = "stub-session";
+    await run(["incident", "create", "where is the delete handler"], h.ctx);
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    const calls = h.calls();
+    expect(calls.map((c) => [c.kind, c.resume])).toEqual([
+      ["command", null],
+      ["planner", null],
+      ["review", "stub-session"],
+      ["review", null],
+      ["leader", null],
+    ]);
+    expect(calls[2]?.prompt).not.toContain("# Incident file");
+    expect(
+      calls[3]?.prompt.startsWith(
+        "Your session was started fresh, so the incident file follows before the draft.\n\n# Change report since your command turn for period 1\n",
+      ),
+    ).toBe(true);
+    expect(calls[3]?.prompt).toContain("\n# Incident file\n");
+    expect(calls[3]?.prompt).toContain(
+      "period objectives:\n  - find the handler\n",
+    );
+    expect(calls[3]?.prompt).toContain(
+      "# The planner's draft for operational period 1",
+    );
+    const replaced = h
+      .store()
+      .listEvents("001")
+      .filter(
+        (e) =>
+          e.type === "leader.started" && e.payload.unitId === "001-command",
+      );
+    expect(replaced).toHaveLength(2);
+    expect(replaced[1]?.payload).toMatchObject({ replaced: "stub-session" });
+    expect(replaced[1]?.payload.usage).toBeUndefined();
   });
 
   it("a command turn that ends the incident, or asks Mauria, stops before the planner; one that is not earned is rejected and the next briefing says so", {
@@ -535,6 +647,11 @@ describe("the IC above the planner", () => {
     expect(briefing).toContain(
       "your last command turn was rejected on:\n  - Status is earned: satisfied with no observed claim",
     );
+    // A rejected turn does not advance the period: the next briefing asks for period 1 again.
+    expect(briefing).toContain(
+      "# Change report since your command turn for period 1",
+    );
+    expect(briefing).toContain("# Your command turn for operational period 1");
     const store = h.store();
     const events = store.listEvents("001");
     expect(
@@ -573,7 +690,7 @@ describe("the IC above the planner", () => {
       closed.listEvents("001").find((e) => e.type === "incident.closed")
         ?.payload,
     ).toMatchObject({ rationale: "no such handler" });
-    expect(closed.getIncident("001")?.period?.number).toBe(4);
+    expect(closed.getIncident("001")?.period?.number).toBe(2);
     closed.close();
   });
 
@@ -581,11 +698,13 @@ describe("the IC above the planner", () => {
     const store = new Store(":memory:");
     const s = scriptedIncident(store);
     expect(renderChangeReport(store.listEvents("i1"))).toEqual([
-      "# Change report since you last acted",
+      "# Change report",
       "This is your first turn on this incident; nothing has run yet.",
       "discrepancies raised:",
       "  (none)",
       "unit reports:",
+      "  (none)",
+      "resource requests:",
       "  (none)",
       "questions answered:",
       "  (none)",
@@ -598,9 +717,18 @@ describe("the IC above the planner", () => {
       { number: 1, objectives: ["o1"], priorities: [] },
       "runtime",
       {
+        cycle: 1,
         usage: { inputTokens: 100, outputTokens: 10, seconds: 1, costUsd: 0.5 },
       },
     );
+    // The IC's own discrepancy and session start are not news to it.
+    store.record("i1", "picture.discrepancy", "runtime", {
+      seat: "ic",
+      discrepancy: "my own",
+    });
+    store.setUnitSession("i1", "i1-command", "ic-session", "runtime", {
+      unitId: "i1-command",
+    });
     store.record("i1", "task.usage", "dispatcher", {
       taskId: "t1",
       usage: { inputTokens: 40, outputTokens: 2, seconds: 3, costUsd: 0.25 },
@@ -615,10 +743,12 @@ describe("the IC above the planner", () => {
     });
     const report = renderChangeReport(store.listEvents("i1"));
     expect(report).toEqual([
-      "# Change report since you last acted",
+      "# Change report since your command turn for period 1",
       "discrepancies raised:",
       "  - planner: a hurricane, not a fire",
       "unit reports:",
+      "  (none)",
+      "resource requests:",
       "  (none)",
       "questions answered:",
       "  (none)",
@@ -661,6 +791,32 @@ describe("the IC above the planner", () => {
       ReviewTurn.safeParse({ verdict: "amend", plan: findIt, rationale: "x" })
         .success,
     ).toBe(true);
+    // A plan beside approve, or corrections beside amend, does not fit: only an amend
+    // verdict's plan is ever applied.
+    expect(
+      ReviewTurn.safeParse({ verdict: "approve", plan: findIt, rationale: "x" })
+        .success,
+    ).toBe(false);
+    expect(
+      ReviewTurn.safeParse({
+        verdict: "amend",
+        plan: findIt,
+        corrections: "x",
+        rationale: "x",
+      }).success,
+    ).toBe(false);
+    // Every turn is one strict object: an unnamed key is refused.
+    expect(
+      ReviewTurn.safeParse({ verdict: "approve", rationale: "x", extra: 1 })
+        .success,
+    ).toBe(false);
+    expect(CommandTurn.safeParse({ ...command(), extra: 1 }).success).toBe(
+      false,
+    );
+    expect(
+      Object.keys(jsonSchemaFor(FinalReviewTurn).properties as object),
+    ).toEqual(["verdict", "plan", "rationale", "discrepancy"]);
+    expect(jsonSchemaFor(CommandTurn).additionalProperties).toBe(false);
     expect(
       ReviewTurn.safeParse({
         verdict: "approve",

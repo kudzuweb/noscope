@@ -7,6 +7,7 @@ import {
   type Usage,
 } from "./models.js";
 import { PLANNER_MODEL } from "./planner.js";
+import { opensCycle } from "./store.js";
 import { citesMember, describeStrikeTeam } from "./strike-team.js";
 
 /**
@@ -307,25 +308,32 @@ function teamConfigs(events: readonly Event[]): TeamConfig[] {
 }
 
 /**
- * The log cut into cycles: at every `command.turned` (the IC's turn opens a cycle), or, in
- * a log from before the IC, at every `plan.proposed`, which was then the cycle's first
- * call. A cycle's drafts are its `plan.proposed` events, two after a correction.
+ * The log cut into cycles, the way `cycleOf` counts them: at every `command.turned`, and
+ * before the first one at every `plan.proposed`, which was then the cycle's first call. A
+ * rejected command turn is cut as its own entry but numbered as the period it attempted,
+ * which the next accepted turn then takes, so the numbers match the periods the IC set. A
+ * cycle's drafts are its `plan.proposed` events, two after a correction.
  */
 function cycles(events: readonly Event[]): Cycle[] {
-  const opener = events.some((e) => e.type === "command.turned")
-    ? "command.turned"
-    : "plan.proposed";
   const result: Cycle[] = [];
+  let seen = false;
+  let number = 0;
   for (const e of events) {
-    if (e.type === opener)
+    // A rejected command turn, or one that failed, is an attempt at the next period.
+    const attempt =
+      (e.type === "command.turned" && e.payload.rejected === true) ||
+      (e.type === "command.failed" && e.payload.turn === "command");
+    if (opensCycle(e, seen) || attempt) {
+      if (!attempt) number += 1;
       result.push({
-        number: result.length + 1,
+        number: attempt ? number + 1 : number,
         opened: e,
         proposals: e.type === "plan.proposed" ? [e] : [],
         events: [],
       });
-    else if (e.type === "plan.proposed") result.at(-1)?.proposals.push(e);
+    } else if (e.type === "plan.proposed") result.at(-1)?.proposals.push(e);
     else result.at(-1)?.events.push(e);
+    if (e.type === "command.turned") seen = true;
   }
   return result;
 }
@@ -339,8 +347,13 @@ function icLines(
 ): string[] {
   const lines: string[] = [];
   const turns = [
-    ...(cycle.opened.type === "command.turned" ? [cycle.opened] : []),
-    ...cycle.events.filter((e) => e.type === "plan.reviewed"),
+    ...(cycle.opened.type === "command.turned" ||
+    cycle.opened.type === "command.failed"
+      ? [cycle.opened]
+      : []),
+    ...cycle.events.filter(
+      (e) => e.type === "plan.reviewed" || e.type === "command.failed",
+    ),
   ];
   let model: string | null = null;
   for (const e of turns) {
@@ -350,7 +363,9 @@ function icLines(
     add(roleTotals("ic", model), usage, turnCost);
     addCost(cost, turnCost);
     let move: string;
-    if (e.type === "command.turned") {
+    if (e.type === "command.failed") {
+      move = `${str(e.payload.turn)} turn failed: ${clip(str(e.payload.reason))}`;
+    } else if (e.type === "command.turned") {
       const turn = e.payload.turn as
         | {
             periodObjectives?: unknown;
@@ -460,6 +475,10 @@ export function renderReview(
       verdict = `rejected on ${rejections.length} rule line(s)`;
     } else if (cycle.events.some((e) => e.type === "command.rejected"))
       verdict = "command turn rejected";
+    else if (cycle.opened.type === "command.failed")
+      verdict = "command turn failed";
+    else if (cycle.events.some((e) => e.type === "command.failed"))
+      verdict = "review turn failed";
     else if (cycle.opened.type === "command.turned")
       verdict = `ic set the incident ${str(cycle.opened.payload.incidentStatus)}`;
     else verdict = "no verdict recorded";

@@ -457,7 +457,14 @@ async function cycle(
     `plan drafted (session ${draft.sessionId}): ${draft.plan.rationale}`,
   );
   printPlan(ctx, draft.plan);
-  let review = await reviewTurn(store, current, draft.plan, null, icOptions);
+  let review = await reviewTurn(
+    store,
+    current,
+    providers,
+    draft.plan,
+    null,
+    icOptions,
+  );
   ctx.io.out(`IC review: ${review.output.verdict}: ${review.output.rationale}`);
   let corrections: string | null = null;
   let proposed = draft.plan;
@@ -474,12 +481,22 @@ async function cycle(
       `plan redrafted (session ${redraft.sessionId}): ${proposed.rationale}`,
     );
     printPlan(ctx, proposed);
-    review = await reviewTurn(store, current, proposed, corrections, icOptions);
+    review = await reviewTurn(
+      store,
+      current,
+      providers,
+      proposed,
+      corrections,
+      icOptions,
+    );
     ctx.io.out(
       `IC review: ${review.output.verdict}: ${review.output.rationale}`,
     );
   }
-  const plan = review.output.plan ?? proposed;
+  const plan =
+    review.output.verdict === "amend" && review.output.plan !== undefined
+      ? review.output.plan
+      : proposed;
   if (review.output.verdict === "amend") {
     ctx.io.out(`plan amended by the IC: ${plan.rationale}`);
     printPlan(ctx, plan);

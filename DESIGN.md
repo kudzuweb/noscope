@@ -545,7 +545,8 @@ tokens and costs nothing; a run that fails before the provider answers records n
 since none is known, and a spend summed with such an event in it carries no cost, so a
 figure is never printed that a failed session would have raised. The spend `incident show`
 prints, and a budget counts, is the tasks'; the planner's usage is recorded on
-`plan.proposed`, the IC's on `command.turned` and `plan.reviewed`, and the leaders' on their
+`plan.proposed`, the IC's on `command.turned`, `plan.reviewed` and `command.failed`, and
+the leaders' on their
 turns, none of them counted against the budget, a design call on the revisit list. The IC's
 change report sums every usage recorded since its last turn, whichever seat spent it.
 
