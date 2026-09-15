@@ -2,7 +2,7 @@ import type { z } from "zod";
 import { recordActivity } from "./activity.js";
 import { listCapabilities } from "./capabilities/index.js";
 import { READ_ONLY_SESSION_COMMANDS } from "./equipment/index.js";
-import { LEADER_ACTOR, openRequestsByUnit } from "./leader.js";
+import { IC_ACTOR, LEADER_ACTOR, openRequestsByUnit } from "./leader.js";
 import {
   ActionPlan,
   type Claim,
@@ -215,7 +215,11 @@ function renderSituation(s: Situation | null): string[] {
 function lastCycleSequence(events: readonly Event[]): number {
   let last = -1;
   for (const e of events)
-    if (e.type === "plan.applied" && e.actor !== LEADER_ACTOR)
+    if (
+      e.type === "plan.applied" &&
+      e.actor !== LEADER_ACTOR &&
+      e.actor !== IC_ACTOR
+    )
       last = e.sequence;
   return last;
 }

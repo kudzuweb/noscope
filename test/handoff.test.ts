@@ -91,6 +91,7 @@ const command = (over: Partial<CommandTurn> = {}): CommandTurn => ({
   priorities: ["observation over reading"],
   closeUnits: [],
   answers: [],
+  assignTasks: [],
   questionsForHuman: [],
   capabilityRequests: [],
   grantRequests: [],

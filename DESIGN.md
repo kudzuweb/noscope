@@ -414,6 +414,7 @@ const CommandTurn = z.object({
   priorities: z.array(z.string()),               // the incident's, restated or revised
   closeUnits: z.array(UnitClose),
   answers: z.array(ResourceAnswer).default([]),  // unit, request, answer: resource requests from units the IC can answer itself (the requests arrive with R3-6; the answers ride on command.turned until then)
+  assignTasks: z.array(TaskProposal).default([]), // R4-6: deterministic tasks under command (grep, read, check_path, git_history), each naming the root as its unit; run in this cycle's pass, results in the next change report; a session task here is refused
   questionsForHuman: z.array(z.string()),
   capabilityRequests: z.array(CapabilityRequest),
   grantRequests: z.array(GrantRequest),
@@ -452,9 +453,15 @@ const HandoffDocument = z.strictObject({           // the outgoing IC's last cal
 ```
 
 A command turn is held to the validator's rules that cover what it can do (Units exist,
-Closing is clean, Status is earned; Step 5) and applied as a plan is: units closed,
-questions and requests recorded, the incident's status set, then `command.turned` with the
-turn, the call's session, model and usage, and the period as its mutation. A turn that
+Closing is clean, Status is earned, and the task rules on its assignments; Step 5) and
+applied as a plan is: units closed, questions and requests recorded, the incident's status
+set, the tasks it assigns under command created with `plan.applied` by the actor `ic`
+naming the root unit, its session and the task ids (R4-6: deterministic tasks belong to
+whichever leader assigns them, command included, ruled 2026-09-14; with no leader turn on
+the root the IC assigns them here, and they run in this cycle's pass as the root's tasks),
+then `command.turned` with the turn, the call's session, model and usage, and the period
+as its mutation. The planner's and `incident review`'s cycle windows open at the plan's
+`plan.applied`, never at the IC's or a leader's. A turn that
 fails a rule is recorded as `command.turned` with `rejected` and one `command.rejected`
 per rule, the cycle ends, and the next briefing names the rules. When the turn's status is
 not `continue` the cycle ends after it: the incident is `blocked` on what the IC raised,
@@ -594,8 +601,12 @@ applied as it stands. One warning exists:
 
 The IC's command turn is checked by the same code as a plan that creates nothing, under
 Units exist, Closing is clean and Status is earned, since closing units and setting the
-status is all it does to the tree; a failing rule is recorded as `command.rejected` and
-the cycle ends there (Step 4).
+status is all it does to the tree, and its `assignTasks` (R4-6) as a plan creating those
+tasks under the task rules a leader's assignments pass, plus Own unit against the root and
+the IC's own rule Deterministic only: a task to a session-backed capability is refused with
+"the IC assigns deterministic work only, and session work goes under a unit", since the
+root's tasks run with no leader turn (Step 6) and session work is a unit's; a failing rule
+is recorded as `command.rejected` and the cycle ends there (Step 4).
 
 A leader's assignments (`assignTasks` on a `LeaderTurn`, R3-6) pass the rules above that
 read tasks (Capabilities exist, Units exist, No cycles, No duplicates, Inputs validate, Span

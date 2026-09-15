@@ -90,6 +90,7 @@ const command = (over: Partial<CommandTurn> = {}): CommandTurn => ({
   priorities: ["observation over reading"],
   closeUnits: [],
   answers: [],
+  assignTasks: [],
   questionsForHuman: [],
   capabilityRequests: [],
   grantRequests: [],
@@ -727,6 +728,98 @@ describe("the IC above the planner", () => {
     ).toMatchObject({ rationale: "no such handler" });
     expect(closed.getIncident("001")?.period?.number).toBe(2);
     closed.close();
+  });
+
+  it("the IC assigns a deterministic task under command in its command turn, which runs in the pass with no leader turn and opens the next change report; a session task assigned there, or one under another unit, is rejected (R4-6)", {
+    timeout: 60_000,
+  }, async () => {
+    const underCommand = { ...grepTask, unit: "001-command" };
+    const h = harness(
+      [empty],
+      [
+        command({ assignTasks: [underCommand] }),
+        command({
+          assignTasks: [
+            {
+              ...underCommand,
+              capability: "investigate",
+              objective: "read the handler",
+              inputs: { question: "what handles deletion?" },
+              provider: "claude-code",
+              model: "claude-haiku-4-5",
+              budget: { seconds: 30 },
+            },
+            { ...grepTask, unit: "u-none" },
+          ],
+        }),
+      ],
+      [{ verdict: "approve", rationale: "as drafted" }],
+    );
+    await run(
+      ["incident", "create", "--no-size-up", "where is the delete handler"],
+      h.ctx,
+    );
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    expect(h.out).toContain("  assign under command: grep: find delete");
+    expect(h.out).toContain(
+      "  task 001-t01 [ready] under 001-command: grep: find delete",
+    );
+    expect(h.out).toContain("  ran 001-t01 (grep): completed; 1 claim(s)");
+    // The task was created at the command turn, before the planner's call, and ran in
+    // this cycle's pass; no leader call was made for it.
+    expect(h.calls().map((c) => c.kind)).toEqual([
+      "command",
+      "planner",
+      "review",
+    ]);
+    const store = h.store();
+    const applied = store
+      .listEvents("001")
+      .filter((e) => e.type === "plan.applied");
+    expect(applied.map((e) => [e.actor, e.payload.tasks])).toEqual([
+      ["ic", ["001-t01"]],
+      ["runtime", []],
+    ]);
+    expect(applied[0]?.payload).toMatchObject({
+      unitId: "001-command",
+      sessionId: "stub-session",
+    });
+    expect(store.listUnits("001")[0]?.sessionId).toBe("stub-session");
+    const types = store.listEvents("001").map((e) => e.type);
+    for (const type of ["unit.continued", "unit.reported"])
+      expect(types).not.toContain(type);
+    store.close();
+    // The planner's window still opens at the last plan, not at the IC's assignment.
+    expect(h.calls()[1]?.prompt).toContain(
+      "## 4. Tasks completed since the last cycle\n  (none)",
+    );
+    h.out.length = 0;
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    const briefing =
+      h.calls().filter((c) => c.kind === "command")[1]?.prompt ?? "";
+    expect(briefing).toContain(
+      "tasks under command, ended with no leader to report them:\n  - 001-t01 (grep) completed: {",
+    );
+    expect(briefing).toContain(
+      "## 4. Tasks completed since the last cycle\n  - 001-t01 (grep, under 001-command)",
+    );
+    expect(h.out).toContain("command turn rejected:");
+    expect(h.out).toContain(
+      '  - Deterministic only: task "read the handler" runs investigate, a session; the IC assigns deterministic work only, and session work goes under a unit',
+    );
+    expect(h.out).toContain(
+      '  - Own unit: task "find delete" is under u-none, not the leader\'s own unit 001-command',
+    );
+    expect(
+      h.out.some((l) =>
+        l.startsWith(
+          '  - Units exist: task "find delete" is under no active unit u-none',
+        ),
+      ),
+    ).toBe(true);
+    const after = h.store();
+    expect(after.listTasks("001")).toHaveLength(1);
+    after.close();
   });
 
   it("renders the change report and the briefing from the log", () => {

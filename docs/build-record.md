@@ -2176,9 +2176,21 @@ command. `IC_ROLE` and the IC's seat paragraph say that no task runs in its sess
 task under command is deterministic and runs in process while a session-backed one placed
 there runs alone, that either's result reaches it in its change report with no leader turn
 between, that its tools serve no turn, that command files no report, and that every lack it
-has goes through the command turn (a retrievable fact as a period objective); the sentences
-that it runs a task under command as any leader, assigns with `assignTasks` and is held to
-the leader rules are dropped, since it never sees a `LeaderTurn`. The planner's section 9
+has goes through the command turn; the sentences that it runs a task under command as any
+leader and is held to the leader rules are dropped, since it never sees a `LeaderTurn`. The
+IC's deterministic assignments move from the root's leader turn to the command turn (ruled
+2026-09-14: deterministic tasks belong to whichever leader assigns them, command included):
+`CommandTurn` gains `assignTasks` (default empty), `validateCommand` holds them to the task
+rules a leader's assignments pass, to Own unit against the root and to a rule of the IC's
+own, "Deterministic only", which refuses a session-backed capability with "the IC assigns
+deterministic work only, and session work goes under a unit"; `applyCommand` creates them
+last in its transaction with `plan.applied` by the actor `ic` (`IC_ACTOR` in
+`src/leader.ts`) naming the root, the session the turn's first call may just have put on
+it, and the task ids, and returns them for `step` to print as it prints a plan's; they run
+in the same cycle's dispatch pass as root tasks and reach the next change report under the
+"tasks under command" heading. The planner's cycle window (`lastCycleSequence`) and
+review's per-cycle verdict skip the `ic` actor as they skip the leader's, and review lists
+"IC assigned N task(s) under command" in the cycle. The planner's section 9
 gains, after the rules, "warned on, and applied anyway:" with `PLANNER_WARNINGS` (one line,
 "Session work under a unit": session work belongs under a unit with a leader, never under
 command; one placed there runs alone with no leader to judge it, and a deterministic task
@@ -2206,8 +2218,15 @@ test that a plan with a grep and an investigate under the root and an investigat
 unit passes with one warning naming the investigate under the root, records one
 `plan.warned` with the rationale and no `plan.rejected`; the planner snapshot shows the
 warning text and a warning recorded before the last applied plan under "warned last cycle";
-the providers test pins the new IC sentences and that "as under any leader", `assignTasks`
-and the leader rules are gone from `IC_ROLE`. The dispatcher tests of a leader's turns
+the providers test pins the new IC sentences and that "as under any leader" and the leader
+rules are gone from `IC_ROLE`; an IC test where the first command turn assigns a grep under
+command: `step` prints the assignment and the task, the grep runs in the pass with no
+leader call (the stub sees command, planner, review), `plan.applied` by `ic` names the
+root, its session and the task, the planner's section 4 still opens at the last plan, the
+next briefing lists the grep's result under "tasks under command" and in section 4, and a
+second command turn assigning an investigate under command and a grep under a unit that
+does not exist is rejected on Deterministic only, Own unit and Units exist with nothing
+created. The dispatcher tests of a leader's turns
 (inside-the-leader runs, the replaced session, strike-team requests, the failed leader, the
 retrievable-fact assignment, the refused assignment, the malformed continue) moved from the
 root to a unit under it (`led()` in `test/fixtures/models.ts`, the root's equipment and
@@ -2217,15 +2236,17 @@ that unit's leader in its session.
 
 Not exactly to spec, with reasons:
 
-- The IC takes no leader turn at all, not only after session tasks. The block says the
-  IC's own assignments under command stay deterministic, which reads as the root keeping
-  a turn for deterministic tasks; the orchestrator's brief for this PR says the root has no
-  leader turns and the IC judges at its command turn, and that is what was built. A
-  deterministic task under command still runs, placed by the planner; the IC assigns
-  nothing on a turn, since `CommandTurn` has no `assignTasks`.
-- The role text drops more than the one sentence the block names: with no leader turn, the
-  paragraph telling the IC to assign with `assignTasks` under the leader rules and that its
-  resource requests are refused described calls that never happen, so it went too.
+- The IC takes no leader turn at all, not only after session tasks, per the orchestrator's
+  brief (the root has no leader turns; the IC judges at its command turn). The block's "the
+  IC's own assignments under command stay deterministic" is kept by moving the assignments
+  from the root's leader turn to the command turn (`assignTasks` on `CommandTurn`), held to
+  the task rules, Own unit and Deterministic only rather than to the leader's three rules
+  (Capability held is moot for deterministic work; Budget within share is not applied,
+  since the root has no plan share of its own to assign inside).
+- The role text drops more than the one sentence the block names: the paragraph telling the
+  IC to assign on a leader turn under the leader rules and that its resource requests are
+  refused described calls that never happen; the assignment sentence is restated for the
+  command turn.
 - The warning is recorded as an event (`plan.warned`) rather than held only on the verdict,
   because the planner reads the log and nothing else; "warned last cycle" needs the record.
 - The root's refused-request rule ("Resource requests" under `plan.rejected` by the actor

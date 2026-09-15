@@ -231,7 +231,9 @@ describe("claude code provider", () => {
       "No task runs in your session: a task under command is deterministic and runs in process, and a session-backed task placed under command runs in a session of its own",
       "Your tools serve no turn",
       "command files no report",
-      "Command has no leader turn to assign on and no resource requests to raise",
+      "You assign deterministic tasks under command in your command turn (assignTasks",
+      "session work is a unit's, never assigned by you",
+      "Command has no leader turn and no resource requests to raise",
       "answers is for the resource requests your change report lists, and nothing else",
       "satisfied is refused while any task is still open or before any claim is observed",
       "becomes a question for Mauria",
@@ -241,10 +243,10 @@ describe("claude code provider", () => {
     ])
       expect(ic).toContain(line);
     expect(ic).not.toContain("the IC, who has more perspective");
-    // R4-6: nothing runs under the IC as under a leader, and it assigns nothing on a turn.
+    // R4-6: nothing runs under the IC as under a leader; its assignments are on the command turn, not a leader turn under the leader rules.
     for (const gone of [
       "as under any leader",
-      "assignTasks",
+      "like any leader (assignTasks)",
       "- Own unit:",
       "resource requests, which are refused on command",
     ])

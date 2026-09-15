@@ -701,6 +701,8 @@ async function cycle(
     ctx.io.out(`  close unit ${c.unitId}: ${c.reason}`);
   for (const a of turn.answers)
     ctx.io.out(`  answer to ${a.unitId} (${a.request}): ${a.answer}`);
+  for (const t of turn.assignTasks)
+    ctx.io.out(`  assign under command: ${t.capability}: ${t.objective}`);
   for (const q of turn.questionsForHuman) ctx.io.out(`  ask: ${q}`);
   for (const r of turn.capabilityRequests)
     ctx.io.out(`  request capability: ${r.need} (${r.why})`);
@@ -743,6 +745,10 @@ async function cycle(
     ctx.io.out(`  question ${q.id}: ${q.text}`);
   for (const a of commanded.answered)
     for (const line of describeAnswered(a)) ctx.io.out(`  ${line}`);
+  for (const t of commanded.tasks)
+    ctx.io.out(
+      `  task ${t.id} [${t.status}] under ${t.unitId}: ${t.capability}: ${t.objective}`,
+    );
   if (commanded.incidentStatus !== "open") {
     ctx.io.out(`incident ${incident.id} is now ${commanded.incidentStatus}`);
     return { status: commanded.incidentStatus, stopped: null };

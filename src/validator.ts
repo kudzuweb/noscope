@@ -906,20 +906,47 @@ const COMMAND_RULES: readonly RuleName[] = [
   "Status is earned",
 ];
 
-/** The one rule of the IC's own: an answer names a request a waiting unit raised. */
-export type CommandRuleName = "Answers match";
+/** The IC's own rules: an answer names a request a waiting unit raised; an assignment under command is deterministic. */
+export type CommandRuleName = "Answers match" | "Deterministic only";
 
 /**
  * The IC's command turn is held to the rules that cover what it can do, closing units and
  * setting the incident's status, by checking it as a plan that creates nothing (DESIGN.md
- * Step 5), and to one rule of its own: every answer names a waiting unit and an open
- * request that unit raised, as the change report showed it. Returns the failing rules with
+ * Step 5), and to two rules of its own: every answer names a waiting unit and an open
+ * request that unit raised, as the change report showed it; and every task it assigns is
+ * deterministic (R4-6), since session work is a unit's. Its assignments pass the task
+ * rules as a leader's do, and "Own unit" against the root. Returns the failing rules with
  * their reasons; the caller records `command.rejected` and ends the cycle.
  */
 export function validateCommand(
   turn: CommandTurn,
   ctx: ValidationContext,
-): Rejection<RuleName | CommandRuleName>[] {
+): Rejection<RuleName | LeaderRuleName | CommandRuleName>[] {
+  const root = ctx.units.find((u) => u.parentId === null);
+  const assignments: Rejection<RuleName | LeaderRuleName | CommandRuleName>[] =
+    turn.assignTasks.length === 0
+      ? []
+      : [
+          ...RULES.filter((r) => TASK_RULES.includes(r.name)).flatMap(
+            ({ name, check }) =>
+              check(asPlan(turn.assignTasks), ctx).map((reason) => ({
+                rule: name,
+                reason,
+              })),
+          ),
+          ...(root === undefined
+            ? []
+            : LEADER_CHECKS["Own unit"](turn.assignTasks, root, ctx).map(
+                (reason) => ({ rule: "Own unit" as const, reason }),
+              )),
+          ...perRegisteredTask(asPlan(turn.assignTasks), (t, capability) =>
+            capability.kind === "session"
+              ? [
+                  `${label(t)} runs ${t.capability}, a session; the IC assigns deterministic work only, and session work goes under a unit`,
+                ]
+              : [],
+          ).map((reason) => ({ rule: "Deterministic only" as const, reason })),
+        ];
   const answers: Rejection<CommandRuleName>[] = turn.answers.flatMap((a) => {
     const unit = ctx.units.find((u) => u.id === a.unitId);
     if (unit === undefined)
@@ -958,7 +985,7 @@ export function validateCommand(
       reason: `unit ${unitId}'s request "${request}" is answered twice`,
     });
   }
-  const asPlan: ActionPlan = {
+  const commandAsPlan: ActionPlan = {
     createUnits: [],
     closeUnits: turn.closeUnits,
     createTasks: [],
@@ -980,9 +1007,10 @@ export function validateCommand(
   return [
     ...RULES.filter(({ name }) => COMMAND_RULES.includes(name)).flatMap(
       ({ name, check }) =>
-        check(asPlan, ctx).map((reason) => ({ rule: name, reason })),
+        check(commandAsPlan, ctx).map((reason) => ({ rule: name, reason })),
     ),
     ...answers,
+    ...assignments,
   ];
 }
 
