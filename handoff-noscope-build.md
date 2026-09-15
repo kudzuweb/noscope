@@ -1,7 +1,7 @@
 # Handoff: noscope round 4, the build in progress
 
-Refreshed 2026-09-15 16:33 CDT by session noscope-round4 [f7cb98], mid-build, ten of
-thirteen merged. Written by the successor session; the relay session mauriaparker-91 has stopped.
+Refreshed 2026-09-15 17:02 CDT by session noscope-round4 [f7cb98]; every code row merged,
+the fourth run pending. Written by the successor session; the relay session mauriaparker-91 has stopped.
 
 **First actions, in order:** (1) `/warp-pin title noscope-round4-<n>`. (2) Read this file,
 then `BUILD-PLAN.md` "## Round 4" in full (rows R4-10 to R4-12 are new; the fourth run is now R4-13), then the round 4
@@ -40,19 +40,17 @@ thread `~/Documents/Projects/my-quipu/ics-runtime.md` and reviewed into the plan
 
 ## 3. STATE (as of this refresh)
 
-Origin main is `ffde9ce` (R4-10, #49) plus docs-only commits, pushed; local main equals it;
-`dist/` built from it. Merged this round, in order: R4-8 (#40), R4-1 (#41), R4-6 (#42),
-R4-7 (#43), R4-9 (#44), R4-2 (#45), R4-3 (#46), R4-4 (#47), R4-5 (#48), R4-10 (#49, 16:19,
-two reviewers). Ten of thirteen. Open and building:
-
-| Row | Branch, worktree | State |
-|---|---|---|
-| #50 R4-12 The runtime tag on events | `pr-runtime-tag`, `scratchpad/wt-r4-12` | Built, pushed at ea514be, reviewer `review50-correctness` running. Schema 8, migration step 7. |
-| R4-11 Saved unit configs | `pr-saved-configs`, `scratchpad/wt-r4-11` | Builder `build-r4-11` running since 16:20. Also bumps the schema; whichever of 50 and this merges second rebases and renumbers its migration step. |
+Origin main is `3b2cd7a` (R4-11, #51), pushed; local main equals it; `dist/` built from it
+(runtime tag `3b2cd7a…`). Every code row of round 4 is merged, in order: R4-8 (#40), R4-1
+(#41), R4-6 (#42), R4-7 (#43), R4-9 (#44), R4-2 (#45), R4-3 (#46), R4-4 (#47), R4-5 (#48),
+R4-10 (#49), R4-12 (#50), R4-11 (#51, 17:01). Twelve of thirteen. Open: nothing. Remaining:
+R4-13, the fourth run, which spends money and waits on Mauria's go (the plan was restated to
+her at 17:02). Store schema is 9; `NOSCOPE_DB` files from earlier runs migrate on open.
 
 Rulings by the orchestrator in review, shown to Mauria and not reversed: a plan cannot close
 a unit whose revise is undelivered (R4-3); the IC can drop a reassignment on a later turn
-(`dropReassignments`) and a `failed` plan owes no taker (R4-4).
+(`dropReassignments`) and a `failed` plan owes no taker (R4-4); `config save` refuses a
+non-plannable unit (R4-11).
 
 Rulings since the 11:50 refresh, all Mauria's, 2026-09-15:
 
@@ -69,20 +67,18 @@ session: builders `build-r4-6`, `build-r4-7`, `build-r4-9`, `build-r4-2`, `build
 `build-r4-4` and reviewers `review43-rebase`, `review44-rebase`, `review45-rebase`,
 `review46-correctness`, `review47-correctness`, `review48-correctness`, builders `build-r4-5`,
 `build-r4-10`, `build-r4-12`, reviewers `review49-design`, `review49-correctness` (idle, hold
-context), `build-r4-11`, `review50-correctness` (running), `quipu` (the keeper; last write
-726f2eb). Heartbeat cron `53cbb702` hourly at :23.
+context), `build-r4-11`, `review50-correctness`, `review51-correctness` (idle), `quipu` (the keeper;
+last write 18e3032, which opened the thread noscope-as-a-service.md). Heartbeat cron `53cbb702` hourly at :23.
 
-Not started: nothing but the run; R4-13 (the fourth run) last. The one worktree lives under
+Not started: the run (R4-13) only; R4-13 (the fourth run) last. The one worktree lives under
 this session's scratchpad `/private/tmp/claude-501/-Users-mauriaparker-Documents-Projects-noscope/5c3f3ef0-a43b-4a43-b0d5-afcbc0e7673c/scratchpad/`;
 a successor recreates any it needs with `git worktree add -b <branch> <path> origin/<branch>`
 and `pnpm install --frozen-lockfile`.
 
 ## 4. NEXT STEPS, IN ORDER
 
-1. PR 50 and R4-11: on each review, fixes through the builder, fill the body, CI, `gh pr merge
-   N --squash --delete-branch --match-head-commit <sha>`, pull, `pnpm build`; the second
-   rebases over the first (schema step renumbered).
-2. (done for every code row; this step remains only as the pattern) Spawn builders one at a time, each on a
+1. (done) Every code row merged.
+2. (done; kept as the pattern) Spawn builders one at a time, each on a
    fresh worktree from main (`git worktree add -b <branch> <path> origin/main`), briefed with
    the builder brief plus its plan block; review each by a subagent; merge. Before R4-5's
    brief, confirm the brief's situation sentence (already updated). R4-10 and R4-11 get two
