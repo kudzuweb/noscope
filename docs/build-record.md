@@ -3305,3 +3305,84 @@ Not exactly to spec, with reasons:
   refusals is not a turn" saw its refusals land on the wrong calls once (pass 1's two
   concurrent stubs both took ordinal 1, so `NOSCOPE_STUB_REFUSE=3,4` missed t-dep). It
   passes alone and passed on the next full run; the stub is unchanged here.
+
+## R4-12: The runtime tag on events (#PR, merged 2026-09-15)
+
+R4-12 of the round 4 plan, ruled by Mauria on 2026-09-15 (13:34 to 13:39): what a seat
+received is preserved in the Claude Code transcript (every call writes a `prompt_snapshot`
+record with the full system prompt, and the user messages are the transcript; transcripts
+are kept for 99999 days on her machine), so briefings are not stored; a briefing is made
+reproducible by a tag naming the code that rendered it, not by its content. Three
+commits: the build step and the version module; the column, the stamp and the migration;
+the two commands.
+
+The tag (`src/runtime-version.ts`): `describeRuntime(cwd)` is `git rev-parse HEAD` in the
+checkout, `-dirty` when `git status --porcelain --untracked-files=no` lists anything, and
+`unknown` when git fails or there is no checkout; `writeRuntimeVersion(dir, checkout)`
+writes `{ "runtime": <tag> }` to `dir/runtime-version.json`; `readRuntime(dir)` reads it
+back, `unknown` when the file is missing, empty or malformed; `RUNTIME` is the read of
+the file beside the module. Run as a script, the module writes the file beside itself
+with the tag of the directory above, so `pnpm build` is `tsc -p tsconfig.json && node
+dist/runtime-version.js` and bakes `dist/runtime-version.json` into the build; `dist/` is
+git-ignored already. A process running from source (vitest) or from a `dist/` without the
+file stamps `unknown`.
+
+The store: `Event` gains `runtime` (a non-empty string or null), the `events` table gains
+`runtime TEXT`, `write` stamps `RUNTIME` on every event and `insertEvent` inserts it,
+`rowToEvent` reads it, and `replay` re-inserts each event with the tag it carried, never
+the replaying build's, which is what reproduction depends on. `SCHEMA_VERSION` is 8;
+migration step 7 adds the column, and every event from before reads null. The column is
+added ahead of step 5 too (`addRuntime`, guarded by `hasColumn`), since step 5 writes a
+`leader.released` event and the stamp needs the column; verified by removing the call,
+which fails the version 5 test with `no such column`.
+
+`incident events` prints `runtime: <tag>` before the first event and again before any
+event whose tag differs from the one before it; `incident review` prints `runtimes: N:
+<tag> (events a to b), ...` after the transfers line, one entry per stretch of the log
+written by one build, in the order the log switches between them, an untagged stretch
+named `none recorded (written before the tag)`, or `runtimes: none` on an empty log
+(`describeRuntimeTag` and `runtimesLine` in `src/review.ts`).
+
+Reproduction is documented in DESIGN.md Step 2, with no command: check out the tagged
+commit, `pnpm build`, replay the events with `sequence` below the call's answer event
+(`command.turned`, `plan.proposed`, `unit.reported`, `unit.continued`) into a fresh store
+with `Store.replay` (the system events with them), and call that build's renderer
+(`renderChangeReport`, `renderPlannerInput`, `renderLeaderOrientation` or
+`renderTurnPrompt`) on it; the transcript is the check. DESIGN.md Step 2 (the `events`
+row, version 7, the reproduction paragraph) and Step 7 (`events`, `review`), README's
+build paragraph and `docs/architecture.html`'s incident-file node follow.
+
+Tests: `test/runtime-version.test.ts` (new) pins `describeRuntime` on this checkout
+against `git rev-parse HEAD` and the tree's dirtiness, `unknown` on a directory that
+does not exist, `writeRuntimeVersion` into a temp directory read back by `readRuntime`
+with the same tag, `unknown` from a missing, empty or malformed file, and `RUNTIME`
+non-empty. `test/store.test.ts` pins that every event a store writes, incident and
+system, carries `RUNTIME`; that a replay keeps each event's own tag; and the version 7
+migration: the events written before read null, one written after carries `RUNTIME`, and
+a replay keeps the nulls; the version 5 test drops the `runtime` column too and pins the
+migration's own event as tagged. `test/incident-commands.test.ts` pins the `runtime:`
+header on `events`; `test/review.test.ts` pins `runtimes: 1: <RUNTIME> (events 0 to N)`
+on the stub run and, on a hand-built log, four stretches with the untagged one named. The
+schema version pins move from 7 to 8 and the review test's event helper carries
+`runtime: null`. `pnpm check` exits 0; the built binary on a scratch store prints the
+clean commit's SHA in `events` and `review`.
+
+Not exactly to spec, with reasons:
+
+- The version module is one TypeScript file that is both the reader and the build's
+  writer (`node dist/runtime-version.js` after `tsc`), rather than a generated
+  `src/runtime-version.ts` or a separate script: a generated source file would have to
+  exist before `pnpm typecheck` and `pnpm test`, which CI runs before `pnpm build`, and a
+  script outside `src/` would need its own type declaration for the test to import it.
+  The JSON is the generated artifact and lives only in `dist/`.
+- The dirty check counts tracked files only (`--untracked-files=no`), so an untracked
+  scratch file does not mark a build dirty; the plan says "a dirty tree" without saying
+  which.
+- Under vitest the tag is `unknown` (no build has run beside `src/`), so the store and
+  command tests pin `RUNTIME` rather than a SHA; the build test asserts the SHA on the
+  file the build step writes, which is what `dist/` carries.
+- `Event.runtime` is required in the schema (nullable, not optional), so an event built
+  in code says what it carries; the one hand-built event helper in the tests gained
+  `runtime: null`.
+- R4-11 (saved configs) is being built in parallel and also raises the schema version;
+  whichever merges second renumbers its step and pins.
