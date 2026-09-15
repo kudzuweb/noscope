@@ -761,6 +761,12 @@ function reviewTurn<const V extends readonly ["approve", ...string[]]>(
     ),
     rationale: z.string().describe("Why this verdict, one paragraph"),
     discrepancy: DISCREPANCY,
+    briefingEvaluation: z
+      .array(BriefingVerdict)
+      .optional()
+      .describe(
+        "Only on a review that is this session's first call after a transfer of command (a handoff before the review): each item of the handoff document, accepted, rewritten or discarded, and why",
+      ),
   });
 }
 

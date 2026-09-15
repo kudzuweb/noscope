@@ -354,6 +354,50 @@ function describeTransfer(e: Event): string {
   return `command transferred (${str(e.payload.kind) || "?"}): session ${str(e.payload.outgoingSessionId) || "(none)"} to session ${str(e.payload.incomingSessionId) || "(none)"}${typeof contextTokens === "number" ? ` after ${n(contextTokens)} tokens of context` : ""}, document ${n(length)} chars`;
 }
 
+/** The verdicts an IC turn recorded on what it was handed: `briefingEvaluation` on a command turn's `turn`, or on a review. */
+function evaluationOf(e: Event): { verdict: string; item: string }[] | null {
+  const holder =
+    e.type === "command.turned"
+      ? (e.payload.turn as { briefingEvaluation?: unknown } | undefined)
+      : (e.payload as { briefingEvaluation?: unknown });
+  const verdicts = holder?.briefingEvaluation;
+  if (!Array.isArray(verdicts)) return null;
+  return verdicts.map((v) => ({
+    verdict: str((v as { verdict?: unknown }).verdict),
+    item: str((v as { item?: unknown }).item),
+  }));
+}
+
+/**
+ * How the transfer's document was evaluated: by the first accepted command turn or review
+ * on the incoming session (a handoff), or by the first accepted command turn after the
+ * transfer (the initial kind, whose incoming session is not yet known); the counts by
+ * verdict and each item, or that it has not been evaluated yet.
+ */
+function describeEvaluation(
+  transfer: Event,
+  events: readonly Event[],
+): string[] {
+  const incoming = transfer.payload.incomingSessionId;
+  const evaluated = events.find((e) => {
+    if (e.type === "command.turned" && e.payload.rejected === true)
+      return false;
+    if (e.type !== "command.turned" && e.type !== "plan.reviewed") return false;
+    if (evaluationOf(e) === null) return false;
+    return typeof incoming === "string"
+      ? str(e.payload.sessionId) === incoming
+      : e.sequence > transfer.sequence;
+  });
+  const verdicts = evaluated === undefined ? null : evaluationOf(evaluated);
+  if (verdicts === null) return ["    evaluated: not yet"];
+  const count = (kind: string) =>
+    verdicts.filter((v) => v.verdict === kind).length;
+  return [
+    `    evaluated on its ${evaluated?.type === "plan.reviewed" ? "review" : "command turn"}: ${count("accepted")} of ${verdicts.length} item(s) accepted, ${count("rewritten")} rewritten, ${count("discarded")} discarded`,
+    ...verdicts.map((v) => `      ${v.verdict}: ${clip(v.item)}`),
+  ];
+}
+
 /**
  * The IC's own calls in a cycle: its command turn, its reviews and its handoff document
  * (the outgoing session's last call, on `leader.released`), each with the seat's model
@@ -361,6 +405,7 @@ function describeTransfer(e: Event): string {
  */
 function icLines(
   cycle: Cycle,
+  events: readonly Event[],
   roleTotals: (role: string, model: string | null) => Totals,
   cost: CostSum,
   verdicts: Map<string, number>,
@@ -382,7 +427,7 @@ function icLines(
   let model: string | null = null;
   for (const e of turns) {
     if (e.type === "command.transferred") {
-      lines.push(`  ${describeTransfer(e)}`);
+      lines.push(`  ${describeTransfer(e)}`, ...describeEvaluation(e, events));
       continue;
     }
     model = str(e.payload.model) || null;
@@ -624,7 +669,7 @@ export function renderReview(
       verdict = `ic set the incident ${str(cycle.opened.payload.incidentStatus)}`;
     else verdict = "no verdict recorded";
     lines.push(`cycle ${cycle.number}  ${cycle.opened.createdAt}  ${verdict}`);
-    lines.push(...icLines(cycle, roleTotals, cost, verdicts));
+    lines.push(...icLines(cycle, events, roleTotals, cost, verdicts));
 
     for (const proposed of cycle.proposals) {
       const p = proposed.payload;

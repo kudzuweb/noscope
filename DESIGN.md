@@ -356,19 +356,29 @@ changed, what changed on which claims, and for `not_met` the why and suggestion)
 question answered and capability provided, the rules the IC's last turn failed if it was
 rejected, and the spend since then (every usage any seat recorded after the IC's last
 turn, summed). The IC's first briefing on an incident says so. When a transfer of command
-is pending, that is, the last `command.transferred` is later than the last accepted
-`command.turned` (a rejected turn does not count, as it does not for `cycleOf`, so the retry
-of a rejected first turn still evaluates), the briefing carries the transfer's document
-after the change report: for the initial transfer (R3-8) every line of the incident
-briefing, who wrote it on what model, and how the IC's own model was chosen; for a handoff
-(R3-9) the outgoing IC's document as written. The ask then opens with the evaluation
-instruction, and the turn is taken under `FirstCommandTurn`, the command turn with
+is pending, the briefing carries the transfer's document after the change report: for the
+initial transfer (R3-8) every line of the incident briefing, who wrote it on what model,
+and how the IC's own model was chosen; for a handoff (R3-9) the outgoing IC's document
+rendered section by section, with whom it takes command from, under the same role text, at
+what context. An initial transfer names no incoming session and is pending while it is
+later than the last accepted `command.turned` (a rejected turn does not count, as it does
+not for `cycleOf`, so the retry of a rejected first turn still evaluates); a handoff names
+its incoming session, is written with that session's `leader.started` after the turn that
+recorded its first call, and is pending until an accepted command turn or a review has run
+on that session, so the successor evaluates the document once, on whichever call was its
+first; a handoff in flight, whose transfer is not written yet, is rendered the same way from
+the runtime's hand. The ask then opens with the evaluation instruction (for a briefing,
+each initial objective and each unit sketched; for a handoff document, each period
+objective and priority, each unit's state, the hypothesis, each thing set aside and the
+next move), and the turn is taken under `FirstCommandTurn`, the command turn with
 `briefingEvaluation` required (one strict object, like every turn schema), so the
 provider's own validation holds the IC to judging what it was handed before it sets the
-period. An incident with no pending transfer (`--no-size-up`, a failed size-up, one
-migrated from before R3-8, or any turn after the evaluation was accepted) gets the plain ask
-and the plain schema. The instruction lives in the user message because a resumed call
-ignores `systemPrompt`; the IC's role text carries the general rule.
+period; a review that is the successor's first call carries the same `briefingEvaluation`
+as an optional field of `ReviewTurn` and `FinalReviewTurn`, asked for the same way and
+recorded on `plan.reviewed`. An incident with no pending transfer (`--no-size-up`, a failed
+size-up, one migrated from before R3-8, or any turn after the evaluation was accepted) gets
+the plain ask and the plain schema. The instruction lives in the user message because a
+resumed call ignores `systemPrompt`; the IC's role text carries the general rule.
 
 ```ts
 const CommandTurn = z.object({
@@ -402,6 +412,7 @@ const ReviewTurn = z.object({
   plan: ActionPlan.optional(),                      // with amend: the whole plan as the IC wants it applied
   rationale: z.string(),
   discrepancy: z.string().optional(),
+  briefingEvaluation: z.array(BriefingVerdict).optional(),  // only on a review that is the session's first call after a handoff: each item of the handoff document, accepted, rewritten or discarded, and why
 });
 
 const HandoffDocument = z.strictObject({           // the outgoing IC's last call at a handoff (Step 6), written for its successor
@@ -678,16 +689,20 @@ intended move); the session is then released through the log, `leader.released` 
 mutation `unit.session` null, the outgoing session's provider, model and usage, the
 context size, the threshold and the document; and the next IC call starts a fresh session
 under the same `IC_ROLE` (nothing in the system prompt changes between the two), whose
-user message opens with the transfer: that it takes command from the session whose context
-reached the threshold, the document rendered section by section, and the instruction to
-evaluate it before acting, the same evaluation the initial IC's briefing gets (R3-8): say
-in the rationale what of it is accepted, rewritten or discarded, and why; then the change
-report and the full file as on any command turn, or, before a review, the file and then
-the draft. `command.transferred` (`kind: "handoff"`, the outgoing and incoming session
-ids, the context size, the threshold, the document) is written with the successor's
-`leader.started`, the moment its id is known, in the transaction of the turn that records
-its first call, after `command.turned` or `plan.reviewed` and whether or not the call
-answered, so a session that was paid for is recorded as the one command passed to. A
+user message carries the transfer after the change report (Step 4): that it takes command
+from the session whose context reached the threshold, under the same role text, the
+document rendered section by section, and then the full file; the ask opens with the
+instruction to evaluate the document, the same evaluation the initial IC's briefing gets
+(R3-8), answered in `briefingEvaluation`, required on the command turn
+(`FirstCommandTurn`) and optional on a review that is the successor's first call. The
+transfer is one event for both kinds, `command.transferred` written by one
+`recordTransfer` with the root unit's leader as its mutation (`unit.leader`, a no-op on a
+handoff, whose `outgoing` and `incoming` leaders are both the unit's): `kind: "handoff"`,
+the unit, the outgoing and incoming session ids and leaders, the document, the context
+size and the threshold. It is written with the successor's `leader.started`, the moment
+its id is known, in the transaction of the turn that records its first call, after
+`command.turned` or `plan.reviewed` and whether or not the call answered, so a session
+that was paid for is recorded as the one command passed to. A
 release whose successor never got a session id at all stays pending in the log (a
 `leader.released` carrying a handoff after the root unit's last `leader.started`), and
 the next IC call is briefed with its document and records the transfer. An outgoing
@@ -696,9 +711,10 @@ line) is released with the reason and nothing is handed off: the successor start
 file alone, and `step` says so. A handoff call that fails otherwise is filed as
 `command.failed` with `turn: "handoff"` and ends the cycle like any failed IC call; the
 session stays on the unit and the next cycle tries again. `incident review` prices the
-handoff call under `ic` and lists each transfer with the context size that triggered it
-and the document's length; `incident show` names the IC's current session and counts the
-transfers.
+handoff call under `ic` and lists each transfer with the context size that triggered it,
+the document's length and how its document was evaluated (on which call, the verdicts by
+kind and each item, or not yet); `incident show` names the IC's current session and counts
+the transfers.
 
 What the log holds per session, beyond its outcome and usage. Every tool call the session
 makes is a `tool.called` event, written in the task's transaction before its claims: the
@@ -759,7 +775,7 @@ to verified, and the validator gates `proven` and `satisfied` on basis `observed
 | `noscope incident step <id>` | One cycle, then stop. Prints a handoff when one runs (the outgoing session, the context that triggered it, the threshold, and the transfer once the successor has answered), the IC's command turn (its verdicts on a briefing it took command with, objectives, priorities, closes, answers, what it raised, status), the planner's draft, the IC's verdict with its corrections or amended plan and the redraft when there is one, the validator's verdict, what ran, each unit's report with any resource request it sent up, the tasks each leader assigned, any discrepancy raised, and whether a report stopped the pass. |
 | `noscope incident run <id> [--max-cycles N]` | Repeats `step` until the incident leaves `open` or the cap is hit. |
 | `noscope incident events <id>` | The event log with timestamps and actors. |
-| `noscope incident review <id>` | The After Action Review computed from the event log: the size-up when there was one (the initial IC's call with its usage and tool calls, what the briefing said in numbers, whom command transferred to and who chose the model, or the size-up's failure; its questions), then each cycle (cut at the IC's command turn; at `plan.proposed` in a log from before the IC) with its verdict, the IC's command turn, reviews and handoff call with their usage, each transfer of command with the context size that triggered it and the document's length (and their count at the end), each draft's planner call, rejections, tasks run (capability, model, tokens with the cache split, seconds, cost, claims), each leader's turns with their usage and outcome, the resource requests it sent up and the tasks it assigned or was refused, discrepancies, strike teams declared or refused, questions and answers; totals by role and model (the IC under `ic`, the initial IC under `initial_ic`, leaders under `leader`); plan, IC-verdict (by kind: approve, correct, amend), briefing-kept (the verdicts on the IC's first accepted command turn that evaluated one: accepted, rewritten, discarded, of how many items; or that none was evaluated yet, that there was no size-up, or that it failed), task, leader-turn and claim counts, each unit's reports by cycle, each declared strike-team config against what ran under it (members, usage, cost, claims citing a member), and lacks resolved at a leader against those sent up; the cost, recorded where the provider priced it and bounded at list rates where it did not. Deterministic; the judged review is the session-backed `review` capability, after v0. |
+| `noscope incident review <id>` | The After Action Review computed from the event log: the size-up when there was one (the initial IC's call with its usage and tool calls, what the briefing said in numbers, whom command transferred to and who chose the model, or the size-up's failure; its questions), then each cycle (cut at the IC's command turn; at `plan.proposed` in a log from before the IC) with its verdict, the IC's command turn, reviews and handoff call with their usage, each transfer of command with the context size that triggered it, the document's length and its evaluation (and their count at the end), each draft's planner call, rejections, tasks run (capability, model, tokens with the cache split, seconds, cost, claims), each leader's turns with their usage and outcome, the resource requests it sent up and the tasks it assigned or was refused, discrepancies, strike teams declared or refused, questions and answers; totals by role and model (the IC under `ic`, the initial IC under `initial_ic`, leaders under `leader`); plan, IC-verdict (by kind: approve, correct, amend), briefing-kept (the verdicts on the IC's first accepted command turn that evaluated one: accepted, rewritten, discarded, of how many items; or that none was evaluated yet, that there was no size-up, or that it failed), task, leader-turn and claim counts, each unit's reports by cycle, each declared strike-team config against what ran under it (members, usage, cost, claims citing a member), and lacks resolved at a leader against those sent up; the cost, recorded where the provider priced it and bounded at list rates where it did not. Deterministic; the judged review is the session-backed `review` capability, after v0. |
 | `noscope incident sop <id> <name>` | Adds an SOP's unit and its tasks to the incident in one action plan. After v0. |
 | `noscope incident answer <id> "<text>"` | Answers the oldest open question, the IC's, the planner's or a unit leader's; the IC's next change report carries the answer. A unit's question answered returns that unit to `active` once nothing of the unit's is open; the incident returns to `open` only when a command turn or a plan had blocked it and nothing of theirs still waits. |
 | `noscope incident provide <id> "<text>"` | Answers the oldest unanswered capability request, the IC's, the planner's or a unit leader's, with what was provided, or why not. A unit's request answered returns that unit to `active` once nothing of the unit's is open; the incident returns to `open` only when a command turn or a plan had blocked it and nothing of theirs still waits. |

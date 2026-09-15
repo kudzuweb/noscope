@@ -521,7 +521,9 @@ function renderReviewPrompt(
   cycle: number,
   corrections: string | null,
   briefing: string[] | null,
+  transfer: TransferPayload | null = null,
 ): string {
+  const evaluate = transfer === null ? "R" : `${evaluateAsk(transfer)}r`;
   return [
     ...(briefing === null
       ? []
@@ -540,8 +542,8 @@ function renderReviewPrompt(
       : ["", "Your corrections were:", corrections]),
     "",
     corrections === null
-      ? "Review it against the period objectives and priorities: approve it, correct it once with text the planner redrafts against, or amend it and return the whole plan. Correct when the planner must re-plan, since it holds the file's refs and tasks; amend when the change is small and exact."
-      : "Review it against the period objectives and priorities: approve it, or amend it and return the whole plan.",
+      ? `${evaluate}eview it against the period objectives and priorities: approve it, correct it once with text the planner redrafts against, or amend it and return the whole plan. Correct when the planner must re-plan, since it holds the file's refs and tasks; amend when the change is small and exact.`
+      : `${evaluate}eview it against the period objectives and priorities: approve it, or amend it and return the whole plan.`,
   ].join("\n");
 }
 
@@ -788,7 +790,8 @@ export function commandTurn(
 /**
  * The IC's review of a draft (step 4): the draft is the user message on the resumed
  * session, which read the file in the command turn; a session with no id (lost since the
- * command turn, or started fresh by a handoff) is briefed first. The first read may
+ * command turn, or started fresh by a handoff) is briefed first, and after a handoff asked
+ * to evaluate the document in `briefingEvaluation`, recorded on `plan.reviewed`. The first read may
  * approve, correct or amend; a read of the redraft may only approve or amend, and the
  * schema the provider receives says so. `plan.reviewed` records the verdict, the
  * corrections, and the amended plan when there is one, with the call's provenance, and the
@@ -813,20 +816,20 @@ export async function reviewTurn(
     incident,
     "review",
     cycle,
-    (unit) =>
-      renderReviewPrompt(
+    (unit) => {
+      // A fresh session reads the file first and, after a transfer, evaluates its document here.
+      const transfer =
+        unit.sessionId === null ? transferToEvaluate(events, handoff) : null;
+      return renderReviewPrompt(
         draft,
         cycle,
         corrections,
         unit.sessionId === null
-          ? renderBriefingBody(
-              store,
-              incident,
-              providers,
-              transferToEvaluate(events, handoff),
-            )
+          ? renderBriefingBody(store, incident, providers, transfer)
           : null,
-      ),
+        transfer,
+      );
+    },
     redraft ? FINAL_REVIEW_TURN_SCHEMA : REVIEW_TURN_SCHEMA,
     (o): ReviewTurn =>
       redraft ? FinalReviewTurn.parse(o) : ReviewTurn.parse(o),
@@ -844,6 +847,9 @@ export async function reviewTurn(
         ? {}
         : { corrections: call.output.corrections }),
       ...(call.output.plan === undefined ? {} : { plan: call.output.plan }),
+      ...(call.output.briefingEvaluation === undefined
+        ? {}
+        : { briefingEvaluation: call.output.briefingEvaluation }),
     });
     call.record();
   });

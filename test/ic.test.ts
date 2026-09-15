@@ -836,7 +836,13 @@ describe("the IC above the planner", () => {
     );
     expect(
       Object.keys(jsonSchemaFor(FinalReviewTurn).properties as object),
-    ).toEqual(["verdict", "plan", "rationale", "discrepancy"]);
+    ).toEqual([
+      "verdict",
+      "plan",
+      "rationale",
+      "discrepancy",
+      "briefingEvaluation",
+    ]);
     expect(jsonSchemaFor(CommandTurn).additionalProperties).toBe(false);
     expect(
       ReviewTurn.safeParse({

@@ -755,6 +755,8 @@ async function cycle(
       ctx.io.out(
         `  command transferred from session ${before.outgoingSessionId} to session ${read.sessionId}`,
       );
+    for (const v of read.output.briefingEvaluation ?? [])
+      ctx.io.out(`  handoff: ${v.verdict} ${v.item}: ${v.why}`);
     return read;
   };
   let review = await reviewAfterHandoff(draft.plan, null);

@@ -1776,22 +1776,34 @@ the file). The session is then released through the log, `setUnitSession(root, n
 `leader.released` with the call's provenance and usage, `released`, the reason, and
 `handoff` (`contextTokens`, `threshold`, `document`), in one transaction with the call's
 activity. The next IC call starts a fresh session (`icCall` already does when the root has
-none) under the unchanged `IC_ROLE`; `renderTransferBriefing` opens its user message with
-the transfer (who it takes command from, under the same role text, at what context), the document rendered section
-by section (`renderHandoffDocument`) and the evaluation instruction (say in the rationale
-what is accepted, rewritten and discarded, and why), then the change report and the file
-as on any command turn, or, before a review, the file and then the draft (`reviewTurn`
-already re-briefs a session with no id; it now takes the handoff too). `command.transferred`
-(`kind: "handoff"`, `unitId`, `outgoingSessionId`, `incomingSessionId`, `contextTokens`,
-`threshold`, `document`) is written by `icCall`'s `started` with the successor's
-`leader.started`, the moment its id is known, after `command.turned` or `plan.reviewed` in
-the same transaction. `step` prints the handoff (session, context, threshold), the
+none) under the unchanged `IC_ROLE`; its user message carries the transfer through R3-8's
+path (`transferToEvaluate`: the transfer pending in the log, or the handoff in flight
+before its transfer is written): after the change report, `renderTransfer`'s handoff
+branch says who it takes command from, under the same role text, at what context, and
+renders the document section by section (`renderHandoffDocument`); then the file, and the
+ask opens with R3-8's evaluation instruction naming the document's items (each period
+objective and priority, each unit's state, the hypothesis, each thing set aside and the
+next move), answered in `briefingEvaluation` under `FirstCommandTurn`; before a review,
+the same transfer and ask precede the draft and `ReviewTurn` and `FinalReviewTurn` carry
+`briefingEvaluation` as an optional field, recorded on `plan.reviewed` (`reviewTurn`
+already re-briefs a session with no id; it now takes the handoff too). The transfer is
+R3-8's `Transfer` with `kind: "handoff"` (`unitId`, `outgoingSessionId`, `outgoing`,
+`incomingSessionId`, `incoming`, both leaders the unit's, `document`, `contextTokens`,
+`threshold`), written by R3-8's `recordTransfer` (the `unit.leader` mutation, a no-op
+here) from `icCall`'s `started` with the successor's `leader.started`, the moment its id
+is known, after `command.turned` or `plan.reviewed` in the same transaction;
+`pendingTransfer` treats a transfer that names its incoming session as pending until an
+accepted command turn or a review has run on that session, so the successor evaluates
+once, on whichever call was its first, and the next turn is not asked again. `step` prints
+the handoff (session, context, threshold), the
 transfer after the successor's turn, a lost outgoing session, and a pending handoff
 resumed. `incident show` prints `IC: <provider>/<model>, session <id or none yet>; N
 transfer(s) of command`. `incident review` prices the handoff call under `ic` in its cycle
 (`wrote its handoff after N tokens of context`), lists each `command.transferred` with its
 kind, both sessions, the context that triggered it and the document's length in JSON
-characters, and ends with `transfers of command: N (kinds)`. The stub recognises the
+characters, followed by how its document was evaluated (`evaluated on its command turn`
+or `review`: the counts by verdict and each item, or `evaluated: not yet`), and ends with
+`transfers of command: N (kinds)`. The stub recognises the
 document by its `nextMove` property, answers `NOSCOPE_STUB_HANDOFF` or a one-line default,
 logs the kind `handoff`, ends every call with one answering `assistant` line whose message
 usage carries the context (`input_tokens` is `NOSCOPE_STUB_IC_CONTEXT` or the next entry of
@@ -1808,16 +1820,20 @@ the IC node and cycle steps 2 and 4; the README names `NOSCOPE_IC_HANDOFF_TOKENS
 Tests (`test/handoff.test.ts`): a run on the stub with the threshold at 5,000 where cycle
 1's review runs at 6,500 tokens of context (the stub's `contextTokens`) and the next `step` shows the handoff call
 resumed on the outgoing session (its prompt and schema pinned), the command turn on a fresh
-session whose system prompt is the IC's and whose briefing opens with the transfer, the
-document and the evaluation instruction before the change report, a new session id on the
-root unit, `leader.released` with the document and the call's usage before
-`command.turned`, `command.transferred` right after it and before `leader.started`, `show`
-naming the new session with one transfer and `review` pricing the handoff and listing the
-transfer; below the threshold two steps make no handoff call, write no release or
-transfer and keep the session; a command turn at 6,500 hands off before the review, whose
-fresh session is briefed with the transfer and the document before the file and the draft,
-with `leader.released`, `plan.reviewed`, `command.transferred`, `leader.started` in that
-order, and the next step resumes the successor; an outgoing session that cannot be resumed
+session whose system prompt is the IC's and whose briefing carries the transfer and the
+document between the change report and the file with the evaluation ask under
+`FirstCommandTurn`, a new session id on the root unit, `leader.released` with the document
+and the call's usage before `command.turned`, `command.transferred` (the full `Transfer`
+with its `unit.leader` mutation) right after it and before `leader.started`, the transfer
+consumed by that turn, `show` naming the new session with one transfer and `review`
+pricing the handoff and listing the transfer with its evaluation; below the threshold two
+steps make no handoff call, write no release or transfer and keep the session; a command
+turn at 6,500 hands off before the review, whose fresh session is briefed with the
+transfer and the document before the file and the draft and asked to evaluate under a
+schema with `briefingEvaluation` optional, the scripted evaluation recorded on
+`plan.reviewed` and listed by `review` as evaluated on its review, with `leader.released`,
+`plan.reviewed`, `command.transferred`, `leader.started` in that order, and the next step
+resumes the successor with the plain ask and schema; an outgoing session that cannot be resumed
 is released with the reason and no document, no transfer is written, and the successor's
 briefing opens with the change report; a handoff call that answers outside its schema
 (`NOSCOPE_STUB_HANDOFF` without `nextMove`) is filed as `command.failed` with `turn:
@@ -1855,13 +1871,14 @@ Not exactly to spec, with reasons:
   which knows nothing, for the handoff. The next call starts on the file alone and `step`
   says so. A handoff call that fails otherwise is `command.failed` with `turn: "handoff"`
   and ends the cycle; the session stays and the next cycle retries.
-- The evaluation instruction asks for the evaluation in the command turn's `rationale`
-  rather than adding a field to `CommandTurn`, since R3-8, built in parallel, owns the
-  first briefing's evaluation and any field it adds; the rebase can point both at one.
-- `command.transferred` is defined here with `kind: "handoff"` and a payload of
-  `unitId`, `outgoingSessionId`, `incomingSessionId`, `contextTokens`, `threshold` and
-  `document`; R3-8 defines the same event with `kind: "initial"` and the briefing as its
-  document, and the rebase reconciles the two definitions to one.
+- From the review (PR 36) at the rebase onto R3-8: the evaluation, first asked for in the
+  command turn's `rationale`, is the `briefingEvaluation` field R3-8 gave the first
+  command turn, extended as an optional field to both review schemas for a handoff before
+  a review, so `incident review` lists every transfer's evaluation (on which call, the
+  verdicts by kind, each item); and `command.transferred` is R3-8's one definition,
+  written by its `recordTransfer`. `pendingTransfer` gained the incoming-session rule
+  above because a handoff's transfer is written after the turn that consumed it, and the
+  sequence comparison alone would have asked the successor to evaluate twice.
 - The stub's usage fields were fixed (1,000 / 200 / 300 / 42) rather than set from the
   environment as the task message supposed; `NOSCOPE_STUB_IC_CONTEXT(S)` scripts the IC's
   calls only, so the planner's and leaders' usage in every existing test is unchanged.

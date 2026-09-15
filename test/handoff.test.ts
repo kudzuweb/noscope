@@ -287,13 +287,10 @@ describe("the IC handoff at the context threshold", () => {
     });
     // The successor's accepted turn on its session consumed the transfer: the next turn does not evaluate again.
     expect(pendingTransfer(events)).toBeNull();
-    expect(
-      (
-        turnedOf(events).at(-1)?.payload.turn as {
-          briefingEvaluation?: unknown[];
-        }
-      ).briefingEvaluation,
-    ).toHaveLength(1);
+    const lastTurn = turnedOf(events).at(-1)?.payload.turn as
+      | { briefingEvaluation?: unknown[] }
+      | undefined;
+    expect(lastTurn?.briefingEvaluation).toHaveLength(1);
     const turned = types.lastIndexOf("command.turned");
     expect(types.indexOf("command.transferred")).toBe(turned + 1);
     expect(types[turned + 2]).toBe("leader.started");
@@ -314,6 +311,9 @@ describe("the IC handoff at the context threshold", () => {
     );
     expect(review).toContain(
       `  command transferred (handoff): session stub-session-1 to session stub-session-4 after 6,500 tokens of context, document ${JSON.stringify(document).length} chars`,
+    );
+    expect(review).toContain(
+      "    evaluated on its command turn: 1 of 1 item(s) accepted, 0 rewritten, 0 discarded",
     );
     expect(review).toContain("transfers of command: 1 (handoff)");
     // Five IC calls priced under ic: two turns in cycle 1, the handoff, two turns in cycle 2.
@@ -359,6 +359,22 @@ describe("the IC handoff at the context threshold", () => {
     timeout: 60_000,
   }, async () => {
     const h = harness([findIt], [6000, 1000]);
+    // The successor's review evaluates the document in the field the schema offers it.
+    const evaluation = [
+      { item: "find the handler", verdict: "accepted", why: "it stands" },
+      {
+        item: "the scroll logic",
+        verdict: "discarded",
+        why: "the draft covers it",
+      },
+    ];
+    h.ctx.env.NOSCOPE_STUB_REVIEWS = JSON.stringify([
+      {
+        verdict: "approve",
+        rationale: "stub review",
+        briefingEvaluation: evaluation,
+      },
+    ]);
     await run(
       ["incident", "create", "where is the delete handler", "--no-size-up"],
       h.ctx,
@@ -367,6 +383,9 @@ describe("the IC handoff at the context threshold", () => {
     expect(h.err).toEqual([]);
     expect(h.out[1]).toBe(
       "IC command turn for period 1 (session stub-session-1): first period",
+    );
+    expect(h.out).toContain(
+      "  handoff: discarded the scroll logic: the draft covers it",
     );
     expect(h.out).toContain(
       "IC handoff: session stub-session-1 wrote its handoff document after 6500 tokens of context (threshold 5000); command passes to a fresh session",
@@ -403,6 +422,15 @@ describe("the IC handoff at the context threshold", () => {
     expect(
       review.indexOf("# The planner's draft for operational period 1"),
     ).toBeGreaterThan(review.indexOf("## 10. Situation"));
+    expect(review).toMatch(
+      /\nFirst, evaluate the handoff document you took command with: for each period objective and priority, each unit's state, the hypothesis, each thing set aside and the next move, say in briefingEvaluation .* Then review it against the period objectives and priorities: approve it, correct it once/,
+    );
+    expect(Object.keys(schemaOf(calls[3] as Call).properties)).toContain(
+      "briefingEvaluation",
+    );
+    expect(schemaOf(calls[3] as Call).required).not.toContain(
+      "briefingEvaluation",
+    );
     const store = h.store();
     const events = store.listEvents("001");
     const types = events.map((e) => e.type);
@@ -418,8 +446,26 @@ describe("the IC handoff at the context threshold", () => {
       incomingSessionId: "stub-session-3",
       contextTokens: 6500,
     });
+    expect(events[reviewed]?.payload.briefingEvaluation).toEqual(evaluation);
     expect(store.listUnits("001")[0]?.sessionId).toBe("stub-session-3");
+    // The review on the incoming session consumed the transfer: the next command turn
+    // resumes that session and is not asked to evaluate again.
+    expect(pendingTransfer(events)).toBeNull();
     store.close();
+    h.out.length = 0;
+    expect(await run(["incident", "review", "001"], h.ctx)).toBe(EXIT.ok);
+    expect(h.out.join("\n")).toContain(
+      [
+        "  command transferred (handoff): session stub-session-1 to session stub-session-3 after 6,500 tokens of context, document ",
+      ].join(""),
+    );
+    expect(h.out.join("\n")).toContain(
+      [
+        "    evaluated on its review: 1 of 2 item(s) accepted, 0 rewritten, 1 discarded",
+        "      accepted: find the handler",
+        "      discarded: the scroll logic",
+      ].join("\n"),
+    );
     // The next step resumes the successor and nothing else is handed off.
     h.out.length = 0;
     expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
@@ -427,6 +473,9 @@ describe("the IC handoff at the context threshold", () => {
       "IC command turn for period 2 (session stub-session-3): second period",
     );
     expect(h.calls().filter((c) => c.kind === "handoff")).toHaveLength(1);
+    const second = h.calls().filter((c) => c.kind === "command")[1] as Call;
+    expect(second.prompt).not.toContain("# Transfer of command");
+    expect(schemaOf(second).required).not.toContain("briefingEvaluation");
   });
 
   it("an outgoing session that cannot be resumed is released with the reason and the successor starts on the file alone", {
