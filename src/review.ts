@@ -809,6 +809,26 @@ type RoleTotals = { role: string; model: string | null; totals: Totals };
  * bounded at list rates where it did not. Nothing here is judged; that is the
  * session-backed review capability's job.
  */
+/** The runtime tag (R4-12) as `events` and `review` print it: a null, from before the tag, is named. */
+export function describeRuntimeTag(runtime: string | null): string {
+  return runtime ?? "none recorded (written before the tag)";
+}
+
+/**
+ * The runtimes an incident ran under (R4-12), each with the sequence range of the events
+ * it wrote, in the order the log switches between them; a run on one build is one entry.
+ */
+function runtimesLine(events: readonly Event[]): string {
+  const runs: { runtime: string | null; from: number; to: number }[] = [];
+  for (const e of events) {
+    const last = runs.at(-1);
+    if (last !== undefined && last.runtime === e.runtime) last.to = e.sequence;
+    else runs.push({ runtime: e.runtime, from: e.sequence, to: e.sequence });
+  }
+  if (runs.length === 0) return "runtimes: none";
+  return `runtimes: ${runs.length}: ${runs.map((r) => `${describeRuntimeTag(r.runtime)} (events ${r.from} to ${r.to})`).join(", ")}`;
+}
+
 export function renderReview(
   incident: Incident,
   events: readonly Event[],
@@ -1207,6 +1227,7 @@ export function renderReview(
   lines.push(
     `transfers of command: ${transfers.length}${transfers.length === 0 ? "" : ` (${transfers.map((e) => str(e.payload.kind) || "?").join(", ")})`}`,
   );
+  lines.push(runtimesLine(events));
   lines.push(
     `tasks: ${sessionsRan + deterministicRan} ran (${deterministicRan} deterministic, ${sessionsRan} sessions) of ${tasks.length} created${failedWithoutRunning === 0 ? "" : `, ${failedWithoutRunning} failed before running`}`,
   );
