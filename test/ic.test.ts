@@ -1357,6 +1357,32 @@ describe("the IC above the planner", () => {
       ],
     });
     expect(validateCommand(good, ctx())).toEqual([]);
+    // The assignments are the turn's tasks: a satisfied turn that still assigns work is
+    // refused as a plan would be, and a bad unit is reported once, by "Units exist".
+    expect(
+      validateCommand(
+        command({
+          incidentStatus: "satisfied",
+          assignTasks: [
+            { ...grepTask, unit: "i1-command", objective: "one more look" },
+          ],
+        }),
+        ctx(),
+      ).map((r) => [r.rule, r.reason]),
+    ).toEqual([
+      ["Status is earned", "satisfied while creating 1 task(s)"],
+      ["Status is earned", "satisfied with no observed claim"],
+    ]);
+    expect(
+      validateCommand(
+        command({
+          assignTasks: [
+            { ...grepTask, unit: "u-none", objective: "one more look" },
+          ],
+        }),
+        ctx(),
+      ).map((r) => r.rule),
+    ).toEqual(["Units exist", "Own unit"]);
     const commanded = applyCommand(store, { id: "i1" }, good, 1, {});
     expect(commanded.answered.map((a) => [a.question?.answer, a.unit])).toEqual(
       [

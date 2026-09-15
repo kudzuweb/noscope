@@ -899,7 +899,7 @@ export function validationContext(
   };
 }
 
-/** The rules a command turn is held to: it closes units and sets a status, and nothing else the other rules check. */
+/** The rules a command turn is held to: it closes units, assigns tasks under command and sets a status, and nothing else the other rules check. */
 const COMMAND_RULES: readonly RuleName[] = [
   "Units exist",
   "Closing is clean",
@@ -914,9 +914,11 @@ export type CommandRuleName = "Answers match" | "Deterministic only";
  * setting the incident's status, by checking it as a plan that creates nothing (DESIGN.md
  * Step 5), and to two rules of its own: every answer names a waiting unit and an open
  * request that unit raised, as the change report showed it; and every task it assigns is
- * deterministic (R4-6), since session work is a unit's. Its assignments pass the task
- * rules as a leader's do, and "Own unit" against the root. Returns the failing rules with
- * their reasons; the caller records `command.rejected` and ends the cycle.
+ * deterministic (R4-6), since session work is a unit's. Its assignments are the plan's
+ * tasks, so "Units exist" and "Status is earned" see them (a turn that assigns work and
+ * declares `satisfied` is refused as a plan would be), and they pass the other task rules
+ * as a leader's do, and "Own unit" against the root. Returns the failing rules with their
+ * reasons; the caller records `command.rejected` and ends the cycle.
  */
 export function validateCommand(
   turn: CommandTurn,
@@ -927,12 +929,15 @@ export function validateCommand(
     turn.assignTasks.length === 0
       ? []
       : [
-          ...RULES.filter((r) => TASK_RULES.includes(r.name)).flatMap(
-            ({ name, check }) =>
-              check(asPlan(turn.assignTasks), ctx).map((reason) => ({
-                rule: name,
-                reason,
-              })),
+          // "Units exist" runs once, over `commandAsPlan` below, so a bad unit is
+          // reported once.
+          ...RULES.filter(
+            (r) => TASK_RULES.includes(r.name) && r.name !== "Units exist",
+          ).flatMap(({ name, check }) =>
+            check(asPlan(turn.assignTasks), ctx).map((reason) => ({
+              rule: name,
+              reason,
+            })),
           ),
           ...(root === undefined
             ? []
@@ -985,10 +990,12 @@ export function validateCommand(
       reason: `unit ${unitId}'s request "${request}" is answered twice`,
     });
   }
+  // The assignments are the plan's tasks, so "Units exist" sees their unit and "Status
+  // is earned" refuses `satisfied` beside them.
   const commandAsPlan: ActionPlan = {
     createUnits: [],
     closeUnits: turn.closeUnits,
-    createTasks: [],
+    createTasks: turn.assignTasks,
     cancelTasks: [],
     questionsForHuman: turn.questionsForHuman,
     grantRequests: turn.grantRequests,
