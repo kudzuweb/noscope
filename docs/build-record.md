@@ -2844,3 +2844,99 @@ Not exactly to spec, with reasons:
   the planner snapshot and DESIGN.md Step 5's row follow; a validator test pins the
   plan's rejection, the IC's close of the same unit passing, and the close freed once
   `unit.revised` follows.
+
+## R4-4: Reassign (#PR, merged 2026-09-15)
+
+R4-4 of the round 4 plan, on R4-2's verdicts (which already close a reassigned unit
+through `verdictCloses`) and R4-3's revise path. Built: a `reassign` verdict hands the
+unit's slice on. `applyCommand` in `src/runtime.ts` records, after the verdicts'
+`report.reviewed` and before the closes, one `unit.reassigned` per reassign verdict
+(`reassignmentsOf`; actor `ic`; payload `reassignmentId`, numbered in the incident as
+`<incident>-rNN` after `-qNN` and `-tNN`, `reportId`, `unitId`, the unit's `objective`,
+`instructions`, `why`, `claims`, the ids of every claim whose provenance task is the
+unit's, `cycle`, and `dropped`, true when the instructions begin `drop:`,
+`dropsSlice`), then closes the unit through `store.closeUnit` as R4-2 did (its session
+demobilized on `unit.closed`) and cancels its open tasks (`task.cancelled` by the runtime
+with `rationale: reassign: <why>` and the `reassignmentId`; PR 45's review found that
+`unit.close` sets status only). `Commanded` carries `reassignments` and
+`cancelledTasks`, and `step` prints `reassignment <id> recorded from unit <u> with N
+claim(s); the next plan gives it to a new unit`, or `dropped by the IC: <instructions>`,
+and `task <id> cancelled`. `src/leader.ts` gains `Reassignment`, `reassignments` (every
+`unit.reassigned`, each with `takenBy` from a later `reassignment.taken`),
+`openReassignments` (recorded, not dropped, not taken) and `reassignmentTakenBy`. The
+planner's input (`src/planner.ts`) gains section 11, "Reassignments", after the
+situation: each open one with its id, the closed unit and objective, the cycle and
+report, the instructions, the why and the claim ids, or "(none)"; the system prompt says
+eleven sections and what section 11 asks. `UnitProposal` gains `takes`, optional, the
+id of an open reassignment; the rule "Reassignments taken" (a `PLANNER_RULES` line, so a
+`RuleName`, checked on plans only) refuses a `takes` naming no open reassignment, a
+reassignment taken twice, and an open reassignment no new unit takes;
+`ValidationContext` gains `reassignments`, the open ones. `applyPlan` records
+`reassignment.taken` (the reassignment, the new unit's id, `fromUnitId`) after the
+taking unit's `unit.created`, and `Applied.taken` lets `step` print `(takes reassignment
+<id>)` on the unit it created and on the drafted proposal. The dispatcher's
+`orientation` (`src/dispatcher.ts`) looks the unit's reassignment up
+(`reassignmentTakenBy`) and `renderLeaderOrientation` renders it in the unit's own lines,
+on a turn's first call and before a task brief run inside the session alike: the
+reassignment's id, the closed unit and its objective, the report reviewed, the
+instructions, the why, and the claims by id with each one's subject, predicate, basis
+and confidence from the store. `IC_ROLE` says a reassignment is recorded with the
+instructions and the claims, that the next plan must create a unit that takes it, that
+the taking leader reads the instructions, and that `drop:` drops the slice instead.
+`incident review` (`src/review.ts`) lists the recording and the taking in their cycles
+and, after the revisions, `reassignments: N` with one line each: the unit, the cycle,
+the claim count, taken by which unit, dropped, or open, and the instructions. Two new
+`EventType`s (49 now). DESIGN.md Step 2 (the events), Step 4 (the verdict, the
+application order, section 11, `takes`), Step 5 (the rule), Step 6 (the orientation)
+and Step 7 (`step`, `review`), and the architecture page's IC and planner nodes and
+cycle steps 2, 3, 5, 6 and 7 follow.
+
+Tests: a stub run (`test/ic.test.ts`) where the leader reports `progress` with a second
+grep still pending, the IC reassigns with instructions, `step` prints the verdict, the
+close, the reassignment with its one claim and the cancelled task, the planner's second
+input carries section 11 with the reassignment (the first "(none)"), the draft without
+a taking unit is rejected on "Reassignments taken" with the reason, `unit.reassigned`'s
+actor and payload and its place between `report.reviewed` and `unit.closed`,
+`task.cancelled`'s payload, the tasks' statuses, the third cycle's plan with a `takes`
+applied (printed on the proposal and the unit), `reassignment.taken`'s payload and its
+place between `unit.created` and `plan.applied`, the new unit's first call opening with
+the orientation lines and the claim's line, and `review`'s cycle lines, verdict counts and
+reassignment line; a unit test on two reported units where one reassign carries
+instructions and the other `drop:`, both close, both are recorded (one `dropped`), only
+the first is open, a plan taking nothing is refused with the reason, a `takes` on the
+dropped one is refused beside it, two units taking one is refused, a taking plan passes,
+`applyPlan` records `reassignment.taken` with `fromUnitId`, `reassignmentTakenBy` finds
+it, and the next plan owes nothing. The planner snapshot and the rule count (14) and
+event count (49) pins follow.
+
+Not exactly to spec, with reasons:
+
+- A reassignment is an event pair, not a table: `unit.reassigned` records it and
+  `reassignment.taken` closes it, as `report.reviewed` and `unit.revised` pair in R4-3;
+  no schema version rises, and a replay reads the same set. "Open" is recorded, not
+  dropped and not taken.
+- A `drop:` verdict records the reassignment with `dropped: true` rather than writing
+  nothing or a separate event: the record shows the IC took the slice from the unit and
+  chose to drop it, `review` counts it, and one event carries both facts. The test is
+  `/^drop:/i` on the trimmed instructions.
+- The reassignment's id is `<incident>-rNN`, numbered in the incident like questions
+  and tasks, not the `report.reviewed` event's UUID: the planner names it in `takes`,
+  and a test's plan literal can name `001-r01` where it could not name a UUID, so the
+  stub needed no change for the taking plan; the reassign verdict is scripted as R4-2
+  built it (`reportId: ""` with the unit).
+- Section 11 is appended after the situation rather than inserted mid-file: both
+  sections change every cycle, so the cached prefix is the same either way, and the
+  existing section numbers, which the system prompt and the docs name, stay put. R4-5
+  folds it into the situation.
+- Only a reassign verdict cancels the closed unit's open tasks, as the block says; an
+  accepted verdict still leaves them pending, as R4-2 built it, for a plan to cancel.
+- The orientation renders each claim's subject, predicate, basis and confidence beside
+  its id, not the id alone: the block says "by reference", the acceptance says the claim
+  ids, and one line per claim costs little and tells the leader what the id is before it
+  opens the file; the object is never rendered.
+- The rule is not applied to a command turn or a leader's assignments, which create no
+  units; a plan that blocks or fails with a reassignment open is still held to it, since
+  the IC decides what happens to the slice through the verdict and the plan carries it
+  out.
+- `incident show` is unchanged: the open reassignments are in the planner's section 11,
+  in `step`'s lines and in `review`, and R4-5 puts them in the situation `show` prints.
