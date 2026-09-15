@@ -342,9 +342,70 @@ function cycles(events: readonly Event[]): Cycle[] {
   return result;
 }
 
-/** The IC's own calls in a cycle: its command turn and its reviews, each with the seat's model and the call's usage. */
+/** A handoff's release of the outgoing session: `leader.released` carrying the document, the context and the call's usage. */
+const isHandoffRelease = (e: Event): boolean =>
+  e.type === "leader.released" && e.payload.handoff !== undefined;
+
+/** A transfer of command as review lists it: its kind, the sessions, the context that triggered it and the document's length. */
+function describeTransfer(e: Event): string {
+  const contextTokens = e.payload.contextTokens;
+  const document = e.payload.document;
+  const length = document === undefined ? 0 : JSON.stringify(document).length;
+  return `command transferred (${str(e.payload.kind) || "?"}): session ${str(e.payload.outgoingSessionId) || "(none)"} to session ${str(e.payload.incomingSessionId) || "(none)"}${typeof contextTokens === "number" ? ` after ${n(contextTokens)} tokens of context` : ""}, document ${n(length)} chars`;
+}
+
+/** The verdicts an IC turn recorded on what it was handed: `briefingEvaluation` on a command turn's `turn`, or on a review. */
+function evaluationOf(e: Event): { verdict: string; item: string }[] | null {
+  const holder =
+    e.type === "command.turned"
+      ? (e.payload.turn as { briefingEvaluation?: unknown } | undefined)
+      : (e.payload as { briefingEvaluation?: unknown });
+  const verdicts = holder?.briefingEvaluation;
+  if (!Array.isArray(verdicts)) return null;
+  return verdicts.map((v) => ({
+    verdict: str((v as { verdict?: unknown }).verdict),
+    item: str((v as { item?: unknown }).item),
+  }));
+}
+
+/**
+ * How the transfer's document was evaluated: by the first accepted command turn or review
+ * on the incoming session (a handoff), or by the first accepted command turn after the
+ * transfer (the initial kind, whose incoming session is not yet known); the counts by
+ * verdict and each item, or that it has not been evaluated yet.
+ */
+function describeEvaluation(
+  transfer: Event,
+  events: readonly Event[],
+): string[] {
+  const incoming = transfer.payload.incomingSessionId;
+  const evaluated = events.find((e) => {
+    if (e.type === "command.turned" && e.payload.rejected === true)
+      return false;
+    if (e.type !== "command.turned" && e.type !== "plan.reviewed") return false;
+    if (evaluationOf(e) === null) return false;
+    return typeof incoming === "string"
+      ? str(e.payload.sessionId) === incoming
+      : e.sequence > transfer.sequence;
+  });
+  const verdicts = evaluated === undefined ? null : evaluationOf(evaluated);
+  if (verdicts === null) return ["    evaluated: not yet"];
+  const count = (kind: string) =>
+    verdicts.filter((v) => v.verdict === kind).length;
+  return [
+    `    evaluated on its ${evaluated?.type === "plan.reviewed" ? "review" : "command turn"}: ${count("accepted")} of ${verdicts.length} item(s) accepted, ${count("rewritten")} rewritten, ${count("discarded")} discarded`,
+    ...verdicts.map((v) => `      ${v.verdict}: ${clip(v.item)}`),
+  ];
+}
+
+/**
+ * The IC's own calls in a cycle: its command turn, its reviews and its handoff document
+ * (the outgoing session's last call, on `leader.released`), each with the seat's model
+ * and the call's usage; and each transfer of command, which spends nothing itself.
+ */
 function icLines(
   cycle: Cycle,
+  events: readonly Event[],
   roleTotals: (role: string, model: string | null) => Totals,
   cost: CostSum,
   verdicts: Map<string, number>,
@@ -356,11 +417,19 @@ function icLines(
       ? [cycle.opened]
       : []),
     ...cycle.events.filter(
-      (e) => e.type === "plan.reviewed" || e.type === "command.failed",
+      (e) =>
+        e.type === "plan.reviewed" ||
+        e.type === "command.failed" ||
+        e.type === "command.transferred" ||
+        isHandoffRelease(e),
     ),
   ];
   let model: string | null = null;
   for (const e of turns) {
+    if (e.type === "command.transferred") {
+      lines.push(`  ${describeTransfer(e)}`, ...describeEvaluation(e, events));
+      continue;
+    }
     model = str(e.payload.model) || null;
     const usage = (e.payload.usage ?? {}) as Partial<Usage>;
     const turnCost = costOf(usage, model);
@@ -369,6 +438,9 @@ function icLines(
     let move: string;
     if (e.type === "command.failed") {
       move = `${str(e.payload.turn)} turn failed: ${clip(str(e.payload.reason))}`;
+    } else if (e.type === "leader.released") {
+      const handoff = e.payload.handoff as { contextTokens?: unknown };
+      move = `wrote its handoff${typeof handoff.contextTokens === "number" ? ` after ${n(handoff.contextTokens)} tokens of context` : ""}`;
     } else if (e.type === "command.turned") {
       const turn = e.payload.turn as
         | {
@@ -462,25 +534,27 @@ function sizeUpLines(
 
 /** How much of the briefing the IC kept: the verdicts on its first accepted command turn that evaluated one, counted by kind. */
 function briefingKept(events: readonly Event[]): string {
-  const briefed = events.some((e) => e.type === "incident.briefed");
+  const briefed = events.find((e) => e.type === "incident.briefed");
   const failed = events.some(
     (e) => e.type === "command.failed" && e.payload.seat === "initial_ic",
   );
+  if (briefed === undefined)
+    return failed
+      ? "briefing: none (the size-up failed)"
+      : "briefing: none (no size-up)";
+  // The first accepted turn after the briefing that evaluated: a handoff's verdicts, on a
+  // later turn, are the handoff document's and are listed with its transfer.
   const evaluated = events.find(
     (e) =>
       e.type === "command.turned" &&
+      e.sequence > briefed.sequence &&
       e.payload.rejected !== true &&
       Array.isArray(
         (e.payload.turn as { briefingEvaluation?: unknown } | undefined)
           ?.briefingEvaluation,
       ),
   );
-  if (evaluated === undefined)
-    return briefed
-      ? "briefing kept: not evaluated yet"
-      : failed
-        ? "briefing: none (the size-up failed)"
-        : "briefing: none (no size-up)";
+  if (evaluated === undefined) return "briefing kept: not evaluated yet";
   const verdicts = list(
     (evaluated.payload.turn as { briefingEvaluation: unknown[] })
       .briefingEvaluation,
@@ -597,7 +671,7 @@ export function renderReview(
       verdict = `ic set the incident ${str(cycle.opened.payload.incidentStatus)}`;
     else verdict = "no verdict recorded";
     lines.push(`cycle ${cycle.number}  ${cycle.opened.createdAt}  ${verdict}`);
-    lines.push(...icLines(cycle, roleTotals, cost, verdicts));
+    lines.push(...icLines(cycle, events, roleTotals, cost, verdicts));
 
     for (const proposed of cycle.proposals) {
       const p = proposed.payload;
@@ -832,6 +906,10 @@ export function renderReview(
       : `ic verdicts: ${reviews} review(s): ${["approve", "correct", "amend"].map((v) => `${verdicts.get(v) ?? 0} ${v}`).join(", ")}`,
   );
   lines.push(briefingKept(events));
+  const transfers = events.filter((e) => e.type === "command.transferred");
+  lines.push(
+    `transfers of command: ${transfers.length}${transfers.length === 0 ? "" : ` (${transfers.map((e) => str(e.payload.kind) || "?").join(", ")})`}`,
+  );
   lines.push(
     `tasks: ${sessionsRan + deterministicRan} ran (${deterministicRan} deterministic, ${sessionsRan} sessions) of ${tasks.length} created${failedWithoutRunning === 0 ? "" : `, ${failedWithoutRunning} failed before running`}`,
   );

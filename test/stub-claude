@@ -21,9 +21,18 @@
 // gets one default verdict added when the answer carries none. The initial IC's size-up,
 // recognised by the IncidentBriefing schema (an `incomingCommander` property), gets
 // NOSCOPE_STUB_BRIEFING, or by default an investigation briefing with one objective, one
-// unit sketched, no questions and claude-opus-5 as the incoming commander. NOSCOPE_STUB_CALLS,
+// unit sketched, no questions and claude-opus-5 as the incoming commander. The IC's
+// handoff, recognised by the HandoffDocument schema (a `nextMove` property), gets
+// NOSCOPE_STUB_HANDOFF or by default a one-line document. Every call ends with one
+// assistant line whose message usage is the context of the call's last message (which
+// the provider records as contextTokens): input_tokens is NOSCOPE_STUB_IC_CONTEXT on the
+// IC's calls (command, review, handoff), or the next entry of NOSCOPE_STUB_IC_CONTEXTS
+// (counter file NOSCOPE_STUB_IC_CONTEXT_COUNTER, the last entry repeating), or 1000 like
+// every call; the envelope's usage repeats the same figures. A fresh call's session id is stub-session, or
+// stub-session-N when NOSCOPE_STUB_SESSION_COUNTER names a counter file, so a test can tell
+// one fresh session from the next. NOSCOPE_STUB_CALLS,
 // when set, gets one JSON line appended per call: its kind (planner, leader, command,
-// review, size-up, task), the resumed id, args and prompt.
+// review, size-up, handoff, task), the resumed id, args and prompt.
 // NOSCOPE_STUB_FAIL and NOSCOPE_STUB_EXIT leave a leader's and the IC's turns alone, so a test
 // of a failing task session still gets its leader's turn; NOSCOPE_STUB_LEADER_FAIL fails every
 // turn instead.
@@ -72,14 +81,23 @@ if (process.env.NOSCOPE_STUB_LOG)
 
 const systemPrompt = args[args.indexOf("--system-prompt") + 1] ?? "";
 const resumed = args.indexOf("--resume");
-const sessionId = resumed === -1 ? "stub-session" : args[resumed + 1];
+function freshSessionId() {
+  const counter = process.env.NOSCOPE_STUB_SESSION_COUNTER ?? "";
+  if (!counter) return "stub-session";
+  const i = existsSync(counter) ? Number(readFileSync(counter, "utf8")) : 0;
+  writeFileSync(counter, String(i + 1));
+  return `stub-session-${i + 1}`;
+}
+const sessionId = resumed === -1 ? freshSessionId() : args[resumed + 1];
 const isPlanner = systemPrompt.startsWith("You are the Planning Section");
 const schema = JSON.parse(args[args.indexOf("--json-schema") + 1] ?? "{}");
 const isLeaderTurn = Array.isArray(schema.properties?.kind?.enum) && schema.properties.kind.enum.includes("report");
 const isCommandTurn = schema.properties?.periodObjectives !== undefined;
 const isReviewTurn = schema.properties?.verdict !== undefined;
 const isSizeUp = schema.properties?.incomingCommander !== undefined;
-const isTurn = isLeaderTurn || isCommandTurn || isReviewTurn || isSizeUp;
+const isHandoff = schema.properties?.nextMove !== undefined;
+const isIcCall = isCommandTurn || isReviewTurn || isHandoff;
+const isTurn = isLeaderTurn || isIcCall || isSizeUp;
 if (calls)
   appendFileSync(
     calls,
@@ -94,6 +112,8 @@ if (calls)
               ? "review"
               : isSizeUp
                 ? "size-up"
+                : isHandoff
+                  ? "handoff"
                 : "task",
       resume: resumed === -1 ? null : args[resumed + 1],
       concurrent,
@@ -165,6 +185,19 @@ const nextReview = () =>
     rationale: "stub review",
   }));
 
+const nextHandoff = () =>
+  nextOf("NOSCOPE_STUB_HANDOFF", "", "", () => ({
+    period: { objectives: ["pursue the incident objective"], priorities: [], why: "stub handoff" },
+    units: [],
+    hypothesis: { statement: "stub hypothesis", claims: [] },
+    setAside: [],
+    nextMove: "continue",
+  }));
+
+const icContext = isIcCall
+  ? nextOf("NOSCOPE_STUB_IC_CONTEXT", "NOSCOPE_STUB_IC_CONTEXTS", "NOSCOPE_STUB_IC_CONTEXT_COUNTER", () => 1000)
+  : 1000;
+
 function nextTurn() {
   if (process.env.NOSCOPE_STUB_TURNS) {
     const turns = JSON.parse(process.env.NOSCOPE_STUB_TURNS);
@@ -212,7 +245,9 @@ const planned = isPlanner
         ? nextReview()
         : isSizeUp
           ? nextBriefing()
-          : null;
+          : isHandoff
+            ? nextHandoff()
+            : null;
 const output = planned ?? nextOutput();
 const failing = isTurn
   ? Boolean(process.env.NOSCOPE_STUB_LEADER_FAIL)
@@ -235,13 +270,13 @@ const envelope = failing
       duration_ms: 1500,
       total_cost_usd: 0.0123,
       usage: {
-        input_tokens: 1000,
+        input_tokens: icContext,
         cache_creation_input_tokens: 200,
         cache_read_input_tokens: 300,
         output_tokens: 42,
       },
     };
-const lines = [{ type: "system", subtype: "init", session_id: "stub-session" }];
+const lines = [{ type: "system", subtype: "init", session_id: sessionId }];
 const tools = JSON.parse(process.env.NOSCOPE_STUB_TOOLS ?? "[]");
 tools.forEach((call, i) => {
   const id = `toolu_stub_${i + 1}`;
@@ -278,6 +313,24 @@ if (process.env.NOSCOPE_STUB_EXIT && !isTurn) {
   process.stdout.write(`${lines.map((l) => JSON.stringify(l)).join("\n")}\n`);
   process.exit(Number(process.env.NOSCOPE_STUB_EXIT));
 }
+// The answering message: its usage is the context the provider records for the session.
+lines.push({
+  type: "assistant",
+  session_id: sessionId,
+  parent_tool_use_id: null,
+  timestamp: new Date(1_757_900_000_000 + tools.length * 2_000).toISOString(),
+  message: {
+    role: "assistant",
+    id: "msg_stub_answer",
+    content: [{ type: "text", text: "answered" }],
+    usage: {
+      input_tokens: icContext,
+      cache_creation_input_tokens: 200,
+      cache_read_input_tokens: 300,
+      output_tokens: 42,
+    },
+  },
+});
 const sleepMs = isTurn ? 0 : Number(process.env.NOSCOPE_STUB_SLEEP_MS ?? 0);
 if (sleepMs > 0) {
   process.stdout.write(`${lines.map((l) => JSON.stringify(l)).join("\n")}\n`);

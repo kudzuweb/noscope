@@ -5,7 +5,16 @@ import { listCapabilities } from "../capabilities/index.js";
 import { type Context, EXIT, type Handler } from "../context.js";
 import { dispatch } from "../dispatcher.js";
 import { READ_ONLY_COMMANDS } from "../equipment/index.js";
-import { briefingOf, commandTurn, recordTransfer, reviewTurn } from "../ic.js";
+import {
+  briefingOf,
+  commandTurn,
+  type Handoff,
+  type HandoffOutcome,
+  pendingTransfer,
+  prepareHandoff,
+  recordTransfer,
+  reviewTurn,
+} from "../ic.js";
 import { IC_MODEL, IC_PROVIDER, openRequestsByUnit } from "../leader.js";
 import {
   type ActionPlan,
@@ -421,6 +430,14 @@ function renderIncidentFile(
   lines.push(
     `budget: tokens ${incident.budget.tokens ?? "unlimited"}, seconds ${incident.budget.seconds ?? "unlimited"}; spent tokens ${usage.tokens}, seconds ${usage.seconds.toFixed(1)}${spent.costUsd === undefined ? "" : `, task cost $${spent.costUsd.toFixed(2)} at list price`}`,
   );
+  const root = units.find((u) => u.parentId === null);
+  const transfers = events.filter(
+    (e) => e.type === "command.transferred",
+  ).length;
+  if (root !== undefined)
+    lines.push(
+      `IC: ${root.leader.provider}/${root.leader.model}, session ${root.sessionId ?? "none yet"}; ${transfers} transfer(s) of command`,
+    );
   lines.push("");
   lines.push(
     `units: ${units.filter((u) => u.status === "active").length} active, ${units.filter((u) => u.status === "waiting").length} waiting, ${units.filter((u) => u.status === "closed").length} closed`,
@@ -592,14 +609,33 @@ function printPlan(ctx: Context, plan: ActionPlan): void {
   ctx.io.out(`  status: ${plan.incidentStatus}`);
 }
 
+/** What a handoff check came to, as `step` prints it: the outgoing session and what triggered it, a pending one resumed, or a lost session released. */
+function printHandoff(ctx: Context, outcome: HandoffOutcome): Handoff | null {
+  if (outcome.kind === "handoff") {
+    const h = outcome.handoff;
+    ctx.io.out(
+      outcome.resumed
+        ? `IC handoff pending from session ${h.outgoingSessionId}: the successor is briefed with its document`
+        : `IC handoff: session ${h.outgoingSessionId} wrote its handoff document after ${h.contextTokens} tokens of context (threshold ${h.threshold}); command passes to a fresh session`,
+    );
+    return h;
+  }
+  if (outcome.kind === "released")
+    ctx.io.out(
+      `IC session ${outcome.sessionId} released after ${outcome.contextTokens} tokens of context: ${outcome.reason}; the next call starts fresh on the file alone`,
+    );
+  return null;
+}
+
 /**
  * One cycle, the eight steps of DESIGN.md's cycle: (1) the IC's briefing is rendered, (2)
  * the IC's command turn sets the period or ends the incident, (3) the planner drafts, (4)
  * the IC reviews the draft once, with one redraft on a correction, (5) the validator checks
  * the plan to apply, (6) it is applied, (7) the units run under their leaders to their
- * reports or to a change of picture, (8) stop. Prints each turn, the verdicts, what
- * changed and what ran. A provider that cannot run throws; the command decides the exit
- * code.
+ * reports or to a change of picture, (8) stop. Before the command turn and before each
+ * review, command is handed off when the IC's last call reached the context threshold.
+ * Prints each turn, the verdicts, what changed and what ran. A provider that cannot run
+ * throws; the command decides the exit code.
  */
 async function cycle(
   store: Store,
@@ -611,15 +647,35 @@ async function cycle(
   const icOptions = { cwd: ctx.cwd, env: ctx.env };
   const number = cycleOf(store.listEvents(incident.id)) + 1;
 
-  const command = await commandTurn(store, incident, providers, icOptions);
+  const handoff = printHandoff(
+    ctx,
+    await prepareHandoff(store, incident, icOptions),
+  );
+  // What the turn's evaluation is of: the handoff in flight, or the transfer pending in the log.
+  const evaluating =
+    handoff !== null ||
+    pendingTransfer(store.listEvents(incident.id))?.payload.kind === "handoff"
+      ? "handoff"
+      : "briefing";
+  const command = await commandTurn(
+    store,
+    incident,
+    providers,
+    icOptions,
+    handoff,
+  );
   const turn = command.output;
   ctx.io.out(
     `IC command turn for period ${number} (session ${command.sessionId}): ${turn.rationale}`,
   );
+  if (handoff !== null)
+    ctx.io.out(
+      `  command transferred from session ${handoff.outgoingSessionId} to session ${command.sessionId}`,
+    );
   if (turn.discrepancy !== undefined)
     ctx.io.out(`  discrepancy: ${turn.discrepancy}`);
   for (const v of turn.briefingEvaluation ?? [])
-    ctx.io.out(`  briefing: ${v.verdict} ${v.item}: ${v.why}`);
+    ctx.io.out(`  ${evaluating}: ${v.verdict} ${v.item}: ${v.why}`);
   for (const o of turn.periodObjectives) ctx.io.out(`  objective: ${o}`);
   for (const p of turn.priorities) ctx.io.out(`  priority: ${p}`);
   for (const c of turn.closeUnits)
@@ -684,15 +740,33 @@ async function cycle(
     `plan drafted (session ${draft.sessionId}): ${draft.plan.rationale}`,
   );
   printPlan(ctx, draft.plan);
-  let review = await reviewTurn(
-    store,
-    current,
-    providers,
-    draft.plan,
-    null,
-    icOptions,
-  );
-  ctx.io.out(`IC review: ${review.output.verdict}: ${review.output.rationale}`);
+  const reviewAfterHandoff = async (
+    proposed: ActionPlan,
+    corrections: string | null,
+  ) => {
+    const before = printHandoff(
+      ctx,
+      await prepareHandoff(store, current, icOptions),
+    );
+    const read = await reviewTurn(
+      store,
+      current,
+      providers,
+      proposed,
+      corrections,
+      icOptions,
+      before,
+    );
+    ctx.io.out(`IC review: ${read.output.verdict}: ${read.output.rationale}`);
+    if (before !== null)
+      ctx.io.out(
+        `  command transferred from session ${before.outgoingSessionId} to session ${read.sessionId}`,
+      );
+    for (const v of read.output.briefingEvaluation ?? [])
+      ctx.io.out(`  handoff: ${v.verdict} ${v.item}: ${v.why}`);
+    return read;
+  };
+  let review = await reviewAfterHandoff(draft.plan, null);
   let corrections: string | null = null;
   let proposed = draft.plan;
   if (review.output.verdict === "correct") {
@@ -708,17 +782,7 @@ async function cycle(
       `plan redrafted (session ${redraft.sessionId}): ${proposed.rationale}`,
     );
     printPlan(ctx, proposed);
-    review = await reviewTurn(
-      store,
-      current,
-      providers,
-      proposed,
-      corrections,
-      icOptions,
-    );
-    ctx.io.out(
-      `IC review: ${review.output.verdict}: ${review.output.rationale}`,
-    );
+    review = await reviewAfterHandoff(proposed, corrections);
   }
   const plan =
     review.output.verdict === "amend" && review.output.plan !== undefined

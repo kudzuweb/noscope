@@ -659,7 +659,14 @@ describe("the initial IC and the transfer of command", () => {
     expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
     const store = h.store();
     const document = {
-      periodObjectives: ["find the handler"],
+      period: {
+        objectives: ["find the handler"],
+        priorities: [],
+        why: "the objective names it",
+      },
+      units: [],
+      hypothesis: { statement: "the handler is in a.txt", claims: [] },
+      setAside: [],
       nextMove: "task the grep",
     };
     recordTransfer(store, "001", {
@@ -687,16 +694,21 @@ describe("the initial IC and the transfer of command", () => {
     if (incident === undefined) throw new Error("incident exists");
     const text = renderCommandBriefing(store, incident, [fakeProvider]);
     expect(text).toContain(
-      "# Transfer of command: the outgoing IC's handoff document\nWritten by the outgoing IC on claude-code/claude-sonnet-5 (session stub-session) before its session reached the context threshold. Nothing in it binds you.\n",
+      "# Transfer of command: the outgoing IC's handoff document\nYou take command from the previous IC session in this seat, under the same role text, on claude-code/claude-sonnet-5 (session stub-session), whose context reached 130,000 tokens of the 120,000-token handoff threshold;",
     );
-    expect(text).toContain('"nextMove": "task the grep"');
+    expect(text).toContain("next move: task the grep");
     expect(text).toContain(
-      "# Your command turn for operational period 2\nFirst, evaluate the handoff document you took command with: for each period objective, each unit's state and the next move it names, say in briefingEvaluation",
+      "# Your command turn for operational period 2\nFirst, evaluate the handoff document you took command with: for each period objective and priority, each unit's state, the hypothesis, each thing set aside and the next move, say in briefingEvaluation",
     );
     store.close();
     h.out.length = 0;
     await run(["incident", "review", "001"], h.ctx);
-    expect(h.out.join("\n").match(/command transferred \(/g)).toHaveLength(1);
+    // The size-up lines carry the initial transfer alone; the handoff is listed in its cycle.
+    const review = h.out.join("\n");
+    expect(review.match(/command transferred \(/g)).toHaveLength(2);
+    expect(review).toContain(
+      "  command transferred (handoff): session stub-session to session fresh-session after 130,000 tokens of context, document ",
+    );
     h.out.length = 0;
     await run(["incident", "show", "001"], h.ctx);
     expect(h.out).toContain(
