@@ -37,7 +37,9 @@
 // of a failing task session still gets its leader's turn; NOSCOPE_STUB_LEADER_FAIL fails every
 // turn instead.
 // NOSCOPE_STUB_SLEEP_MS makes a task call sleep that long after its tool lines, before the
-// envelope, so a bound can kill it. A --resume call answers with the id it was given as
+// envelope, so a bound can kill it or a run can be held in flight; NOSCOPE_STUB_SLEEP_IF
+// narrows the sleep to task calls whose prompt contains that text (a task's objective, say),
+// so one task of a pass is slow and the rest are not. A --resume call answers with the id it was given as
 // session_id, as the real binary does; NOSCOPE_STUB_RESUME_FAIL names a session id whose
 // resume exits 1 before any output, as the binary does for a session it cannot find.
 // NOSCOPE_STUB_REFUSE names call ordinals (1-based, comma-separated, counted in the file
@@ -385,7 +387,11 @@ lines.push({
     },
   },
 });
-const sleepMs = isTurn ? 0 : Number(process.env.NOSCOPE_STUB_SLEEP_MS ?? 0);
+const sleepIf = process.env.NOSCOPE_STUB_SLEEP_IF ?? "";
+const sleepMs =
+  isTurn || (sleepIf !== "" && !prompt.includes(sleepIf))
+    ? 0
+    : Number(process.env.NOSCOPE_STUB_SLEEP_MS ?? 0);
 if (sleepMs > 0) {
   process.stdout.write(`${lines.map((l) => JSON.stringify(l)).join("\n")}\n`);
   setTimeout(() => {

@@ -12,6 +12,7 @@ import {
 import {
   answeredRequestsOf,
   describeRefusedCall,
+  endedSinceLastTurn,
   fallbackModel,
   LEADER_ACTOR,
   LEADER_TURN_SCHEMA,
@@ -129,34 +130,64 @@ function withinSeconds<T>(
   return Promise.race([run, bound]).finally(() => clearTimeout(timer));
 }
 
-/**
- * Whether the incident's budget has room for this task: spend so far plus the task's own
- * bound where it sets one (the validator has already checked it fits), otherwise the
- * capability's typical cost, against the incident's bound.
- */
-function overBudget(
-  incident: Incident,
-  usage: Usage,
-  task: Task,
-  capability: Capability,
-): string | null {
-  const tokens = incident.budget.tokens;
-  const spentTokens = usage.inputTokens + usage.outputTokens;
-  const needTokens = task.budget.tokens ?? capability.cost.typicalTokens ?? 0;
-  if (tokens !== undefined && spentTokens + needTokens > tokens)
-    return `tokens: ${spentTokens} spent of ${tokens}, ${task.id} needs ${needTokens}`;
-  const seconds = incident.budget.seconds;
-  const needSeconds =
-    task.budget.seconds ?? capability.cost.typicalSeconds ?? 0;
-  if (seconds !== undefined && usage.seconds + needSeconds > seconds)
-    return `seconds: ${usage.seconds.toFixed(1)} spent of ${seconds}, ${task.id} needs ${needSeconds}`;
-  return null;
+/** The most a task in flight will spend, held against the budget until its usage is recorded. */
+type Reservation = { tokens: number; seconds: number };
+
+/** What a task will spend at most: its own bound where it sets one (the validator has already checked it fits), otherwise the capability's typical cost. */
+function reservationFor(task: Task, capability: Capability): Reservation {
+  return {
+    tokens: task.budget.tokens ?? capability.cost.typicalTokens ?? 0,
+    seconds: task.budget.seconds ?? capability.cost.typicalSeconds ?? 0,
+  };
 }
 
 /**
- * v0 runs one task at a time in one process, so a task still `running` when a pass starts
- * was left by a pass that died mid-run; it is failed with that reason rather than skipped
- * forever, and the planner can reissue it.
+ * Whether the incident's budget has room for this task. `none` when what is spent plus the
+ * task's own reservation is over the bound: the stop, as in round 3, with its reason.
+ * `deferred` when the task fits what is spent but not what is spent plus what the tasks in
+ * flight are held to: the task waits for a landing, since a reservation is a bound, not a
+ * spend, and the room may be there once the run's usage is recorded. `fits` otherwise.
+ */
+type Room =
+  | { room: "fits" }
+  | { room: "deferred" }
+  | { room: "none"; reason: string };
+
+function budgetRoom(
+  incident: Incident,
+  usage: Usage,
+  held: Reservation,
+  task: Task,
+  capability: Capability,
+): Room {
+  const need = reservationFor(task, capability);
+  const tokens = incident.budget.tokens;
+  const spentTokens = usage.inputTokens + usage.outputTokens;
+  if (tokens !== undefined && spentTokens + need.tokens > tokens)
+    return {
+      room: "none",
+      reason: `tokens: ${spentTokens} spent of ${tokens}, ${task.id} needs ${need.tokens}`,
+    };
+  const seconds = incident.budget.seconds;
+  if (seconds !== undefined && usage.seconds + need.seconds > seconds)
+    return {
+      room: "none",
+      reason: `seconds: ${usage.seconds.toFixed(1)} spent of ${seconds}, ${task.id} needs ${need.seconds}`,
+    };
+  if (
+    (tokens !== undefined &&
+      spentTokens + held.tokens + need.tokens > tokens) ||
+    (seconds !== undefined &&
+      usage.seconds + held.seconds + need.seconds > seconds)
+  )
+    return { room: "deferred" };
+  return { room: "fits" };
+}
+
+/**
+ * Every pass runs in one process and lands every run before it returns, so a task still
+ * `running` when a pass starts was left by a pass that died mid-run; it is failed with that
+ * reason rather than skipped forever, and the planner can reissue it.
  */
 function failInterrupted(store: Store, incident: Incident, actor: string) {
   for (const t of store.listTasks(incident.id))
@@ -457,6 +488,9 @@ async function runTask(
   };
 }
 
+/** An ending as it lands in a pass: the task's ending, and the refusals when its session was refused on both models (R4-7), for the unit's report. */
+type Landed = TaskEnding & { refusals?: readonly RefusedCall[] };
+
 /** What a turn came to: the leader's move, the session it ran on (null for a report the runtime wrote after two refusals), the unit as it now stands (the session recorded on the first call), and how many tasks the leader assigned and the validator let through. */
 type Turned = {
   turn: LeaderTurn;
@@ -500,7 +534,7 @@ function reportRefusals(
   return report;
 }
 
-/** The reasons the validator refused this unit's leader's last assignment, since the leader's last turn, for its next prompt. */
+/** The reasons the validator refused this unit's leader's last assignment, since the leader's last turn, for its next prompt; a report the runtime wrote after two refusals is not a turn of the leader's. */
 function refusedSinceLastTurn(
   events: readonly Event[],
   unitId: string,
@@ -508,7 +542,10 @@ function refusedSinceLastTurn(
   const reasons: string[] = [];
   for (const e of events) {
     if (e.payload.unitId !== unitId) continue;
-    if (e.type === "unit.continued" || e.type === "unit.reported")
+    if (
+      (e.type === "unit.continued" || e.type === "unit.reported") &&
+      e.payload.writtenBy !== "runtime"
+    )
       reasons.length = 0;
     if (e.type === "plan.rejected" && e.actor === LEADER_ACTOR)
       reasons.push(`${String(e.payload.rule)}: ${String(e.payload.reason)}`);
@@ -581,8 +618,10 @@ function declareRequestedTeam(
 }
 
 /**
- * Ask the unit's leader for its next move: the last task's ending, how many ready tasks
- * remain and which runs next, under the `LeaderTurn` schema. The first call creates the
+ * Ask the unit's leader for its next move: the endings it has not heard from earlier passes
+ * (`unheard`, on a pass's first turn), the last task's ending, how many ready tasks remain
+ * and which runs next, which tasks of the unit are still running and which have ended and
+ * reach it on turns of their own, under the `LeaderTurn` schema. The first call creates the
  * session and opens with the orientation; `leader.started` records its id on the unit,
  * with the cwd it was launched from. A session that cannot be resumed (the call died
  * before its init line) is replaced: a fresh session is oriented and asked the same turn,
@@ -602,8 +641,11 @@ async function leaderTurn(
   listed: Unit,
   units: readonly Unit[],
   cause: TurnCause,
+  unheard: readonly TaskEnding[],
   remaining: number,
   next: Task | null,
+  running: readonly Task[],
+  landed: readonly Task[],
   options: DispatchOptions,
   actor: string,
 ): Promise<Turned> {
@@ -622,7 +664,15 @@ async function leaderTurn(
         unit,
         [
           ...orientation(store, incident, unit, units),
-          renderTurnPrompt(cause, remaining, next, refused),
+          renderTurnPrompt(
+            cause,
+            unheard,
+            remaining,
+            next,
+            refused,
+            running,
+            landed,
+          ),
         ].join("\n"),
         LEADER_TURN_SCHEMA,
         options.cwd,
@@ -742,7 +792,7 @@ async function leaderTurn(
     });
   }
   // A report that asks for something the unit cannot get itself changes the picture by
-  // definition: the IC must see the unit waiting before the next unit runs. The schema
+  // definition: the IC must see the unit waiting before anything new starts. The schema
   // refuses a report on a continue turn, so a request never rides on one.
   const requests =
     turn.kind === "report" ? (turn.report?.resourceRequests ?? []) : [];
@@ -777,7 +827,7 @@ async function leaderTurn(
       store.record(incident.id, "picture.discrepancy", actor, {
         ...seat,
         seat: "leader",
-        taskId: cause !== null && "task" in cause ? cause.task.id : null,
+        taskId: "task" in cause ? cause.task.id : null,
         discrepancy: turn.discrepancy,
       });
     if (turn.kind === "report")
@@ -822,26 +872,83 @@ async function leaderTurn(
   return { turn, sessionId, unit: current, assigned };
 }
 
+/** Unit passes run at once: `NOSCOPE_PARALLEL`, a positive whole number, 3 when unset. */
+const DEFAULT_PARALLEL = 3;
+
+function parallelLimit(env: NodeJS.ProcessEnv): number {
+  const raw = env.NOSCOPE_PARALLEL;
+  if (raw === undefined || raw === "") return DEFAULT_PARALLEL;
+  if (!/^[1-9]\d*$/.test(raw))
+    throw new Error(
+      `NOSCOPE_PARALLEL must be a positive whole number of unit passes, not ${JSON.stringify(raw)}`,
+    );
+  return Number(raw);
+}
+
 /**
- * Run the units, one at a time in tree order, each until its leader reports (DESIGN.md
- * Step 6). In a unit, each runnable task runs under its time bound: a pending task whose
- * dependencies are complete becomes ready (`task.ready`), then `task.started`, then the
- * claims, the result with `task.completed` and `task.usage` in one transaction, or
- * `task.failed` with the reason and the usage the run still spent; its ending then reaches
- * the leader, which continues to the next task, assigns tasks of its own (run in the same
- * pass), or reports. A unit with nothing left to run and no report is asked for one; a unit
- * resumed since its last report opens with a turn carrying the answers, before any task. A
- * task whose dependencies complete during the pass runs in the same pass when its unit has
- * not yet reported; a unit that has reported is done for the pass, so its dependents wait
- * for the next one. A `waiting` unit is skipped. The root is the exception (R4-6): its
- * leader is the IC, which takes no leader turn, so its runnable tasks run one after
- * another with no turn between, none inside the IC's session, and its pass ends without a
- * report once its ready tasks have run; the IC judges their results at its command turn,
- * where the change report lists them. The pass ends when every unit that ran has
- * reported, when a report says the picture changed (`pictureChanged` names the unit; a
- * report with resource requests always does, and so does the report the runtime writes
- * for a unit whose seat was refused on both models, R4-7), or, with `budget.exceeded`,
- * when the incident's budget has no room for the next task.
+ * Units whose passes may not run at once: a task of one that has not ended waits on a task
+ * of the other that has not ended (`dependsOn`, either way round). Related units run one at
+ * a time in tree order, as every unit did before R4-9; a parent and a child are related
+ * only through their tasks. A dependency already completed, failed or cancelled orders
+ * nothing. Read from the store's tasks before each scheduling round, so a task a leader
+ * assigns mid-pass counts.
+ */
+function relatedUnits(
+  units: readonly Unit[],
+  tasks: readonly Task[],
+): Map<string, Set<string>> {
+  const related = new Map(units.map((u) => [u.id, new Set<string>()]));
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  const ended = (t: Task) =>
+    t.status === "completed" ||
+    t.status === "failed" ||
+    t.status === "cancelled";
+  for (const t of tasks) {
+    if (ended(t)) continue;
+    for (const id of t.dependsOn) {
+      const d = byId.get(id);
+      if (d === undefined || ended(d) || d.unitId === t.unitId) continue;
+      related.get(t.unitId)?.add(d.unitId);
+      related.get(d.unitId)?.add(t.unitId);
+    }
+  }
+  return related;
+}
+
+/**
+ * Run the units to their reports (DESIGN.md Step 6), unrelated units at once. A unit's pass
+ * starts when it has something to do (a resumed leader to brief, a runnable task, a report
+ * owed), no unit it is related to (`relatedUnits`) is mid-pass, and fewer than
+ * `NOSCOPE_PARALLEL` passes are running; related units keep tree order. In a unit, every
+ * runnable task not yet attempted starts at once, each in process or in a session of its
+ * own, except that tasks inside the leader's session run one at a time, each followed by
+ * the leader's turn on it: a pending task whose dependencies are complete becomes ready
+ * (`task.ready`), then `task.started`, then the claims, the result with `task.completed`
+ * and `task.usage` in one transaction, or `task.failed` with the reason and the usage the
+ * run still spent. Each ending reaches the leader on a turn of its own, in the order the
+ * tasks ended, one call on the session at a time; the turn says which tasks of the unit are
+ * still running and which have landed and reach it next, and the leader continues (the
+ * tasks its ending made runnable start, and any it assigned), or reports, which ends the
+ * unit's pass while its tasks in flight finish and land. Their endings, and any other the
+ * leader has not heard (`endedSinceLastTurn`), ride on the first turn of the unit's next
+ * pass whatever that turn is for, so a result never goes unread. A unit with nothing left
+ * to run, nothing running and nothing left to hear is asked for its report; a unit resumed
+ * since its last report opens with a turn carrying the answers, before any task. A task whose dependencies complete during
+ * the pass runs in the same pass when its unit has not yet reported; a unit that has
+ * reported is done for the pass, so its dependents wait for the next one. A `waiting` unit
+ * is skipped. The root is the exception (R4-6): its leader is the IC, which takes no leader
+ * turn, so its runnable tasks all start at once with no turn between, none inside the IC's
+ * session, and its pass ends without a report once its ready tasks have landed; the IC
+ * judges their results at its command turn, where the change report lists them. The pass
+ * ends when every unit that ran has reported, when a report says the picture changed
+ * (`pictureChanged` names the first such unit; a report with resource requests always
+ * does, and so does the report the runtime writes for a unit whose seat was refused on
+ * both models, R4-7), or, with `budget.exceeded`, when the incident's budget has no room
+ * for the next task by what is spent; from that moment nothing new starts, and every run
+ * in flight finishes and lands before `dispatch` returns. A task that fits by what is spent
+ * but not with what the runs in flight are held to is deferred, not stopped: its unit's
+ * pass waits for the next landing anywhere and sweeps again. A leader that cannot answer
+ * ends the pass the same way, and its error is thrown once the runs in flight have landed.
  */
 export async function dispatch(
   store: Store,
@@ -849,6 +956,7 @@ export async function dispatch(
   options: DispatchOptions,
 ): Promise<Dispatched> {
   const actor = options.actor ?? "dispatcher";
+  const parallel = parallelLimit(options.env ?? process.env);
   const ran: Ran[] = [];
   const reports: Reported[] = [];
   const attempted = new Set<string>();
@@ -857,37 +965,62 @@ export async function dispatch(
   const units = unitsInTreeOrder(store.listUnits(incident.id)).filter(
     (u) => u.status === "active",
   );
-  const owing = unitsOwingReport(
-    units,
-    store.listTasks(incident.id),
-    store.listEvents(incident.id),
-  );
-  const resumed = resumedUnits(units, store.listEvents(incident.id));
-  const nextIn = (unitId: string): Task | undefined => {
-    const tasks = store.listTasks(incident.id);
-    return tasks.find(
-      (t) => t.unitId === unitId && !attempted.has(t.id) && runnable(t, tasks),
-    );
+  const tasksAtStart = store.listTasks(incident.id);
+  const eventsAtStart = store.listEvents(incident.id);
+  const owing = unitsOwingReport(units, tasksAtStart, eventsAtStart);
+  const resumed = resumedUnits(units, eventsAtStart);
+  let halt: Pick<Dispatched, "stopped" | "pictureChanged"> | null = null;
+  const stop = (why: Pick<Dispatched, "stopped" | "pictureChanged">) => {
+    halt ??= why;
   };
-  const remainingIn = (unitId: string): number => {
+  let failed: unknown;
+  const reserved = new Map<string, Reservation>();
+  // A landing anywhere: a pass whose start was deferred on what runs in flight are held to
+  // waits for the next one, wherever it is, and sweeps again.
+  let landedAnywhere: () => void = () => undefined;
+  let anyLanding = new Promise<void>((resolve) => {
+    landedAnywhere = resolve;
+  });
+  const noteLanding = () => {
+    const notify = landedAnywhere;
+    anyLanding = new Promise<void>((resolve) => {
+      landedAnywhere = resolve;
+    });
+    notify();
+  };
+  const held = (): Reservation => {
+    const sum = { tokens: 0, seconds: 0 };
+    for (const r of reserved.values()) {
+      sum.tokens += r.tokens;
+      sum.seconds += r.seconds;
+    }
+    return sum;
+  };
+  const runnableIn = (unitId: string): Task[] => {
     const tasks = store.listTasks(incident.id);
     return tasks.filter(
       (t) => t.unitId === unitId && !attempted.has(t.id) && runnable(t, tasks),
-    ).length;
+    );
   };
   const settle = async (
     unit: Unit,
     cause: TurnCause,
+    unheard: readonly TaskEnding[],
+    running: readonly Task[] = [],
+    landed: readonly Task[] = [],
   ): Promise<{ unit: Unit; stop: boolean }> => {
-    const remaining = remainingIn(unit.id);
+    const remaining = runnableIn(unit.id);
     const turned = await leaderTurn(
       store,
       incident,
       unit,
       units,
       cause,
-      remaining,
-      nextIn(unit.id) ?? null,
+      unheard,
+      remaining.length,
+      remaining[0] ?? null,
+      running,
+      landed,
       options,
       actor,
     );
@@ -900,9 +1033,15 @@ export async function dispatch(
       done.add(unit.id);
       return { unit: turned.unit, stop: turned.turn.report.pictureChanged };
     }
-    // Continued with nothing left and nothing assigned: the unit's pass ends without a
-    // report, and the next pass asks again.
-    if (remaining === 0 && turned.assigned === 0) done.add(unit.id);
+    // Continued with nothing left, nothing running, nothing to hear and nothing assigned:
+    // the unit's pass ends without a report, and the next pass asks again.
+    if (
+      remaining.length === 0 &&
+      turned.assigned === 0 &&
+      running.length === 0 &&
+      landed.length === 0
+    )
+      done.add(unit.id);
     return { unit: turned.unit, stop: false };
   };
   const answered = (unit: Unit): TurnCause => {
@@ -917,75 +1056,110 @@ export async function dispatch(
       ),
     };
   };
-  for (;;) {
-    let progressed = false;
-    for (const listed of units) {
-      if (done.has(listed.id)) continue;
-      let unit =
-        store.listUnits(incident.id).find((u) => u.id === listed.id) ?? listed;
-      let ranInUnit = false;
-      if (resumed.has(unit.id) && unit.parentId !== null) {
-        // The leader reads the answers to its requests before its unit runs anything. The
-        // root takes no turn (R4-6): a waiting root can only come from a store written
-        // before this, and its answers are read at the command turn.
-        resumed.delete(unit.id);
-        progressed = true;
-        const settled = await settle(unit, answered(unit));
-        unit = settled.unit;
-        if (settled.stop)
-          return { ran, reports, stopped: null, pictureChanged: unit.id };
-        if (done.has(unit.id)) continue;
-      }
-      for (;;) {
-        const next = nextIn(unit.id);
-        if (next === undefined) break;
-        ranInUnit = true;
-        progressed = true;
-        attempted.add(next.id);
-        if (next.status === "pending")
-          store.setTaskStatus(
-            incident.id,
-            next.id,
-            "ready",
-            actor,
-            "task.ready",
-          );
-        const capability = getCapability(next.capability);
-        let ending: TaskEnding;
-        let refusals: readonly RefusedCall[] | undefined;
-        if (capability === undefined) {
-          const reason = `no capability named ${next.capability}`;
-          store.setTaskStatus(
-            incident.id,
-            next.id,
-            "failed",
-            actor,
-            "task.failed",
-            { extra: { reason } },
-          );
-          ran.push({
+  const owed: TurnCause = { status: "owing" };
+  const hasWork = (unitId: string) =>
+    resumed.has(unitId) || owing.has(unitId) || runnableIn(unitId).length > 0;
+
+  const pass = async (listed: Unit): Promise<void> => {
+    let unit =
+      store.listUnits(incident.id).find((u) => u.id === listed.id) ?? listed;
+    // The leader's session takes one call at a time: a task that runs inside it and every
+    // turn queue here, in the order they are asked for.
+    let leader: Promise<unknown> = Promise.resolve();
+    const onLeader = <T>(fn: () => Promise<T>): Promise<T> => {
+      const run = leader.then(fn);
+      leader = run.catch(() => undefined);
+      return run;
+    };
+    // Tasks started and not yet landed, the endings landed and not yet heard (with the
+    // refusals when the task's session was refused on both models, R4-7), and the waker
+    // for the loop below when it has nothing to hear.
+    const inFlight = new Map<string, Task>();
+    const landed: Landed[] = [];
+    let wake: (() => void) | null = null;
+    // The endings of earlier passes the leader has not heard (tasks that landed after it
+    // reported, or a pass that died): the pass's first turn carries them, whatever it is
+    // for, so a result never goes unread.
+    let unheard: readonly TaskEnding[] = endedSinceLastTurn(
+      unit,
+      store.listTasks(incident.id),
+      store.listEvents(incident.id),
+    );
+    const hear = (): readonly TaskEnding[] => {
+      const heard = unheard;
+      unheard = [];
+      return heard;
+    };
+    const pending = new Set<Promise<void>>();
+    // A run that threw past `runOne` (a store that failed in its record) ends the pass with
+    // that error once the other runs have landed.
+    let crashed: unknown;
+    let insideTask: string | null = null;
+    // What a turn is told beside its ending: the tasks still running in sessions of their
+    // own (an inside task queues on the leader's chain as a turn does, so at a turn it has
+    // landed or not started; the filter keeps it out either way), and the tasks that
+    // landed and wait for turns of their own.
+    const stillRunning = () =>
+      [...inFlight.values()].filter((t) => t.id !== insideTask);
+    const landedTasks = () => landed.map((e) => e.task);
+    let ranInUnit = false;
+    // A task's start: `started`; `deferred`, when it fits the budget by spend but not with
+    // what the runs in flight are held to, so it is left unattempted for the sweep after
+    // the next landing; or `stopped`, when the budget has no room for it by spend
+    // (`budget.exceeded`, and the pass halts).
+    const start = (next: Task): "started" | "deferred" | "stopped" => {
+      const capability = getCapability(next.capability);
+      const room =
+        capability === undefined
+          ? { room: "fits" as const }
+          : budgetRoom(
+              incident,
+              sumUsage(store.listEvents(incident.id)),
+              held(),
+              next,
+              capability,
+            );
+      if (room.room === "deferred") return "deferred";
+      attempted.add(next.id);
+      ranInUnit = true;
+      inFlight.set(next.id, next);
+      if (next.status === "pending")
+        store.setTaskStatus(incident.id, next.id, "ready", actor, "task.ready");
+      let run: Promise<Landed>;
+      if (capability === undefined) {
+        const reason = `no capability named ${next.capability}`;
+        store.setTaskStatus(
+          incident.id,
+          next.id,
+          "failed",
+          actor,
+          "task.failed",
+          {
+            extra: { reason },
+          },
+        );
+        ran.push({
+          taskId: next.id,
+          capability: next.capability,
+          status: "failed",
+          claims: 0,
+          reason,
+        });
+        run = Promise.resolve({ task: next, status: "failed", reason });
+      } else {
+        if (room.room === "none") {
+          inFlight.delete(next.id);
+          store.record(incident.id, "budget.exceeded", actor, {
             taskId: next.id,
-            capability: next.capability,
-            status: "failed",
-            claims: 0,
-            reason,
+            reason: room.reason,
           });
-          ending = { task: next, status: "failed", reason };
-        } else {
-          const over = overBudget(
-            incident,
-            sumUsage(store.listEvents(incident.id)),
-            next,
-            capability,
-          );
-          if (over !== null) {
-            store.record(incident.id, "budget.exceeded", actor, {
-              taskId: next.id,
-              reason: over,
-            });
-            return { ran, reports, stopped: over, pictureChanged: null };
-          }
-          const run = await runOne(
+          stop({ stopped: room.reason, pictureChanged: null });
+          return "stopped";
+        }
+        reserved.set(next.id, reservationFor(next, capability));
+        const inside = runsInsideLeader(capability, next, unit);
+        const runIt = async () => {
+          const one = await runOne(
             store,
             incident,
             next,
@@ -996,56 +1170,159 @@ export async function dispatch(
             actor,
             ran,
           );
-          ending = run.ending;
-          unit = run.unit;
-          refusals = run.refusals;
-        }
+          if (inside) unit = one.unit;
+          return one.refusals === undefined
+            ? one.ending
+            : { ...one.ending, refusals: one.refusals };
+        };
+        if (inside) insideTask = next.id;
+        run = inside ? onLeader(runIt) : runIt();
+      }
+      const landing = run.then(
+        (ending) => {
+          reserved.delete(next.id);
+          inFlight.delete(next.id);
+          const ended = store
+            .listTasks(incident.id)
+            .find((t) => t.id === next.id);
+          landed.push(
+            ended === undefined ? ending : { ...ending, task: ended },
+          );
+          wake?.();
+          noteLanding();
+        },
+        (error: unknown) => {
+          // Nothing new starts anywhere from this moment, whatever pass is mid-turn.
+          crashed ??= error;
+          stop({ stopped: null, pictureChanged: null });
+          reserved.delete(next.id);
+          inFlight.delete(next.id);
+          wake?.();
+          noteLanding();
+        },
+      );
+      pending.add(landing);
+      landing.then(() => pending.delete(landing));
+      return "started";
+    };
+    try {
+      if (resumed.has(unit.id) && unit.parentId !== null) {
+        // The leader reads the answers to its requests before its unit runs anything. The
+        // root takes no turn (R4-6): a waiting root can only come from a store written
+        // before this, and its answers are read at the command turn.
+        resumed.delete(unit.id);
+        const settled = await onLeader(() =>
+          settle(unit, answered(unit), hear()),
+        );
+        unit = settled.unit;
+        if (settled.stop) stop({ stopped: null, pictureChanged: unit.id });
+        if (done.has(unit.id)) return;
+      }
+      for (;;) {
+        let deferred = false;
+        if (halt === null && !done.has(unit.id))
+          for (const next of runnableIn(unit.id)) {
+            const capability = getCapability(next.capability);
+            // One task at a time inside the leader: the next waits for the turn on this one.
+            if (
+              insideTask !== null &&
+              capability !== undefined &&
+              runsInsideLeader(capability, next, unit)
+            )
+              continue;
+            const started = start(next);
+            if (started === "started") continue;
+            deferred = started === "deferred";
+            break;
+          }
+        if (inFlight.size === 0 && landed.length === 0 && !deferred) break;
+        // Nothing to hear yet: wait for a landing of this unit's, or, with a start
+        // deferred, for a landing anywhere, since that is what frees the room.
+        if (landed.length === 0)
+          await (deferred
+            ? anyLanding
+            : new Promise<void>((resolve) => {
+                wake = resolve;
+              }));
+        wake = null;
+        if (crashed !== undefined) throw crashed;
+        const ending = landed.shift();
+        if (ending === undefined) continue;
         // A root task refused on both models ends as its `task.failed` (R4-7, the
         // refusals on it), which the change report lists under the tasks under command:
         // command files no report, and the IC judges it at its command turn (R4-6).
         if (unit.parentId === null) continue;
         // A unit's task refused on both models: the runtime reports `not_met` for the unit
-        // with both refusals, picture-changing, and the pass ends for the IC to decide.
-        if (refusals !== undefined) {
+        // with both refusals, picture-changing, and the pass ends for the IC to decide,
+        // whether or not the leader has reported this pass.
+        if (ending.refusals !== undefined) {
           const report = reportRefusals(
             store,
             incident,
             unit,
             "task",
-            refusals,
+            ending.refusals,
             actor,
           );
           reports.push({ unitId: unit.id, sessionId: null, report });
           done.add(unit.id);
-          return { ran, reports, stopped: null, pictureChanged: unit.id };
+          stop({ stopped: null, pictureChanged: unit.id });
+          continue;
         }
-        const ended = store
-          .listTasks(incident.id)
-          .find((t) => t.id === next.id);
-        const settled = await settle(
-          unit,
-          ended === undefined ? ending : { ...ending, task: ended },
+        // The leader reported this pass: the ending is recorded, and its next turn hears it.
+        if (done.has(unit.id)) continue;
+        const settled = await onLeader(() =>
+          settle(unit, ending, hear(), stillRunning(), landedTasks()),
         );
+        if (ending.task.id === insideTask) insideTask = null;
         unit = settled.unit;
-        if (settled.stop)
-          return { ran, reports, stopped: null, pictureChanged: unit.id };
-        if (done.has(unit.id)) break;
+        if (settled.stop) stop({ stopped: null, pictureChanged: unit.id });
       }
+      // The root files no report (R4-6): its pass ends once its tasks have landed.
       if (unit.parentId === null) {
         done.add(unit.id);
-        continue;
+        return;
       }
-      if (!ranInUnit && owing.has(unit.id)) {
-        progressed = true;
-        const settled = await settle(unit, null);
+      if (!ranInUnit && owing.has(unit.id) && halt === null) {
+        const settled = await onLeader(() => settle(unit, owed, hear()));
         done.add(unit.id);
-        if (settled.stop)
-          return { ran, reports, stopped: null, pictureChanged: unit.id };
+        if (settled.stop) stop({ stopped: null, pictureChanged: unit.id });
       }
+    } catch (error) {
+      // A leader that cannot answer, or a run that crashed: nothing new starts anywhere,
+      // and the error is thrown once every pass has landed its runs.
+      failed ??= error;
+      stop({ stopped: null, pictureChanged: null });
+    } finally {
+      // Whatever the pass is leaving on, its runs in flight land first.
+      await Promise.allSettled(pending);
     }
-    if (!progressed)
-      return { ran, reports, stopped: null, pictureChanged: null };
+  };
+
+  const passes = new Map<string, Promise<void>>();
+  for (;;) {
+    // Related units are read afresh each round: a task a leader assigned mid-pass with a
+    // cross-unit dependency relates its units from the next round on.
+    const related = relatedUnits(units, store.listTasks(incident.id));
+    if (halt === null && failed === undefined)
+      for (const listed of units) {
+        if (passes.size >= parallel) break;
+        if (done.has(listed.id) || passes.has(listed.id)) continue;
+        if (!hasWork(listed.id)) continue;
+        const busy = [...(related.get(listed.id) ?? [])].some((id) =>
+          passes.has(id),
+        );
+        if (busy) continue;
+        passes.set(
+          listed.id,
+          pass(listed).finally(() => passes.delete(listed.id)),
+        );
+      }
+    if (passes.size === 0) break;
+    await Promise.race(passes.values());
   }
+  if (failed !== undefined) throw failed;
+  return { ran, reports, ...(halt ?? { stopped: null, pictureChanged: null }) };
 }
 
 /**

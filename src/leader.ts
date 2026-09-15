@@ -1,5 +1,6 @@
 import {
   type Capability,
+  getCapability,
   renderTaskResult,
   resolveEquipment,
 } from "./capabilities/index.js";
@@ -91,9 +92,9 @@ export const LEADER_RULES = [
 ] as const;
 
 /** The role text as a unit leader reads it; the IC reads `IC_ROLE`. */
-export const LEADER_ROLE = `Your role: unit leader. You own your unit's objective and direct its tasks, in order, until you can report against it.
+export const LEADER_ROLE = `Your role: unit leader. You own your unit's objective and direct its tasks until you can report against it. A task that runs inside this session runs one at a time, in order; tasks in sessions of their own start at once when nothing they depend on is still open, and each reaches you on the turn after it ends. dependsOn is what serializes tasks; a task with none waits for nothing.
 
-Report what changed, not what you did: each item in changed is something now true that was not, naming the claim ids it rests on; a change with no claims behind it is a claim of its own and counts for less. Outcome met means the unit's objective is established by observed claims; not_met means it cannot be met as set, and then why and suggestion are required, because the IC, who has more perspective, decides what happens next; progress means the unit has more to run or more to say. Set pictureChanged, and report rather than continue, the moment an outcome changes the picture the incident is working from: the IC acts on it before the next unit runs.
+Report what changed, not what you did: each item in changed is something now true that was not, naming the claim ids it rests on; a change with no claims behind it is a claim of its own and counts for less. Outcome met means the unit's objective is established by observed claims; not_met means it cannot be met as set, and then why and suggestion are required, because the IC, who has more perspective, decides what happens next; progress means the unit has more to run or more to say. Set pictureChanged, and report rather than continue, the moment an outcome changes the picture the incident is working from: the IC acts on it before anything new starts.
 
 A lack is resolved by the nearest seat that can. A retrievable fact is yours to get: assign a task for it in assignTasks, under your own unit, to a capability your unit holds, inside your unit's budget, and it runs in this pass; a task of yours that came back insufficient for a retrievable fact is yours to resolve the same way. Permission, missing means and something only a human knows go up as resourceRequests on your report, each with what and why: your unit then waits until Mauria answers, its pending tasks stay pending, the other units keep running, and the report counts as picture-changing so the IC sees it at once. Assignments are checked by the validator's rules on tasks and by these:
 ${LEADER_RULES.map((r) => `- ${r}`).join("\n")}
@@ -515,12 +516,61 @@ export type TaskEnding =
 
 /**
  * Why the leader is asked for a move: a task ended, its unit resumed with the answers to its
- * requests, or nothing (the unit owes a report from an earlier pass).
+ * requests, or the unit owes a report from an earlier pass. The endings its leader has not
+ * yet heard (tasks that ended after its last turn: a pass that died, or tasks still in
+ * flight when the leader reported) travel beside the cause on the first turn of a pass,
+ * whatever the cause is.
  */
 export type TurnCause =
   | TaskEnding
   | { status: "answered"; answers: readonly string[] }
-  | null;
+  | { status: "owing" };
+
+/**
+ * The endings a unit's leader has not heard: tasks of the unit that completed or failed
+ * after the leader's last turn (`unit.reported` or `unit.continued`). A report the runtime
+ * wrote on the leader's behalf after two refusals (`writtenBy: "runtime"`, R4-7) is not a
+ * turn and moves nothing. Empty when every ending reached a turn. A completed task ran
+ * inside the leader when `runsInsideLeader` says its capability, model and equipment put
+ * it there.
+ */
+export function endedSinceLastTurn(
+  unit: Unit,
+  tasks: readonly Task[],
+  events: readonly Event[],
+): TaskEnding[] {
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  let lastTurn = -1;
+  for (const e of events)
+    if (
+      (e.type === "unit.reported" || e.type === "unit.continued") &&
+      e.payload.unitId === unit.id &&
+      e.payload.writtenBy !== "runtime"
+    )
+      lastTurn = e.sequence;
+  const ended: TaskEnding[] = [];
+  for (const e of events) {
+    if (e.sequence <= lastTurn) continue;
+    if (e.type !== "task.completed" && e.type !== "task.failed") continue;
+    const taskId = (e.payload.mutation as { taskId?: unknown } | undefined)
+      ?.taskId;
+    const task = typeof taskId === "string" ? byId.get(taskId) : undefined;
+    if (task === undefined || task.unitId !== unit.id) continue;
+    const capability = getCapability(task.capability);
+    ended.push(
+      e.type === "task.completed"
+        ? {
+            task,
+            status: "completed",
+            inside:
+              capability !== undefined &&
+              runsInsideLeader(capability, task, unit),
+          }
+        : { task, status: "failed", reason: String(e.payload.reason ?? "") },
+    );
+  }
+  return ended;
+}
 
 /** What a task that came back insufficient needed, each with its kind; empty for any other result. */
 function insufficiencyOf(task: Task): { kind: string; what: string }[] {
@@ -535,65 +585,95 @@ function insufficiencyOf(task: Task): { kind: string; what: string }[] {
 const RESOLVE_LACKS =
   "A retrievable fact is yours to get: assign a task for it under your unit (assignTasks) and continue. Permission, missing means and something only a human knows go up as resourceRequests on your report.";
 
+/** How one ending reads to the leader: a failure with its reason, an insufficiency with what it needed and what the leader does about each kind, or a completion with its result (recorded already when it ran in this session). */
+function renderEnding(ending: TaskEnding): string[] {
+  const { task } = ending;
+  if (ending.status === "failed")
+    return [`Task ${task.id} (${task.capability}) failed: ${ending.reason}`];
+  const needed = insufficiencyOf(task);
+  if (needed.length > 0)
+    return [
+      `Task ${task.id} (${task.capability}) came back insufficient${ending.inside ? " in this session" : ""}. It needed:`,
+      ...needed.map((n) => `  - ${n.kind}: ${n.what}`),
+      RESOLVE_LACKS,
+    ];
+  if (ending.inside)
+    return [
+      `Task ${task.id} (${task.capability}) completed in this session; its result is recorded.`,
+    ];
+  return [
+    `Task ${task.id} (${task.capability}) completed. Its result:\n  ${renderTaskResult(task)}`,
+  ];
+}
+
 /**
- * The user message of a turn: what the last task came to (its insufficiency, when it came
- * back insufficient, with what the leader does about each kind; none when the unit owes a
- * report from an earlier pass; the answers when the unit resumed), any assignment the
- * validator refused since the last turn, then how many ready tasks remain, which runs next
- * and the team it declares if any, and what the leader is asked for.
+ * The user message of a turn: the endings the leader has not heard from earlier passes
+ * (`unheard`, on the first turn of a pass, each rendered as an ending is), then what the
+ * turn is for (the last task's ending, with its insufficiency and what the leader does
+ * about each kind when it came back insufficient; the answers when the unit resumed; that
+ * a report is owed), any assignment the validator refused since the last turn, then how
+ * many ready tasks remain, which runs next and the team it declares if any, which tasks of
+ * the unit are still running in sessions of their own, which have ended in this pass and
+ * reach the leader on turns of their own, and what the leader is asked for: its report when
+ * nothing remains, nothing runs and nothing is left to hear, otherwise its next move.
  */
 export function renderTurnPrompt(
   cause: TurnCause,
+  unheard: readonly TaskEnding[],
   remaining: number,
   next: Task | null = null,
   rejections: readonly string[] = [],
+  running: readonly Task[] = [],
+  landed: readonly Task[] = [],
 ): string {
   const came: string[] = [];
-  if (cause === null)
+  if (unheard.length > 0)
+    came.push(
+      "Since your last turn these tasks also ended:",
+      ...unheard.flatMap(renderEnding),
+      "",
+    );
+  if (cause.status === "owing")
     came.push("Your unit has not reported since its last task ended.");
   else if (cause.status === "answered")
     came.push(
       "Your unit's resource requests were answered and it is active again:",
       ...cause.answers.map((a) => `  - ${a}`),
     );
-  else if (cause.status === "failed")
-    came.push(
-      `Task ${cause.task.id} (${cause.task.capability}) failed: ${cause.reason}`,
-    );
-  else {
-    const needed = insufficiencyOf(cause.task);
-    if (needed.length > 0)
-      came.push(
-        `Task ${cause.task.id} (${cause.task.capability}) came back insufficient${cause.inside ? " in this session" : ""}. It needed:`,
-        ...needed.map((n) => `  - ${n.kind}: ${n.what}`),
-        RESOLVE_LACKS,
-      );
-    else if (cause.inside)
-      came.push(
-        `Task ${cause.task.id} (${cause.task.capability}) completed in this session; its result is recorded.`,
-      );
-    else
-      came.push(
-        `Task ${cause.task.id} (${cause.task.capability}) completed. Its result:\n  ${renderTaskResult(cause.task)}`,
-      );
-  }
+  else came.push(...renderEnding(cause));
   if (rejections.length > 0)
     came.push(
       "",
       "Refused on your last turn, and nothing from it was created or raised:",
       ...rejections.map((r) => `  - ${r}`),
     );
+  const ask =
+    remaining > 0
+      ? `${remaining} ready task(s) remain in your unit. Your next move: continue to the next, or report now if the picture changed.`
+      : running.length > 0
+        ? "No task of yours is ready to start. Your next move: continue and wait for the running ones, or report now if the picture changed."
+        : landed.length > 0
+          ? "No task of yours is ready to start and none is running. Your next move: continue to hear the tasks that ended, or report now if the picture changed."
+          : NO_TASKS_REMAIN;
   return [
     ...came,
     "",
-    remaining === 0
-      ? NO_TASKS_REMAIN
-      : `${remaining} ready task(s) remain in your unit. Your next move: continue to the next, or report now if the picture changed.`,
+    ask,
     ...(remaining === 0 || next === null
       ? []
       : [
           `Next: task ${next.id} (${next.capability}): ${next.objective}${next.strikeTeam.length === 0 ? "" : `; it declares a strike team: ${next.strikeTeam.map(describeStrikeTeam).join("; ")}`}`,
           STRIKE_TEAM_OFFER,
+        ]),
+    ...(running.length === 0
+      ? []
+      : [
+          `Still running in sessions of their own: ${running.map((t) => `${t.id} (${t.capability})`).join(", ")}; each reaches you on the turn after it ends.`,
+        ]),
+    ...(landed.length === 0
+      ? []
+      : [
+          `Ended already: ${landed.map((t) => `${t.id} (${t.capability})`).join(", ")}; each reaches you on a turn of its own next.`,
         ]),
   ].join("\n");
 }

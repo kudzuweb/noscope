@@ -366,6 +366,8 @@ describe("the IC above the planner", () => {
       [command(), command({ rationale: "second period" })],
       [],
     );
+    // One unit at a time, so the second unit is left for the next pass.
+    h.ctx.env.NOSCOPE_PARALLEL = "1";
     h.ctx.env.NOSCOPE_STUB_TURN = JSON.stringify({
       kind: "report",
       report: {

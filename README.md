@@ -50,6 +50,9 @@ left as the pointer to the full record (default 1500).
 (default `claude-opus-4-8`): the IC's replacement session, a unit leader's, or a task's own
 retry; refused on it too, a unit reports `not_met` for the IC to decide and the IC's own
 refusal blocks the incident on a question that `incident answer <id> "<model>"` resolves.
+`NOSCOPE_PARALLEL` is how many units run their passes at once (default 3; a positive whole
+number): units with no `dependsOn` between their tasks run concurrently, and inside a unit
+the tasks in sessions of their own start together; set it to 1 for one unit at a time.
 `NOSCOPE_LIVE=1` also runs the live tests, which call the real binary: a Haiku session, a
 Haiku leader sending a two-member `pinger` strike team, a Haiku initial IC sizing up this
 checkout read-only and one sizing up a diagnostic objective on it, and a

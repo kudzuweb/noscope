@@ -59,7 +59,8 @@ Environment: `NOSCOPE_DB` names the SQLite file (default `~/.noscope/noscope.sql
 file per investigation); `NOSCOPE_CLAUDE_BIN` names the Claude Code binary (default `claude`);
 `NOSCOPE_IC_HANDOFF_TOKENS` is the IC context size at which command is handed to a fresh
 session (default 120000); `NOSCOPE_IC_FALLBACK_MODEL` is the model a refused seat is retried
-on once (default `claude-opus-4-8`). The README's "Install and run" section has the rest.
+on once (default `claude-opus-4-8`); `NOSCOPE_PARALLEL` is how many units run at once
+(default 3; 1 runs them one at a time). The README's "Install and run" section has the rest.
 
 Everything is read-only in this version: sessions get `Read`, `Grep`, `Glob` and `Bash` under a
 read-only allowlist, and nothing that writes runs without a grant, which is not built yet.

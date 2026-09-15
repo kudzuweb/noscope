@@ -207,6 +207,11 @@ describe("claude code provider", () => {
       "- Budget within share:",
     ])
       expect(LEADER_ROLE).toContain(line);
+    // R4-9: tasks in their own sessions start at once; dependsOn serializes.
+    expect(LEADER_ROLE).toContain(
+      "tasks in sessions of their own start at once when nothing they depend on is still open",
+    );
+    expect(LEADER_ROLE).toContain("dependsOn is what serializes tasks");
     // R3-5: the leader may send a team the task declares or ask for one, choosing its shape.
     expect(LEADER_ROLE).toContain("You may send a strike team");
     expect(LEADER_ROLE).toContain("requestStrikeTeam");

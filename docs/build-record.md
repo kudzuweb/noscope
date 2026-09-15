@@ -2442,3 +2442,167 @@ Not exactly to spec, with reasons:
 - Review's refusals line gained the model (`ic reasoning_extraction on claude-opus-5
   (session ...)`), changing R3-10a's format, so that a refusal on the fallback reads
   differently from one on the primary model.
+
+## R4-9: Parallel dispatch (#44, merged 2026-09-15)
+
+R4-9 of the round 4 plan. Built: `dispatch` in `src/dispatcher.ts` runs the passes of
+unrelated units at once and, inside a unit, starts every runnable task that is not inside
+the leader's session together. Two units are related when a task of one that has not ended
+names, in `dependsOn`, a task of the other that has not ended, either way round
+(`relatedUnits`, read from the store's tasks before each scheduling round, so a task a
+leader assigns mid-pass with a cross-unit dependency relates its units from the next
+round on; a dependency already completed, failed or cancelled orders nothing, and a
+parent and a child are related only through their tasks). A unit's pass starts when the
+unit has something to do (a resumed leader to brief, a runnable task, a report owed), no
+unit related to it is mid-pass, and fewer than
+`NOSCOPE_PARALLEL` passes are running: a positive whole number read from the command's
+environment (`options.env`, `process.env` when absent), 3 when unset, refused otherwise
+with the same shape of error as `NOSCOPE_IC_HANDOFF_TOKENS`; related units keep tree
+order, so `NOSCOPE_PARALLEL=1` is the round 3 dispatcher. The scheduling loop starts what
+can start, waits for a pass to end, and looks again, which replaces round 3's outer
+re-visit of units whose cross-unit dependencies completed mid-pass. Inside a unit, the
+leader's session takes one call at a time: a task that runs inside it (`runsInsideLeader`)
+and every turn queue on one promise chain, and at most one inside task is in flight or
+awaiting its turn at a time, so inside tasks keep round 3's shape (task, turn, task, turn)
+while the tasks in sessions of their own, and the deterministic ones, start the moment
+they are runnable. Every ending lands in a queue and reaches the leader on a turn of its
+own, in the order the tasks ended (`settle` per ending, as before); the turn's prompt
+(`renderTurnPrompt`, new `running` and `landed` arguments) lists the unit's tasks still
+running in sessions of their own (the tasks in flight; an inside task queues on the
+leader's chain as a turn does, so at a turn it has landed or not started) and, apart from
+them, the tasks that landed while the turn waited and reach the leader on turns of their
+own ("Ended already"); when nothing is left to start but tasks are still running or still
+to be heard it asks the leader to continue and wait or report now, rather than for its
+report, so the stub's default turn keeps continuing until the last ending is heard. A
+leader that reports while its own tasks are in flight ends the unit's pass; the tasks land
+(their events are written) and get no turn. Every ending the leader has not heard
+(`endedSinceLastTurn` in `src/leader.ts`: tasks of the unit that completed or failed after
+its last `unit.reported` or `unit.continued`, a pass that died included; inside-ness from
+`runsInsideLeader`) is computed once at the top of the unit's next pass and rides on that
+pass's first turn whatever its cause (`renderTurnPrompt`'s `unheard` argument, rendered
+before the cause as "Since your last turn these tasks also ended:" with `renderEnding`),
+so a unit with a runnable task next pass hears them on the turn after that task, and a
+unit with nothing to run hears them on its owed turn: `TurnCause` gains `{ status:
+"owing" }` in place of `null`, carrying nothing itself. The runtime's report after two
+refusals (`writtenBy: "runtime"`, R4-7) is not a turn: `endedSinceLastTurn` and
+`refusedSinceLastTurn` skip it when placing the cutoff, so the endings and validator
+reasons a leader never read survive it and ride on its next real turn (a new task, or
+the IC's revise once R4-3 lands); `unitsOwingReport` still counts it as the report it is,
+so the dispatcher does not ask a refused seat again on its own, and the change report
+lists those endings under the runtime report meanwhile. A report
+whose `pictureChanged` is true, or a budget stop, sets the pass's halt: no pass and no
+task starts after it, every run in flight finishes and lands, and a task that lands after
+the halt still gets its leader's turn (the leader hears the ending; nothing starts from
+it), so a result is never left unread; `dispatch` returns once every pass has landed its
+runs, with the first halt (`pictureChanged` names the first such unit). The budget is
+checked before every start (`budgetRoom`): a task that does not fit what is spent stops
+the pass with `budget.exceeded`, round 3's test and reason; a task that fits what is spent
+but not what is spent plus what the tasks in flight are held to (`reservationFor`: the
+task's own bound or the capability's typical cost) is deferred, left unattempted for the
+sweep after the next landing anywhere (a dispatch-wide promise replaced on every
+landing), so concurrent starts cannot overrun the budget together and a reservation never
+stops an incident, since `incident run` ends on any stop and the planner reads
+`budget.exceeded` as the budget having stopped the pass. A pass with a deferred start and
+nothing of its own in flight waits on that promise rather than ending. A leader that
+cannot answer, or a run that throws past `runOne`, sets the halt (the rejection callback
+itself, so a pass mid-turn when the run threw cannot start a task on its next sweep), and
+the error is thrown once every pass has landed its runs, so nothing writes to the store
+after `dispatch` returns. `failInterrupted` keeps its job, since a pass lands every run
+before it returns. `Dispatched.ran` is in landing order. `LEADER_ROLE` says tasks in
+sessions of
+their own start at once and `dependsOn` is what serializes; the report's `pictureChanged`
+description and the role text say the IC acts before anything new starts, not before the
+next unit; the planner's preamble says independent tasks run at once across units and
+within one, only tasks inside a leader's session one at a time, and that `dependsOn` is
+declared where a task needs another's result and nowhere else. `incident review` prints,
+under each cycle's tasks, `wall time: cycle N s, dispatch N s; K task(s) summing N s,
+parallel Rx` (`wallTimeLine` in `src/review.ts`): the cycle from the event that opened it
+to its last event, the dispatch span from the first `task.started` to the last task ending
+or leader turn, the tasks' recorded seconds summed, and `parallel` the sum over the span,
+1.0 in sequence and higher when tasks overlapped. The stub gains `NOSCOPE_STUB_SLEEP_IF`,
+which narrows `NOSCOPE_STUB_SLEEP_MS` to task calls whose prompt contains the text (a
+task's objective, in the tests), so one task of a pass is slow and the rest are not; its
+`concurrent` figure in the call log is a bound, not a measure (two stub processes started
+4 ms apart each saw none running). DESIGN.md Step 6 (dispatch, the owed turn, the budget
+check, the strike-team request's target), Step 7 (the review row) and the Speed section
+follow; `docs/architecture.html` follows on the dispatcher node, cycle step 7 and the
+speed line; README and CLAUDE.md list `NOSCOPE_PARALLEL`.
+
+Merged after R4-6 and R4-7, which land in the pass as follows. The root (R4-6): its
+resumed branch is skipped, an ending of its gets no turn (`continue` before `settle`), and
+its pass ends with `done.add` once its runs have landed, so with `runsInsideLeader` false
+for the root every root session task starts at once in a process of its own and the IC
+reads the results in its change report. Refusals (R4-7): `runIt` carries `runOne`'s
+`refusals` on the landed ending (`Landed`, a `TaskEnding` with optional `refusals`), and
+the loop, before `settle`, files the runtime's `not_met` report on the unit
+(`reportRefusals`, pushed with `sessionId: null`), marks the unit done and halts with
+`pictureChanged` naming it; a root task refused twice ends as its `task.failed` under the
+tasks under command, as R4-7 built it. That refusal report is filed even when the leader
+reported earlier in the pass (the ending landed after the report), since the IC decides
+on refusals with its verdicts; the unit then has two reports in one pass. A leader's own
+fallback (R4-7, `setUnitLeader` inside `leaderTurn`) changes `unit.leader.model` mid-pass
+through `settle`'s returned unit, so `runsInsideLeader` flips for the unit's tasks not yet
+started (planned-inside tasks run in sessions of their own, at once), the one-inside-task
+gate evaluates against the new leader, and `endedSinceLastTurn` renders an ending that ran
+inside the old session as an outside one; accepted as is. Two tests that ran inside tasks
+under the root moved onto the `led()` unit, since the root takes no turn.
+
+Tests: two independent units on the stub with sleeping sessions run at once (the second's
+`task.started` precedes both `task.completed` by sequence and by timestamp, and the same
+run with `NOSCOPE_PARALLEL=1` writes the same events per unit in the same order and the
+same multiset overall); a picture-changing report from one unit ends the pass while the
+other's task in flight completes, its leader hears the ending on a turn after the stop,
+and the task that completion made runnable stays pending; with `NOSCOPE_PARALLEL=2` three
+independent units run two at a time (no stub process ever saw more than one other, the
+second task started before the first completed, the third after the first report); inside
+a unit, two tasks in their own sessions start together, a `dependsOn` serializes the third
+behind the first, and the turn after the fast one lists the slow one as still running and
+asks the leader to continue or report rather than for its report; two tasks inside the
+leader's session run one at a time, each followed by its turn; a leader that reports while
+its own task runs leaves the task to land without a turn, and the next pass's owed turn
+renders that ending before asking for the report; a runtime report after two refusals
+(t-dep refused on its model and the fallback in pass 2, `NOSCOPE_STUB_REFUSE`) leaves
+t-slow's and t-dep's endings unheard, and a third pass with a new task carries both on
+that task's turn; a task that landed after its unit reported, whose completion made a
+dependent runnable, reaches the leader on the next pass's first turn, the one on the
+dependent's ending, and nothing is owed after that report; a task that landed while a
+turn was queued behind a slow inside task is listed on that turn as ended already, not
+running, and gets its own turn next; a task in flight is
+held against the budget, so a second unit's task that fits by spend but not by reservation
+waits for the landing and is then stopped on what is spent, with one `budget.exceeded`
+after the first task's `task.completed`, while the first's leader still hears it; two
+units whose tasks fit one at a time by spend but not by reservation both run, the second
+starting after the first lands, with nothing stopped; `NOSCOPE_PARALLEL=0` is refused. The
+round 3 dispatcher tests that read as a sequence now declare it: the grep, investigate
+and interpret test and the strike-team test chain their tasks with `dependsOn` (and so
+also pin that a chain still serializes: `task.ready` per dependent, the same call order as
+before), the two-unit picture-change and waiting
+tests and the IC's picture-change step test run with `NOSCOPE_PARALLEL=1`, and the root
+unit's refused-request test chains its two greps. The review test pins the wall-time line
+once per cycle that ran a task; the preamble tests pin the new sentences of `LEADER_ROLE`
+and the planner prompt.
+
+Not exactly to spec, with reasons:
+
+- The cap bounds unit passes, as the plan says, and not processes: a unit with several
+  independent session tasks starts them all, so the number of Claude Code processes can
+  exceed `NOSCOPE_PARALLEL`; a unit with N independent session tasks spawns N+1 processes
+  (its leader's and one per task), and with R4-6 the root's session tasks run in sessions
+  of their own too. The plan's own task count and budget bound that side; a process cap is
+  a follow-up, noted in review.
+- The plan says a picture-changing report ends the pass "and the others finish the task in
+  flight"; here the leader of a task that lands after the halt is also asked its turn on
+  that ending, because the owed turn is the only other way the result would reach it, and
+  a turn is not a task start. A task that lands after its own unit reported gets no turn,
+  and the first turn of the unit's next pass carries it, whatever that turn is for; round
+  3's owed turn said only that the unit had not reported, and never rendered the result,
+  which parallel dispatch would have made a common way to lose one.
+- A leader's `requestStrikeTeam` targets the task that runs next, which under parallel
+  dispatch is a task not yet started: one still waiting on a dependency or one the leader
+  assigns on the same turn. A task with no dependency has started already by the time the
+  leader is asked anything, so a request made after it is refused as having nothing to
+  send it on, as R3-5 already provided for.
+- A leader is asked about each ending on a turn of its own, never about several at once,
+  so the events of a parallel run are the events of the sequential run reordered; a turn
+  that reads several endings would have been a schema and prompt change the plan did not
+  ask for.
