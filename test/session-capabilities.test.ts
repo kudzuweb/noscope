@@ -57,7 +57,7 @@ describe("session capabilities", () => {
     expect(() => getProvider("codex")).toThrow(/no provider named codex/);
   });
 
-  it("renders the task brief with the contract and the owning unit's purpose, and builds the request from the task's model", () => {
+  it("renders the task brief with the contract and the owning unit's objective, and builds the request from the task's model", () => {
     const store = new Store(":memory:");
     const { unit, task } = scriptedIncident(store);
     const t = task({
@@ -145,6 +145,7 @@ describe("session capabilities", () => {
         inferred: [],
         keep: [],
       },
+      units: [],
       claims: [claim],
       results: [store.listTasks("i1").find((x) => x.id === done.id) as Task],
     });

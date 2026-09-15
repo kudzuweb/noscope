@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -8,10 +8,12 @@ import { EXIT, run } from "../src/cli.js";
 import { dispatch } from "../src/dispatcher.js";
 import type { ActionPlan } from "../src/models.js";
 import { Store } from "../src/store.js";
-import { scriptedIncident } from "./fixtures/models.js";
+import { scriptedIncident, unitProposal } from "./fixtures/models.js";
 
 const tree = resolve("test/fixtures/tree");
 const stub = resolve("test/stub-claude");
+/** Every pass asks a unit's leader for its move, so even a deterministic-only pass needs the stub. */
+const stubbed = { cwd: tree, env: { NOSCOPE_CLAUDE_BIN: stub } };
 
 defineCapability({
   name: "slow_probe",
@@ -61,7 +63,7 @@ describe("dispatcher", () => {
       evidenceFrom: { claims: [], tasks: [] },
       status: "pending",
     });
-    const { ran, stopped } = await dispatch(store, incident, { cwd: tree });
+    const { ran, stopped } = await dispatch(store, incident, stubbed);
     expect(stopped).toBeNull();
     expect(ran).toEqual([
       { taskId: "t1", capability: "grep", status: "completed", claims: 1 },
@@ -112,7 +114,7 @@ describe("dispatcher", () => {
       budget: { seconds: 0.1 },
       status: "ready",
     });
-    const { ran } = await dispatch(store, incident, { cwd: tree });
+    const { ran } = await dispatch(store, incident, stubbed);
     expect(ran).toEqual([
       {
         taskId: "t-slow",
@@ -193,7 +195,10 @@ describe("dispatcher", () => {
     expect(usage?.payload).toMatchObject({
       usage: { inputTokens: 1500, outputTokens: 42, costUsd: 0.0123 },
     });
-    // The calls come first, then the claims and the outcome, all in the task's transaction.
+    // The task's model and equipment are the leader's, so it ran inside the leader's session:
+    // the session is recorded on the unit first, then the calls, the claims and the outcome,
+    // all in the task's transaction; the leader's turn follows, its own stub calls filed
+    // under no task, and with nothing left to run it reports.
     const types = store
       .listEvents("i1")
       .map((e) => e.type)
@@ -201,12 +206,25 @@ describe("dispatcher", () => {
     expect(types).toEqual([
       "incident.created",
       "task.started",
+      "leader.started",
       "tool.called",
       "tool.called",
       "claim.asserted",
       "task.completed",
       "task.usage",
+      "tool.called",
+      "tool.called",
+      "unit.reported",
     ]);
+    expect(store.listUnits("i1")[0]?.sessionId).toBe("stub-session");
+    const turnCalls = store
+      .listEvents("i1")
+      .filter((e) => e.type === "tool.called" && e.payload.taskId === null);
+    expect(turnCalls).toHaveLength(2);
+    expect(turnCalls[0]?.payload).toMatchObject({
+      unitId: "i1-command",
+      sessionId: "stub-session",
+    });
     const calls = store
       .listEvents("i1")
       .filter((e) => e.type === "tool.called");
@@ -262,14 +280,20 @@ describe("dispatcher", () => {
       delete process.env.NOSCOPE_STUB_EXIT;
     }
     const events = store.listEvents("i1");
-    expect(events.map((e) => e.type).slice(-3)).toEqual([
-      "tool.called",
-      "task.failed",
-      "task.usage",
-    ]);
+    const failedAt = events.findIndex((e) => e.type === "task.failed");
+    expect(events.map((e) => e.type).slice(failedAt - 1, failedAt + 2)).toEqual(
+      ["tool.called", "task.failed", "task.usage"],
+    );
     expect(events.find((e) => e.type === "tool.called")?.payload).toMatchObject(
       { taskId: "t-inv", tool: "Grep", sessionId: "stub-session" },
     );
+    // The failed call was the leader's first, so no session was recorded and the turn started one.
+    expect(events.map((e) => e.type).slice(failedAt + 1)).toEqual([
+      "task.usage",
+      "leader.started",
+      "tool.called",
+      "unit.reported",
+    ]);
     expect(events.find((e) => e.type === "task.failed")?.payload).toMatchObject(
       { sessionId: "stub-session" },
     );
@@ -303,11 +327,13 @@ describe("dispatcher", () => {
       delete process.env.NOSCOPE_STUB_FAIL;
     }
     const types = store.listEvents("i1").map((e) => e.type);
-    expect(types.slice(-3)).toEqual([
+    const failedAt = types.indexOf("task.failed");
+    expect(types.slice(failedAt - 1, failedAt + 2)).toEqual([
       "tool.called",
       "task.failed",
       "task.usage",
     ]);
+    expect(types.at(-1)).toBe("unit.reported");
     expect(
       store.listEvents("i1").find((e) => e.type === "tool.called")?.payload,
     ).toMatchObject({
@@ -319,8 +345,7 @@ describe("dispatcher", () => {
   });
 
   it("a session's brief carries the incident objective, the situation, and the claims and results the task names in evidenceFrom", async () => {
-    const { mkdtempSync, readFileSync } = await import("node:fs");
-    const { tmpdir } = await import("node:os");
+    const { readFileSync } = await import("node:fs");
     const store = new Store(":memory:");
     const { incident, task } = scriptedIncident(store);
     store.createClaim(
@@ -443,8 +468,8 @@ describe("dispatcher", () => {
       budget: { seconds: 30 },
       status: "ready",
     });
-    const log = join(mkdtempSync(join(tmpdir(), "noscope-brief-")), "log.json");
-    process.env.NOSCOPE_STUB_LOG = log;
+    const log = join(mkdtempSync(join(tmpdir(), "noscope-brief-")), "calls");
+    process.env.NOSCOPE_STUB_CALLS = log;
     try {
       await withStubOutput(
         {
@@ -460,15 +485,31 @@ describe("dispatcher", () => {
           }),
       );
     } finally {
-      delete process.env.NOSCOPE_STUB_LOG;
+      delete process.env.NOSCOPE_STUB_CALLS;
     }
-    const prompt = (JSON.parse(readFileSync(log, "utf8")) as { prompt: string })
-      .prompt;
+    const calls = readFileSync(log, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l) as { kind: string; prompt: string });
+    expect(calls.map((c) => c.kind)).toEqual(["task", "leader"]);
+    // The interpret is on the leader's model with no equipment, so it ran as the leader's
+    // first call: the unit's own lines, then the brief with the rest.
+    const prompt = calls[0]?.prompt ?? "";
+    expect(prompt.split("\n").slice(0, 4)).toEqual([
+      "You lead unit i1-command. Your unit's objective: command: where deletion moves the scroll position",
+      "Your equipment: Read, Grep, Glob, Bash; Bash allowlist: ls, cat, head, tail, wc, find, stat",
+      "",
+      "Your first task follows; run it and answer against its schema.",
+    ]);
     expect(
-      prompt.startsWith(
-        `Incident objective: ${incident.objective}\nCurrent hypothesis: the handler is the one\nEstablished so far:\n  - ${claim.id}: the handler is at a.ts:1\n\nObjective:`,
+      prompt.includes(
+        `\n\nIncident objective: ${incident.objective}\nCurrent hypothesis: the handler is the one\nEstablished so far:\n  - ${claim.id}: the handler is at a.ts:1\n\nYour unit: i1-command (command, the root), leader claude-code/claude-haiku-4-5: command: where deletion moves the scroll position\nReports to: Mauria, the Agency Administrator, through the planner and the incident file\nBelow it: no units\n\nObjective:`,
       ),
     ).toBe(true);
+    // The leader's turn resumed the session and needed no orientation.
+    expect(calls[1]?.prompt).toBe(
+      "Task t-read (interpret) completed in this session; its result is recorded.\n\nNo ready tasks remain in your unit. File your report against the unit's objective.",
+    );
     expect(prompt).toContain(
       `Evidence attached by reference:\nclaims:\n  - ${claim.id}: `,
     );
@@ -496,7 +537,7 @@ describe("dispatcher", () => {
     const { ran, stopped } = await dispatch(
       store,
       { ...incident, budget: { tokens: 100 } },
-      { cwd: tree },
+      stubbed,
     );
     expect(ran).toEqual([]);
     expect(stopped).toBe("tokens: 110 spent of 100, t1 needs 0");
@@ -604,7 +645,7 @@ describe("dispatcher, from the review", () => {
       inputs: { root: ".", pattern: "delete" },
       status: "ready",
     });
-    await dispatch(store, incident, { cwd: tree });
+    await dispatch(store, incident, stubbed);
     const claims = store.listClaims("i1");
     const match = claims.find(
       (c) =>
@@ -670,7 +711,7 @@ describe("dispatcher, interrupted and malformed runs", () => {
       budget: { seconds: 3_000_000 },
       status: "ready",
     });
-    const { ran } = await dispatch(store, incident, { cwd: tree });
+    const { ran } = await dispatch(store, incident, stubbed);
     expect(store.listTasks("i1").find((t) => t.id === "t-orphan")?.status).toBe(
       "failed",
     );
@@ -690,6 +731,268 @@ describe("dispatcher, interrupted and malformed runs", () => {
   });
 });
 
+describe("dispatcher, unit leaders", () => {
+  type Call = {
+    kind: string;
+    resume: string | null;
+    args: string[];
+    prompt: string;
+  };
+  const callsLog = () =>
+    join(mkdtempSync(join(tmpdir(), "noscope-leader-")), "calls");
+  const readCalls = (log: string): Call[] =>
+    readFileSync(log, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l) as Call);
+  const schemaOf = (c: Call) =>
+    JSON.parse(c.args[c.args.indexOf("--json-schema") + 1] ?? "{}") as {
+      properties: Record<string, unknown>;
+    };
+
+  it("runs a grep in process, an investigate on the leader's model as a resumed call on its session, and an interpret on another model in its own session, with per-task events and one report", async () => {
+    const store = new Store(":memory:");
+    const { incident, task } = scriptedIncident(store);
+    task({
+      id: "t-grep",
+      capability: "grep",
+      inputs: { root: ".", pattern: "delete" },
+      status: "ready",
+    });
+    task({
+      id: "t-inv",
+      capability: "investigate",
+      inputs: { question: "what handles deletion?" },
+      provider: "claude-code",
+      model: "claude-haiku-4-5",
+      budget: { seconds: 30 },
+      status: "ready",
+    });
+    task({
+      id: "t-read",
+      capability: "interpret",
+      inputs: {
+        question: "so what?",
+        evidence: [{ source: "x", content: "y" }],
+      },
+      provider: "claude-code",
+      model: "claude-opus-5",
+      budget: { seconds: 30 },
+      status: "ready",
+    });
+    const log = callsLog();
+    process.env.NOSCOPE_STUB_CALLS = log;
+    let dispatched: Awaited<ReturnType<typeof dispatch>>;
+    try {
+      dispatched = await withStubOutput(
+        {
+          outcome: "answered",
+          claims: [],
+          // Fits both investigate and interpret; each schema keeps its own fields.
+          findings: {
+            summary: "a.txt",
+            observations: [],
+            conclusion: "the handler",
+            reasoning: "the match",
+          },
+          needed: [],
+        },
+        () => dispatch(store, incident, stubbed),
+      );
+    } finally {
+      delete process.env.NOSCOPE_STUB_CALLS;
+    }
+    expect(dispatched.ran.map((r) => [r.taskId, r.status])).toEqual([
+      ["t-grep", "completed"],
+      ["t-inv", "completed"],
+      ["t-read", "completed"],
+    ]);
+    expect(dispatched.pictureChanged).toBeNull();
+    expect(dispatched.reports).toEqual([
+      {
+        unitId: "i1-command",
+        sessionId: "stub-session",
+        report: { outcome: "progress", changed: [], pictureChanged: false },
+      },
+    ]);
+    const calls = readCalls(log);
+    expect(calls.map((c) => [c.kind, c.resume])).toEqual([
+      ["leader", null],
+      ["task", "stub-session"],
+      ["leader", "stub-session"],
+      ["task", null],
+      ["leader", "stub-session"],
+    ]);
+    // The leader's first call opens with its orientation and the grep's result.
+    expect(calls[0]?.prompt).toMatch(
+      /^Incident objective: find where comment deletion scrolls the view\n/,
+    );
+    expect(calls[0]?.prompt).toContain("Your unit's objective: command:");
+    expect(calls[0]?.prompt).toContain(
+      "Task t-grep (grep) completed. Its result:",
+    );
+    expect(calls[0]?.prompt).toContain("2 ready task(s) remain in your unit.");
+    const leaderSystem =
+      calls[0]?.args[calls[0].args.indexOf("--system-prompt") + 1];
+    expect(leaderSystem).toContain("Your role: unit leader.");
+    expect(leaderSystem).toContain("you are the Incident Commander");
+    // The investigate ran as the leader's turn: its brief, the capability's schema, the leader's tools.
+    expect(calls[1]?.prompt).toContain("Your next task follows");
+    expect(calls[1]?.prompt).toContain("Objective: run investigate");
+    expect(schemaOf(calls[1] as Call).properties.outcome).toBeDefined();
+    expect(calls[1]?.args[calls[1].args.indexOf("--tools") + 1]).toBe(
+      "Read,Grep,Glob,Bash",
+    );
+    expect(calls[2]?.prompt).toContain(
+      "Task t-inv (investigate) completed in this session; its result is recorded.",
+    );
+    // The interpret ran in its own session with its own role text, and its result reached the leader.
+    expect(
+      calls[3]?.args[calls[3].args.indexOf("--system-prompt") + 1],
+    ).toMatch(/Your role: interpret/);
+    expect(calls[4]?.prompt).toContain(
+      "Task t-read (interpret) completed. Its result:\n  conclusion: the handler",
+    );
+    expect(calls[4]?.prompt).toContain("No ready tasks remain in your unit.");
+    const events = store.listEvents("i1");
+    const types = events.map((e) => e.type);
+    for (const type of ["task.started", "task.completed", "task.usage"])
+      expect(types.filter((t) => t === type)).toHaveLength(3);
+    expect(types.filter((t) => t === "leader.started")).toHaveLength(1);
+    expect(types.filter((t) => t === "unit.continued")).toHaveLength(2);
+    expect(types.filter((t) => t === "unit.reported")).toHaveLength(1);
+    expect(types.at(-1)).toBe("unit.reported");
+    expect(
+      events.find((e) => e.type === "leader.started")?.payload,
+    ).toMatchObject({
+      unitId: "i1-command",
+      sessionId: "stub-session",
+      provider: "claude-code",
+      model: "claude-haiku-4-5",
+    });
+    expect(
+      events.find((e) => e.type === "unit.reported")?.payload,
+    ).toMatchObject({
+      unitId: "i1-command",
+      sessionId: "stub-session",
+      model: "claude-haiku-4-5",
+      usage: { inputTokens: 1500, outputTokens: 42 },
+    });
+    expect(store.listUnits("i1")[0]?.sessionId).toBe("stub-session");
+    store.close();
+  });
+
+  it("a report that changed the picture stops the pass before the next unit, and a unit whose leader owes a report is asked without a task", async () => {
+    const store = new Store(":memory:");
+    const { incident, task, addUnit } = scriptedIncident(store);
+    addUnit({ id: "u-a", objective: "the first half" });
+    addUnit({ id: "u-b", objective: "the second half" });
+    task({
+      id: "t-a",
+      capability: "grep",
+      unitId: "u-a",
+      inputs: { root: ".", pattern: "delete" },
+      status: "ready",
+    });
+    task({
+      id: "t-b",
+      capability: "grep",
+      unitId: "u-b",
+      inputs: { root: ".", pattern: "delete" },
+      status: "ready",
+    });
+    process.env.NOSCOPE_STUB_TURN = JSON.stringify({
+      kind: "report",
+      report: {
+        outcome: "not_met",
+        changed: [{ what: "the handler is elsewhere", claims: [] }],
+        pictureChanged: true,
+        why: "the grep hit nothing relevant",
+        suggestion: "look in the view layer",
+      },
+      discrepancy:
+        "the objective describes a scroll; the tree has no scroll code",
+    });
+    let first: Awaited<ReturnType<typeof dispatch>>;
+    try {
+      first = await dispatch(store, incident, stubbed);
+    } finally {
+      delete process.env.NOSCOPE_STUB_TURN;
+    }
+    expect(first.ran.map((r) => r.taskId)).toEqual(["t-a"]);
+    expect(first.pictureChanged).toBe("u-a");
+    expect(first.reports.map((r) => [r.unitId, r.report.outcome])).toEqual([
+      ["u-a", "not_met"],
+    ]);
+    expect(store.listTasks("i1").find((t) => t.id === "t-b")?.status).toBe(
+      "ready",
+    );
+    const discrepancy = store
+      .listEvents("i1")
+      .find((e) => e.type === "picture.discrepancy");
+    expect(discrepancy?.payload).toMatchObject({
+      seat: "leader",
+      unitId: "u-a",
+      taskId: "t-a",
+      discrepancy:
+        "the objective describes a scroll; the tree has no scroll code",
+    });
+    // Next pass: u-b runs; its leader says continue with nothing left, so the pass ends
+    // without its report, and the pass after that asks u-b for one with no task to show.
+    process.env.NOSCOPE_STUB_TURN = JSON.stringify({ kind: "continue" });
+    let second: Awaited<ReturnType<typeof dispatch>>;
+    try {
+      second = await dispatch(store, incident, stubbed);
+    } finally {
+      delete process.env.NOSCOPE_STUB_TURN;
+    }
+    expect(second.ran.map((r) => r.taskId)).toEqual(["t-b"]);
+    expect(second.reports).toEqual([]);
+    expect(store.listEvents("i1").at(-1)?.type).toBe("unit.continued");
+    const log = callsLog();
+    process.env.NOSCOPE_STUB_CALLS = log;
+    let third: Awaited<ReturnType<typeof dispatch>>;
+    try {
+      third = await dispatch(store, incident, stubbed);
+    } finally {
+      delete process.env.NOSCOPE_STUB_CALLS;
+    }
+    expect(third.ran).toEqual([]);
+    expect(third.reports.map((r) => r.unitId)).toEqual(["u-b"]);
+    const calls = readCalls(log);
+    expect(calls.map((c) => [c.kind, c.resume])).toEqual([
+      ["leader", "stub-session"],
+    ]);
+    expect(calls[0]?.prompt).toContain(
+      "Your unit has not reported since its last task ended.",
+    );
+    store.close();
+  });
+
+  it("a leader that cannot answer ends the pass with the unit named, after the task's own events are written", async () => {
+    const store = new Store(":memory:");
+    const { incident, task } = scriptedIncident(store);
+    task({
+      id: "t-grep",
+      capability: "grep",
+      inputs: { root: ".", pattern: "delete" },
+      status: "ready",
+    });
+    process.env.NOSCOPE_STUB_LEADER_FAIL = "1";
+    try {
+      await expect(dispatch(store, incident, stubbed)).rejects.toThrow(
+        /^leader of unit i1-command: claude session failed/,
+      );
+    } finally {
+      delete process.env.NOSCOPE_STUB_LEADER_FAIL;
+    }
+    const types = store.listEvents("i1").map((e) => e.type);
+    expect(types.slice(-2)).toEqual(["task.completed", "task.usage"]);
+    expect(store.listUnits("i1")[0]?.sessionId).toBeNull();
+    store.close();
+  });
+});
+
 describe("incident step", () => {
   // Several stub sessions through the CLI; slow on a CI runner.
   it("runs one cycle with the stub planner: plan, verdict, apply, dispatch, claims; then refuses a closed incident", {
@@ -705,9 +1008,7 @@ describe("incident step", () => {
     };
     await run(["incident", "create", "where is the delete handler"], ctx);
     const plan: ActionPlan = {
-      createUnits: [
-        { ref: "find", purpose: "locate the handler", parent: "001-command" },
-      ],
+      createUnits: [unitProposal("find", "locate the handler", "001-command")],
       closeUnits: [],
       createTasks: [
         {
@@ -747,13 +1048,14 @@ describe("incident step", () => {
     ).toBe(EXIT.ok);
     expect(out).toEqual([
       "plan proposed (session stub-session): grep first",
-      "  create unit find under 001-command: locate the handler",
+      "  create unit find under 001-command (leader claude-code/claude-haiku-4-5): locate the handler",
       "  create task under find: grep: find delete",
       "  status: continue",
       "plan approved",
       "  unit 001-u02 created under 001-command: locate the handler",
       "  task 001-t01 [ready] under 001-u02: grep: find delete",
       "  ran 001-t01 (grep): completed; 1 claim(s)",
+      "  unit 001-u02 reported progress: nothing changed",
       "claims: 1 verified, 0 asserted",
     ]);
     out.length = 0;

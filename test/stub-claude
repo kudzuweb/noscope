@@ -7,8 +7,15 @@
 // NOSCOPE_STUB_OUTPUT (or a canned answered result); a planner call, recognised by its
 // system prompt, gets NOSCOPE_STUB_PLAN instead, or the next entry of NOSCOPE_STUB_PLANS
 // (a JSON array walked in order, the position kept in the file NOSCOPE_STUB_COUNTER).
+// A leader's turn, recognised by the LeaderTurn schema (a `kind` of report or continue),
+// gets NOSCOPE_STUB_TURN, or the next entry of NOSCOPE_STUB_TURNS (walked with the counter
+// file NOSCOPE_STUB_TURN_COUNTER), or by default `continue` while the prompt says tasks
+// remain and a progress report once it says none do. NOSCOPE_STUB_CALLS, when set, gets one
+// JSON line appended per call: its kind (planner, leader, task), the resumed id, args and prompt.
+// NOSCOPE_STUB_FAIL and NOSCOPE_STUB_EXIT leave a leader's turn alone, so a test of a failing
+// task session still gets its leader's turn; NOSCOPE_STUB_LEADER_FAIL fails the turn instead.
 // A --resume call answers with the id it was given as session_id, as the real binary does.
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 
 const args = process.argv.slice(2);
 const prompt = readFileSync(0, "utf8");
@@ -22,6 +29,32 @@ const systemPrompt = args[args.indexOf("--system-prompt") + 1] ?? "";
 const resumed = args.indexOf("--resume");
 const sessionId = resumed === -1 ? "stub-session" : args[resumed + 1];
 const isPlanner = systemPrompt.startsWith("You are the Planning Section");
+const schema = JSON.parse(args[args.indexOf("--json-schema") + 1] ?? "{}");
+const isLeaderTurn = Array.isArray(schema.properties?.kind?.enum) && schema.properties.kind.enum.includes("report");
+if (process.env.NOSCOPE_STUB_CALLS)
+  appendFileSync(
+    process.env.NOSCOPE_STUB_CALLS,
+    `${JSON.stringify({
+      kind: isPlanner ? "planner" : isLeaderTurn ? "leader" : "task",
+      resume: resumed === -1 ? null : args[resumed + 1],
+      args,
+      prompt,
+    })}\n`,
+  );
+
+function nextTurn() {
+  if (process.env.NOSCOPE_STUB_TURNS) {
+    const turns = JSON.parse(process.env.NOSCOPE_STUB_TURNS);
+    const counter = process.env.NOSCOPE_STUB_TURN_COUNTER ?? "";
+    const i = counter && existsSync(counter) ? Number(readFileSync(counter, "utf8")) : 0;
+    if (counter) writeFileSync(counter, String(i + 1));
+    return turns[Math.min(i, turns.length - 1)];
+  }
+  if (process.env.NOSCOPE_STUB_TURN) return JSON.parse(process.env.NOSCOPE_STUB_TURN);
+  return prompt.includes("No ready tasks remain")
+    ? { kind: "report", report: { outcome: "progress", changed: [], pictureChanged: false } }
+    : { kind: "continue" };
+}
 
 function nextPlan() {
   if (process.env.NOSCOPE_STUB_PLANS) {
@@ -34,13 +67,16 @@ function nextPlan() {
   return JSON.parse(process.env.NOSCOPE_STUB_PLAN ?? "null");
 }
 
-const planned = isPlanner ? nextPlan() : null;
+const planned = isPlanner ? nextPlan() : isLeaderTurn ? nextTurn() : null;
 const output =
   planned ??
   (process.env.NOSCOPE_STUB_OUTPUT
     ? JSON.parse(process.env.NOSCOPE_STUB_OUTPUT)
     : { outcome: "answered", claims: [], findings: { note: "stub" }, needed: [] });
-const envelope = process.env.NOSCOPE_STUB_FAIL
+const failing = isLeaderTurn
+  ? Boolean(process.env.NOSCOPE_STUB_LEADER_FAIL)
+  : Boolean(process.env.NOSCOPE_STUB_FAIL);
+const envelope = failing
   ? {
       type: "result",
       subtype: "error_during_execution",
@@ -97,7 +133,7 @@ tools.forEach((call, i) => {
   });
 });
 // NOSCOPE_STUB_EXIT: die with that code after the tool lines, never reaching the result.
-if (process.env.NOSCOPE_STUB_EXIT) {
+if (process.env.NOSCOPE_STUB_EXIT && !isLeaderTurn) {
   process.stdout.write(`${lines.map((l) => JSON.stringify(l)).join("\n")}\n`);
   process.exit(Number(process.env.NOSCOPE_STUB_EXIT));
 }

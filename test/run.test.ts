@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { EXIT, run } from "../src/cli.js";
 import type { ActionPlan, TaskProposal } from "../src/models.js";
 import { Store } from "../src/store.js";
+import { unitProposal } from "./fixtures/models.js";
 
 const tree = resolve("test/fixtures/tree");
 const stub = resolve("test/stub-claude");
@@ -32,11 +33,7 @@ const empty: ActionPlan = {
 const findIt: ActionPlan = {
   ...empty,
   createUnits: [
-    {
-      ref: "find",
-      purpose: "locate the delete handler",
-      parent: "001-command",
-    },
+    unitProposal("find", "locate the delete handler", "001-command"),
   ],
   createTasks: [
     {
