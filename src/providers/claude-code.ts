@@ -36,14 +36,9 @@ const KILL_GRACE_MS = 5_000;
  * about 3k and keep Mauria's settings, skills and hooks out (DESIGN.md Step 3, verified
  * 2026-09-12 on Claude Code 2.1.270). Transcripts are kept on purpose: every session's
  * record under Claude Code's project directory is the material for refining the runtime,
- * and `--no-session-persistence` is never set, so a session stays resumable.
- */
-/** After a timeout's SIGTERM, how long the child has to exit before SIGKILL. */
-const KILL_GRACE_MS = 5_000;
-
-/**
- * Stream output, one JSON line per message, so every tool call the session makes is read as
- * it happens; the last line is the same result envelope `--output-format json` prints. Print
+ * and `--no-session-persistence` is never set, so a session stays resumable. Output is the
+ * stream, one JSON line per message, so every tool call the session makes is read as it
+ * happens; the last line is the same result envelope `--output-format json` prints. Print
  * mode refuses the stream format without `--verbose` (verified 2026-09-15 on 2.1.272).
  */
 export const CLAUDE_CODE_ISOLATION_FLAGS = [
