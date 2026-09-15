@@ -2291,3 +2291,126 @@ could reach `settle(root)` on a pre-R4-6 store (guarded); "warned last cycle" re
 the previous applied plan's warnings after a rejected plan (narrowed); DESIGN.md Step 5
 sent a fact the IC lacks only through a period objective where `IC_ROLE` also offers a
 deterministic task under command (aligned).
+
+## R4-7: Refusals: the category, and the fallback to Opus 4.8 (#PR, merged 2026-09-15)
+
+R4-7 of the round 4 plan. Two things the third run left open. The category: run 003's
+`command.failed` events recorded `refused: { category: "unstated", explanation: "" }`
+while the IC sessions' transcripts (`cf551f26`, `a30d1d7f`) carry
+`apiRefusalCategory: "reasoning_extraction"` on the same `model_refusal_no_fallback` line.
+The cause, read from Claude Code 2.1.272's own code on 2026-09-15: the binary serializes
+that system message for the SDK stream with snake_case keys (`api_refusal_category`,
+`api_refusal_explanation`), and writes the transcript record with camelCase ones; R3-10a
+read the camelCase names off the stream, found the line, and took the missing field as
+`unstated` with an empty explanation, which is exactly what the events show. The run's raw
+stream was not captured, so the stream's spelling is verified from the code and inferred
+from the events, not seen live. Built: `refusalOf` in `src/providers/claude-code.ts` reads
+the system line under either spelling, then the assistant line's `stop_details` (the
+transcript's synthetic assistant message carries `category` and `explanation` there, and
+the binary's own refusal reader uses it), and, when the stream still names no category and
+the session id is known, the session's transcript under the project directory
+(`readTranscriptRefusal`, the path R3-1's provider already resolves); `unstated` remains
+only when no record names one. The stub prints the snake_case line and `stop_details`, as
+the stream does. The Reference row records the two spellings and that Claude Code has a
+refusal fallback of its own (`model_refusal_fallback`), which the run's sessions did not
+have.
+
+The fallback, ruled by Mauria in review on 2026-09-15. `fallbackModel` in `src/leader.ts`
+reads `NOSCOPE_IC_FALLBACK_MODEL` from the command's environment, default
+`claude-opus-4-8`, refused when the provider does not serve it. Every refused seat retries
+once on it, and no seat retries beyond that. The IC (`icCall` in `src/ic.ts`): the refused
+call is filed (`command.failed`), its session released when it was resumed, and command
+transfers to the fallback as `command.transferred` of kind `fallback` (R3-8's `Transfer`
+union gains the kind: the refused calls as `refusals`, the outgoing and incoming leaders,
+`chosenBy: "runtime"`, no document; `recordTransfer` changes the root unit's leader through
+the log, so every later IC call stays there); a fresh session on the fallback is asked the
+same turn, and its `leader.started` names the refused session as `replaced` and
+`fallbackFrom`. A fallback transfer is never pending for evaluation (`pendingTransfer` skips
+it), and a handoff recorded by a successor that fell back keeps the fallback as its incoming
+leader. The IC's own leader turns under `command` (the dispatcher's `leaderTurn` on the root
+unit) record the same transfer. Refused on the fallback too, or refused after a fallback
+transfer already exists (the IC's model was changed once, by the runtime or by an answer),
+`blockOnRefusals` asks a question naming every refusal (`question.asked` with
+`icRefusals`), blocks the incident (`incident.blocked` with the same) and throws
+`IcRefused`, which `step` and `run` print as the blocked incident, the question and the
+`answer` command, exiting 0 as a plan's question does. `holdsOn` in `src/runtime.ts` gains
+the hold "the IC's model" (`icModelHold`: the last `incident.blocked` carrying `icRefusals`
+with no transfer after it). `incident answer` parses the text for a model in the provider's
+list as a whole word; found, it records the transfer (`chosenBy: "answer"`, the refusals
+carried) before answering the question, so the incident reopens on that model; not found,
+the answer is stored, the same question is asked again under the next id, and the incident
+stays blocked with a hint listing the models. A unit leader (`leaderTurn` in
+`src/dispatcher.ts`): the refused turn is filed as `leader.failed` carrying `fallback` and
+the mutation `unit.leader` to the fallback model, the session released, and a fresh session
+on the fallback asked the same turn; refused there too, or refused when the unit's leader
+already is the fallback, the runtime writes the unit's report (`reportRefusals`:
+`unit.reported` by the dispatcher's actor with `writtenBy: "runtime"` and the `refusals`, a
+null session, `not_met`, both refusals as the why, the IC's choices as the suggestion,
+picture-changing), and the pass ends on it. A task session (`runTask`): the refused call is
+filed on the task as `task.usage` carrying the refusal, the model and the fallback, plus its
+activity, and the task is retried once in its own session on the fallback whatever the
+first call ran in; `task.completed` and `task.usage` then carry `model` and `fallbackFrom`;
+refused there too, or refused when the task's own model is the fallback, `TaskRefused`
+carries both, `task.failed` records `refused` with both and the models, and `dispatch`
+writes the same runtime report for the unit instead of asking its leader, ending the pass.
+`incident show` lists every model change under "model changes:"; `step` prints a fallback
+transfer under the turn that forced it; `incident review` lists a fallback transfer with its
+models, chooser and refusals (no evaluation lines), a leader's refused turn with its move
+to the fallback, a task's refused call priced and named with the model it was retried on, a
+retried task's outcome with `fallback from`, the runtime's report as such, and the refusals
+line now names each call's model and includes task sessions. DESIGN.md Step 2 (the events),
+Step 6 (the rule), Step 7 (`show`, `step`, `run`, `review`, `answer`), the Reference row
+and the Model choices table follow; README and CLAUDE.md name the variable, and CLAUDE.md
+no longer says to pass `--ic-model claude-sonnet-5` as the only way around the refusal.
+
+Tests (`test/refusal.test.ts`): the provider yields `reasoning_extraction` from a stream
+whose system line uses either spelling, and from a stream carrying only the stop reason
+beside a transcript fixture under a scratch project directory (and `unstated` without the
+transcript); the IC's review refused on its resumed session is filed, released, transferred
+(kind `fallback`, the refusal as reason), reviewed by a fresh session on `claude-opus-4-8`
+whose `leader.started` carries `fallbackFrom`, the unit's leader changed, `show` and
+`review` naming the change, and the next command turn resumes it on the fallback; refused
+on the fallback too, the incident blocks with the question carrying both refusals, `step`
+exits 5 on it, an answer naming no model is stored and re-asked with the hint, an answer
+naming Sonnet 5 transfers command (chosen by `answer`) and reopens, a refusal on Sonnet
+blocks again on one refusal (the fallback already tried), an answer naming Haiku runs the
+cycle through, and `show` lists the three changes; a leader refused on its resumed session
+moves to the fallback on `leader.failed` (the mutation checked), its fresh session reports
+on `claude-opus-4-8`, and `review` names the move; a leader refused on the fallback too has
+its unit report `not_met` by the runtime with both refusals, the pass stops, `review` lists
+the runtime's report and both refusals, and the IC's next change report carries it; a task
+in its own session refused is retried on the fallback with both models on its events; a
+task refused on both (the first call inside its leader's session) fails with both, the unit
+reports by the runtime, and no leader turn is asked; `NOSCOPE_IC_FALLBACK_MODEL` is
+validated against the provider's list.
+
+Not exactly to spec, with reasons:
+
+- The stream's spelling of the category key is read from the binary's code, not observed
+  on a live refusal: a refusal cannot be provoked deterministically, and R4-10's run is
+  where it will be seen. The provider reads every spelling and the transcript, so whichever
+  record carries the category reaches the event.
+- A second refusal of the IC ends `step` and `run` with exit 0 and the blocked incident,
+  not exit 1 as R3-10a's second refusal did: the outcome is now in the record (the
+  question and `incident.blocked`), which is what exit 0 means for a plan's question, and
+  exit 1 is for a failure outside the record.
+- "Refused on the fallback" is read as "the seat's fallback has been tried": for the IC any
+  fallback transfer on the incident, including one Mauria's answer chose, so a refusal on
+  the model she named blocks again on that one refusal rather than retrying Opus 4.8 a
+  second time; for a leader or task, the seat's model already being the fallback. The
+  question then names the refusals that call sequence filed, one or two.
+- A task refused inside its leader's session is retried in its own session on the fallback,
+  not inside the leader (the leader's session is on the refused model and is itself flagged);
+  the leader's next turn on that session is then refused and falls back on its own. R3-10a
+  had such a task simply fail.
+- An answer naming no model re-asks the question under the next id rather than leaving the
+  first unanswered: the answer is a record of what Mauria said, and an open question is
+  what `incident answer` acts on, so the hold "the IC's model" and the re-asked question
+  together keep the incident blocked until a model is named.
+- A refused handoff call stays the lost-outgoing-session path (released, nothing handed
+  off) rather than a fallback: the handoff asks the outgoing session what it knows, and a
+  fresh session has nothing to hand off; the fallback applies to the successor's first
+  call when that is refused.
+- Review's refusals line gained the model (`ic reasoning_extraction on claude-opus-5
+  (session ...)`), changing R3-10a's format, so that a refusal on the fallback reads
+  differently from one on the primary model.
