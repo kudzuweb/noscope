@@ -2,7 +2,7 @@
 
 Derived from `DESIGN.md` at commit 4d5f68a and `docs/architecture.html`. Fifteen PRs, each
 mergeable on its own, the CLI working after every one; round 2, from the first incident's
-audit, follows at the end. Every PR targets `main`. The design
+audit, and round 3, the Incident Commander and units with leaders, follow at the end. Every PR targets `main`. The design
 document is the contract; where this plan and it disagree, the design wins and this plan
 gets fixed.
 
@@ -209,7 +209,7 @@ Acceptance: all eight criteria observed on the live run and checked off in
 SOPs and `incident sop`; grants and `incident grant`, `grant standing`, `--per-task`; the
 MCP equipment server and external MCP servers as equipment (round 2 brings in the first
 external server, a browser, in R2-7); the Codex provider; parallel
-dispatch; the Situation Unit; cross-incident priorities; auto-whitelisting of grants.
+dispatch; the Situation Unit as a session (round 3 gives its change report to the runtime); cross-incident priorities; auto-whitelisting of grants.
 The schema slots for grants, SOP applications and capability requests are created in PR 2
 and PR 3 so none of these needs a migration.
 
@@ -389,3 +389,323 @@ reported beside run 001 with no thresholds: the measure is what it took to reach
 answer. The report also says how run 002 settled the one step code cannot prove, where the
 editor's selection rests before a deletion; run 001 settled it by a question to Mauria at
 cycle 9, and run 002 has `reproduce` for it.
+
+## Round 3: the Incident Commander and units with leaders
+
+Derived from run 002's measures in `docs/first-incident.md` and the design conversation of
+2026-09-14, afternoon and evening, whose rulings are recorded in the quipu thread
+`ics-runtime.md` and summarized in `handoff-noscope-build.md`. The mechanism checks in
+R3-0 were run on 2026-09-15 before this section was written; their results are in that
+PR's scope. Eleven PRs in dependency order, each mergeable on its own, the CLI working
+after every one; the last reruns the first incident and runs a second of a different kind.
+Numbered R3-0 to R3-10 here; the build record maps each to its GitHub number. The
+conventions above apply. DESIGN.md is updated by each PR for what it changes, and the
+design wins where this plan disagrees with it.
+
+What round 3 builds, in one paragraph. Every unit has a leader: a session created with
+the unit that holds its objective, runs its tasks in order, and reports against that
+objective. The root unit's leader is the Incident Commander, a persistent session that
+sets each operational period's objectives and priorities, reviews the planner's draft
+against them, reads the units' reports, and closes or reorganizes. The planner stays as it
+is, stateless and fed the full file. The runtime is the Planning Section's bookkeeping: it
+briefs the IC at the top of each cycle, checks the plan's shape, dispatches, and records.
+An initial IC on a cheap model sizes the incident up and hands command over with a
+briefing. Leaders deploy strike teams of subagents, and every tool call and subagent run
+lands in the event log. Claim status stops gating anything.
+
+| PR | Title | Depends on | Delivers, in one line |
+|---|---|---|---|
+| R3-0 | Mechanism checks | none | The five spikes the round rests on, landed under `spikes/round3/` with their results in DESIGN.md's Reference table. |
+| R3-1 | Tool and subagent events | none | Every tool call a session makes, and every subagent it spawns, is an event filed under the task in flight. |
+| R3-2 | Status is a label | none | Promotion and `claimsToVerify` go; `proven` and `satisfied` key on basis `observed`; status says where a claim came from and gates nothing. |
+| R3-3 | Persistent sessions | R3-0 | The provider can resume a session for one more structured call, with that call's own usage. |
+| R3-4 | Unit leaders | R3-1, R3-3 | A unit has a leader session that runs its tasks and reports against its objective; the preamble and role texts say what a leader is. |
+| R3-5 | Strike teams | R3-4 | A task declares the subagent team a leader may send; the runtime provides it and logs every member. |
+| R3-6 | Lacks resolve at the leader | R3-4 | A leader resolves a retrievable fact itself and sends the rest up as resource requests; a unit waits, the incident does not block. |
+| R3-7 | The IC above the planner | R3-2, R3-4 | The root unit's leader sets period objectives and priorities, reviews the plan in one round, reads reports, and ends a period early on a change of picture. |
+| R3-8 | Initial IC and transfer of command | R3-7 | `create` runs a cheap size-up that writes the incident briefing and names the IC's model; command transfers with a recorded event. |
+| R3-9 | IC handoff at the context threshold | R3-7 | The IC is never compacted: the runtime hands off to a fresh session below the limit, as a transfer of command. |
+| R3-10 | Third run, and a second incident | all | The first incident rerun with everything above, and an incident of another kind, both measured with `incident review`. |
+
+R3-1, R3-2 and R3-3 can run in parallel once R3-0 is in. R3-5 and R3-6 can run in
+parallel with R3-7. R3-8 and R3-9 can run in parallel.
+
+### R3-0: Mechanism checks
+
+Scope: the scripts run on 2026-09-15 land under `spikes/round3/` in the form of
+`spikes/mcp-tools-filter/run.sh`, and DESIGN.md's Reference table gains one row per result.
+The results, each from a live Haiku call on Claude Code 2.1.272 unless noted:
+
+| Check | Result |
+|---|---|
+| A call resumed with `--resume <id>` accepts its own `--json-schema` and returns one structured result for that call. | Passes: three calls on one session with three schemas returned three structured outputs, and the session remembered across them. |
+| A resumed call reports usage for that call alone. | Passes: `num_turns` was 2 on every call and cache writes grew by one turn each time. Cache reads were 0 on every call, consistent with the schema changing per call; R3-3 confirms cache reads with a fixed schema. |
+| Auto-compaction can be turned off for a headless session. | Passes, from the docs (`code.claude.com/docs/en/model-config`): `DISABLE_COMPACT` in the environment disables it, and the session errors at the context limit instead. `--autocompact <tokens>` sets the window when compaction is wanted. |
+| The parent envelope accounts for subagent usage. | `total_cost_usd` includes the subagents (the `modelUsage` entries sum to it); `modelUsage` lists each model; `subagent_stats` counts spawned, completed, failed and by type. Each subagent's transcript under `<session>/subagents/` carries its own per-message usage and a `.meta.json` with the `toolUseId` of the `Agent` call that spawned it. |
+| `--agents <json>` is honored on a `--resume` call. | Passes: a session started without agents, resumed with a `pinger` kind, spawned it. |
+
+Acceptance: the scripts run from their directory and print the results above; the
+Reference rows cite the date and the Claude Code version.
+
+### R3-1: Tool and subagent events
+
+Scope: `src/providers/claude-code.ts` runs every session with `--output-format
+stream-json` and reads the stream: each `tool_use` block and the `tool_result` that answers
+it (matched on `tool_use_id`) become one `tool.called` event carrying the session id, the
+unit, the task in flight, the tool name, the full input, the result clipped at a size cap
+with the transcript path as the full record, `is_error`, and the duration between the two
+timestamps. The final `result` message is parsed as the envelope is today. When the
+envelope's `subagent_stats.spawned` is nonzero, the provider reads each transcript under
+`~/.claude/projects/<dir>/<session id>/subagents/` and writes one `subagent.ran` event per
+member: agent id, type from its `.meta.json`, model, the `toolUseId` that links it to its
+`tool.called`, its usage summed from its assistant messages, and its own tool calls as
+nested `tool.called` events. Usage on `task.usage` stays the envelope's figures; a
+subagent's usage is a breakdown, never added. `incident review` shows tool calls and
+subagents per task. Two event types added to `EventType` and to DESIGN.md Step 2; Step 6
+says what the log holds per session.
+
+Acceptance: a provider test on a recorded stream (a fixture captured from a real Haiku
+session with one Bash call and one subagent) produces the expected `tool.called` and
+`subagent.ran` events with the link between them; a test that a clipped result names the
+transcript; the stub binary emits stream-json so every existing test still passes.
+
+### R3-2: Status is a label
+
+Scope: `promoteMatching` and the `claim.verified` promotion path go from
+`src/verifier.ts`; `claimsToVerify` goes from `ActionPlan`, from `applyPlan`, from the
+validator's "Dependencies resolve" line and from `step`'s output. The "Inferred links are
+worked" rule accepts in `proven` any claim whose basis is `observed`, whichever task
+observed it; "Status is earned" requires at least one observed claim for `satisfied`
+rather than a verified one. Planner input sections 2 and 3 become one section, claims,
+each line showing its status and basis; the planner prompt says status names the source
+(deterministic equipment or a session) and basis says whether it was seen. The store
+migration is a no-op on rows. DESIGN.md Vocabulary (claim), Step 4, Step 5 and Step 6
+follow; the sentence "only deterministic verification promotes it" goes.
+
+Acceptance: validator tests that a `proven` entry naming an observed session claim passes
+and an inferred one fails; a `satisfied` plan with observed claims and no verified ones
+passes; the models test rejects a plan with `claimsToVerify`; the planner snapshot
+updated; a verifier test that a matching deterministic claim no longer changes an asserted
+claim's status.
+
+### R3-3: Persistent sessions
+
+Scope: `SessionRequest` gains optional `resume: string` (a session id); the Claude Code
+renderer adds `--resume <id>` when it is set and never sets `--no-session-persistence`.
+`SessionOutcome` is unchanged: one structured result and one usage record per call, which
+R3-0 established. The provider passes `DISABLE_COMPACT=1` in every session's environment,
+so compaction never rewrites a session the runtime is resuming. A live test behind
+`NOSCOPE_LIVE=1` runs two calls on one session with the same schema and asserts the second
+call's cache reads are nonzero, which settles the open observation from R3-0. DESIGN.md
+Step 3 (session fields) and the Speed section's last sentence follow.
+
+Acceptance: a renderer test that `resume` produces the flag and its absence does not; the
+stub binary honors `--resume` by echoing the id back as `session_id`; the live test.
+
+### R3-4: Unit leaders
+
+Scope: a unit has a leader. `UnitProposal` and `Unit` gain `leader`: `provider` and
+`model` (required), and the unit's `equipment` and `bashAllowlist` declared the way a
+capability declares them, read-only until grants exist; `Unit` also gains `sessionId`
+(null until the leader first runs) and `objective` replaces `purpose` (the migration
+copies it). The root unit is created with a leader too, whose model is fixed to Opus 5
+until R3-8 routes it; the leader machinery is the same for the root as for every other
+unit, so R3-7 gives the root leader a different schema and nothing else. A leader's
+session is created when its unit first has a ready task and demobilized (its id recorded
+on `unit.closed`) when the unit closes.
+
+Dispatch, rewritten in `src/dispatcher.ts`: a ready task runs inside its unit's leader
+session when the task's model and equipment match the leader's, as one resumed call whose
+prompt is the task brief and whose schema is the capability's output schema; it runs in a
+session of its own, as today, when they differ, and its result is then rendered into the
+leader's next call. Either way the log records `task.started`, `task.completed` or
+`task.insufficient`, `task.usage` and the claims per task, so `incident review` costs each
+task on its own. A deterministic task runs as today and its result goes to the leader's
+next call. A unit runs until its leader reports: after each of its tasks, the leader's
+session is resumed with the result and asked for its next move under the `LeaderTurn`
+schema: `report` (outcome `met`, `not_met` or `progress`; `changed`, a list of what is
+now true that was not, each naming the claims it rests on; `picture_changed: boolean`),
+or `continue` when tasks remain. `unit.reported` records every report. A unit with no
+tasks left and no report is asked for one. Dispatch runs one unit at a time, in tree
+order, until every unit with ready tasks has reported or one reports `picture_changed`.
+
+The preamble in `src/providers/base.ts` is rewritten for the seats: what the system is
+(the IC sets objectives and priorities, the planner drafts, the IC approves, the validator
+checks, units run under their leaders and report); the terms gain Incident Commander,
+initial IC, unit leader, situation report, operational period, transfer of command, strike
+team, task force and subagent, and "nothing runs as a unit" goes; the session's place is
+rendered per seat, and the runtime renders the hierarchy around the session from the tree
+at brief time (its unit, its parent, who it reports to, what is below it). The leader role
+text: it owns its unit's objective, directs its tasks, reports what changed and not what it
+did, files a report the moment an outcome changes the picture, and cannot change the
+organization above or beside it. The validator's "Model known" rule covers leaders;
+"Closing is clean" covers a leader session's demobilization. `incident tree` shows each
+leader's model and last report. DESIGN.md Vocabulary (unit, task), the ICS mapping rows
+for Division, Group and Unit and for the Operations Section, Step 3 (the preamble row),
+Step 6 and Step 7 follow.
+
+Acceptance: a dispatcher test on the stub that a unit with a grep, an investigate on the
+leader's model and an interpret on another model runs the grep in-process, the
+investigate as a resumed call on the leader's session, and the interpret in its own
+session, with per-task events for all three and one `unit.reported` at the end; a test
+that a `picture_changed` report stops the pass before the next unit; the preamble test
+pins the seat paragraphs; the planner snapshot updated for leaders in section 4; the
+replay test covers the new events.
+
+### R3-5: Strike teams
+
+Scope: `TaskProposal` and `Task` gain optional `strikeTeam`: `kind` (a name), `model`,
+`tools` (built-in tool names), `prompt` (the member's system prompt), `count` (how many
+the leader intends to send), and `why`. A leader may also request one in its `LeaderTurn`
+(`requestStrikeTeam`), which the runtime treats as the same declaration on the task in
+flight. The validator checks the model against the provider's list, the tools against
+read-only (the effect policy: no `Edit`, `Write` or unallowlisted `Bash` until grants
+exist), and the count against the task's budget, and nothing else. The runtime records
+`strike_team.defined` and passes the kinds on the leader's next launch or resume with
+`--agents <json>` (R3-0, honored on resume) and `Agent` in the session's tools. No preset
+kinds exist and no kind is provided by default; the leader chooses the shape and says
+why, so the record shows what leaders ask for. `incident review` reports per declared
+config: members run, usage, cost, and how many claims cite a member. The preamble's
+strike-team line says the leader must choose the kind, model, tools and count when it
+asks. DESIGN.md Vocabulary (strike team, task force), the ICS mapping row for Strike Team
+and Task Force, Step 4 (the task fields) and Step 5 follow.
+
+Acceptance: validator tests for a team with a writing tool, an unknown model and a
+count over budget; a renderer test that a declared team reaches `--agents`; a live test
+behind `NOSCOPE_LIVE=1` where a Haiku leader sends two `pinger` members and the log holds
+`strike_team.defined`, one `tool.called` for the `Agent` call and two `subagent.ran`
+linked to it.
+
+### R3-6: Lacks resolve at the leader
+
+Scope: a leader's `LeaderTurn` may also carry `assignTasks` (task proposals under its own
+unit, to capabilities it holds, inside its budget), which `applyPlan` applies under the
+same validator rules as a plan's tasks, recorded as `plan.applied` with the leader as
+actor; this is how a retrievable fact is resolved without a cycle boundary. A task's
+`insufficient` with kind `retrievable_fact` goes to the leader's next call, not to the
+planner. The other three kinds, and a leader's own, go up as `resourceRequests` on the
+report: `permission`, `missing_means` or `human_knowledge`, each with what and why. A unit
+whose report carries a resource request enters the new status `waiting`
+(`UnitStatus`, migration adds nothing to rows); its tasks stay pending; dispatch skips it;
+the report is `picture_changed`. The incident's `questions` and `capabilityRequests`
+now name the unit that raised them; `incident answer` and `incident provide` return that
+unit to `active` and return the incident to `open` only if the IC had set it `blocked`.
+The incident goes `blocked` only when a plan says so (R3-7 gives the IC that call).
+`incident show` lists waiting units with their requests. DESIGN.md Step 4's channel table
+and Step 7 follow.
+
+Acceptance: a dispatcher test that a `retrievable_fact` insufficiency leads to a
+leader-assigned grep and a resumed call, all in one pass; a test that a
+`human_knowledge` request puts the unit in `waiting`, stops the pass with
+`picture_changed`, and that `incident answer` returns it to `active`; validator tests that
+a leader cannot assign under another unit or above its budget.
+
+### R3-7: The IC above the planner
+
+Scope: the root unit's leader is the Incident Commander. `src/planner.ts` keeps
+`renderPlannerInput` and `proposePlan`; the IC's briefing is rendered from the same
+sections and opens with the change report: every `unit.reported` since the IC last acted,
+every answer and provided capability, and the spend since then. The cycle in `step`
+becomes: (1) the runtime renders the briefing; (2) the IC's session is resumed with it
+under the `CommandTurn` schema: `periodObjectives` (the objectives for this period, from
+the incident objective, the constraints, the priorities and the reports), `priorities`
+(the incident's, restated or revised), `closeUnits`, `answers` to resource requests it can
+answer itself, `questionsForHuman`, `capabilityRequests`, `grantRequests`,
+`incidentStatus` (`continue`, `blocked`, `satisfied`, `failed`) and `rationale`; (3) when
+the status is `continue`, the planner drafts as today, with the period objectives and
+priorities rendered into section 1; (4) the IC's session is resumed with the draft under
+the `ReviewTurn` schema: `verdict` `approve`, `correct` (with `corrections`, text the
+planner redrafts against, once) or `amend` (with the plan as amended); after a redraft the
+verdict is `approve` or `amend`; (5) the validator checks the applied plan's shape as
+today; (6) apply; (7) dispatch runs units to their reports or to a `picture_changed`
+report; (8) stop. `plan.applied` records the verdict, the corrections and the diff between
+draft and applied plan; `incident review` reports verdicts by kind per incident, which is
+the evidence for cutting the planner if the IC never changes its draft. `incident create`
+takes `--priority` as it takes `--constraint`, and the planner prompt says the rationale
+names the priority that chose between plans. The IC role text: it scopes, breaks down,
+equips and judges; its digging is assigned; a period ends when units report or the
+picture changes; it declares `satisfied` when the period objectives and the incident
+objective are met by the reports. `situation` stays the planner's. `incident show` prints
+the current period's objectives. DESIGN.md's ICS mapping rows for Incident Commander and
+Planning Section, the Planning P row, Vocabulary (cycle, incident file), Step 4 and Step
+7 follow; the cycle's definition in DESIGN.md is rewritten to the eight steps above.
+
+Acceptance: a run test on the stub where cycle 1's IC sets objectives, the planner drafts,
+the IC corrects, the planner redrafts, the IC approves, the plan applies and a unit
+reports; a test that a `picture_changed` report ends the pass and the next `step` opens
+with it in the change report; a test that `amend` applies the amended plan and records
+the diff; the models tests for both IC schemas; `review` shows verdict counts; the
+planner snapshot shows period objectives in section 1.
+
+### R3-8: Initial IC and transfer of command
+
+Scope: `incident create` runs the size-up: a session on a cheap model (`claude-haiku-4-5`
+by default, `--initial-model` to override) with the read-only tool set, given the
+objective, constraints, priorities and the runtime's own findings (registered capabilities
+and equipment, budget, whether the cwd is a git repository and its state, whether any URL
+a constraint names answers), returning the `IncidentBriefing` schema: `kind` (what sort of
+incident this is), `dominantProblem`, `obviouslyNeeded` (each with whether a tool checked
+it), `initialObjectives`, `initialOrganization` (units sketched, one line each),
+`questionsForHuman`, `hazards`, and `incomingCommander` (`provider`, `model`, `why`).
+`--ic-model` at `create` overrides the model it names. The briefing is recorded as
+`incident.briefed`; the root unit's leader is set from it; `command.transferred` records
+the transfer from the initial IC's session to the IC's, with the briefing as its payload.
+The IC's first briefing (R3-7 step 1) carries the incident briefing, and the IC role text's
+first instruction is to evaluate it: say what it accepts, rewrites or discards and why,
+before setting the first period's objectives; `incident review` reports how much of the
+briefing the IC kept. Questions in the briefing block the incident before the IC starts.
+DESIGN.md's ICS mapping (a new row for the initial IC and transfer of command), Step 7
+(`create`'s flags) and the Model choices table follow.
+
+Acceptance: a `create` test on the stub that records the briefing, sets the root
+leader's model from it and writes the transfer event; a test that a briefing question
+leaves the incident `blocked` with the question recorded; a planner-style snapshot of the
+IC's first briefing showing the incident briefing and the evaluation instruction; a live
+test behind `NOSCOPE_LIVE=1` that sizes up a fixture repository and returns a `kind`.
+
+### R3-9: IC handoff at the context threshold
+
+Scope: the runtime reads each IC call's whole input context from its usage (the figure
+`task.usage` already records) and, when it crosses `NOSCOPE_IC_HANDOFF_TOKENS` (default
+120000; the IC runs with compaction disabled since R3-3), runs a handoff before the next
+cycle: the outgoing IC's session is resumed once under the `HandoffDocument` schema,
+whose instructions are tailored to the seat: the period objectives and priorities and why
+they are what they are, every unit's state and what it waits on, the hypothesis and the
+claims it rests on, what it set aside and why, and its next intended move. A fresh session
+is then created for the root unit, briefed with that document and the full file, and
+`command.transferred` records the handoff with the document as payload and the outgoing
+and incoming session ids. The IC's first instruction on a handoff is the same evaluation
+as R3-8's. `incident review` lists transfers with the context size that triggered each.
+DESIGN.md Step 6 and the Reference row on compaction follow.
+
+Acceptance: a run test on the stub where the stub reports a context above the threshold
+and the next `step` shows a handoff call, a new session id on the root unit and the
+transfer event; a test that below the threshold no handoff happens; the models test for
+the document schema.
+
+### R3-10: Third run, and a second incident
+
+Scope: the first incident's objective run a third time from the same roughdraftplus
+working directory at commit 6a996e8, with the scratch document restored before the run
+and the priority "settling by observation over reading" given at `create`; `incident
+review 003` recorded beside 001 and 002 in `docs/first-incident.md` under a "Third run"
+section, with the same measures plus: the initial IC's briefing and how much of it the IC
+kept, the IC's verdicts by kind, units and their reports, strike teams declared and what
+they cost, transfers of command, and lacks resolved at a leader against those sent up.
+Then a second incident of a kind that is not a code investigation, chosen by Mauria
+(the open question below), run the same way and written up under a new section, so the
+size-up classifies something else and the record shows what a leader asks for when the
+work is not reading code.
+
+Acceptance: run 003 reaches `satisfied` with the same code path named, and its write-up
+answers whether the IC ever changed the planner's draft and whether any unit's
+`picture_changed` report changed the period. The second incident reaches a terminal
+status and its write-up names every design call it forced, on the revisit list.
+
+### Round 3 open questions
+
+| Question | Blocks |
+|---|---|
+| Which incident of another kind R3-10 runs: a research question, a purchase, a document to draft, something else. Mauria's choice. | R3-10's second half only. |
+| What the IC does when a unit reports `not_met` with nothing requested: re-task the unit or close it and re-plan. | Nothing in the build; the IC role text in R3-7 leaves it to the IC's judgment and R3-10's write-up says what it did. |
+| Whether the planner's `situation` moves to the IC once the IC holds continuity. | Nothing; it stays the planner's in this round, and R3-10's measures show whether the two pictures diverge. |
