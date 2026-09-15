@@ -3,15 +3,21 @@
 // then prints the result envelope claude -p --output-format json prints. The structured
 // output is NOSCOPE_STUB_OUTPUT (or a canned answered result); a planner call, recognised by
 // its system prompt, gets NOSCOPE_STUB_PLAN instead, or the next entry of NOSCOPE_STUB_PLANS
-// (a JSON array walked in order, the position kept in the file NOSCOPE_STUB_COUNTER).
+// (a JSON array walked in order, the position kept in the file NOSCOPE_STUB_COUNTER). A
+// --resume call answers with the id it was given as session_id, as the real binary does.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
 const args = process.argv.slice(2);
 const prompt = readFileSync(0, "utf8");
 if (process.env.NOSCOPE_STUB_LOG)
-  writeFileSync(process.env.NOSCOPE_STUB_LOG, JSON.stringify({ args, prompt }));
+  writeFileSync(
+    process.env.NOSCOPE_STUB_LOG,
+    JSON.stringify({ args, prompt, disableCompact: process.env.DISABLE_COMPACT ?? null }),
+  );
 
 const systemPrompt = args[args.indexOf("--system-prompt") + 1] ?? "";
+const resumed = args.indexOf("--resume");
+const sessionId = resumed === -1 ? "stub-session" : args[resumed + 1];
 const isPlanner = systemPrompt.startsWith("You are the Planning Section");
 
 function nextPlan() {
@@ -37,7 +43,7 @@ const envelope = process.env.NOSCOPE_STUB_FAIL
       subtype: "error_during_execution",
       is_error: true,
       result: "stub failure",
-      session_id: "stub-session",
+      session_id: sessionId,
     }
   : {
       type: "result",
@@ -45,7 +51,7 @@ const envelope = process.env.NOSCOPE_STUB_FAIL
       is_error: false,
       result: JSON.stringify(output),
       structured_output: output,
-      session_id: "stub-session",
+      session_id: sessionId,
       duration_ms: 1500,
       total_cost_usd: 0.0123,
       usage: {

@@ -236,12 +236,16 @@ provider, and the provider renders the fields onto its own command from them:
 | `bash_allowlist` | `--allowedTools` entries of the form `Bash(<command> *)`, so read-only tool calls need no approval. | Covered by `-s read-only`; a finer allowlist is an open item. |
 | `cwd`, `add_dirs` | The working directory and `--add-dir` entries. | `-C <dir>` and `--add-dir`. |
 | `output_schema` | `--json-schema <schema>`, so the result comes back structured. Every session schema carries `outcome: answered \| insufficient`; an insufficient result carries `needed`, a list of what the session lacked, each tagged with its kind (a retrievable fact, permission, missing means, or a human's knowledge), and no claims. | `--output-schema <file>` with the same schema written to a temp file, and `-o <file>` to collect the final message. |
+| `resume`, optional (round 3, R3-3) | `--resume <session id>`: the call continues that session for one more structured result, with this call's own prompt and `--json-schema`, and the envelope reports the session's unchanged id and this call's usage alone (verified 2026-09-15 on Claude Code 2.1.272; `spikes/round3/resume.sh` and the live test in `test/providers.test.ts`). A resumed call with a prefix over the model's minimum cacheable length reads its earlier turns from cache; on Haiku 4.5 that minimum is 4096 tokens, above a bare session's context, so a short session's calls cache nothing at all. Absent, a fresh session starts. A unit leader's session is what gets resumed (R3-4). | Open: `codex exec` has `resume` in its help, untested here. |
 
 Each provider has a fixed set of isolation flags, so no session inherits Mauria's personal
 setup. Claude Code: `--output-format json`, `--setting-sources ""`,
 `--disable-slash-commands`, `--exclude-dynamic-system-prompt-sections`, which together drop
 a session's context from about 40k tokens to about 3k and keep her CLAUDE.md, skills and
-hooks out; `--bare` is not used because it authenticates only with an API key. Sessions are
+hooks out; `--bare` is not used because it authenticates only with an API key. Every session
+also runs with `DISABLE_COMPACT=1` in its environment, so auto-compaction never rewrites a
+session between the calls that resume it; a session that reaches the context limit errors
+instead, and the runtime hands off below the limit (R3-9). Sessions are
 not made ephemeral: every planner and task session leaves its transcript under Claude Code's
 project directory for the session's working directory (`~/.claude/projects/<directory with
 slashes as dashes>/<session id>.jsonl`), and the session id is on `plan.proposed`, on
@@ -523,7 +527,9 @@ negligible. An incident that takes five cycles with two sessions each runs three
 That is slow for a daemon and right for v0, which is stepped by hand to be watched. The
 lever after v0 is running ready tasks in parallel, which turns the sum into a
 maximum; the startup cost per session stays unless sessions are reused with `--resume`,
-which is untested for this use.
+which the provider supports since round 3 (R3-3) and unit leaders use (R3-4): one resumed
+Haiku call with a fixed schema ran in about 4 s wall and read its earlier turns from cache
+(2026-09-15).
 ## Open questions
 | What is undecided | Needed for v0? | What waits on it, and what the build assumes meanwhile |
 |---|---|---|

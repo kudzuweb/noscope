@@ -28,6 +28,12 @@ export type SessionRequest = {
   /** The JSON Schema of the session's structured output, from `jsonSchemaFor`. */
   outputSchema: Record<string, unknown>;
   timeoutSeconds: number;
+  /**
+   * A session id to resume: the call continues that session for one more structured result
+   * with this request's prompt and schema, and reports usage for this call alone (DESIGN.md
+   * Step 3; verified 2026-09-15). Absent, the provider starts a fresh session.
+   */
+  resume?: string;
 };
 
 /** What a provider returns: the structured output, unparsed, with the session id and usage that are its provenance. */
