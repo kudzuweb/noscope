@@ -43,6 +43,10 @@ export function citesMember(
   members: readonly { agentId: string; eventId: string }[],
 ): boolean {
   return evidence.some((item) =>
-    members.some((m) => item.includes(m.agentId) || item.includes(m.eventId)),
+    members.some(
+      (m) =>
+        (m.agentId !== "" && item.includes(m.agentId)) ||
+        item.includes(m.eventId),
+    ),
   );
 }

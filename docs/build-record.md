@@ -1173,7 +1173,7 @@ Not exactly to spec, with reasons:
   `NOSCOPE_STUB_CALLS` line counts the stub processes still running when the call started,
   which is how the timeout test shows the turn waited for the killed process.
 
-## R3-5: Strike teams (#PR, merged 2026-09-15)
+## R3-5: Strike teams (#35, merged 2026-09-15)
 
 R3-5 of the round 3 plan. Built: a task declares the subagent team its leader may send, the
 runtime provides it and logs every member. `StrikeTeam` in `src/models.ts` is `kind` (a
@@ -1202,7 +1202,9 @@ through the Agent tool, and says a claim resting on a member's finding cites the
 `agentId`, which the Agent tool's result shows the session (the R3-1 fixture's result
 carries `agentId: af6c0f2722871e1a1`). The validator's "Model known" checks a team's model
 against the task's provider's list and refuses a team on a task that runs no session;
-"Effect policy" holds a team's tools to the four read-only built-ins; "Budget respected"
+"Effect policy" holds a team's tools to the four read-only built-ins (that a member's `Bash`
+is held to the parent session's allowlist is inferred from Claude Code applying permission
+rules session-wide, not tested on 2.1.272); "Budget respected"
 holds `count` times `STRIKE_MEMBER_MIN_TOKENS` (600; the fixture's `pinger` with no tools
 read 672) inside the task's token bound where it sets one; the planner's rule lines say the
 same and its prompt says what a team is and that none exists by default. `incident review`

@@ -11,6 +11,7 @@ import { runsInsideLeader, unitsOwingReport } from "../src/leader.js";
 import type { ActionPlan } from "../src/models.js";
 import { applyPlan } from "../src/runtime.js";
 import { Store } from "../src/store.js";
+import { citesMember } from "../src/strike-team.js";
 import { scriptedIncident, unitProposal } from "./fixtures/models.js";
 
 const tree = resolve("test/fixtures/tree");
@@ -1363,8 +1364,14 @@ describe("dispatcher, unit leaders", () => {
         });
         expect(spawning.has(m.payload.toolUseId)).toBe(true);
       }
-      const claims = store.listClaims("i1");
-      expect(claims.length).toBeGreaterThanOrEqual(1);
+      // At least one claim cites a member by the agentId the Agent tool's result showed.
+      const cited = members.map((m) => ({
+        agentId: String(m.payload.agentId),
+        eventId: m.id,
+      }));
+      expect(
+        store.listClaims("i1").some((c) => citesMember(c.evidence, cited)),
+      ).toBe(true);
       store.close();
     },
     600_000,
