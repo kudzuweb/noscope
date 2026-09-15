@@ -1898,7 +1898,7 @@ Not exactly to spec, with reasons:
   been reached live; no live test is added, since reaching 120,000 tokens of IC context
   would cost a long Opus session.
 
-## R3-10a: A refusal replaces the session (#PR, merged 2026-09-15)
+## R3-10a: A refusal replaces the session (#38, merged 2026-09-15)
 
 Forced by the third live run (R3-10, 2026-09-15): the IC's review turn on Opus 5, a resumed
 call over the planner's draft, came back from the API refused (`model_refusal_no_fallback`,
@@ -1963,3 +1963,31 @@ Not exactly to spec, with reasons:
 - A task refused inside a leader's session is not replaced at the task: it fails as a task
   with the refusal in its reason, and the leader's next turn on that session is what gets
   replaced.
+
+## R3-10b: The session's read-only command list (#39, merged 2026-09-15)
+
+Forced by run 003 (R3-10): the planner's first plan under the Sonnet IC gave its new unit a
+Bash allowlist of `grep`, `rg`, `git log`, `git status` and `git diff`, and the validator's
+"Effect policy" rejected all five as "not read-only", because the rule compared entries
+against `READ_ONLY_COMMANDS`, the seven-command list `run_readonly` executes in process
+(`ls`, `cat`, `head`, `tail`, `wc`, `find`, `stat`), and the planner was never shown the
+list. Built: `READ_ONLY_SESSION_COMMANDS` in `src/equipment/builtin.ts`, the in-process list
+plus `grep`, `rg`, `diff`, `pwd`, `which`, `basename`, `dirname`, `realpath` and the read-only
+git subcommands as whole entries (`sort`, `uniq`, `tree` and `echo` were dropped in review:
+each has a write form or needs a redirect, and none is worth much to an investigation;
+`rg --pre` and `git --output` remain as accepted holes beside `find -exec`); the effect policy, `investigate`, the size-up, the root unit at `create` and the
+provider's default allowlist use it; the planner's "Effect policy" rule text names the list
+so a plan is never drafted outside it. `run_readonly` keeps the in-process list, since it
+executes one binary and cannot take a two-word entry. DESIGN.md Step 3's built-in tool row
+and Step 5's Effect policy row follow; tests derive their expectations from the list.
+
+Not exactly to spec, with reasons:
+
+- The list is a floor, not the fence: in print mode Claude Code permits read-only commands
+  beyond the allowlist and denies writes regardless (the Reference row from R3-8), so
+  widening it changes what the planner may declare and what the validator accepts, not what
+  a session can do.
+- `holdsCapability` treats a capability's read-only allowlist as held whenever the unit
+  holds `Bash` and every entry is on the session list, so a unit a plan declared with a
+  subset still runs `investigate` inside its leader under the unit's own allowlist; before
+  this the leader rule "Capability held" would have refused it.

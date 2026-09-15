@@ -6,6 +6,7 @@ import {
   renderTaskBrief,
   runSession,
 } from "../src/capabilities/index.js";
+import { READ_ONLY_SESSION_COMMANDS } from "../src/equipment/index.js";
 import type { Task } from "../src/models.js";
 import { jsonSchemaFor, SessionResult } from "../src/models.js";
 import {
@@ -176,7 +177,9 @@ describe("session capabilities", () => {
       'add to its evidence one item beginning "settled by:"',
     );
     expect(request.systemPrompt).toMatch(/\n\nYour role: investigate/);
-    expect(request.bashAllowlist).toHaveLength(7);
+    expect(request.bashAllowlist).toHaveLength(
+      READ_ONLY_SESSION_COMMANDS.length,
+    );
     const unmodeled = task({ capability: "interpret", id: "t-nomodel" });
     expect(() =>
       buildSessionRequest(sessionCapability("interpret"), unmodeled, unit, "/"),

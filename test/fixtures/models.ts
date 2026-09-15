@@ -1,3 +1,4 @@
+import { READ_ONLY_SESSION_COMMANDS } from "../../src/equipment/index.js";
 import type {
   Incident,
   Leader,
@@ -65,7 +66,7 @@ export function scriptedIncident(store: Store, id = "i1", at = now()) {
     objective: "command: where deletion moves the scroll position",
     leader: STUB_LEADER,
     equipment: ["Read", "Grep", "Glob", "Bash"],
-    bashAllowlist: ["ls", "cat", "head", "tail", "wc", "find", "stat"],
+    bashAllowlist: [...READ_ONLY_SESSION_COMMANDS],
     sessionId: null,
     status: "active",
     createdAt: at,

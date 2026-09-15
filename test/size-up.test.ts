@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { EXIT, run } from "../src/cli.js";
+import { READ_ONLY_SESSION_COMMANDS } from "../src/equipment/index.js";
 import {
   briefingOf,
   pendingTransfer,
@@ -230,7 +231,7 @@ describe("the initial IC and the transfer of command", () => {
     expect(argAfter(call, "--model")).toBe("claude-haiku-4-5");
     expect(argAfter(call, "--tools")).toBe("Read,Grep,Glob,Bash");
     expect(argAfter(call, "--allowedTools")).toBe(
-      "Bash(ls *),Bash(cat *),Bash(head *),Bash(tail *),Bash(wc *),Bash(find *),Bash(stat *)",
+      READ_ONLY_SESSION_COMMANDS.map((c) => `Bash(${c} *)`).join(","),
     );
     expect(argAfter(call, "--system-prompt")).toBe(
       sessionSystemPrompt(INITIAL_IC_ROLE, "initial_ic"),
@@ -244,7 +245,7 @@ describe("the initial IC and the transfer of command", () => {
     expect(call.prompt).toContain("URLs the constraints name:\n  (none)\n");
     expect(call.prompt).toContain("  - grep [deterministic, read_only]:");
     expect(call.prompt).toContain(
-      "  - built-in tools: Read, Grep, Glob, Bash (Bash under the read-only allowlist: ls, cat, head, tail, wc, find, stat)\n",
+      `  - built-in tools: Read, Grep, Glob, Bash (Bash under the read-only allowlist: ${READ_ONLY_SESSION_COMMANDS.join(", ")})\n`,
     );
     expect(call.prompt).toContain(
       "providers and models the Incident Commander may run on:\n  - claude-code: claude-fable-5-1, claude-opus-5,",

@@ -4,7 +4,7 @@ import { recordActivity } from "../activity.js";
 import { listCapabilities } from "../capabilities/index.js";
 import { type Context, EXIT, type Handler } from "../context.js";
 import { dispatch } from "../dispatcher.js";
-import { READ_ONLY_COMMANDS } from "../equipment/index.js";
+import { READ_ONLY_SESSION_COMMANDS } from "../equipment/index.js";
 import {
   briefingOf,
   commandTurn,
@@ -166,7 +166,7 @@ export const create: Handler = async (args, ctx) => {
       objective: "command: holds the objective and the current plan",
       leader: { provider: IC_PROVIDER, model: override ?? IC_MODEL },
       equipment: ["Read", "Grep", "Glob", "Bash"],
-      bashAllowlist: [...READ_ONLY_COMMANDS],
+      bashAllowlist: [...READ_ONLY_SESSION_COMMANDS],
       sessionId: null,
       status: "active",
       createdAt: at,

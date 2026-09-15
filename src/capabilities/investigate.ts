@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { READ_ONLY_COMMANDS } from "../equipment/index.js";
+import { READ_ONLY_SESSION_COMMANDS } from "../equipment/index.js";
 import { sessionResult } from "../models.js";
 import { defineCapability } from "./registry.js";
 
@@ -39,7 +39,7 @@ export const investigate = defineCapability({
   cost: { typicalTokens: 8_000, typicalSeconds: 30 },
   session: {
     systemPrompt: INVESTIGATE_ROLE,
-    bashAllowlist: READ_ONLY_COMMANDS,
+    bashAllowlist: READ_ONLY_SESSION_COMMANDS,
   },
 });
 
