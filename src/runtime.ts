@@ -371,6 +371,22 @@ export function icModelHold(
 }
 
 /**
+ * The id of the question the IC's refusals raised (R4-7): the one the last `question.asked`
+ * carrying `icRefusals` asked, which is the question `incident answer` must answer while
+ * the IC is held, whatever older questions of the units are open; null when none was asked.
+ */
+export function icRefusalQuestionId(events: readonly Event[]): string | null {
+  let id: string | null = null;
+  for (const e of events) {
+    if (e.type !== "question.asked" || !Array.isArray(e.payload.icRefusals))
+      continue;
+    const asked = e.payload.questions as readonly Pick<Question, "id">[];
+    id = asked[0]?.id ?? id;
+  }
+  return id;
+}
+
+/**
  * What still holds an incident `blocked`: the planner's unanswered questions, its unanswered
  * capability requests, its grant requests no grant has answered, and the IC's model when
  * the API refused it on both models and no answer has named one yet (R4-7). A unit's

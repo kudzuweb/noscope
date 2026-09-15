@@ -2339,9 +2339,12 @@ transfer already exists (the IC's model was changed once, by the runtime or by a
 `IcRefused`, which `step` and `run` print as the blocked incident, the question and the
 `answer` command, exiting 0 as a plan's question does. `holdsOn` in `src/runtime.ts` gains
 the hold "the IC's model" (`icModelHold`: the last `incident.blocked` carrying `icRefusals`
-with no transfer after it). `incident answer` parses the text for a model in the provider's
-list as a whole word; found, it records the transfer (`chosenBy: "answer"`, the refusals
-carried) before answering the question, so the incident reopens on that model; not found,
+with no transfer after it). While that hold stands, `incident answer` answers the question
+the refusals raised (`icRefusalQuestionId`: the one the last `question.asked` carrying
+`icRefusals` asked), not the oldest open question, so a unit leader's older question does
+not swallow the model name (review finding); it parses the text for a model in the
+provider's list as a whole word; found, it records the transfer (`chosenBy: "answer"`, the
+refusals carried) before answering the question, so the incident reopens on that model; not found,
 the answer is stored, the same question is asked again under the next id, and the incident
 stays blocked with a hint listing the models. A unit leader (`leaderTurn` in
 `src/dispatcher.ts`): the refused turn is filed as `leader.failed` carrying `fallback` and

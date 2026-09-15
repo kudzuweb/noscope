@@ -47,6 +47,7 @@ import {
   applyPlan,
   holdsOn,
   icModelHold,
+  icRefusalQuestionId,
   newQuestions,
   planDiff,
 } from "../runtime.js";
@@ -1114,11 +1115,12 @@ function modelNamed(text: string, models: readonly string[]): string | null {
  * briefing reads it; a unit's question answered returns the unit to `active` once nothing
  * of its is open; the incident returns to `open` when a command turn or a plan had blocked
  * it and nothing of theirs still waits. A closed unit's question is skipped: nobody reads
- * its answer. While the IC is blocked on its refusals (R4-7), an answer naming a model
- * the provider serves transfers command to it (`command.transferred` of kind `fallback`,
- * chosen by the answer) before the question is answered, so the incident reopens on that
- * model; an answer naming none is stored, the question is asked again, and the incident
- * stays blocked with a hint.
+ * its answer. While the IC is blocked on its refusals (R4-7), the answer goes to the
+ * question those refusals raised, not to an older open question of a unit's, and one
+ * naming a model the provider serves transfers command to it (`command.transferred` of
+ * kind `fallback`, chosen by the answer) before the question is answered, so the incident
+ * reopens on that model; an answer naming none is stored, the question is asked again,
+ * and the incident stays blocked with a hint.
  */
 export const answer: Handler = async (args, ctx) => {
   const store = openStore(ctx);
@@ -1139,10 +1141,15 @@ export const answer: Handler = async (args, ctx) => {
       return EXIT.usage;
     }
     const closed = closedUnits(store, incident.id);
+    const events = store.listEvents(incident.id);
+    const hold = icModelHold(events);
+    const heldId = hold === null ? null : icRefusalQuestionId(events);
     const open = incident.questions.find(
       (q) =>
         q.answer === undefined &&
-        (q.unitId === undefined || !closed.has(q.unitId)),
+        (heldId === null
+          ? q.unitId === undefined || !closed.has(q.unitId)
+          : q.id === heldId),
     );
     if (open === undefined) {
       ctx.io.err(
@@ -1150,7 +1157,6 @@ export const answer: Handler = async (args, ctx) => {
       );
       return EXIT.cannotProceed;
     }
-    const hold = icModelHold(store.listEvents(incident.id));
     const icProvider = getProvider(IC_PROVIDER, ctx.env);
     const model = hold === null ? null : modelNamed(text, icProvider.models);
     const root = store.listUnits(incident.id).find((u) => u.parentId === null);

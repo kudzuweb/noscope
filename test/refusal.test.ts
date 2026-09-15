@@ -645,6 +645,70 @@ describe("a refusal replaces the session", () => {
     ]);
   });
 
+  it("an answer while the IC is held goes to the refusals' question, not to a unit's older open question", {
+    timeout: 60_000,
+  }, async () => {
+    // Cycle 1: command, planner, review, leader (fresh; its report asks Mauria something,
+    // so the unit waits on 001-q01). Cycle 2: the command turn (call 5) refused, the
+    // fallback's (call 6) refused, so the IC's question 001-q02 blocks the incident.
+    const h = harness([findIt], "5,6");
+    h.ctx.env.NOSCOPE_STUB_TURN = JSON.stringify({
+      kind: "report",
+      report: {
+        outcome: "progress",
+        changed: [],
+        pictureChanged: false,
+        resourceRequests: [
+          {
+            kind: "human_knowledge",
+            what: "which file matters",
+            why: "two files match and only the author knows",
+          },
+        ],
+      },
+    });
+    await run(create, h.ctx);
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    h.out.length = 0;
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    expect(h.err).toEqual([]);
+    const blocked = h.store();
+    expect(blocked.getIncident("001")).toMatchObject({
+      status: "blocked",
+      questions: [{ id: "001-q01", unitId: "001-u02" }, { id: "001-q02" }],
+    });
+    expect(blocked.listUnits("001")[1]?.status).toBe("waiting");
+    blocked.close();
+    h.out.length = 0;
+    expect(
+      await run(["incident", "answer", "001", "claude-sonnet-5"], h.ctx),
+    ).toBe(EXIT.ok);
+    expect(h.out.slice(1)).toEqual([
+      "command transferred to claude-code/claude-sonnet-5, named by your answer",
+      "incident 001 is open again",
+    ]);
+    expect(h.out[0]).toMatch(/^answered 001-q02: The IC was refused/);
+    const store = h.store();
+    const incident = store.getIncident("001");
+    expect(incident?.status).toBe("open");
+    expect(incident?.questions[0]?.answer).toBeUndefined();
+    expect(incident?.questions[1]?.answer).toBe("claude-sonnet-5");
+    expect(store.listUnits("001")[1]?.status).toBe("waiting");
+    expect(store.listUnits("001")[0]?.leader.model).toBe("claude-sonnet-5");
+    store.close();
+    // The unit's question is still there for the next answer.
+    h.out.length = 0;
+    expect(
+      await run(["incident", "answer", "001", "the first one"], h.ctx),
+    ).toBe(EXIT.ok);
+    expect(h.out[0]).toBe(
+      "answered 001-q01: which file matters (two files match and only the author knows)",
+    );
+    const answered = h.store();
+    expect(answered.listUnits("001")[1]?.status).toBe("active");
+    answered.close();
+  });
+
   it("a leader's turn refused on its resumed session is filed as leader.failed, the leader moved to the fallback, and the fresh session's turn on it stands", {
     timeout: 60_000,
   }, async () => {
