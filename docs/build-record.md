@@ -970,7 +970,7 @@ Not exactly to spec, with reasons:
   is in the `resume` row of Step 3's session table instead, so the two PRs do not both
   append to one table.
 
-## R3-1: Tool and subagent events (#PR, merged 2026-09-15)
+## R3-1: Tool and subagent events (#31, merged 2026-09-15)
 
 R3-1 of the round 3 plan. Built: the Claude Code provider runs every session with
 `--output-format stream-json --verbose` and reads the stream: each `tool_use` block and the
@@ -980,9 +980,12 @@ beside it, `is_error`, and the duration between the two messages' timestamps; th
 `result` line is parsed as the envelope was. When the envelope's `subagent_stats.spawned`
 is nonzero the provider reads each transcript under
 `<config dir>/projects/<cwd as dashes>/<session id>/subagents/`: agent id, type and
-`toolUseId` from the `.meta.json`, model, usage summed from the assistant records, and the
-member's own tool calls. `SessionOutcome` carries this as `activity`, and so does
-`SessionError`, so a failed session's calls are filed too. `src/activity.ts` writes the
+`toolUseId` from the `.meta.json`, model (the envelope's canonical alias for the
+transcript's dated snapshot), usage summed from the assistant records, and the member's own
+tool calls, in spawn order. `SessionOutcome` carries this as `activity`, and so does
+`SessionError`, so a failed session's calls are filed too: a session that returned an error
+envelope, and one that died before any (killed on its timeout, or a nonzero exit), whose
+session id is read from the stream's init line. `src/activity.ts` writes the
 events: one `tool.called` per call with the session id, unit, task in flight (`taskId`,
 nullable, and `cycle` for a planner call) and the transcript path, then per subagent one
 `subagent.ran` and its calls as `tool.called` events carrying the `agentId`. The dispatcher
@@ -1020,8 +1023,16 @@ Not exactly to spec, with reasons:
   `subagent.ran` events rather than a failed task.
 - The stub's tool lines carry synthetic timestamps 1.5 s apart, so a test can assert a
   duration.
-- Observed while capturing, not changed here: with `--setting-sources ""` the session's
-  init line still listed the claude.ai MCP servers of Mauria's account (Craft, Gmail, Drive,
-  Calendar) as connected, and Craft's tools among the session's tools; they were not
-  allowlisted, so a session cannot call them without a prompt, but they reach the session's
-  context. Worth a revisit-list entry.
+- `--strict-mcp-config` moves into the isolation flags, on every session with or without
+  `--mcp-config` (the plan block did not name it; the ruling behind the isolation flags is
+  that no session inherits Mauria's personal setup). While capturing the fixture, with
+  `--setting-sources ""` the session's init line still listed the claude.ai MCP servers of
+  her account (Craft, Gmail, Drive, Calendar) as connected and Craft's tools among the
+  session's tools. With the flag and no `--mcp-config`, one live Haiku call on 2.1.272
+  (2026-09-15) returned an init line whose `mcp_servers` is empty and whose tools are
+  `StructuredOutput` alone.
+- From the review: a session killed on its timeout or exiting nonzero now files the calls
+  it made under the init line's session id, and its error message quotes the stream's last
+  line rather than its first; the planner's calls in `incident review` are selected by
+  `cycle`, not by a null `taskId`, so a leader's call filed under no task (R3-4) is not
+  counted as the planner's.

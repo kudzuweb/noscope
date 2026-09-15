@@ -14,6 +14,7 @@ import {
   CLAUDE_CODE_ISOLATION_FLAGS,
   claudeCodeProjectsDir,
   claudeCodeProvider,
+  failedSessionActivity,
   parseClaudeCodeResult,
   renderClaudeCodeArgs,
   TOOL_RESULT_CAP,
@@ -69,12 +70,13 @@ describe("claude code provider", () => {
       "",
       "--disable-slash-commands",
       "--exclude-dynamic-system-prompt-sections",
+      "--strict-mcp-config",
       "--allowedTools",
       "Bash(ls *),Bash(cat *)",
       "--add-dir",
       "/tmp/extra",
     ]);
-    expect(CLAUDE_CODE_ISOLATION_FLAGS).toHaveLength(7);
+    expect(CLAUDE_CODE_ISOLATION_FLAGS).toHaveLength(8);
     expect(
       renderClaudeCodeArgs({
         ...r,
@@ -170,10 +172,11 @@ describe("claude code provider", () => {
     expect(agent?.durationMs).toBe(1681);
     expect(activity.subagents).toHaveLength(1);
     const [member] = activity.subagents;
+    // The transcript names the dated snapshot; the envelope's modelUsage gives its canonical alias.
     expect(member).toMatchObject({
       agentId: "af6c0f2722871e1a1",
       agentType: "pinger",
-      model: "claude-haiku-4-5-20251001",
+      model: "claude-haiku-4-5",
       toolUseId: agent?.toolUseId,
       toolCalls: [],
       transcriptPath: join(
@@ -198,6 +201,53 @@ describe("claude code provider", () => {
       transcriptPath: null,
       subagents: [],
     });
+    // An envelope with no modelUsage entry for the snapshot: the date is stripped instead.
+    const stripped = parseClaudeCodeResult(
+      recorded.stream
+        .split("\n")
+        .map((line) =>
+          line.includes('"type":"result"')
+            ? JSON.stringify({
+                ...(JSON.parse(line) as object),
+                modelUsage: {},
+              })
+            : line,
+        )
+        .join("\n"),
+      recorded.where,
+    );
+    expect(stripped.activity.subagents[0]?.model).toBe("claude-haiku-4-5");
+  });
+
+  it("files the calls of a session that died before its result, under the init line's session id", () => {
+    const stream = [
+      { type: "system", subtype: "init", session_id: "s-dead" },
+      {
+        type: "assistant",
+        message: {
+          content: [{ type: "tool_use", id: "t1", name: "Bash", input: {} }],
+        },
+      },
+      {
+        type: "user",
+        message: {
+          content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }],
+        },
+      },
+    ]
+      .map((l) => JSON.stringify(l))
+      .join("\n");
+    const failed = failedSessionActivity(stream, {
+      projectsDir: "/p",
+      cwd: "/w",
+    });
+    expect(failed.sessionId).toBe("s-dead");
+    expect(failed.activity).toMatchObject({
+      transcriptPath: "/p/-w/s-dead.jsonl",
+      subagents: [],
+    });
+    expect(failed.activity.toolCalls.map((c) => c.tool)).toEqual(["Bash"]);
+    expect(failedSessionActivity("not json").sessionId).toBeNull();
   });
 
   it("clips a long tool result at the cap and names the transcript as the full record", () => {
@@ -371,7 +421,11 @@ describe("claude code provider", () => {
         },
       },
     });
-    expect(withBrowser[at + 2]).toBe("--strict-mcp-config");
+    // Strict MCP config is an isolation flag on every session, not a companion of --mcp-config.
+    expect(withBrowser[at + 2]).toBe("--chrome");
+    expect(withBrowser.filter((a) => a === "--strict-mcp-config")).toHaveLength(
+      1,
+    );
     expect(withBrowser.at(-1)).toBe("--chrome");
     const allowed = withBrowser.indexOf("--allowedTools");
     expect(withBrowser[allowed + 1]).toBe(
@@ -421,6 +475,31 @@ describe("claude code provider", () => {
     await expect(
       claudeCodeProvider(stub).run({ ...request(), cwd: "/nonexistent/cwd" }),
     ).rejects.toThrow(/cwd \/nonexistent\/cwd does not exist/);
+  });
+
+  it("reports a nonzero exit as a SessionError carrying the calls made and the stream's last line", async () => {
+    process.env.NOSCOPE_STUB_TOOLS = JSON.stringify([
+      { tool: "Grep", input: { pattern: "x" }, result: "none" },
+    ]);
+    process.env.NOSCOPE_STUB_EXIT = "2";
+    try {
+      let caught: unknown;
+      try {
+        await claudeCodeProvider(stub).run(request());
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught).toBeInstanceOf(SessionError);
+      const error = caught as SessionError;
+      expect(error.message).toMatch(/^claude exited 2: .*tool_result/);
+      expect(error.sessionId).toBe("stub-session");
+      expect(error.usage).toBeNull();
+      expect(error.activity.toolCalls.map((c) => c.tool)).toEqual(["Grep"]);
+      expect(error.activity.transcriptPath).toMatch(/stub-session\.jsonl$/);
+    } finally {
+      delete process.env.NOSCOPE_STUB_TOOLS;
+      delete process.env.NOSCOPE_STUB_EXIT;
+    }
   });
 
   it("kills a session that outlives its timeout and reports the signal", async () => {

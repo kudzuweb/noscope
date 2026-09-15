@@ -2,7 +2,8 @@
 // A stand-in for the claude binary: records its argument list and stdin to NOSCOPE_STUB_LOG,
 // then prints the stream claude -p --output-format stream-json prints: an init line, one
 // assistant and one user line per tool call in NOSCOPE_STUB_TOOLS (a JSON array of
-// {tool, input, result, isError}), and the result envelope. The structured output is
+// {tool, input, result, isError}), and the result envelope. NOSCOPE_STUB_EXIT makes it exit
+// with that code before the envelope, as a killed or crashed session would. The structured output is
 // NOSCOPE_STUB_OUTPUT (or a canned answered result); a planner call, recognised by its
 // system prompt, gets NOSCOPE_STUB_PLAN instead, or the next entry of NOSCOPE_STUB_PLANS
 // (a JSON array walked in order, the position kept in the file NOSCOPE_STUB_COUNTER).
@@ -95,5 +96,10 @@ tools.forEach((call, i) => {
     },
   });
 });
+// NOSCOPE_STUB_EXIT: die with that code after the tool lines, never reaching the result.
+if (process.env.NOSCOPE_STUB_EXIT) {
+  process.stdout.write(`${lines.map((l) => JSON.stringify(l)).join("\n")}\n`);
+  process.exit(Number(process.env.NOSCOPE_STUB_EXIT));
+}
 lines.push(envelope);
 process.stdout.write(`${lines.map((l) => JSON.stringify(l)).join("\n")}\n`);

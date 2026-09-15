@@ -231,6 +231,51 @@ describe("dispatcher", () => {
     store.close();
   });
 
+  it("a session killed before its result still files its calls, then task.failed", async () => {
+    const store = new Store(":memory:");
+    const { incident, task } = scriptedIncident(store);
+    task({
+      id: "t-inv",
+      capability: "investigate",
+      inputs: { question: "where is deletion handled?" },
+      provider: "claude-code",
+      model: "claude-haiku-4-5",
+      budget: { seconds: 30 },
+      status: "ready",
+    });
+    process.env.NOSCOPE_STUB_TOOLS = JSON.stringify([
+      { tool: "Grep", input: { pattern: "delete" }, result: "a.txt:2" },
+    ]);
+    process.env.NOSCOPE_STUB_EXIT = "3";
+    try {
+      const { ran } = await dispatch(store, incident, {
+        cwd: tree,
+        env: { NOSCOPE_CLAUDE_BIN: stub },
+      });
+      expect(ran[0]).toMatchObject({
+        taskId: "t-inv",
+        status: "failed",
+        reason: expect.stringMatching(/^claude exited 3/),
+      });
+    } finally {
+      delete process.env.NOSCOPE_STUB_TOOLS;
+      delete process.env.NOSCOPE_STUB_EXIT;
+    }
+    const events = store.listEvents("i1");
+    expect(events.map((e) => e.type).slice(-3)).toEqual([
+      "tool.called",
+      "task.failed",
+      "task.usage",
+    ]);
+    expect(events.find((e) => e.type === "tool.called")?.payload).toMatchObject(
+      { taskId: "t-inv", tool: "Grep", sessionId: "stub-session" },
+    );
+    expect(events.find((e) => e.type === "task.failed")?.payload).toMatchObject(
+      { sessionId: "stub-session" },
+    );
+    store.close();
+  });
+
   it("a session that fails still files the tool calls it made before failing", async () => {
     const store = new Store(":memory:");
     const { incident, task } = scriptedIncident(store);

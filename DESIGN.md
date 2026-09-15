@@ -245,7 +245,11 @@ setup. Claude Code: `--output-format stream-json --verbose` (print mode refuses 
 format without `--verbose`, verified 2026-09-15 on 2.1.272), `--setting-sources ""`,
 `--disable-slash-commands`, `--exclude-dynamic-system-prompt-sections`, which together drop
 a session's context from about 40k tokens to about 3k and keep her CLAUDE.md, skills and
-hooks out; `--bare` is not used because it authenticates only with an API key. Every session
+hooks out, and `--strict-mcp-config` on every session, with or without `--mcp-config`,
+because without it the claude.ai connectors of her account (Craft, Gmail, Drive, Calendar)
+loaded into a session's context under `--setting-sources ""` (seen 2026-09-15 on 2.1.272;
+with the flag and no `--mcp-config` the init line's `mcp_servers` is empty, verified the
+same day); `--bare` is not used because it authenticates only with an API key. Every session
 also runs with `DISABLE_COMPACT=1` in its environment, so auto-compaction never rewrites a
 session between the calls that resume it; a session that reaches the context limit errors
 instead, and the runtime hands off below the limit (R3-9). The stream is one JSON line per
@@ -387,13 +391,18 @@ with `resultChars` saying how long it was, `isError`, `startedAt`, `endedAt` and
 transcript as the full record. The `StructuredOutput` call that carries the answer is the
 result, not a tool call, and is not filed. Every subagent the session spawned is a
 `subagent.ran` event read from the subagent's own transcript once the envelope's
-`subagent_stats.spawned` is nonzero: `agentId`, `agentType` and `toolUseId` (from its meta
-file; the `toolUseId` names the `Agent` call's `tool.called`), its model, its usage summed
+`subagent_stats.spawned` is nonzero, in spawn order: `agentId`, `agentType` and `toolUseId`
+(from its meta file; the `toolUseId` names the `Agent` call's `tool.called`), its model as
+the envelope's canonical alias for the transcript's dated snapshot (so review can price
+it), its usage summed
 once per API message from its assistant records (the transcript repeats a message's usage
 on each of its content blocks), and `toolCalls`, a count; the member's own calls follow as
 `tool.called` events carrying its `agentId`. A subagent's usage is a breakdown of the
 session's, which the envelope already includes, and is never added to `task.usage`. A
-session that fails after making calls still files them, before `task.failed`. `incident
+session that fails after making calls still files them, before `task.failed`, whether it
+returned an error envelope or died before any (killed on its timeout, or a nonzero exit),
+in which case the session id comes from the stream's init line and no subagent is read.
+`incident
 review` prints each session's calls by tool with errors and time in tools, each subagent
 with its usage and calls, and the run's totals.
 

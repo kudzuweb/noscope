@@ -204,8 +204,14 @@ function activityLines(
   events: readonly Event[],
   taskId: string | null,
   model: string | null,
+  cycle: number,
 ): string[] {
-  const own = (e: Event) => (str(e.payload.taskId) || null) === taskId;
+  // A task's calls by its id; the planner's by the cycle it drafted, since a leader session
+  // (R3-4) may file a call under no task and that call is not the planner's.
+  const own = (e: Event) =>
+    taskId === null
+      ? e.payload.cycle === cycle
+      : str(e.payload.taskId) === taskId;
   const lines: string[] = [];
   const calls = events.filter(
     (e) => e.type === "tool.called" && own(e) && e.payload.agentId === null,
@@ -317,7 +323,9 @@ export function renderReview(
     lines.push(
       `  planner ${plannerModel}: ${describeUsage(plannerUsage, plannerCost)}${session(str(p.sessionId))}`,
     );
-    lines.push(...activityLines(cycle.events, null, plannerModel));
+    lines.push(
+      ...activityLines(cycle.events, null, plannerModel, cycle.number),
+    );
 
     for (const r of rejections) {
       ruleLines += 1;
@@ -389,7 +397,7 @@ export function renderReview(
       lines.push(
         `  ${taskId} ${capability}${model === null ? " (deterministic)" : ` ${model}`}: ${spend}  ${outcomeText}${claimsText}${session(sessionId)}`,
       );
-      lines.push(...activityLines(cycle.events, taskId, model));
+      lines.push(...activityLines(cycle.events, taskId, model, cycle.number));
       if (outcome?.type === "task.failed")
         lines.push(`    failed: ${str(outcome.payload.reason)}`);
       if (outcome?.type === "task.insufficient")
