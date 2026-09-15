@@ -119,6 +119,74 @@ describe("incident run", () => {
     expect(h.err.at(-1)).toMatch(/is satisfied; run needs an open incident/);
   });
 
+  it("a round 4 store, written before units named a type, reads and replays as ic on the root and base elsewhere, with the same show and tree (R4-10)", {
+    timeout: 60_000,
+  }, async () => {
+    const h = harness([
+      findIt,
+      {
+        ...empty,
+        incidentStatus: "satisfied",
+        rationale: "the handler is at a.txt:2",
+      },
+    ]);
+    await run(
+      ["incident", "create", "--no-size-up", "where is the delete handler"],
+      h.ctx,
+    );
+    expect(await run(["incident", "run", "001"], h.ctx)).toBe(EXIT.ok);
+    // Make the file a round 4 one: no type or role column on units, no type or role in any
+    // unit.create mutation, and schema version 6.
+    const s1 = h.store();
+    s1.db.exec("ALTER TABLE units DROP COLUMN type");
+    s1.db.exec("ALTER TABLE units DROP COLUMN role");
+    s1.db.exec(
+      "UPDATE events SET payload_json = json_remove(payload_json, '$.mutation.unit.type', '$.mutation.unit.role') WHERE type = 'unit.created'",
+    );
+    s1.db.pragma("user_version = 6");
+    s1.close();
+    const migrated = h.store();
+    expect(migrated.db.pragma("user_version", { simple: true })).toBe(7);
+    expect(
+      migrated.listUnits("001").map((u) => [u.id, u.type, u.role]),
+    ).toEqual([
+      ["001-command", "ic", null],
+      ["001-u02", "base", null],
+    ]);
+    for (const e of migrated.listEvents("001"))
+      if (e.type === "unit.created")
+        expect(
+          (e.payload.mutation as { unit: Record<string, unknown> }).unit,
+        ).not.toHaveProperty("type");
+    // The replay of the round 4 log yields the same store.
+    const replayed = harness([]);
+    const rebuilt = replayed.store();
+    rebuilt.replay([
+      ...migrated.listEvents(null),
+      ...migrated.listEvents("001"),
+    ]);
+    expect(rebuilt.snapshot()).toEqual(migrated.snapshot());
+    expect(rebuilt.listUnits("001").map((u) => [u.id, u.type])).toEqual([
+      ["001-command", "ic"],
+      ["001-u02", "base"],
+    ]);
+    migrated.close();
+    rebuilt.close();
+    const shown = harness([]);
+    shown.ctx.env.NOSCOPE_DB = h.ctx.env.NOSCOPE_DB as string;
+    expect(await run(["incident", "show", "001"], shown.ctx)).toBe(EXIT.ok);
+    expect(await run(["incident", "tree", "001"], shown.ctx)).toBe(EXIT.ok);
+    expect(await run(["incident", "show", "001"], replayed.ctx)).toBe(EXIT.ok);
+    expect(await run(["incident", "tree", "001"], replayed.ctx)).toBe(EXIT.ok);
+    expect(replayed.out).toEqual(shown.out);
+    expect(shown.out).toContain(
+      "001-command [active] command: holds the objective and the current plan (ic; leader claude-code/claude-opus-5; last report: none)",
+    );
+    expect(shown.out).toContain(
+      "  001-u02 [active] locate the delete handler (base; leader claude-code/claude-haiku-4-5; last report: progress, revise)",
+    );
+  });
+
   it("a chain of grep then interpret, linked by a task ref in one plan, completes in one cycle", {
     timeout: 60_000,
   }, async () => {

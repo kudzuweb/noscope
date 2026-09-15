@@ -3082,3 +3082,182 @@ Not exactly to spec, with reasons:
   claim with status `rejected` and basis `observed` passes "Situation grounded" in `proven`,
   since basis is what gates and nothing sets `rejected` yet; noted for the PR that first
   sets it.
+
+## R4-10: Unit types: the form, the filled form, the protocol (#PR, merged 2026-09-15)
+
+R4-10 of the round 4 plan, ruled by Mauria on 2026-09-15 (12:31 to 13:34): a unit is a
+type plus a config; the type is the form (the fields a kind of unit fills) and the protocol
+(how a unit of that kind uses what is in the box); the config is the filled form; `base`
+is the led unit and `ic` is command, the root; a config keeps its type's protocol; the role
+text is a form field defaulting to the type's; more types will be written and saved. Built
+on the layout of `src/capabilities/registry.ts`, in four commits: the registry, forms and
+`Unit.type`; the protocols and the dispatcher; the validator; the docs. The names in code
+are the plan's words: `Unit.type` names the type, and the filled form is the unit's own
+fields (there is no `config` column; R4-11 adds the table for saved ones).
+
+The registry (`src/units/registry.ts`): `defineUnitType` registers a `UnitType` by name,
+a `description`, `plannable` (whether a plan may create a unit of the type), a `form` (a
+zod object; registration refuses one without a `role` field, since every form carries the
+role text its session reads) and a `protocol`; `getUnitType`, `listUnitTypes`,
+`protocolOf(unit)` (refusing a unit whose type is not registered) and `roleOf(unit)` (the
+config's `role`, else the type's) read it. A `Protocol` is the seat its session holds,
+the default role text, `reports` (whether the unit files reports the IC answers; false
+for command), `rules` (the assignment rules, below), `runsInside` (whether a session task
+runs inside the unit's session) and `insideRequest` (the request for one that does), and
+three pass hooks, `open`, `ending` and `close`, each given a `PassContext` (the store, the
+incident, the active units, cwd, env, actor, providers, and the runtime's `bookkeeping`:
+`validateAssignments`, `applyAssignments`, `raiseRequests`, `strikeTeamRejections`, lent
+by the dispatcher so a protocol module imports neither the validator nor the runtime,
+which import the registry) and a `PassView` (the unit's runnable tasks not yet attempted,
+the unheard endings of earlier passes, the tasks running in sessions of their own, the
+endings landed and not yet heard, whether the unit ran anything, is done, or the pass has
+halted, and the leader's chain `onLeader`), and answering a `Turned` (the unit as it now
+stands, the report filed if any, whether the unit is done for the pass, whether the picture
+changed) or null. `TaskEnding`, `Landed`, `Reported`, `describeError` and `leaderRequest`
+(the session request under `roleOf` and the protocol's seat, replacing `leaderRole(seat)`)
+live here too. `src/units/index.ts` registers `base` and `ic` and is a knip entry as
+`src/capabilities/index.ts` is.
+
+The base type (`src/units/base.ts`, `BASE_TYPE`): `plannable`, its form `BaseUnitForm`
+(declared in `src/models.ts` because `UnitProposal`, and so `ActionPlan`, extends it and
+`models.ts` imports nothing: `objective`, `leader`, `equipment`, `bashAllowlist`, and
+`role`, optional, with descriptions the planner's schema renders), and the leader's
+protocol, which is what `src/leader.ts` and the dispatcher's `leaderTurn` did: `LEADER_ROLE`,
+`BASE_RULES`, `LEADER_TURN_SCHEMA`, `runsInsideLeader` (the root check gone; the ic
+protocol's `runsInside` is false instead), `holdsCapability`, `unitShare`, `resumedUnits`,
+`revisedUnits`, `unitsOwingReport` (`protocolOf(u).reports` in place of `parentId !==
+null`), `renderLeaderOrientation`, `endedSinceLastTurn`, `renderTurnPrompt`, the
+orientation, `insideRequest`, `reportRefusals`, `refusedSinceLastTurn`, `couldNotResume`,
+`declareRequestedTeam`, `leaderTurn` (the root throw gone; the bookkeeping through the
+context) and `settle`. Its hooks: `open` recomputes the unit's revision brief (R4-3) and
+resume (R3-6) from the log and takes that turn on the leader's chain, the brief first with
+the answers when both; `ending` files the runtime's `not_met` report for a task refused on
+both models (R4-7: done and halted), takes no turn when the leader reported already this
+pass, else the leader's turn on the ending with the tasks still running and landed;
+`close` asks for the report owed from an earlier pass when the unit ran nothing this pass
+and the pass has not halted, and marks the unit done. `src/leader.ts` keeps what every
+seat shares: `IC_MODEL`, `IC_PROVIDER`, `fallbackModel`, `RefusedCall`, the actors, the
+reassignments, the requests, `revisionOf`, the verdict window, `icSituation` and
+`latestReports`.
+
+The ic type (`src/units/ic.ts`, `IC_TYPE`): not plannable; its form `IcUnitForm` is the
+IC's `leader` (provider and model), `equipment` (default the four read-only built-ins),
+`bashAllowlist` (default the read-only session list) and `role`, with no objective
+(`newCommandUnit` fills it from the leader `incident create` chooses and writes the fixed
+objective line the root has carried since round 1) and no parent; `commandUnitOf(units)`
+finds command by type, which `src/ic.ts` (`commandUnit`, the change report's tasks under
+command), `src/runtime.ts` (`applyCommand`'s assignments), `src/validator.ts` (the
+warning, `validateCommand`) and `src/commands/incident.ts` (`show`'s IC line, `answer`'s
+transfer) use instead of `parentId === null`. Its protocol: seat `ic`, `IC_ROLE` (moved
+here), `reports: false`, `rules: [OWN_UNIT_RULE]`, `runsInside` false, `insideRequest`
+throws, and the root's pass from R4-6: `open` and `ending` take no turn (a root task
+refused twice ends as its `task.failed`, R4-7), `close` marks command done. Its turns are
+`src/ic.ts` as before (the command turn, the review, the change report, the handoff, the
+transfers, the fallback), which the type's header names.
+
+The dispatcher (`src/dispatcher.ts`): `dispatch` builds the `PassContext` once (the
+bookkeeping closes over the validator's and runtime's functions) and each unit's pass
+builds its `PassView`; the pass calls `protocol.open` before the loop, `protocol.ending`
+on each landing, `protocol.close` after it, folding each `Turned` into the pass's tally
+(`take`: the unit, the report, done, the halt); `runTask` and the inside gate ask
+`protocol.runsInside` and `protocol.insideRequest`. The scheduling, the starts, the
+landings, the budget check and the halt are unchanged. `grep -n "parentId === null"
+src/dispatcher.ts src/units/` prints nothing. Three remain in `src/tree.ts`'s
+`renderHierarchy` (the "(command, the root)" and "Reports to: Mauria" lines a task brief
+under command renders, R4-6's test pins them), which are facts of the position in the tree
+and not of the type, and one in `src/store.ts`'s `withType`, the migration's rule.
+
+The schema: `Unit` gains `type` and `role` (nullable); `UnitProposal` is `BaseUnitForm`
+plus `ref`, `parent`, `type` (default `base`, described as the only type a plan may
+create) and `takes`; `applyPlan` copies both; `SCHEMA_VERSION` is 7, the `units` table
+gains `type` (default `base`) and `role`, migration step 6 adds the columns and sets the
+root's type to `ic`, and the `unit.create` mutation's preprocess (`withType`, over
+`withLeader`) reads a unit recorded without a type as `ic` when its `parentId` is null and
+`base` otherwise, with a null role, so a round 4 log replays to the same rows.
+
+The validator: a new plan rule "Type exists" (fifteen now) refuses a new unit whose type
+is not registered, or is registered but not plannable, naming the types a plan may
+create; `PLANNER_RULES` carries its line. The leader's three rules become the base
+protocol's `BASE_RULES`, each an `AssignmentRule` (`assignmentRule(text, check)` in the
+registry: the name is the text before the colon, as the planner's rules are keyed; `Own
+unit` is `OWN_UNIT_RULE`, every type's), and `validateLeaderTasks` and `validateCommand`
+apply `protocolOf(unit).rules` (`typeRuleRejections`), so `LEADER_CHECKS`,
+`LEADER_RULE_CHECKS` and `LeaderRuleName` are gone and a rejection's rule from a type's
+rule is a string; "Deterministic only" stays a command rule; `LEADER_RULES` is the texts,
+for the role text and the tests. "Closing is clean" refuses a unit of the ic type ("is
+command and is never closed"). The planner's preamble says a new unit is a type plus a
+config and names `base` as the one type a plan may create.
+
+`incident tree` and the planner's section 3 print each unit's type first in the
+parenthetical (`(base; leader claude-code/claude-haiku-4-5; last report: none)`,
+`describeLeader` in `src/tree.ts`). DESIGN.md's Vocabulary (the Unit row, and Unit type
+and Unit config rows), the ICS mapping row for the Incident Commander, Step 1's tree,
+Step 2 (the table and version 6), Step 4 (the IC as command's leader), Step 5 (Type
+exists, the rules through the protocol), Step 6 (the hooks) and Step 7 (`tree`) follow;
+`docs/architecture.html`'s IC, dispatcher, unit leader and system-prompt nodes and the
+validate step, README's layout line and CLAUDE.md's framework paragraph follow.
+
+Tests: `test/units.test.ts` (new) pins the two registered types, their forms' fields,
+`plannable`, seat, role and `reports`, the registration refusals (a duplicate name, a form
+without `role`), the proposal schema's field order, the `type` default and descriptions,
+`protocolOf` and `roleOf` (a unit with its own role text reads it under the type's seat),
+`leaderRequest`, the refusal of an unregistered type, and `newCommandUnit`'s filled form.
+`test/store.test.ts` migrates a version 6 file (the root `ic`, the rest `base`, roles
+null), replays a log whose `unit.create` mutations carry no type to the same snapshot, and
+round-trips a unit with its own role text. `test/run.test.ts` builds a store with the
+stub through the CLI, strips it to a round 4 one (the columns dropped, the type and role
+removed from every `unit.created` mutation with `json_remove`, `user_version` 6), reopens
+it, replays its log into a fresh store, and asserts the same snapshot and the same `show`
+and `tree` output from both, the tree naming `ic` on command and `base` on the unit.
+`test/validator.test.ts` pins Type exists (base passes, an unknown type and `ic` are
+refused with their reasons, the default is base), the base protocol's rules keyed as the
+role text lists them and command holding Own unit alone; `test/dispatcher.test.ts` pins
+that nothing runs inside command through the ic protocol's `runsInside`; the planner
+snapshot and the rule count follow; `test/providers.test.ts` reads the roles from
+`src/units/index.js`. Every R4-6, R4-7, R4-9, R4-3, R4-4 and R4-5 test passes with the
+same events recorded; the existing tests that changed changed only their imports, the
+`(type; leader …)` parenthetical where they pin a tree line, the schema version pin (6 to
+7), the close reason's wording ("is command and is never closed") and the unit literals,
+which now carry `type` and `role`.
+
+Not exactly to spec, with reasons:
+
+- The ic form carries no fallback-model or handoff-threshold field, though the plan block
+  lists both: `NOSCOPE_IC_FALLBACK_MODEL` is the retry model of every refused seat, not
+  the IC's alone (R4-7), and `NOSCOPE_IC_HANDOFF_TOKENS` is read on each call so a test
+  sets it per step; a form field would need a column nothing fills, since `incident
+  create` has no flag for either, and R4-11 saves base configs only. Both stay
+  environment settings read by the ic protocol's turns in `src/ic.ts`; adding them to the
+  form later changes the ic form only, which no saved config uses.
+- The base form is declared in `src/models.ts` (`BaseUnitForm`) and bound by
+  `src/units/base.ts`, rather than declared beside the type: `UnitProposal` extends it and
+  `ActionPlan` needs the proposal, and `models.ts` is the leaf module; the ic form has no
+  such consumer and is declared in its type module.
+- `UnitProposal.type` defaults to `base` rather than being required: the planner sees the
+  field with its default and description, "Type exists" holds what it names, every
+  existing plan fixture and stub plan stands, and R4-11's `config` will supply the type
+  when a proposal names one.
+- The protocol's pass is three hooks around the dispatcher's loop rather than the whole
+  pass: the scheduling, the budget, the landings and the halt are the same for every
+  type, and moving them into each protocol would have duplicated them; what differs by
+  type is the turns, which is what the hooks are.
+- The bookkeeping a leader's turn needs (validate and apply its assignments, raise its
+  requests, check a strike-team request) is lent through the `PassContext` rather than
+  imported by `src/units/base.ts`: the validator imports `src/units/index.ts` to hold a
+  unit to its type's rules and to guarantee the types are registered wherever it runs,
+  and the runtime imports the validator, so an import the other way would have made a
+  cycle where the tree was acyclic.
+- The rules are on the protocol with their checks (`AssignmentRule`), not only their
+  lines, so the validator holds a unit to whatever its type declares; the ic protocol
+  holds `Own unit`, which `validateCommand` applied against the root by name before.
+- `runsInsideLeader` in `src/units/base.ts` no longer refuses the root; the ic protocol's
+  `runsInside` does, and the dispatcher asks the protocol. The R4-6 test that pinned the
+  base function on the root now pins the protocol.
+- `renderHierarchy`'s three root checks stay as position checks (above); the plan's
+  acceptance names the dispatcher and `src/units/` only.
+- Follow-up, not this PR's: `test/stub-claude`'s call ordinal (`NOSCOPE_STUB_CALL_COUNTER`)
+  is a read-modify-write on a file, so two stub processes started together can take the
+  same ordinal; under a loaded full-suite run the R4-9 test "a runtime report after two
+  refusals is not a turn" saw its refusals land on the wrong calls once (pass 1's two
+  concurrent stubs both took ordinal 1, so `NOSCOPE_STUB_REFUSE=3,4` missed t-dep). It
+  passes alone and passed on the next full run; the stub is unchanged here.
