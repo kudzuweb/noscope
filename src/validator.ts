@@ -36,18 +36,17 @@ import { type Store, sumUsage } from "./store.js";
 import { STRIKE_MEMBER_MIN_TOKENS } from "./strike-team.js";
 import {
   commandUnitOf,
-  holdsCapability,
+  getUnitType,
   IC_TYPE,
-  LEADER_RULES,
+  listUnitTypes,
+  protocolOf,
   revisedUnits,
-  unitShare,
   unitsOwingReport,
 } from "./units/index.js";
 
 /** A rule's name is the text before the colon of the line the planner reads, so the two lists cannot drift. */
 type BeforeColon<S> = S extends `${infer Name}: ${string}` ? Name : never;
 export type RuleName = BeforeColon<(typeof PLANNER_RULES)[number]>;
-export type LeaderRuleName = BeforeColon<(typeof LEADER_RULES)[number]>;
 type WarningName = BeforeColon<(typeof PLANNER_WARNINGS)[number]>;
 
 export const SPAN_OF_CONTROL = 7;
@@ -250,6 +249,22 @@ const CHECKS: Record<RuleName, Rule> = {
         .filter((c) => !known.has(c.unitId))
         .map((c) => `no unit ${c.unitId} to close`),
     ];
+  },
+
+  "Type exists": (plan) => {
+    const plannable = listUnitTypes()
+      .filter((t) => t.plannable)
+      .map((t) => t.name);
+    return plan.createUnits.flatMap((u) => {
+      const type = getUnitType(u.type);
+      if (type === undefined)
+        return [`${unitLabel(u)} names no registered unit type ${u.type}`];
+      return type.plannable
+        ? []
+        : [
+            `${unitLabel(u)} names type ${u.type}, which a plan may not create; a plan may create ${plannable.join(", ")}`,
+          ];
+    });
   },
 
   "No cycles": (plan, ctx) => {
@@ -750,63 +765,20 @@ const TASK_RULES: readonly RuleName[] = [
   "Model known",
 ];
 
-type LeaderRule = (
+/**
+ * A unit's type's rules on its leader's assignments (R4-10: Own unit for every type;
+ * Capability held and Budget within share under the base protocol), each rejection keyed
+ * by the rule's name as the role text lists it.
+ */
+function typeRuleRejections(
   tasks: readonly TaskProposal[],
   unit: Unit,
   ctx: ValidationContext,
-) => string[];
-
-const LEADER_CHECKS: Record<LeaderRuleName, LeaderRule> = {
-  "Own unit": (tasks, unit) =>
-    tasks
-      .filter((t) => t.unit !== unit.id)
-      .map(
-        (t) =>
-          `${label(t)} is under ${t.unit}, not the leader's own unit ${unit.id}`,
-      ),
-
-  "Capability held": (tasks, unit) =>
-    tasks.flatMap((t) => {
-      const capability = getCapability(t.capability);
-      if (capability === undefined) return [];
-      return holdsCapability(capability, unit, t.inputs)
-        ? []
-        : [
-            `${label(t)} needs ${t.capability}, whose equipment or Bash allowlist unit ${unit.id} does not hold`,
-          ];
-    }),
-
-  "Budget within share": (tasks, unit, ctx) => {
-    const { share, charged } = unitShare(unit, ctx.tasks, ctx.events);
-    const reasons: string[] = [];
-    for (const dimension of ["tokens", "seconds"] as const) {
-      const asked = tasks.reduce((n, t) => n + (t.budget[dimension] ?? 0), 0);
-      if (asked === 0) continue;
-      const allotted = share[dimension];
-      if (allotted === undefined) {
-        reasons.push(
-          `the assignments ask ${asked} ${dimension}, but no plan task under unit ${unit.id} bounds ${dimension}, so its share is zero`,
-        );
-        continue;
-      }
-      const left = allotted - charged[dimension];
-      if (asked > left)
-        reasons.push(
-          `the assignments ask ${asked} ${dimension} of the ${Math.max(0, left)} left in unit ${unit.id}'s share (${allotted} allotted by the plans, ${charged[dimension]} spent or bound)`,
-        );
-    }
-    return reasons;
-  },
-};
-
-/** The leader's own rules, in the order its role text lists them. */
-export const LEADER_RULE_CHECKS: readonly {
-  name: LeaderRuleName;
-  check: LeaderRule;
-}[] = LEADER_RULES.map((line) => {
-  const name = line.slice(0, line.indexOf(":")) as LeaderRuleName;
-  return { name, check: LEADER_CHECKS[name] };
-});
+): Rejection<string>[] {
+  return protocolOf(unit).rules.flatMap((rule) =>
+    rule.check(tasks, unit, ctx).map((reason) => ({ rule: rule.name, reason })),
+  );
+}
 
 /** A leader's assignments as the task rules see them: a plan that creates those tasks and nothing else. */
 function asPlan(tasks: readonly TaskProposal[]): ActionPlan {
@@ -825,25 +797,24 @@ function asPlan(tasks: readonly TaskProposal[]): ActionPlan {
 }
 
 /**
- * A leader's assignments pass every task rule of a plan and the leader's own rules, or are
+ * A leader's assignments pass every task rule of a plan and its unit's type's rules, or are
  * refused whole (DESIGN.md Step 5): under its own unit, to capabilities the unit holds,
  * inside the unit's share, and, through the plan rules, span of control under that unit,
- * known models, read-only capabilities and the incident's remaining budget.
+ * known models, read-only capabilities and the incident's remaining budget. A type's rule
+ * names are the registered rules', so a rejection's rule is a string here.
  */
 export function validateLeaderTasks(
   tasks: readonly TaskProposal[],
   unit: Unit,
   ctx: ValidationContext,
-): Verdict<RuleName | LeaderRuleName> {
+): Verdict<string> {
   const plan = asPlan(tasks);
-  const rejections: Rejection<RuleName | LeaderRuleName>[] = [
+  const rejections: Rejection<string>[] = [
     ...RULES.filter((r) => TASK_RULES.includes(r.name)).flatMap(
       ({ name, check }) =>
         check(plan, ctx).map((reason) => ({ rule: name, reason })),
     ),
-    ...LEADER_RULE_CHECKS.flatMap(({ name, check }) =>
-      check(tasks, unit, ctx).map((reason) => ({ rule: name, reason })),
-    ),
+    ...typeRuleRejections(tasks, unit, ctx),
   ];
   return rejections.length === 0
     ? { ok: true, plan, warnings: [] }
@@ -861,7 +832,7 @@ export function validateLeaderTasksAndRecord(
   unit: Unit,
   tasks: readonly TaskProposal[],
   providers: readonly Provider[],
-): Verdict<RuleName | LeaderRuleName> {
+): Verdict<string> {
   const verdict = validateLeaderTasks(
     tasks,
     unit,
@@ -923,7 +894,7 @@ const COMMAND_RULES: readonly RuleName[] = [
 ];
 
 /** The IC's own rules: an answer names a request a waiting unit raised; every report in the change report has one verdict; an assignment under command is deterministic; a drop names an open reassignment (R4-4); the situation names claims the incident has and calls proven only what was observed (R4-5). */
-export type CommandRuleName =
+type CommandRuleName =
   | "Answers match"
   | "Reports answered"
   | "Deterministic only"
@@ -1053,9 +1024,9 @@ function reportsAnswered(
 export function validateCommand(
   turn: CommandTurn,
   ctx: ValidationContext,
-): Rejection<RuleName | LeaderRuleName | CommandRuleName>[] {
+): Rejection<string>[] {
   const root = commandUnitOf(ctx.units);
-  const assignments: Rejection<RuleName | LeaderRuleName | CommandRuleName>[] =
+  const assignments: Rejection<string>[] =
     turn.assignTasks.length === 0
       ? []
       : [
@@ -1071,9 +1042,7 @@ export function validateCommand(
           ),
           ...(root === undefined
             ? []
-            : LEADER_CHECKS["Own unit"](turn.assignTasks, root, ctx).map(
-                (reason) => ({ rule: "Own unit" as const, reason }),
-              )),
+            : typeRuleRejections(turn.assignTasks, root, ctx)),
           ...perRegisteredTask(asPlan(turn.assignTasks), (t, capability) =>
             capability.kind === "session"
               ? [

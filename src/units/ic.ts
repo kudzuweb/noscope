@@ -2,7 +2,7 @@ import { z } from "zod";
 import { READ_ONLY_SESSION_COMMANDS } from "../equipment/index.js";
 import { Leader, type Unit } from "../models.js";
 import { now } from "../store.js";
-import { defineUnitType } from "./registry.js";
+import { defineUnitType, OWN_UNIT_RULE } from "./registry.js";
 
 // The ic type (R4-10): command, the root unit, whose leader is the Incident Commander. Its
 // form is the IC's provider and model, its equipment and Bash allowlist for the
@@ -105,6 +105,9 @@ export const icUnitType = defineUnitType({
     seat: "ic",
     role: IC_ROLE,
     reports: false,
+    // The IC's assignments under command are held to Own unit (against command) and, in
+    // `validateCommand`, to the command rule Deterministic only.
+    rules: [OWN_UNIT_RULE],
     // Nothing runs inside the IC's session (R4-6): a session-backed task under command
     // runs in a session of its own.
     runsInside: () => false,

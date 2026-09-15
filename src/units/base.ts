@@ -43,9 +43,11 @@ import {
 import { describeStrikeTeam } from "../strike-team.js";
 import { renderHierarchy, renderPeriod } from "../tree.js";
 import {
+  assignmentRule,
   defineUnitType,
   describeError,
   leaderRequest,
+  OWN_UNIT_RULE,
   type PassContext,
   type PassView,
   protocolOf,
@@ -68,15 +70,55 @@ import {
 export const BASE_TYPE = "base";
 
 /**
- * The rules the validator holds a leader's assignments to beyond a plan's task rules, stated
- * so the leader does not assign what will be refused (DESIGN.md Step 5). The name before
- * the colon keys the check in `src/validator.ts`, as the planner's rules do.
+ * The base protocol's rules (DESIGN.md Step 5): what the validator holds a leader's
+ * assignments to beyond a plan's task rules, each stated in the role text so the leader does
+ * not assign what will be refused, with its check beside it. Own unit is every type's;
+ * Capability held and Budget within share are the led unit's, since command assigns
+ * deterministic work only and has no share of its own.
  */
-export const LEADER_RULES = [
-  "Own unit: every task you assign names your own unit as its unit; no new units, no tasks under another unit.",
-  "Capability held: every task names a registered capability; a session-backed one needs no equipment or Bash command beyond your unit's, and one that picks its equipment per task picks equipment your unit holds.",
-  "Budget within share: your assignments fit inside what the plans allotted your unit's tasks, per dimension; the unit's spend and its open tasks' bounds count against it, and a dimension no plan task under your unit bounds has a share of zero, so an assignment may not bound it.",
+export const BASE_RULES = [
+  OWN_UNIT_RULE,
+  assignmentRule(
+    "Capability held: every task names a registered capability; a session-backed one needs no equipment or Bash command beyond your unit's, and one that picks its equipment per task picks equipment your unit holds.",
+    (tasks, unit) =>
+      tasks.flatMap((t) => {
+        const capability = getCapability(t.capability);
+        if (capability === undefined) return [];
+        return holdsCapability(capability, unit, t.inputs)
+          ? []
+          : [
+              `task "${t.objective}" needs ${t.capability}, whose equipment or Bash allowlist unit ${unit.id} does not hold`,
+            ];
+      }),
+  ),
+  assignmentRule(
+    "Budget within share: your assignments fit inside what the plans allotted your unit's tasks, per dimension; the unit's spend and its open tasks' bounds count against it, and a dimension no plan task under your unit bounds has a share of zero, so an assignment may not bound it.",
+    (tasks, unit, ctx) => {
+      const { share, charged } = unitShare(unit, ctx.tasks, ctx.events);
+      const reasons: string[] = [];
+      for (const dimension of ["tokens", "seconds"] as const) {
+        const asked = tasks.reduce((n, t) => n + (t.budget[dimension] ?? 0), 0);
+        if (asked === 0) continue;
+        const allotted = share[dimension];
+        if (allotted === undefined) {
+          reasons.push(
+            `the assignments ask ${asked} ${dimension}, but no plan task under unit ${unit.id} bounds ${dimension}, so its share is zero`,
+          );
+          continue;
+        }
+        const left = allotted - charged[dimension];
+        if (asked > left)
+          reasons.push(
+            `the assignments ask ${asked} ${dimension} of the ${Math.max(0, left)} left in unit ${unit.id}'s share (${allotted} allotted by the plans, ${charged[dimension]} spent or bound)`,
+          );
+      }
+      return reasons;
+    },
+  ),
 ] as const;
+
+/** The rules' lines as the role text lists them. */
+export const LEADER_RULES = BASE_RULES.map((r) => r.text);
 
 /** The role text as a unit leader reads it; the IC reads `IC_ROLE`. */
 export const LEADER_ROLE = `Your role: unit leader. You own your unit's objective and direct its tasks until you can report against it. A task that runs inside this session runs one at a time, in order; tasks in sessions of their own start at once when nothing they depend on is still open, and each reaches you on the turn after it ends. dependsOn is what serializes tasks; a task with none waits for nothing.
@@ -1131,6 +1173,7 @@ export const baseUnitType = defineUnitType({
     seat: "leader",
     role: LEADER_ROLE,
     reports: true,
+    rules: BASE_RULES,
     runsInside: runsInsideLeader,
     insideRequest,
     // The pass opens with the turns the unit is owed before any task runs: the IC's

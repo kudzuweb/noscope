@@ -501,6 +501,7 @@ describe("planner", () => {
       ## 9. Rules the validator applies
         - Capabilities exist: every task names a registered capability.
         - Units exist: every task's unit and every new unit's parent is an active unit id or the ref of a unit created in this plan; a closed unit takes no new work.
+        - Type exists: every new unit names a registered unit type a plan may create; base, the led unit, is the only one, so name base or leave type to its default.
         - No cycles: the tree stays a tree; a unit ref is used once, is not an existing unit id, and does not start with the incident id; a task ref likewise against task ids, and new tasks' dependsOn form no cycle.
         - No duplicates: no new task repeats an open or completed one, or another new task, with the same capability and effective inputs under the same unit; a task this plan cancels does not count.
         - Inputs validate: task inputs parse against the capability's input schema; a task that takes evidence names it by id in evidenceFrom (claims, and tasks whose results it needs) rather than copying it into inputs, or carries it inline.
@@ -601,6 +602,10 @@ describe("planner", () => {
       expect(PLANNER_SYSTEM_PROMPT).toContain(
         "Independent tasks run at once, across units and within one (only tasks inside a leader's session run one at a time), and dependsOn is what serializes them",
       );
+      // R4-10: a new unit is a type plus a config, and base is the one type a plan may create.
+      expect(PLANNER_SYSTEM_PROMPT).toContain(
+        "A new unit is a type plus a config: it names its type (base, the led unit, is the only type a plan may create, and the default) and fills the type's form",
+      );
       expect(sent.args).not.toContain("--allowedTools");
       expect(
         sent.prompt.startsWith("# Incident file\n\n## 1. Command picture"),
@@ -637,6 +642,6 @@ describe("planner", () => {
       delete process.env.NOSCOPE_STUB_OUTPUT;
     }
     store.close();
-    expect(PLANNER_RULES).toHaveLength(14);
+    expect(PLANNER_RULES).toHaveLength(15);
   });
 });

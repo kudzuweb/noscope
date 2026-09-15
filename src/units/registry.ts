@@ -6,6 +6,7 @@ import {
 } from "../capabilities/index.js";
 import type { RefusedCall } from "../leader.js";
 import type {
+  Event,
   Incident,
   LeaderReport,
   ResourceRequest,
@@ -111,12 +112,54 @@ export type PassView = {
   onLeader: <T>(fn: () => Promise<T>) => Promise<T>;
 };
 
+/** What an assignment rule reads beyond the assignments and the unit: the incident's tasks and log, for the unit's share of the budget. */
+export type AssignmentContext = {
+  tasks: readonly Task[];
+  events: readonly Event[];
+};
+
+/**
+ * A rule a type holds its leader's assignments to beyond the plan's task rules (DESIGN.md
+ * Step 5): the line the role text lists, whose name before the colon keys the validator's
+ * rejection, and the check, which returns the reasons the assignments fail it.
+ */
+export type AssignmentRule<N extends string = string> = {
+  name: N;
+  text: `${N}: ${string}`;
+  check: (
+    tasks: readonly TaskProposal[],
+    unit: Unit,
+    ctx: AssignmentContext,
+  ) => string[];
+};
+
+/** An assignment rule from its line and its check; the name is the text before the colon, so the two cannot drift. */
+export function assignmentRule<N extends string>(
+  text: `${N}: ${string}`,
+  check: AssignmentRule["check"],
+): AssignmentRule<N> {
+  return { name: text.slice(0, text.indexOf(":")) as N, text, check };
+}
+
+/** The rule every type shares: a leader assigns under its own unit, and nowhere else. */
+export const OWN_UNIT_RULE = assignmentRule(
+  "Own unit: every task you assign names your own unit as its unit; no new units, no tasks under another unit.",
+  (tasks, unit) =>
+    tasks
+      .filter((t) => t.unit !== unit.id)
+      .map(
+        (t) =>
+          `task "${t.objective}" is under ${t.unit}, not the leader's own unit ${unit.id}`,
+      ),
+);
+
 /**
  * How a unit of a type uses what is in the box: the seat its session holds (the system
  * prompt's place), the role text its session reads when the config carries none, whether
  * the unit files reports the IC answers with verdicts (command does not: its tasks'
- * results are judged at the command turn, R4-6), whether a session-backed task runs
- * inside the unit's own session, and the turns the unit takes around its tasks in a pass:
+ * results are judged at the command turn, R4-6), the rules its leader's assignments are
+ * held to beyond the plan's task rules, whether a session-backed task runs inside the
+ * unit's own session, and the turns the unit takes around its tasks in a pass:
  * `open` before any task starts (a revision brief, the answers to its requests), `ending`
  * on each task ending that lands (the leader's turn on it; the runtime's report after two
  * refusals), and `close` once every run has landed (the report owed from an earlier pass;
@@ -127,6 +170,7 @@ export type Protocol = {
   seat: Seat;
   role: string;
   reports: boolean;
+  rules: readonly AssignmentRule[];
   runsInside: (capability: Capability, task: Task, unit: Unit) => boolean;
   /** The request a task that `runsInside` is run with on the unit's session. */
   insideRequest: (
