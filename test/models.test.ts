@@ -38,7 +38,6 @@ const plan = {
     },
   ],
   cancelTasks: [],
-  claimsToVerify: [],
   questionsForHuman: [],
   grantRequests: [],
   capabilityRequests: [],
@@ -58,6 +57,12 @@ describe("contracts", () => {
   it("parses a well-formed action plan", () => {
     const parsed = ActionPlan.parse(plan);
     expect(parsed.createUnits[0]?.ref).toBe("u1");
+  });
+
+  it("rejects an action plan that carries claimsToVerify, which no longer exists", () => {
+    expect(() => ActionPlan.parse({ ...plan, claimsToVerify: ["c1"] })).toThrow(
+      /claimsToVerify/,
+    );
   });
 
   it("rejects an action plan with an unknown incident status", () => {

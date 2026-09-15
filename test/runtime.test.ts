@@ -24,7 +24,6 @@ const empty: ActionPlan = {
   closeUnits: [],
   createTasks: [],
   cancelTasks: [],
-  claimsToVerify: [],
   questionsForHuman: [],
   grantRequests: [],
   capabilityRequests: [],

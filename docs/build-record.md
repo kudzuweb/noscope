@@ -864,3 +864,55 @@ Not exactly to spec, with reasons:
   would show.
 - Cache reads were 0 on every resumed call in `resume.sh`, which the row records as an
   open observation rather than a fact; R3-3's live test settles it with a fixed schema.
+
+## R3-2: Status is a label (#30, merged 2026-09-15)
+
+R3-2 of the round 3 plan. Built: a claim's status now says only which kind of source
+produced it, `verified` for deterministic equipment and `asserted` for a session, and
+never changes after entry; the basis, `observed` or `inferred`, is what the validator
+reads. `promoteMatching` and the promotion path are gone from `src/verifier.ts`, so a
+deterministic result that matches an asserted claim on subject, predicate and object
+leaves it asserted, and no `claim.verified` event with a `claim.status` mutation is written
+any more. `claimsToVerify` is gone from `ActionPlan` (now a `z.strictObject`, so a plan
+still carrying the field is rejected at parse), from `applyPlan`'s `plan.applied` payload,
+from the validator's "Dependencies resolve" line and from `step`'s printout. The `proven`
+check accepts any claim whose basis is `observed`, whichever task observed it, and refuses
+an inferred one with "its basis is inferred, not observed"; "Status is earned" requires at
+least one observed claim for `satisfied` in place of a verified one. Planner input sections
+2 and 3 are one section, "2. Claims", every line carrying `(status, basis; ...)` and its
+provenance, and the sections after it renumber to nine; the grep collapse from R2-3 runs
+over the merged section. The planner's system prompt and rules say status names the source
+and gates nothing, basis says whether it was seen, and `proven` and `satisfied` key on
+observed; the session preamble's "until the runtime verifies them" is replaced by the same
+statement. No store column changed and `user_version` stays at 3; the version-1 migration
+still reads an old file's verified claims as observed. DESIGN.md Vocabulary (claim), Step 3
+(the preamble row and the sentence on why deterministic capabilities exist), Step 4, Step 5
+and Step 6 follow; the sentence "only deterministic verification promotes it" is gone.
+`docs/architecture.html`'s loop and "A claim's life" section follow.
+
+Tests: the validator accepts a `proven` entry naming an observed session claim (`c-seen`)
+and refuses an inferred one; a `satisfied` plan passes with observed session claims and no
+verified claim, and fails when every claim is inferred; the models test rejects a plan with
+`claimsToVerify`; the planner snapshot is updated; the dispatcher test that pinned
+promotion now pins its absence, with no `claim.status` mutation in the log.
+
+Not exactly to spec, with reasons:
+
+- The `proven` check stays under "Dependencies resolve", where it was, rather than moving to
+  "Inferred links are worked" whose text describes it; DESIGN.md's rule table records that
+  placement ("both checked under Dependencies resolve") and moving it changes nothing the
+  planner reads.
+- `incident review` no longer prints `claimsToVerify N` on a cycle line or `N promoted` in
+  the claims summary; the plan block does not name `review.ts`, but both figures measured
+  the removed mechanism and would read as a zero that could have been nonzero. A review of
+  runs 001 and 002 still parses their logs; the `claim.verified` status events in them are
+  simply not counted.
+- The session preamble in `src/providers/base.ts` was not named in the block; its one
+  sentence promising verification was changed because a prompt that promises a mechanism
+  the runtime no longer has is a documentation error. R3-4 rewrites the preamble for
+  leaders and lands after this.
+- Section numbers cited in the planner prompt ("Section 10", "section 8") follow the
+  renumbering; the plan block did not mention them.
+- `setClaimStatus` in `src/store.ts` keeps no caller in `src/`; it stays so the replay
+  test can write a `claim.status` mutation and prove old logs from runs 001 and 002 still
+  rebuild, since those logs carry promotion events.

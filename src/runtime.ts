@@ -46,7 +46,6 @@ function parentsFirst(
  * `plan.applied` (DESIGN.md Step 4). The validator has already passed the plan; this trusts
  * it and only writes. The incident is read from the store, not the argument, so a stale
  * caller cannot overwrite questions; only an open incident takes a plan.
- * `claimsToVerify` is recorded on the applied event for the dispatcher.
  */
 export function applyPlan(
   store: Store,
@@ -180,7 +179,6 @@ export function applyPlan(
       closedUnits: plan.closeUnits.map((c) => c.unitId),
       tasks: tasks.map((t) => t.id),
       cancelledTasks: plan.cancelTasks,
-      claimsToVerify: plan.claimsToVerify,
       incidentStatus,
     });
   });

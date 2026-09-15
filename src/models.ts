@@ -20,8 +20,9 @@ export const TaskStatus = z.enum([
   "failed",
   "cancelled",
 ]);
+/** Where a claim came from: a session (asserted) or deterministic equipment (verified). A label; nothing gates on it. */
 export const ClaimStatus = z.enum(["asserted", "verified", "rejected"]);
-/** How a claim was reached: seen in code or output, or inferred from what was seen. */
+/** How a claim was reached: seen in code, output or a browser, or inferred from what was seen. The validator keys on this. */
 export const ClaimBasis = z.enum(["observed", "inferred"]);
 export const Effect = z.enum(["read_only", "writes_local", "writes_external"]);
 export const Produces = z.enum(["verified_claims", "asserted_claims"]);
@@ -283,7 +284,7 @@ export const Settlement = z.union([
 
 /**
  * The planner's own picture, written each cycle and read back the next: what changed, the
- * current explanation, the verified claims it rests on, the inferred links and what settles
+ * current explanation, the observed claims it rests on, the inferred links and what settles
  * each, and the claims to keep in view. The rationale says why this plan; this says where
  * the incident stands.
  */
@@ -303,23 +304,22 @@ export const Situation = z.object({
         line: z.string().min(1).describe("The claim in one line"),
       }),
     )
-    .describe("The verified claims the hypothesis rests on"),
+    .describe("The observed claims the hypothesis rests on"),
   inferred: z
     .array(z.object({ claimId: z.string().min(1), settledBy: Settlement }))
     .describe(
-      "Every link the hypothesis needs that is not verified, each with what this plan does to settle it",
+      "Every link the hypothesis needs that no claim observed, each with what this plan does to settle it",
     ),
   keep: z
     .array(z.string())
     .describe("Claim ids to hold in view next cycle beyond the proven list"),
 });
 
-export const ActionPlan = z.object({
+export const ActionPlan = z.strictObject({
   createUnits: z.array(UnitProposal),
   closeUnits: z.array(UnitClose),
   createTasks: z.array(TaskProposal),
   cancelTasks: z.array(z.string()),
-  claimsToVerify: z.array(z.string()),
   questionsForHuman: z.array(z.string()),
   grantRequests: z.array(GrantRequest),
   capabilityRequests: z
