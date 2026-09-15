@@ -61,7 +61,12 @@ import {
 import { INITIAL_MODEL, sizeUp } from "../size-up.js";
 import { cycleOf, now, resolveDbPath, Store, sumUsage } from "../store.js";
 import { describeStrikeTeam } from "../strike-team.js";
-import { renderTree } from "../tree.js";
+import {
+  describeLeader,
+  lastReports as lastReportsOf,
+  lastVerdicts,
+  renderTree,
+} from "../tree.js";
 import { commandUnitOf, getUnitType, newCommandUnit } from "../units/index.js";
 import {
   validateAndRecord,
@@ -473,6 +478,12 @@ function renderIncidentFile(
   lines.push(
     `units: ${units.filter((u) => u.status === "active").length} active, ${units.filter((u) => u.status === "waiting").length} waiting, ${units.filter((u) => u.status === "closed").length} closed`,
   );
+  const reportsByUnit = lastReportsOf(events);
+  const verdictsByUnit = lastVerdicts(events);
+  for (const u of units)
+    lines.push(
+      `  ${u.id} [${u.status}] ${u.objective} ${describeLeader(u, reportsByUnit, openRequestsByUnit(incident, events), verdictsByUnit)}`,
+    );
   lines.push(
     `tasks: ${tasks.filter((t) => t.status !== "completed" && t.status !== "cancelled" && t.status !== "failed").length} open, ${tasks.length} total`,
   );
@@ -957,7 +968,7 @@ async function cycle(
   ctx.io.out("plan approved");
   for (const w of verdict.warnings)
     ctx.io.out(`  warned, applied anyway: ${w.rule}: ${w.reason}`);
-  const applied = applyPlan(store, current, plan, "runtime", {
+  const applied = applyPlan(store, current, verdict.plan, "runtime", {
     verdict: review.output.verdict,
     corrections,
     diff: planDiff(draft.plan, plan),

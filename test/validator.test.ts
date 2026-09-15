@@ -395,7 +395,7 @@ describe("validator", () => {
   });
 
   it("Config exists: a new unit naming a config names a saved one of its type, and the passing plan comes back outfitted with the config's fields, a field given beside the config overriding it (R4-11)", () => {
-    const { store, ctx } = seeded();
+    const { store, ctx, incident: seededIncident } = seeded();
     const own = store.listUnits("i1").find((u) => u.id === "u-scroll");
     if (own === undefined) throw new Error("no u-scroll");
     store.saveUnitConfig(
@@ -451,6 +451,34 @@ describe("validator", () => {
         },
       ],
     });
+    // A unit naming no config and leaving a form field unfilled is this rule's too, so a
+    // draft missing its leader is rejected and recorded rather than failing to parse.
+    const unfilled: ActionPlan = {
+      ...empty,
+      createUnits: [
+        { ref: "a", objective: "by hand", parent: "i1-command", type: "base" },
+      ],
+    };
+    expect(validatePlan(unfilled, c)).toEqual({
+      ok: false,
+      rejections: [
+        {
+          rule: "Config exists",
+          reason:
+            "new unit a names no config and leaves leader, equipment, bashAllowlist unfilled; fill the form or name a saved config",
+        },
+      ],
+    });
+    const recorded = validateAndRecord(store, seededIncident, unfilled, [
+      fakeProvider,
+    ]);
+    expect(recorded.ok).toBe(false);
+    expect(
+      store
+        .listEvents("i1")
+        .filter((e) => e.type === "plan.rejected")
+        .map((e) => e.payload.rule),
+    ).toEqual(["Config exists"]);
     const passing = validatePlan(naming("reader"), c);
     expect(passing.ok).toBe(true);
     if (!passing.ok) throw new Error("rejected");

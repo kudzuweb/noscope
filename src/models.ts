@@ -372,56 +372,45 @@ export const BaseUnitForm = z.object({
  * `config` (R4-11) the proposal names a saved config and fills only the objective and the
  * parent; the config's leader, equipment, Bash allowlist and role fill the rest, and a
  * field given beside `config` overrides the config's. Without it the three are required,
- * enforced after parse, since the planner's schema is one strict object.
+ * which the validator's rule Config exists enforces (not the schema, so a draft missing
+ * one is rejected and recorded rather than failing to parse), since the planner's schema
+ * is one strict object.
  */
 export const UnitProposal = BaseUnitForm.partial({
   leader: true,
   equipment: true,
   bashAllowlist: true,
-})
-  .extend({
-    config: z
-      .string()
-      .min(1)
-      .optional()
-      .describe(
-        "The name of a saved unit config (section 8 lists them) whose leader, equipment, bashAllowlist and role fill this unit's form; give only objective and parent beside it, or a field to override the config's",
-      ),
-    ref: z
-      .string()
-      .min(1)
-      .describe("A label the plan uses to refer to this new unit elsewhere"),
-    parent: z
-      .string()
-      .min(1)
-      .describe(
-        "An existing unit id, or the ref of a unit created in this plan",
-      ),
-    type: z
-      .string()
-      .min(1)
-      .default("base")
-      .describe(
-        "The unit's type, whose form these fields fill and whose protocol runs it: base, the led unit, is the only type a plan may create",
-      ),
-    takes: z
-      .string()
-      .min(1)
-      .optional()
-      .describe(
-        "The id of an open reassignment this unit takes (R4-4): the slice of a unit the IC closed with a reassign verdict, whose instructions and claims the new unit's leader is oriented with; every open reassignment is taken by exactly one new unit",
-      ),
-  })
-  .superRefine((u, ctx) => {
-    if (u.config !== undefined) return;
-    for (const field of ["leader", "equipment", "bashAllowlist"] as const)
-      if (u[field] === undefined)
-        ctx.addIssue({
-          code: "custom",
-          path: [field],
-          message: `a unit naming no config fills ${field} itself`,
-        });
-  });
+}).extend({
+  config: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "The name of a saved unit config (section 8 lists them) whose leader, equipment, bashAllowlist and role fill this unit's form; give only objective and parent beside it, or a field to override the config's",
+    ),
+  ref: z
+    .string()
+    .min(1)
+    .describe("A label the plan uses to refer to this new unit elsewhere"),
+  parent: z
+    .string()
+    .min(1)
+    .describe("An existing unit id, or the ref of a unit created in this plan"),
+  type: z
+    .string()
+    .min(1)
+    .default("base")
+    .describe(
+      "The unit's type, whose form these fields fill and whose protocol runs it: base, the led unit, is the only type a plan may create",
+    ),
+  takes: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "The id of an open reassignment this unit takes (R4-4): the slice of a unit the IC closed with a reassign verdict, whose instructions and claims the new unit's leader is oriented with; every open reassignment is taken by exactly one new unit",
+    ),
+});
 
 export const UnitClose = z.strictObject({
   unitId: z.string().min(1),

@@ -1,6 +1,7 @@
 import { configOf, describeForm } from "../configs.js";
 import { type Context, EXIT, type Handler } from "../context.js";
 import { now, resolveDbPath, Store } from "../store.js";
+import { getUnitType, listUnitTypes } from "../units/index.js";
 
 // Saved unit configs (R4-11): `config save` keeps a unit's filled form under a name, and
 // `config list` and `config show` read what is saved. A plan deploys one by naming it in a
@@ -15,7 +16,8 @@ function openStore(ctx: Context): Store {
 /**
  * Save a unit's config under a name: its type and its form less the objective (the
  * leader, equipment, Bash allowlist and role text), with when and from which unit and
- * incident it was taken, as the system event `config.saved`. A name is saved once.
+ * incident it was taken, as the system event `config.saved`. A name is saved once, and
+ * only a unit of a type a plan may create is saved, since no plan could deploy another.
  */
 export const save: Handler = async (args, ctx) => {
   const [incidentId, unitId, name] = args;
@@ -40,6 +42,15 @@ export const save: Handler = async (args, ctx) => {
         `noscope config save: no unit ${JSON.stringify(unitId)} in incident ${incident.id}`,
       );
       return EXIT.notFound;
+    }
+    if (getUnitType(unit.type)?.plannable !== true) {
+      ctx.io.err(
+        `noscope config save: unit ${unit.id} is of type ${unit.type}, which a plan may not create, so a config of it could never be deployed; a plan may create ${listUnitTypes()
+          .filter((t) => t.plannable)
+          .map((t) => t.name)
+          .join(", ")}`,
+      );
+      return EXIT.usage;
     }
     if (store.getUnitConfig(name) !== undefined) {
       ctx.io.err(

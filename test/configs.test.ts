@@ -186,6 +186,21 @@ describe("saved unit configs (R4-11)", () => {
       "new unit byName names config command, which is of type ic, not base",
     ]);
     expect(() => outfit(plan, [])).toThrow("has no whole form");
+    const unfilled: ActionPlan = {
+      ...empty,
+      createUnits: [
+        {
+          ref: "bare",
+          objective: "no form",
+          parent: "i1-command",
+          type: "base",
+          equipment: [],
+        },
+      ],
+    };
+    expect(configReasons(unfilled, [reader])).toEqual([
+      "new unit bare names no config and leaves leader, bashAllowlist unfilled; fill the form or name a saved config",
+    ]);
     store.close();
   });
 
@@ -243,6 +258,16 @@ describe("saved unit configs (R4-11)", () => {
     ).toBe(EXIT.notFound);
     expect(noUnit.err[0]).toBe(
       'noscope config save: no unit "001-u09" in incident 001',
+    );
+    const command = ctx(db);
+    expect(
+      await run(
+        ["config", "save", "001", "001-command", "cmd"],
+        command.context,
+      ),
+    ).toBe(EXIT.usage);
+    expect(command.err[0]).toBe(
+      "noscope config save: unit 001-command is of type ic, which a plan may not create, so a config of it could never be deployed; a plan may create base",
     );
     const saved = ctx(db);
     expect(

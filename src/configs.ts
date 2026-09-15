@@ -101,14 +101,23 @@ export type OutfittedPlan = Omit<ActionPlan, "createUnits"> & {
   createUnits: OutfittedUnit[];
 };
 
-/** The reasons a proposal's config cannot outfit it: no saved config of that name, or one of another type. */
+/** The reasons a proposal has no whole form: it names no config and leaves a field unfilled, or the config it names is not saved or is of another type. */
 export function configReasons(
   plan: ActionPlan,
   configs: readonly UnitConfig[],
 ): string[] {
   const names = configs.map((c) => c.name);
   return plan.createUnits.flatMap((u) => {
-    if (u.config === undefined) return [];
+    if (u.config === undefined) {
+      const missing = (
+        ["leader", "equipment", "bashAllowlist"] as const
+      ).filter((field) => u[field] === undefined);
+      return missing.length === 0
+        ? []
+        : [
+            `new unit ${u.ref} names no config and leaves ${missing.join(", ")} unfilled; fill the form or name a saved config`,
+          ];
+    }
     const saved = configs.find((c) => c.name === u.config);
     if (saved === undefined)
       return [

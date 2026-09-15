@@ -114,9 +114,10 @@ describe("unit types (R4-10)", () => {
     });
     expect(byName.leader).toBeUndefined();
     expect(schema.required).not.toContain("leader");
-    expect(() =>
-      UnitProposal.parse({ ref: "u", objective: "o", parent: "p" }),
-    ).toThrow("a unit naming no config fills leader itself");
+    // Without a config the three parse as absent too; Config exists rejects the plan.
+    expect(
+      UnitProposal.parse({ ref: "u", objective: "o", parent: "p" }).leader,
+    ).toBeUndefined();
   });
 
   it("a unit's role text is its own when the config carries one, else its type's, and the request carries it under the type's seat", () => {

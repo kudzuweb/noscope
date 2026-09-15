@@ -275,9 +275,16 @@ describe("incident run", () => {
     expect(reviewed.out).toContain(
       "units from saved configs: 1 (001-u03 from reader)",
     );
-    const planned = harness([]);
-    planned.ctx.env.NOSCOPE_DB = h.ctx.env.NOSCOPE_DB as string;
-    expect(await run(["incident", "show", "001"], planned.ctx)).toBe(EXIT.ok);
+    const shown = harness([]);
+    shown.ctx.env.NOSCOPE_DB = h.ctx.env.NOSCOPE_DB as string;
+    expect(await run(["incident", "show", "001"], shown.ctx)).toBe(EXIT.ok);
+    expect(shown.out).toContain(
+      "  001-u03 [active] confirm the delete handler (base, from config reader; leader claude-code/claude-haiku-4-5; last report: progress)",
+    );
+    expect(await run(["incident", "tree", "001"], shown.ctx)).toBe(EXIT.ok);
+    expect(shown.out).toContain(
+      "  001-u03 [active] confirm the delete handler (base, from config reader; leader claude-code/claude-haiku-4-5; last report: progress)",
+    );
   });
 
   it("step offers to save a form filled by hand the third time it appears unsaved, and not the second (R4-11)", {
