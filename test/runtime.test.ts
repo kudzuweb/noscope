@@ -299,7 +299,7 @@ describe("apply and tree", () => {
     expect(await run(["incident", "tree", "001"], ctx)).toBe(EXIT.ok);
     expect(out).toEqual([
       "incident 001 [open]  why does it scroll",
-      "001-command [active] command: holds the objective and the current plan (ic; leader claude-code/claude-opus-5; last report: none)",
+      "001-command [active] command: holds the objective and the current plan (ic; leader claude-code/claude-sonnet-5; last report: none)",
       "  001-u02 [closed] the scroll path (base; leader fake/fake-small; last report: met)",
       "    [done] 001-t01 grep: find scrollTo",
     ]);

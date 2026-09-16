@@ -13,8 +13,13 @@ import type { Refusal } from "./providers/index.js";
 // actors. The led unit's own protocol, its role text, rules, turns and prompts, is
 // `src/units/base.ts`; the IC's is `src/units/ic.ts` and `src/ic.ts` (DESIGN.md Step 6).
 
-/** The root unit's leader when nothing routes it: an incident created with `--no-size-up`, or a briefing that names a model the provider does not serve; `incident create --ic-model` overrides both the default and the briefing. */
-export const IC_MODEL = "claude-opus-5";
+/**
+ * The root unit's leader unless `incident create --ic-model` names another (R5-6): Sonnet
+ * 5, which did run 003's command for $1.28 against run 004's $5.83 on Opus, and whose
+ * resumed turns Opus 5's safeguards refuse (DESIGN.md Reference table). The briefing's
+ * `incomingCommander` is recorded as its recommendation and not followed.
+ */
+export const IC_MODEL = "claude-sonnet-5";
 export const IC_PROVIDER = "claude-code";
 
 /**

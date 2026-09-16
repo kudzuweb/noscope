@@ -231,7 +231,7 @@ describe("the IC handoff at the context threshold", () => {
     expect(briefing).toContain(
       [
         "# Transfer of command: the outgoing IC's handoff document",
-        "You take command from the previous IC session in this seat, under the same role text, on claude-code/claude-opus-5 (session stub-session-1), whose context reached 6,500 tokens of the 5,000-token handoff threshold; a session is never compacted, so command passes to you with the context emptied. That session wrote the handoff below for you, so that you act as the same IC and not as a stranger reading the file; the change report and the incident file that follow are the record it was written from. Nothing in it binds you.",
+        "You take command from the previous IC session in this seat, under the same role text, on claude-code/claude-sonnet-5 (session stub-session-1), whose context reached 6,500 tokens of the 5,000-token handoff threshold; a session is never compacted, so command passes to you with the context emptied. That session wrote the handoff below for you, so that you act as the same IC and not as a stranger reading the file; the change report and the incident file that follow are the record it was written from. Nothing in it binds you.",
         "period objectives:",
         "  - find the handler",
         "period priorities:",
@@ -263,7 +263,7 @@ describe("the IC handoff at the context threshold", () => {
       unitId: "001-command",
       sessionId: "stub-session-1",
       released: "stub-session-1",
-      model: "claude-opus-5",
+      model: "claude-sonnet-5",
       usage: { inputTokens: 1500 },
       handoff: { contextTokens: 6500, threshold: 5000, document },
       mutation: {
@@ -277,16 +277,16 @@ describe("the IC handoff at the context threshold", () => {
       unitId: "001-command",
       kind: "handoff",
       outgoingSessionId: "stub-session-1",
-      outgoing: { provider: "claude-code", model: "claude-opus-5" },
+      outgoing: { provider: "claude-code", model: "claude-sonnet-5" },
       incomingSessionId: "stub-session-4",
-      incoming: { provider: "claude-code", model: "claude-opus-5" },
+      incoming: { provider: "claude-code", model: "claude-sonnet-5" },
       contextTokens: 6500,
       threshold: 5000,
       document,
       mutation: {
         kind: "unit.leader",
         unitId: "001-command",
-        leader: { provider: "claude-code", model: "claude-opus-5" },
+        leader: { provider: "claude-code", model: "claude-sonnet-5" },
       },
     });
     // The successor's accepted turn on its session consumed the transfer: the next turn does not evaluate again.
@@ -305,13 +305,13 @@ describe("the IC handoff at the context threshold", () => {
     h.out.length = 0;
     expect(await run(["incident", "show", "001"], h.ctx)).toBe(EXIT.ok);
     expect(h.out).toContain(
-      "IC: claude-code/claude-opus-5, session stub-session-4; 1 transfer(s) of command",
+      "IC: claude-code/claude-sonnet-5, session stub-session-4; 1 transfer(s) of command",
     );
     h.out.length = 0;
     expect(await run(["incident", "review", "001"], h.ctx)).toBe(EXIT.ok);
     const review = h.out.join("\n");
     expect(review).toMatch(
-      /^ {2}ic claude-opus-5: in 1,500 .* wrote its handoff after 6,500 tokens of context {2}session stub-session-1$/m,
+      /^ {2}ic claude-sonnet-5: in 1,500 .* wrote its handoff after 6,500 tokens of context {2}session stub-session-1$/m,
     );
     expect(review).toContain(
       `  command transferred (handoff): session stub-session-1 to session stub-session-4 after 6,500 tokens of context, document ${JSON.stringify(document).length} chars`,
@@ -321,7 +321,7 @@ describe("the IC handoff at the context threshold", () => {
     );
     expect(review).toContain("transfers of command: 1 (handoff)");
     // Five IC calls priced under ic: two turns in cycle 1, the handoff, two turns in cycle 2.
-    expect(review).toMatch(/ic\s+claude-opus-5\s+5\s+/);
+    expect(review).toMatch(/ic\s+claude-sonnet-5\s+5\s+/);
   });
 
   it("below the threshold no handoff happens and the IC's session is kept", {
@@ -352,7 +352,7 @@ describe("the IC handoff at the context threshold", () => {
     h.out.length = 0;
     expect(await run(["incident", "show", "001"], h.ctx)).toBe(EXIT.ok);
     expect(h.out).toContain(
-      "IC: claude-code/claude-opus-5, session stub-session-1; 0 transfer(s) of command",
+      "IC: claude-code/claude-sonnet-5, session stub-session-1; 0 transfer(s) of command",
     );
     h.out.length = 0;
     expect(await run(["incident", "review", "001"], h.ctx)).toBe(EXIT.ok);

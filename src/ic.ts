@@ -865,6 +865,14 @@ const SERIALIZED_WORK_ASK =
   "Check whether the draft serializes independent work: a unit or task that could start this period but is left for the next, or a dependsOn on a task whose result the dependent does not name in evidenceFrom.tasks, holds work behind work it does not need, and a code reading never waits behind a reproduce it does not need; independent units and tasks run at once, so correct or amend a draft that serializes them, naming what runs together.";
 
 /**
+ * The review's line on models (R5-6): the IC refuses an upgrade the draft does not reason,
+ * since run 004's planner put every session and both leaders on Opus 5 with no reason and
+ * the review approved it without a word; the planner's own rule is Smallest model that fits.
+ */
+const reviewModelsAsk = (corrections: string | null) =>
+  `Hold every session task and every new unit's leader to the smallest model its kind of work needs: recording, reproducing and reading are Haiku or Sonnet work, and so is a leader that directs such tasks; weighing evidence to a conclusion may take Opus. A task or leader on an Opus or Fable model with no modelWhy, or with one the work does not bear out, is an unreasoned upgrade: do not approve the draft as drafted, ${corrections === null ? "correct or amend" : "amend"} it to the smaller model.`;
+
+/**
  * The user message of a review: the draft, and after a redraft the corrections it answers.
  * A session that has not read the file (a fresh one, after the command turn's session was
  * lost) gets the briefing first, so it never reviews blind.
@@ -898,6 +906,7 @@ function renderReviewPrompt(
       ? `${evaluate}eview it against the period objectives and priorities: approve it, correct it once with text the planner redrafts against, or amend it and return the whole plan. Correct when the planner must re-plan, since it holds the file's refs and tasks; amend when the change is small and exact.`
       : `${evaluate}eview it against the period objectives and priorities: approve it, or amend it and return the whole plan.`,
     SERIALIZED_WORK_ASK,
+    reviewModelsAsk(corrections),
   ].join("\n");
 }
 

@@ -42,7 +42,7 @@ describe("incident commands", () => {
       ),
     ).toBe(EXIT.ok);
     expect(c.out[0]).toBe(
-      "incident 001 created: why does Roughdraft scroll after a delete (IC claude-code/claude-opus-5)",
+      "incident 001 created: why does Roughdraft scroll after a delete (IC claude-code/claude-sonnet-5)",
     );
     const e = ctx(db);
     expect(await run(["incident", "events", "001"], e.context)).toBe(EXIT.ok);
@@ -55,7 +55,7 @@ describe("incident commands", () => {
     const store = new Store(db);
     expect(store.listUnits("001")[0]).toMatchObject({
       id: "001-command",
-      leader: { provider: "claude-code", model: "claude-opus-5" },
+      leader: { provider: "claude-code", model: "claude-sonnet-5" },
       equipment: ["Read", "Grep", "Glob", "Bash"],
       sessionId: null,
     });

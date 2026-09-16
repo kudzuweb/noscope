@@ -410,6 +410,13 @@ export const UnitProposal = BaseUnitForm.partial({
     .describe(
       "The id of an open reassignment this unit takes (R4-4): the slice of a unit the IC closed with a reassign verdict, whose instructions and claims the new unit's leader is oriented with; every open reassignment is taken by exactly one new unit",
     ),
+  modelWhy: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Why the leader's model is larger than its work needs (R5-6): required in substance when the leader is on an Opus or Fable model, since directing narrow tasks is Haiku or Sonnet work; omit it on a smaller model",
+    ),
 });
 
 export const UnitClose = z.strictObject({
@@ -444,6 +451,13 @@ export const TaskProposal = z.object({
   instructions: z.string(),
   provider: z.string().nullable(),
   model: z.string().nullable(),
+  modelWhy: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Why this task's model is larger than its kind of work needs (R5-6): required in substance when the model is an Opus or Fable one, since recording, reproducing and reading are Haiku or Sonnet work and only weighing evidence to a conclusion may take Opus; omit it on a smaller model",
+    ),
   budget: Budget,
   strikeTeam: z
     .array(StrikeTeam)

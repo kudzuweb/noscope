@@ -268,6 +268,14 @@ describe("the IC above the planner", () => {
       "correct",
       "amend",
     ]);
+    // Both reviews hold the draft to the smallest model that fits (R5-6); the redraft's
+    // review can only approve or amend, and its line says so.
+    const modelsAsk = (fix: string) =>
+      `Hold every session task and every new unit's leader to the smallest model its kind of work needs: recording, reproducing and reading are Haiku or Sonnet work, and so is a leader that directs such tasks; weighing evidence to a conclusion may take Opus. A task or leader on an Opus or Fable model with no modelWhy, or with one the work does not bear out, is an unreasoned upgrade: do not approve the draft as drafted, ${fix} it to the smaller model.`;
+    expect(calls[2]?.prompt.split("\n").at(-1)).toBe(
+      modelsAsk("correct or amend"),
+    );
+    expect(calls[4]?.prompt.split("\n").at(-1)).toBe(modelsAsk("amend"));
     expect(calls[4]?.prompt).toContain(
       "# The planner's redraft for operational period 1, against your corrections",
     );
@@ -292,7 +300,7 @@ describe("the IC above the planner", () => {
       unitId: "001-command",
       sessionId: "stub-session",
       provider: "claude-code",
-      model: "claude-opus-5",
+      model: "claude-sonnet-5",
       cycle: 1,
       incidentStatus: "open",
       turn: { periodObjectives: ["find the handler"] },
@@ -363,7 +371,7 @@ describe("the IC above the planner", () => {
       "ic verdicts: 2 review(s): 1 approve, 1 correct, 0 amend",
     );
     expect(review).toMatch(
-      /ic\s+claude-opus-5\s+3\s+4,500\s+126\s+4\.5\s+\$0\.04/,
+      /ic\s+claude-sonnet-5\s+3\s+4,500\s+126\s+4\.5\s+\$0\.04/,
     );
   });
 
@@ -565,7 +573,7 @@ describe("the IC above the planner", () => {
     expect(failed?.payload).toMatchObject({
       unitId: "001-command",
       sessionId: "stub-session",
-      model: "claude-opus-5",
+      model: "claude-sonnet-5",
       seat: "ic",
       turn: "review",
       cycle: 1,
@@ -578,9 +586,9 @@ describe("the IC above the planner", () => {
     const review = h.out.join("\n");
     expect(review).toMatch(/^cycle 1 {2}\S+ {2}review turn failed$/m);
     expect(review).toMatch(
-      /^ {2}ic claude-opus-5: in 1,500 .* review turn failed: the answer did not fit/m,
+      /^ {2}ic claude-sonnet-5: in 1,500 .* review turn failed: the answer did not fit/m,
     );
-    expect(review).toMatch(/ic\s+claude-opus-5\s+3\s+4,500/);
+    expect(review).toMatch(/ic\s+claude-sonnet-5\s+3\s+4,500/);
   });
 
   it("a command turn whose session fails is filed as command.failed with its session on the unit, and a review on a lost session is re-briefed", {

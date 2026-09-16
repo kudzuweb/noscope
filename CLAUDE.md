@@ -54,7 +54,7 @@ the runtime starts inherits that directory, read-only.
 
 | Step | Command |
 |---|---|
-| Create an incident. The initial IC (Haiku) sizes it up, writes a briefing and hands command to the IC on the model it recommends, or the one `--ic-model` names. Questions in the briefing block the incident until answered. | `noscope incident create "<objective>" --constraint "<text>" --priority "<text>" [--ic-model claude-sonnet-5]` |
+| Create an incident. The initial IC (Haiku) sizes it up, writes a briefing and hands command to the IC on Sonnet 5, or the model `--ic-model` names; the briefing's recommended commander is recorded and not followed. Questions in the briefing block the incident until answered. | `noscope incident create "<objective>" --constraint "<text>" --priority "<text>" [--ic-model <model>]` |
 | Answer a question or a capability request, the planner's or a unit's. | `noscope incident answer <id> "<text>"`, `noscope incident provide <id> "<text>"` |
 | Run one cycle: the IC sets the period, the planner drafts, the IC reviews, the validator checks, units run to their reports. A cycle with a browser reproduce can take ten minutes; run it detached and read the log. | `noscope incident step <id>` |
 | Run cycles until the incident leaves `open` or the cap is hit. | `noscope incident run <id> --max-cycles N` |
@@ -71,13 +71,14 @@ on once (default `claude-opus-4-8`); `NOSCOPE_PARALLEL` is how many units run at
 
 Everything is read-only in this version: sessions get `Read`, `Grep`, `Glob` and `Bash` under a
 read-only allowlist, and nothing that writes runs without a grant, which is not built yet.
-Opus 5's safeguards refused the IC's resumed turns on 2026-09-15 (`DESIGN.md` Reference
-table); since R4-7 a refused IC call falls back to Opus 4.8 for the rest of the incident, and
-a refusal there too blocks the incident on a question you answer with a model name
-(`noscope incident answer <id> "claude-sonnet-5"`). The fourth run took that fallback: Opus 5
-refused the review turn once and Opus 4.8 ran the rest of the incident with no refusal, at
-Opus prices. Sonnet 5 ran every turn in the third run, so `--ic-model claude-sonnet-5` at
-`create` still avoids the refusal outright and costs less.
+The IC runs on Sonnet 5 unless `--ic-model` names another (R5-6): Opus 5's safeguards
+refused the IC's resumed review turn in the third and fourth runs (`DESIGN.md` Reference
+table) and Sonnet 5 ran every turn of the third run for a fifth of the cost. A refused IC
+call still falls back to Opus 4.8 for the rest of the incident (R4-7), and a refusal there
+too blocks the incident on a question you answer with a model name (`noscope incident
+answer <id> "claude-sonnet-5"`). The planner names the smallest model that fits for every
+session task and leader and says why in `modelWhy` when it picks Opus or Fable; the
+validator warns on an unexplained one and the IC's review refuses it.
 
 ## What to read next
 

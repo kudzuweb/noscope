@@ -1458,6 +1458,87 @@ describe("validator", () => {
     ).toEqual(["Independent work runs together"]);
     store.close();
   });
+
+  it("Smallest model that fits warns on a session task or a new unit's leader on an Opus or Fable model with no modelWhy, and applies the plan; a why, a smaller model, or a leader filled from a saved config draws nothing (R5-6)", () => {
+    const { store, incident } = seeded();
+    const tiered = {
+      ...fakeProvider,
+      models: [...fakeProvider.models, "fake-opus-9"],
+    };
+    store.saveUnitConfig(
+      {
+        name: "opus-readers",
+        type: "base",
+        form: {
+          leader: { provider: "fake", model: "fake-opus-9" },
+          equipment: [],
+          bashAllowlist: [],
+        },
+        savedFrom: { incidentId: "i1", unitId: "u-scroll" },
+        savedAt: AT,
+      },
+      "runtime",
+    );
+    const opus = (over: Partial<TaskProposal> = {}) =>
+      investigateTask({ unit: "u-scroll", model: "fake-opus-9", ...over });
+    const plan: ActionPlan = {
+      ...empty,
+      createUnits: [
+        unitProposal("u-big", "weigh the evidence", "i1-command", {
+          leader: { provider: "fake", model: "fake-opus-9" },
+        }),
+        unitProposal("u-why", "weigh the evidence too", "i1-command", {
+          leader: { provider: "fake", model: "fake-opus-9" },
+          modelWhy: "the unit reconciles two runs' claims to a conclusion",
+        }),
+        unitProposal("u-saved", "read the handler", "i1-command", {
+          config: "opus-readers",
+          leader: undefined,
+          equipment: undefined,
+          bashAllowlist: undefined,
+        }),
+        unitProposal("u-small", "read the caller", "i1-command", {
+          leader: { provider: "fake", model: "fake-small" },
+        }),
+      ],
+      createTasks: [
+        opus({ inputs: { question: "what moves it?" } }),
+        opus({
+          inputs: { question: "which of the two explanations holds?" },
+          modelWhy: "weighs the reproduce against the trace to a conclusion",
+        }),
+        investigateTask({ unit: "u-scroll", inputs: { question: "where?" } }),
+        grepTask({
+          unit: "u-scroll",
+          inputs: { root: "src", pattern: "opus" },
+        }),
+      ],
+      rationale: "opus everywhere",
+    };
+    const verdict = validateAndRecord(store, incident, plan, [tiered]);
+    expect(verdict.ok ? verdict.warnings : verdict.rejections).toEqual([
+      {
+        rule: "Smallest model that fits",
+        reason:
+          'task "read the scroll handler" runs investigate on fake-opus-9 with no modelWhy; say in modelWhy why this task\'s work needs it, or name a smaller model',
+      },
+      {
+        rule: "Smallest model that fits",
+        reason:
+          "new unit u-big puts its leader on fake-opus-9 with no modelWhy; a leader directs its tasks and judges their endings, which is Haiku or Sonnet work, so say why this unit needs a larger leader or name a smaller one",
+      },
+    ]);
+    expect(
+      store
+        .listEvents("i1")
+        .filter((e) => e.type === "plan.warned")
+        .map((e) => e.payload.rule),
+    ).toEqual(["Smallest model that fits", "Smallest model that fits"]);
+    expect(
+      store.listEvents("i1").filter((e) => e.type === "plan.rejected"),
+    ).toHaveLength(0);
+    store.close();
+  });
 });
 
 describe("validator, a leader's assignments", () => {

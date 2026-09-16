@@ -106,11 +106,15 @@ function harness(plans: ActionPlan[], refuse: string) {
   };
 }
 
+// On Opus 5 by flag: the refusal these tests script is the one Opus 5's safeguards gave
+// the IC's review turn in runs 003 and 004, and the default IC is Sonnet 5 (R5-6).
 const create = [
   "incident",
   "create",
   "where is the delete handler",
   "--no-size-up",
+  "--ic-model",
+  "claude-opus-5",
 ];
 
 const refusal = {

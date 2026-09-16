@@ -181,7 +181,7 @@ describe("incident run", () => {
     expect(await run(["incident", "tree", "001"], replayed.ctx)).toBe(EXIT.ok);
     expect(replayed.out).toEqual(shown.out);
     expect(shown.out).toContain(
-      "001-command [active] command: holds the objective and the current plan (ic; leader claude-code/claude-opus-5; last report: none)",
+      "001-command [active] command: holds the objective and the current plan (ic; leader claude-code/claude-sonnet-5; last report: none)",
     );
     expect(shown.out).toContain(
       "  001-u02 [active] locate the delete handler (base; leader claude-code/claude-haiku-4-5; last report: progress, revise)",
