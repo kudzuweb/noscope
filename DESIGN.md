@@ -42,10 +42,10 @@ Still proposed rather than ruled, and settled by building them: the storage tabl
 | Term | Meaning |
 |---|---|
 | Incident | An objective pursued over time, with constraints: a project, a single task, a piece of research, anything Mauria asks for. One row; many cycles. ICS's own word; it does not imply that something went wrong here. |
-| Unit | A box in the incident's temporary tree that owns one slice of the problem, the way an ICS Branch or Group does. It has an objective, a parent and children, and it opens, subdivides and closes as the planner's picture of the problem changes. A unit is a type plus a config (round 4, R4-10, ruled 2026-09-15): the type is the form and the protocol, the config is the filled form, and the unit's `type` names which. Every unit has a leader (round 3, R3-4): a session on the provider and model the unit names, created at the unit's first turn, resumed for each turn after, and demobilized when the unit closes; it holds no tools and runs no task (round 5, R5-4: the leader directs and never does), and the unit's declared equipment and Bash allowlist are what its tasks may use. Under the `base` type the leader directs the unit's tasks and reports against the objective; the root unit, `command`, is the one unit of the `ic` type, owns the incident objective, is created with the incident, and its leader is the Incident Commander. A unit is `waiting` (R3-6) from the report on which its leader raised a resource request until Mauria answers it: it runs nothing and takes no new task, its pending tasks stay pending, and the other units and the incident go on. |
-| Unit type | The form and the protocol of a kind of unit, registered by name in `src/units/` as capabilities are (R4-10). The form is a zod schema of the fields a config of the type fills, every form carrying a `role` field for the role text its session reads (defaulting to the type's own), with descriptions the planner's schema renders. The form is not free-standing: today its fields are the `units` columns (`objective`, `leader_json`, `equipment_json`, `bash_allowlist_json`, `role`), the planner renders only the base form's fields, through `UnitProposal` built on `BaseUnitForm` (its leader, equipment and allowlist optional when a saved config is named, R4-11), and the `ic` form's equipment, allowlist and role are filled by its defaults alone, since `newCommandUnit` takes only the leader and `incident create` has no flag for the rest. The protocol is how a unit of the type uses what is in the box: the seat and role text its session holds, whether it files reports the IC answers, the rules its assignments are held to, whether it has a turn to take before or without a task and which endings its leader has not heard, and the turns it takes around its tasks in a pass. Two types exist: `base`, the led unit (`src/units/base.ts`: the form is the planner's unit proposal less the ref and the parent, objective, leader, equipment, Bash allowlist and role; the protocol is the leader's turns), and `ic`, command (`src/units/ic.ts`: the form is the IC's provider and model, its equipment and allowlist for deterministic tasks and its role, with no objective, since the incident's is its objective; the protocol is the IC's turns in `src/ic.ts` plus the root's pass). A plan may create a unit of `base` only; the runtime creates the one `ic` unit with the incident. More types will be written and saved, so the registry, the table and the code permit that. |
+| Unit | A box in the incident's temporary tree that owns one slice of the problem, the way an ICS Branch or Group does. It has an objective, a parent and children, and it opens, subdivides and closes as the planner's picture of the problem changes. A unit is a type plus a config (round 4, R4-10, ruled 2026-09-15): the type is the form and the protocol, the config is the filled form, and the unit's `type` names which. Every unit has a leader (round 3, R3-4): a session on the provider and model the unit names, created at the unit's first turn, resumed for each turn after, and demobilized when the unit closes; it holds no tools and runs no task (round 5, R5-4: the leader directs and never does), it is called only on a decision (round 5, R5-5: a failed or insufficient ending, a revision brief, an ending it asked to be consulted on, or the report it owes once nothing is ready; a completed ending starts the next ready task with no call), and the unit's declared equipment and Bash allowlist are what its tasks may use. Under the `base` type the leader directs the unit's tasks and reports against the objective; the root unit, `command`, is the one unit of the `ic` type, owns the incident objective, is created with the incident, and its leader is the Incident Commander. A unit is `waiting` (R3-6) from the report on which its leader raised a resource request until Mauria answers it: it runs nothing and takes no new task, its pending tasks stay pending, and the other units and the incident go on. |
+| Unit type | The form and the protocol of a kind of unit, registered by name in `src/units/` as capabilities are (R4-10). The form is a zod schema of the fields a config of the type fills, every form carrying a `role` field for the role text its session reads (defaulting to the type's own), with descriptions the planner's schema renders. The form is not free-standing: today its fields are the `units` columns (`objective`, `leader_json`, `equipment_json`, `bash_allowlist_json`, `role`), the planner renders only the base form's fields, through `UnitProposal` built on `BaseUnitForm` (its leader, equipment and allowlist optional when a saved config is named, R4-11), and the `ic` form's equipment, allowlist and role are filled by its defaults alone, since `newCommandUnit` takes only the leader and `incident create` has no flag for the rest. The protocol is how a unit of the type uses what is in the box: the seat and role text its session holds, whether it files reports the IC answers, the rules its assignments are held to, whether it has a turn to take before or without a task, and the turns it takes around its tasks in a pass. Two types exist: `base`, the led unit (`src/units/base.ts`: the form is the planner's unit proposal less the ref and the parent, objective, leader, equipment, Bash allowlist and role; the protocol is the leader's turns), and `ic`, command (`src/units/ic.ts`: the form is the IC's provider and model, the equipment and allowlist the tasks under command may use (its own session holds no tools, R5-5) and its role, with no objective, since the incident's is its objective; the protocol is the IC's turns in `src/ic.ts` plus the root's pass). A plan may create a unit of `base` only; the runtime creates the one `ic` unit with the incident. More types will be written and saved, so the registry, the table and the code permit that. |
 | Unit config | A type's form filled: the values chosen for one incident, held on the unit's row (R4-10). A config keeps its type's protocol, since it occupies the same place in the hierarchy and reports the same way; what varies between configs of a type is the form's values, the role text included. A saved config (R4-11, ruled 2026-09-15 13:00 to 13:34) is a filled form less the objective and the parent (for `base`: the leader's provider and model, the equipment, the Bash allowlist and the role text), kept under a name in the `unit_configs` table by `noscope config save`, read by `config list` and `config show`, and deployed by name in a plan: a `UnitProposal` naming a `config` fills only the objective and the parent, the config fills the rest, a field given beside `config` overrides the config's, and the unit's row names the config it came from, which `incident review` prints. Nothing is saved without the command; when the same filled form has appeared three times unsaved across the file's incidents, `step` prints the offer to save it with the command to run. |
-| Task | A bounded piece of work owned by one unit and bound to one capability: objective, inputs, expected output, completion criteria, evidence required, dependencies, what it reads by reference (`evidenceFrom`: claims by id, and tasks whose results it needs), and for a session-backed capability the model and any instructions. It is the worker's brief, and for a session it is the prompt the session receives: the incident's objective, the current hypothesis and the claims it rests on, the hierarchy around the owning unit, then the task, then the referenced claims and results attached by the runtime. Every session task runs in a session of its own and every deterministic task in process, never on the leader's session (round 5, R5-4), and either result reaches the leader on its next turn as one line naming the claims it produced. A session task may also declare a strike team (`strikeTeam`, round 3, R3-5). |
+| Task | A bounded piece of work owned by one unit and bound to one capability: objective, inputs, expected output, completion criteria, evidence required, dependencies, what it reads by reference (`evidenceFrom`: claims by id, and tasks whose results it needs), and for a session-backed capability the model and any instructions. It is the worker's brief, and for a session it is the prompt the session receives: the incident's objective, the current hypothesis and the claims it rests on, the hierarchy around the owning unit, then the task, then the referenced claims and results attached by the runtime. Every session task runs in a session of its own and every deterministic task in process, never on the leader's session (round 5, R5-4), and either result reaches the leader on its next turn as one line naming the claims it produced, which is at once when the ending needs a decision and otherwise whenever the leader is next called (R5-5). A session task may also declare a strike team (`strikeTeam`, round 3, R3-5). |
 | Strike team | Several subagents of one kind and model sent on one task (ICS: same kind and type, one leader). Whoever defines the task defines the team with it: a task's `strikeTeam` entry names the kind, its model, its tools, the member's system prompt, how many to send and why, whether the plan wrote the task or its unit's leader assigned it; a turn asks for none (round 5, R5-4: the leader no longer runs the task the team would be provided to). No preset kinds and no default kind exist (ruled 2026-09-14), so the record shows what plans and leaders declare. The validator checks the model against the provider's list, the tools against the read-only built-ins, and the count against the task's token bound, and nothing else. The kinds are defined for the task's own session alone, and every member's run is filed as `subagent.ran` under that task. |
 | Task force | A task that declares more than one kind: the same field with several entries, the mixed-kind team ICS sends for one mission. |
 | Equipment | A primitive: a function the runtime calls in-process, a Claude Code built-in tool such as Read, Grep or Bash under an allowlist, or later anything else a capability needs to do its work. Registered by name. Never assigned by the planner. |
@@ -174,7 +174,11 @@ Event types in v0: `incident.created`, `incident.blocked`, `incident.closed`, `u
 `capability.answered`. Round 3 adds `tool.called` and `subagent.ran`, one per tool call a
 session makes and one per subagent it spawns; `leader.started` (a unit's leader session
 recorded on the unit, the mutation `unit.session`), `unit.continued` and `unit.reported`
-(one per leader turn, with the call's usage), `picture.discrepancy` (a seat saying the
+(one per leader turn, with the call's usage, the task ids of the endings the turn put to
+the leader under `heard` and those the leader named in `consult`, R5-5; `unit.continued`
+is also the runtime's record of an ending that needed no turn, `writtenBy: "runtime"`
+with the task and how many ready tasks start, zero once the pass has halted, R5-5; a
+leader turn also carries `consultUnknown`, the `consult` names that matched nothing), `picture.discrepancy` (a seat saying the
 update it received describes a different problem), `strike_team.defined` (a strike team declared on a task by the plan, or by the leader that
 assigned the task, R5-4) and `strike_team.rejected` (a leader's request refused with its
 reasons; nothing writes it since R5-4, and a log from before it still reads), `command.turned` (the IC's command turn, its situation on it
@@ -306,9 +310,10 @@ leader's orientation (`renderLeaderOrientation` with the incident, the unit, the
 and the unit's own last picture from the events; never the IC's situation, R5-2), and the planner's input
 (`renderPlannerInput`, which also takes the providers, from `getProvider` for the
 unit's provider name under the same environment). A leader's turn prompt
-(`renderTurnPrompt`) is not in the recipe: it takes the leader loop's in-memory state
-(the cause, the endings not yet heard, the tasks running and landed), which the log
-records only as the task events it was built from.
+(`renderTurnPrompt`) is not in the recipe: it takes the pass's in-memory state (the
+cause, the tasks running) beside what the log gives (the endings the leader has not
+heard, `unheardEndings`, R5-5), and the log records the state only as the task events it
+was built from.
 
 Capabilities are not a table. The registry is code, and `incident show` prints what is
 registered.
@@ -431,8 +436,10 @@ hypothesis held above it. A leader's first call opens with its
 orientation (the incident objective and period, the hierarchy, its unit's objective and
 the equipment its tasks may use, and its own unit's last picture when it has reported
 before; never the IC's picture) and every call is a turn (R5-4: no task runs on the
-session): the last task's ending in one line with its claims by id, which ready tasks wait
-to start, which are still running, and the ask, under the `LeaderTurn` schema.
+session; R5-5: a call happens only on a decision): the endings the leader has not heard,
+each in one line with its claims by id, the ending that needs its decision or the report
+owed, which ready tasks wait to start, which are still running, and the ask, under the
+`LeaderTurn` schema.
 
 v0 capabilities:
 
@@ -701,7 +708,12 @@ becomes a question for Mauria in its command turn.
 team is declared on the task by whoever defines it, and a task the leader assigns carries
 its team in its own `strikeTeam`, held to the strike team's three validator rules with the
 rest of the assignment (Step 5) and written as `strike_team.defined` by `leader` when the
-assignment is applied.
+assignment is applied. Either move may carry `consult` (R5-5): task ids of the unit, or
+refs of tasks in `assignTasks` on the same turn, whose ending the leader wants to be
+called on however it ends; the ids are recorded on the turn's event and the refs,
+resolved, on the `plan.applied` that creates the tasks, a name that is neither is
+recorded on the turn's event as `consultUnknown` and read back into the leader's next
+prompt beside the validator's refusals, and the flag holds until the task ends.
 
 The planner proposes structure: the tactics for the period, drafted as a suggestion for
 the IC against the situation the IC holds (R4-5; until then the planner wrote the situation
@@ -891,8 +903,7 @@ asks each unit's protocol at three points, `open` before any task starts, `endin
 landing, and `close` once every run has landed, each answering with the unit as it now
 stands, the report it filed if any, whether the unit is done for the pass and whether the
 picture changed; the dispatcher also asks the protocol whether the unit has a turn to take
-this pass (`hasWork`), which endings of earlier passes its leader has not heard
-(`unheard`, carried on the pass's first turn). No task runs on a unit's session, whatever
+this pass (`hasWork`). No task runs on a unit's session, whatever
 its type (round 5, R5-4, ruled by Mauria on 2026-09-15: the leader directs and never
 does, since a leader busy on a task cannot answer for its unit while the situation
 changes, and a task's tool results in its context are paid for on every later turn; run
@@ -908,8 +919,10 @@ the change report lists them (Step 4). Run 003 is the reason: with every task un
 turns at 60k to 115k context cost $0.94. No `parentId === null` guard remains in the
 dispatcher or the protocols: what the root does differently, it does as the `ic` type. A
 unit's leader session is created at the unit's first turn, with no tools (`--tools ""`
-on Claude Code, which disables every built-in; the `ic` type's session keeps its form's
-equipment, unchanged by R5-4):
+on Claude Code, which disables every built-in; the IC's session holds none either since
+R5-5, ruled at R5-4's review: its deterministic tasks run in process, so the `ic` form's
+equipment and Bash allowlist are what the tasks under command may use, as the `base`
+form's are):
 its system prompt is the preamble, the seat's place and the unit's role text (its type's,
 `LEADER_ROLE`, unless its config carries its own, R4-10), fixed for the
 unit's life (a resumed call keeps the first call's system prompt), and its first user message
@@ -925,35 +938,60 @@ what was found. In a unit, every runnable task not yet attempted starts at once:
 session task in a session of its own, each its own process, and a deterministic task in
 process, whatever the leader's model and equipment, and they start together the moment
 they are runnable, so `dependsOn` is what serializes tasks and a task with none waits for
-nothing. Each task's ending reaches the leader on a turn of its own under `LeaderTurn`,
-in the order the tasks ended, one call on the session at a time: the turn carries the
-ending as one line (a session's summary or a deterministic result's size, then the claims
-the task produced by id with their basis, a session's each with its subject and predicate
-and a deterministic task's as a count and a range; or the failure with its reason and
-the tasks cancelled because they waited on it, and that nothing of the unit's waits on it
-now, R5-10; the
-result itself stays in the task record, which a task the leader assigns reads through
-`evidenceFrom`), which ready tasks wait to start, and which tasks of the unit are still
-running in sessions of their own;
-`continue` starts what the ending made runnable and what the leader assigned, `report`
-files `unit.reported` (the outcome, what changed on which claims, whether the picture
+nothing. The leader is called only on a decision (round 5, R5-5, Mauria's ruling: a
+model is called when a decision needs a model, never for process; run 004's four
+continue turns on completed endings produced 74 output tokens each for $1.81). The base
+protocol's `ending` hook decides, and nowhere else: a task refused on both models files
+the runtime's report (R4-7, below); a unit that reported this pass hears the ending on
+its next turn; a `failed` ending, an `insufficient` one (a session that said it lacked
+something: the task is completed in the store with the lacks as its result and no
+claims, and the ending carries what it needed) and a `completed` one the leader flagged
+`consult` (on the turn that assigned the task, by ref, or on any turn that saw it, by
+id) call the leader at once, unless a turn already put that ending to the leader, and
+whether or not the pass has halted (a failure is a decision whatever else is happening;
+after a halt the leader's continue starts nothing); every
+other completed ending calls nobody: the runtime records `unit.continued` with
+`writtenBy: "runtime"`, the task that ended and how many ready tasks start (zero after a
+halt, whatever is ready), so the log shows the unit's progress, and the tasks the ending
+made runnable start. The leader is
+also called on the IC's revision brief (below), on the answers to its requests, and at
+`close`, once nothing is ready and nothing runs, when the unit owes a report (a task
+ended, or was cancelled because a task it waited on failed (R5-10), after its last
+report, this pass or an earlier one), unless the pass has halted, so a completed landing
+after a halt calls nobody and the unit owes its report to the next pass.
+Every turn is one call on the session under `LeaderTurn`, and carries first the endings
+the leader has not heard (`unheardEndings`: those no turn of its own put to it, whether
+they needed no turn, landed after it reported, or landed while a turn was in progress
+and so were recorded before it but not in its prompt; a turn records the task ids it put
+to the leader under `heard`, so hearing is by id, never by sequence), each as one line (a
+session's summary or a deterministic result's size, then the claims the task produced by
+id with their basis, a session's each with its subject and predicate and a deterministic
+task's as a count and a range; an insufficiency with what it needed, each with its kind,
+and what the leader does about each kind, R3-6; or the failure with its reason and the
+tasks cancelled because they waited on it, and that nothing of the unit's waits on it
+now, R5-10; the result itself stays in the task record, which a task the leader assigns
+reads through `evidenceFrom`), then what the turn is for, which ready tasks wait to
+start, and which tasks of the unit are still running in sessions of their own;
+`continue` starts what is runnable and what the leader assigned, `report` files
+`unit.reported` (the outcome, what changed on which claims, whether the picture
 changed, and the unit's own picture of its slice, R5-2: `situation` with its picture,
 evidence for and against by id, open items with what would settle each, and what
 changed since its last report; the change report renders it under the report for the
 IC to fold into the whole, and the report the runtime writes for a refused unit carries
-one saying nothing was established) and ends the unit's pass while its tasks in flight finish and land,
-their endings kept for the leader's next turn, and
-`pictureChanged: true` on a report ends the whole pass, which `dispatch` returns as the
-unit's id, so the IC's next change report opens with it: from that moment nothing new
-starts anywhere, and every run in flight finishes and lands, each task's leader hearing
-its ending, before `dispatch` returns. A task's ending that came back
-`insufficient` is rendered to the leader with what it needed, each with its kind, and what
-the leader does about each kind (R3-6). Either move may carry `assignTasks`: after the turn
+one saying nothing was established) and ends the unit's pass while its tasks in flight
+finish and land, their endings kept for the leader's next turn, and `pictureChanged:
+true` on a report ends the whole pass, which `dispatch` returns as the unit's id, so the
+IC's next change report opens with it: from that moment nothing new starts anywhere,
+and every run in flight finishes and lands before `dispatch` returns, each landing
+recorded by the runtime and heard on the leader's next turn. Either move may carry
+`assignTasks`: after the turn
 is recorded the assignments are validated (Step 5) and applied under the unit as
-`plan.applied` with the actor `leader`, the unit and session named, and the task ids, and
+`plan.applied` with the actor `leader`, the unit and session named, the task ids and,
+under `consult`, the ids of those the leader named by ref (R5-5), and
 the ready ones run in this pass on a continue and next pass on a report, which ends the
 unit's pass; a refused assignment creates nothing and its reasons open the leader's next
-prompt. A report may carry `resourceRequests` (`permission`,
+prompt. Either move may carry `consult`, the task ids of the unit the leader wants to be
+called on when they end; they are recorded on the turn's event. A report may carry `resourceRequests` (`permission`,
 `missing_means`, `human_knowledge`, each with what and why): it is forced `pictureChanged`,
 each request is raised as Step 4 says, and the unit enters `waiting`; a waiting unit is
 skipped by dispatch, keeps its pending tasks, and is not asked for a report. Command
@@ -985,30 +1023,30 @@ since nothing else changed: the revised unit runs beside the plan's units in tha
 period's pass, and the IC answers the revised report with a verdict as any other. The IC
 may revise again; each revision is numbered from the verdicts. A continue turn carries no
 report, so a resource request rides only on a report. With nothing left to run and nothing running the
-leader is asked for its report; with nothing left to start but tasks still running, or
-landed and waiting for turns of their own, it is asked to continue and wait for them or
-report now, and the turn names both sets; a leader that answers `continue` with nothing
-left, nothing running and nothing left to hear ends the unit's pass without one. The
-endings a leader has not heard (tasks that ended after its last turn: a pass that died, or
-tasks that landed after it reported, or, R5-10, tasks of the unit cancelled because a
-task they waited on will never complete, each rendered with the task it waited on and
-why, except one whose root is a failure listed on the same turn, which that failure's line
-already names) ride on the first turn of its unit's next pass,
-whatever that turn is for, rendered before it as each ending renders; a unit that owes a
-report (a task ended after the last report: completed, failed, or cancelled by that
-cascade, R5-10, since the cascade is no decision of the leader's, where a cancel by a plan
-or a reassign verdict is a decision above the unit and owes nothing) and has nothing to
-run is asked for it at the
-start of the next pass even with no task, the turn creating the session if none exists,
-so a result never goes unread by the leader whose next turn comes, and a unit whose ready
-work was all cancelled this way reports on that rather than sitting idle until the IC
-closes it (its owed turn is one of the decisions a leader is called for, R5-5). The report the runtime
-writes for a unit after two refusals (R4-7) is not a turn of the leader's and moves that
-cutoff for nothing, so the endings it passed over ride on the leader's next real turn,
-with a new task or the IC's revision brief (R4-3); until then the IC reads them in the
-change report under that report. Every turn is one call on the leader's session, recorded as
-`unit.reported` (with the report) or `unit.continued`, each with the unit, the session id,
-the leader's provider and model and the call's usage; `leader.started` records the session
+leader is asked for its report; with nothing left to start but tasks still running, it is
+asked to continue and wait for them or report now, and the turn names them; a leader
+that answers `continue` when asked for its report is asked once more at `close`, and a
+continue there ends the unit's pass without one, so the next pass asks again. The
+endings a leader has not heard (tasks that completed, failed, or, R5-10, were cancelled
+because a task they waited on will never complete, each rendered with the task it waited
+on and why, except one whose root is a failure listed on the same turn, which that
+failure's line already names) ride on its next turn, whatever that turn is for, rendered
+before it as each ending renders; a unit that owes a report (a task ended after the last
+report: completed, failed, or cancelled by that cascade, R5-10, since the cascade is no
+decision of the leader's, where a cancel by a plan or a reassign verdict is a decision
+above the unit and owes nothing) and has nothing to run is asked for it at `close` of the
+pass in which the ending landed or at the start of the next, the turn creating the
+session if none exists, so a result never goes unread by the leader whose next turn
+comes, and a unit whose ready work was all cancelled this way reports on that rather than
+sitting idle until the IC closes it (its owed turn is one of the decisions a leader is
+called for). The report the runtime writes for a unit after two refusals (R4-7) and the
+`unit.continued` it writes for an ending that needed no turn (R5-5) are not turns of the
+leader's and hear nothing, so the endings they passed over ride on the leader's next real
+turn, with a failure, a task named in `consult`, the IC's revision brief (R4-3) or the
+report owed; until then the IC reads them in the change report. Every turn is one call on
+the leader's session, recorded as `unit.reported` (with the report) or
+`unit.continued`, each with the unit, the session id, the leader's provider and model,
+the call's usage, `heard` and `consult`; `leader.started` records the session
 on the unit at its first turn, with the `cwd` it was launched from; `unit.closed`
 carries the session id as the leader's demobilization. A leader session that cannot be
 resumed (the call dies before the stream's init line, as the binary does for a session it
@@ -1317,7 +1355,7 @@ v0 is done when all of these hold on the first incident:
 | Initial Incident Commander, the size-up | `claude-haiku-4-5` by default, `--initial-model` at `create` overrides | The size-up is a read of what the objective points at and a sketch, cheap by design; whatever it thinks is evaluated by the IC proper, so a wrong guess costs one turn's worth of judgment and no authority (ruled by Mauria, 2026-09-15). Its briefing is scoped to the objective's verb (round 4, R4-8): an objective that asks to determine, identify, explain or find, or asks a question (where, what, why), is a diagnosis and takes no fix objective, no fix unit and no question about intended behavior, since the answer is the cause; one that asks to build, change, fix or add is a build and takes them; and a question for Mauria is only what no tool could find and the objective does not settle. Both size-ups of run 003 proposed a fix and asked what the intended behavior should be on a diagnostic objective, and the IC discarded them at the cost of a question round each time. The fourth run's size-up (R4-13) proposed no fix objective and no fix unit and still asked two intended-behavior questions, so the clause on questions did not hold on Haiku; since round 5 (R5-8) its questions are proposals to the IC, which gates them, so a question it should not have asked costs the IC one ruling and Mauria nothing. |
 | Incident Commander, the root unit's leader | `claude-sonnet-5` unless `--ic-model` at `create` names another (round 5, R5-6); the briefing's `incomingCommander` (R3-8) is recorded on the transfer as the initial IC's recommendation and not followed | Ruled by Mauria, 2026-09-15: Sonnet 5 for the IC. Run 003's Sonnet 5 IC did the same work as run 004's Opus one, five calls for $1.28 against eight for $5.83, and Opus 5's safeguards refused the IC's resumed review turn in both runs 003 and 004 (Reference table) where Sonnet 5 was never refused. Until R5-6 the briefing routed the IC, and both size-ups that recommended Opus did so for work Sonnet did. The IC's first act is still to evaluate the briefing, so the model it runs on never inherits a cheaper model's conclusions. |
 | The fallback for a refused seat: the IC, a unit leader, or a task session | `claude-opus-4-8`; `NOSCOPE_IC_FALLBACK_MODEL` overrides it for every seat | Ruled by Mauria in review, 2026-09-15: a refused call is retried once, deterministically, on Opus 4.8, and a second refusal goes to judgment (the IC's for a unit, a question to Mauria for the IC). The retry is a change of model rather than of wording because the refusal sticks to the session and the cause of the category on a review turn is not known (Reference table); the fourth run (R4-13) tried it: five IC calls on Opus 4.8, three review turns (two drafts and a redraft) among them, and none refused, at $4.94 for the five against Sonnet 5's $1.28 for run 003's five. |
-| Unit leaders | Named per unit by the planner, any model the provider serves, the smallest that fits (R5-6): a leader directs its tasks and judges their endings, which is Haiku or Sonnet work; an Opus or Fable leader carries a `modelWhy` or is warned on | A leader directs and never does (R5-4), so its model is chosen for the decisions it makes (whether to continue or report, what to assign for a lack) and never for its tasks' work, which runs in sessions of their own on the models the tasks name. Run 004's two Opus 5 leaders made six leader turns cost $2.37, against run 003's five Sonnet turns at $0.94. |
+| Unit leaders | Named per unit by the planner, any model the provider serves, the smallest that fits (R5-6): a leader directs its tasks and judges their endings, which is Haiku or Sonnet work; an Opus or Fable leader carries a `modelWhy` or is warned on | A leader directs and never does (R5-4) and is called only on a decision (R5-5), so its model is chosen for the decisions it makes (what to do about a failure or a lack, whether to report) and never for its tasks' work, which runs in sessions of their own on the models the tasks name. Run 004's two Opus 5 leaders made six leader turns cost $2.37, against run 003's five Sonnet turns at $0.94; four of run 004's turns were continues on completed endings, 74 output tokens each for $1.81, which R5-5 no longer makes. |
 | `investigate`, `interpret`, `reproduce` | Named per task by the planner, any model the provider serves, the smallest that fits (R5-6): recording, reproducing and reading are Haiku or Sonnet work, and weighing evidence to a conclusion may take Opus; a task on an Opus or Fable model carries a `modelWhy` or is warned on, and the IC's review refuses an unreasoned upgrade | No defaults, ruled 2026-09-12; smallest that fits, ruled 2026-09-15. Run 004's reproduce on Opus 5 cost $1.85 for the same shape of work as run 003's on Sonnet 5 at $0.59 (37 tool calls in 278 s against 34 in 268), and nothing in the planner's rules or the IC's review had asked for fit. |
 | Anthropic models Claude Code accepts by full name, as of 2026-09-12 | Current generation: `claude-fable-5-1`, `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5`. Still served: `claude-fable-5`, `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6`, `claude-sonnet-4-6`. | All are known to the validator. The older ones cost the same or more for less, so the planner is told to prefer the current generation unless a task says otherwise. |
 | Later builder, reviewer and `send_email`-shaped capabilities | `claude-fable-5-1` or `claude-opus-5` with the equipment the job needs | Not in v0. |

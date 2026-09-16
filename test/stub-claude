@@ -64,10 +64,12 @@
 // refusal and the call's usage, then exits 1, on the shape Claude Code 2.1.272 logged on
 // 2026-09-15 (the system line's keys from the binary's serializer, not seen live). Each
 // NOSCOPE_STUB_CALLS line also carries `concurrent`, how many other stub processes on the same
-// log were still running when this one started.
+// log were still running when this one started. Every counter file is bumped under a
+// directory lock (`bump`), since concurrent stub processes walk the same counter.
 import {
   appendFileSync,
   existsSync,
+  mkdirSync,
   readdirSync,
   readFileSync,
   rmSync,
@@ -76,6 +78,34 @@ import {
 import { basename, dirname, join } from "node:path";
 
 const args = process.argv.slice(2);
+
+// Every counter file is walked by concurrent stub processes (two task sessions, or a
+// session and a turn, start within a millisecond of each other, and an unlocked
+// read-then-write let two calls share one ordinal, seen 2026-09-16), so the bump is done
+// under a directory lock: mkdir is atomic, and a process that finds the lock taken waits a
+// millisecond and tries again. Returns the count before this call, 0 when the counter is
+// unnamed.
+function bump(counter) {
+  if (!counter) return 0;
+  const lock = `${counter}.lock`;
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  for (let tries = 0; ; tries++) {
+    try {
+      mkdirSync(lock);
+      break;
+    } catch (error) {
+      if (tries > 5000) throw error;
+      Atomics.wait(pause, 0, 0, 1);
+    }
+  }
+  try {
+    const i = existsSync(counter) ? Number(readFileSync(counter, "utf8")) : 0;
+    writeFileSync(counter, String(i + 1));
+    return i;
+  } finally {
+    rmSync(lock, { recursive: true, force: true });
+  }
+}
 const calls = process.env.NOSCOPE_STUB_CALLS;
 const lock = calls ? join(dirname(calls), `${basename(calls)}.lock.${process.pid}`) : null;
 let concurrent = 0;
@@ -107,9 +137,7 @@ const resumed = args.indexOf("--resume");
 function freshSessionId() {
   const counter = process.env.NOSCOPE_STUB_SESSION_COUNTER ?? "";
   if (!counter) return "stub-session";
-  const i = existsSync(counter) ? Number(readFileSync(counter, "utf8")) : 0;
-  writeFileSync(counter, String(i + 1));
-  return `stub-session-${i + 1}`;
+  return `stub-session-${bump(counter) + 1}`;
 }
 const sessionId = resumed === -1 ? freshSessionId() : args[resumed + 1];
 const isPlanner = systemPrompt.startsWith("You are the Planning Section");
@@ -149,9 +177,7 @@ if (resumed !== -1 && process.env.NOSCOPE_STUB_RESUME_FAIL === sessionId) {
   process.exit(1);
 }
 if (process.env.NOSCOPE_STUB_REFUSE) {
-  const counter = process.env.NOSCOPE_STUB_CALL_COUNTER ?? "";
-  const ordinal = (counter && existsSync(counter) ? Number(readFileSync(counter, "utf8")) : 0) + 1;
-  if (counter) writeFileSync(counter, String(ordinal));
+  const ordinal = bump(process.env.NOSCOPE_STUB_CALL_COUNTER ?? "") + 1;
   if (process.env.NOSCOPE_STUB_REFUSE.split(",").map(Number).includes(ordinal)) {
     const category = process.env.NOSCOPE_STUB_REFUSE_CATEGORY ?? "reasoning_extraction";
     const explanation =
@@ -198,9 +224,7 @@ if (process.env.NOSCOPE_STUB_REFUSE) {
 function nextOf(one, many, counterName, fallback) {
   const entries = process.env[many] ? JSON.parse(process.env[many]) : [];
   if (entries.length > 0) {
-    const counter = process.env[counterName] ?? "";
-    const i = counter && existsSync(counter) ? Number(readFileSync(counter, "utf8")) : 0;
-    if (counter) writeFileSync(counter, String(i + 1));
+    const i = bump(process.env[counterName] ?? "");
     return entries[Math.min(i, entries.length - 1)];
   }
   if (process.env[one]) return JSON.parse(process.env[one]);
@@ -320,9 +344,7 @@ function nextTurn() {
 function scriptedTurn() {
   if (process.env.NOSCOPE_STUB_TURNS) {
     const turns = JSON.parse(process.env.NOSCOPE_STUB_TURNS);
-    const counter = process.env.NOSCOPE_STUB_TURN_COUNTER ?? "";
-    const i = counter && existsSync(counter) ? Number(readFileSync(counter, "utf8")) : 0;
-    if (counter) writeFileSync(counter, String(i + 1));
+    const i = bump(process.env.NOSCOPE_STUB_TURN_COUNTER ?? "");
     return turns[Math.min(i, turns.length - 1)];
   }
   if (process.env.NOSCOPE_STUB_TURN) return JSON.parse(process.env.NOSCOPE_STUB_TURN);
@@ -334,9 +356,7 @@ function scriptedTurn() {
 function nextPlan() {
   if (process.env.NOSCOPE_STUB_PLANS) {
     const plans = JSON.parse(process.env.NOSCOPE_STUB_PLANS);
-    const counter = process.env.NOSCOPE_STUB_COUNTER ?? "";
-    const i = counter && existsSync(counter) ? Number(readFileSync(counter, "utf8")) : 0;
-    if (counter) writeFileSync(counter, String(i + 1));
+    const i = bump(process.env.NOSCOPE_STUB_COUNTER ?? "");
     return plans[Math.min(i, plans.length - 1)];
   }
   return JSON.parse(process.env.NOSCOPE_STUB_PLAN ?? "null");
@@ -345,9 +365,7 @@ function nextPlan() {
 function nextOutput() {
   if (process.env.NOSCOPE_STUB_OUTPUTS) {
     const outputs = JSON.parse(process.env.NOSCOPE_STUB_OUTPUTS);
-    const counter = process.env.NOSCOPE_STUB_OUTPUT_COUNTER ?? "";
-    const i = counter && existsSync(counter) ? Number(readFileSync(counter, "utf8")) : 0;
-    if (counter) writeFileSync(counter, String(i + 1));
+    const i = bump(process.env.NOSCOPE_STUB_OUTPUT_COUNTER ?? "");
     return outputs[Math.min(i, outputs.length - 1)];
   }
   if (process.env.NOSCOPE_STUB_OUTPUT) return JSON.parse(process.env.NOSCOPE_STUB_OUTPUT);

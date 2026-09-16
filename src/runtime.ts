@@ -317,14 +317,16 @@ function settlesOf(
 
 /**
  * Apply a leader's validated assignments in one transaction: the tasks created under its
- * unit, then `plan.applied` with the leader as actor, its unit and session named, and the
- * task ids (DESIGN.md Step 4). The dispatcher runs the ready ones in the same pass.
+ * unit, then `plan.applied` with the leader as actor, its unit and session named, the
+ * task ids and, under `consult`, the ids of those the leader asked to be called on by ref
+ * (R5-5) (DESIGN.md Step 4). The dispatcher runs the ready ones in the same pass.
  */
 export function applyLeaderTasks(
   store: Store,
   incidentRef: Pick<Incident, "id">,
   unit: Pick<Unit, "id" | "sessionId">,
   proposals: readonly TaskProposal[],
+  consult: readonly string[] = [],
 ): Task[] {
   const tasks = buildTasks(
     incidentRef.id,
@@ -333,6 +335,14 @@ export function applyLeaderTasks(
     (ref) => ref,
     now(),
   );
+  // The refs the leader asked to be consulted on (R5-5), resolved to the ids the tasks got:
+  // `buildTasks` keeps the proposals' order.
+  const flagged = tasks
+    .filter((_, i) => {
+      const ref = proposals[i]?.ref;
+      return ref !== undefined && consult.includes(ref);
+    })
+    .map((t) => t.id);
   store.batch(() => {
     for (const t of tasks) {
       store.createTask(t, LEADER_ACTOR);
@@ -348,6 +358,7 @@ export function applyLeaderTasks(
       unitId: unit.id,
       sessionId: unit.sessionId,
       tasks: tasks.map((t) => t.id),
+      ...(flagged.length === 0 ? {} : { consult: flagged }),
     });
   });
   return tasks;

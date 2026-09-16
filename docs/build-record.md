@@ -4761,3 +4761,180 @@ Not exactly to spec, with reasons:
   `asked_at_create`, reads the `question.asked` of seat `initial_ic` after the briefing
   and renders each with its id, counted on the "briefing questions:" line, with the
   replay assertion above.
+
+## R5-5: A leader is called only on a decision (#62, merged 2026-09-16)
+
+R5-5 of the round 5 plan, Mauria's ruling of 2026-09-15: "we don't want any model calls
+happening just for the sake of process. model calls should be because a model is needed".
+Run 004's evidence (`docs/first-incident.md`, "Fourth run"): four continue turns on
+completed endings produced 74 output tokens each for $1.81. Built on R5-4 (#57), which left
+the base protocol's `ending` hook as the one place that decides whether an ending calls
+the leader, with every ending but a double refusal calling it. Everything in one commit:
+the protocol, the registry's types, the dispatcher's small hunks, the models, the runtime,
+the review, the tests and the docs, since the decision rule and the record of hearing run
+through all of them.
+
+The rule (`src/units/base.ts`, the `ending` hook): a task refused on both models files
+the runtime's report as before (R4-7); a unit that reported this pass hears the ending on
+its next turn as before; a `failed` ending, an `insufficient` ending and a `completed`
+ending the leader flagged `consult` call the leader at once, unless a turn has already put
+that ending to the leader; every other completed ending calls nobody, the runtime records
+`unit.continued` with `writtenBy: "runtime"`, `taskId` and `remaining` (how many ready
+tasks start), and the loop starts what the ending made runnable. `close` asks for the
+report whenever the unit owes one (`unitsOwingReport`: a task ended after its last
+report, this pass or an earlier one) and the pass has not halted and the unit is not done
+for the pass; R5-4's `view.ran()` guard, which blocked that call after a pass that ran, is
+gone, since under this rule a pass that ran usually ends with no turn. `settle` no longer
+marks a continue done: the pass's loop decides when the pass ends (nothing ready, nothing
+in flight), and `close` decides the report. A leader that answers `continue` when asked
+for its report on an ending turn is asked once more at `close`; a continue there ends the
+pass without a report and the next pass asks again, as before.
+
+`TaskEnding` (`src/units/registry.ts`) has the third status the R5-4 design reviewer asked
+for: `insufficient`, with `needed` (the lacks, each with its kind; the new `Lack` type),
+produced by `runOne` in the dispatcher from the session result (`lacksOf`, in the
+registry, replaces `insufficiencyOf`) and by `unheardEndings` from the task's stored
+result, so the hook decides on the ending and never on `task.result`. `renderEnding`
+switches on the status. Rebased onto R5-10 (#55): the failed ending keeps its `settled`
+list and the `cancelled` variant stays, `unheardEndings` carries R5-10's cascaded
+cancellations (a cancelled task never lands in a pass, so the hook never sees one), and
+R5-10's rule that a unit whose ready work was all cancelled owes a report is served by
+`close` as the "nothing ready, report due" case.
+
+Hearing is by id, not by sequence. A turn's `unit.continued` or `unit.reported` records
+`heard`, the task ids of the endings the turn put to the leader (its cause when that is an
+ending, and the unheard list beside it); `unheardEndings` (renamed from
+`endedSinceLastTurn`, exported for tests) is every completed or failed task of the unit no
+turn of the leader's has carried under `heard`. The sequence cutoff was wrong under this
+rule: a task that lands while a turn is in progress is recorded before the turn's event
+and was not in its prompt, and R4-9's "Ended already" list handled that in memory; now
+the log says it. `settle` reads the unheard list from the log at every turn, less the
+turn's cause, so the endings that needed no turn this pass ride on the next turn with
+those of earlier passes; `Protocol.unheard` and `PassView.hear` and `PassView.landed`
+are gone with the pass's in-memory copy, and the turn prompt's "Ended already" line with
+them (a queued ending is in the log, so it is in the unheard list). The list's heading
+reads "Endings of your unit's tasks you have not heard:", and the "Still running" line
+says each reaches the leader when it needs it, or on its next turn. `resumedUnits`
+ignores the runtime's turns as `refusedSinceLastTurn` already did.
+
+`consult` (`src/models.ts`, `TurnFields`): either move may name task ids of the unit, or
+refs of tasks in `assignTasks` on the same turn, whose ending the leader wants to be
+called on however it ends. `leaderTurn` splits the list: ids of the unit's tasks go on
+the turn's event as `consult`, the rest are refs and go to `applyAssignments`
+(`bookkeeping`, third argument), and `applyLeaderTasks` (`src/runtime.ts`) resolves them
+by proposal order and records `consult` on the `plan.applied`; `consultFlagged` reads both.
+A name that is neither a task of the unit nor a ref of that turn's `assignTasks` is
+recorded on the turn's event as `consultUnknown` and `refusedSinceLastTurn` reads it into
+the next prompt's "Refused on your last turn" block (PR 62's review: nothing the leader
+asked for vanishes unseen). A flag holds until the task ends; a ref whose assignment the
+validator refused flags nothing, and that refusal is in the same block. `LEADER_ROLE` says
+when the leader is called and what `consult` is for.
+
+The IC's session holds no tools, ruled by the orchestrator at R5-4's review (#57) and
+recorded there: the IC's deterministic tasks run in process, so `Read`, `Grep`, `Glob`
+and `Bash` on its session were residue under "never does". `LeaderTools` and
+`leaderRequest`'s sixth argument are gone; every leader request, the IC's included,
+resolves no equipment and an empty allowlist (`--tools ""`). The `ic` form keeps
+`equipment` and `bashAllowlist` as what the tasks under command may use, as `base` does,
+its descriptions say so, and `IC_ROLE` reads "You hold no tools: a turn is decided from
+the file in front of you, and a session with tools is tempted to keep reading instead of
+deciding." The initial IC's size-up session is untouched: it digs by design.
+
+`incident review` (`src/review.ts`) lists a runtime `unit.continued` as "runtime for
+<unit>: task <id> ended with no turn, N ready task(s) start", counts it as no turn and no
+spend, and the summary line reads "leader turns: N (M reports); endings that needed no
+turn: K", so run 005 can be read against run 004's leader calls per unit.
+
+Tests: the chain test in `test/dispatcher.test.ts` is the first acceptance test (a grep,
+an investigate and an interpret in a chain, two task sessions then one leader call at the
+report, its prompt carrying the three endings, three runtime `unit.continued` with
+`taskId` and `remaining`, `leader.started` after the last `task.completed`, `heard` on
+the report); the inside-a-unit parallel test is the second (a grep on a root that does
+not exist fails in milliseconds and calls the leader at once while the slow investigate
+runs, its turn naming the running task; the dependent starts on its dependency's ending
+with no turn); the strike-team test is the third by id (the leader's first turn, on an
+insufficient investigate, names the ready interpret in `consult`, and the interpret's
+completed ending calls it while the assigned investigate's does not; `consult` and `heard`
+pinned on the turn events) and the lacks test the third by ref (the grep the leader
+assigns for the lack is flagged by ref, its ending calls the leader, the `plan.applied`
+carries `consult` resolved, and the second investigate's ending rides on the report
+turn). The other tests that pinned a turn per completed ending are rebuilt around a
+decision: the R4-4 reassign run test in `test/ic.test.ts` gets a second investigate that
+comes back insufficient after the first, so the grep that depends on it stays pending when
+the IC reassigns (a grep on a root that does not exist, the first choice, is refused by
+R5-10's "Paths exist", and a failed task's dependents are cancelled with it); the
+`leaderTurns` helper there scripts one report per turn, since no continue past a grep is
+asked for any more; the human-knowledge test's first task is an investigate that lacks
+human knowledge; the "reports while a task runs" trio
+and the land-during-turn test fail their fast grep so the leader reports at once; the
+picture-changing parallel test and the budget-reservation test now check that a landing
+after a halt calls nobody and the unit owes its report. The land-during-turn test pins
+hearing by id: both slow tasks are recorded before the first turn's event and neither is
+in its `heard`. `test/units.test.ts` pins `unheardEndings` (insufficient with its lacks,
+failed with its reason, the runtime's records moving nothing); `test/models.test.ts`
+pins `consult` on `LeaderTurn` and its schema; `test/review.test.ts` pins the runtime
+line and the count; `test/providers.test.ts` the IC's tools sentence; a run test in
+`test/ic.test.ts` pins `--tools ""` and no `--allowedTools` on the IC's command and
+review calls. From PR 62's review: a parallel test where a failing session lands after a
+picture-changing report elsewhere and its unit's leader is still created and called on
+the failure, after the halt, and the lacks test names an unknown task in `consult` and
+reads the refusal on its next prompt. The stub
+(`test/stub-claude`) bumps every counter file under a directory lock (`bump`, `mkdirSync`
+as the mutex, a millisecond's `Atomics.wait` between tries): two stub processes starting
+within a millisecond (a task session and a turn, or two sessions) read the same count
+and shared an ordinal, which made the refusal test's `NOSCOPE_STUB_REFUSE` land on the
+wrong call about once in ten runs (seen 2026-09-16; the race predates this PR and is
+what R5-4's record calls "in either order"). `test/dispatcher.test.ts` ran twelve times
+in a row after the fix, clean.
+
+Docs: DESIGN.md Vocabulary (unit, unit type, task), Step 2's event list and replay recipe,
+Step 3's brief paragraph, Step 4's `LeaderTurn` paragraph, Step 6 (the decision rule, the
+IC's session tools, `heard`, the report owed) and the Model choices row for unit leaders;
+`docs/architecture.html` on the IC node, the dispatcher node, the leader node and cycle
+step 7; CLAUDE.md's led-unit paragraph. README unchanged: it enumerates nothing this
+touches.
+
+Hunks, for R5-10's rebase (it touches the dispatcher's pass and `unitsOwingReport`):
+`src/units/base.ts` is rewritten in the module comment, `LEADER_ROLE`, `resumedUnits`,
+`TurnCause`'s comment, `unheardEndings` (was `endedSinceLastTurn`) with the new
+`heardEndings` and `consultFlagged` beside it, `renderEnding`, `renderTurnPrompt` (the
+`landed` argument gone), `leaderTurn` (the `landed` argument gone; `heard` and `consult`
+recorded; `consultRefs` to `applyAssignments`), `settle` (the unheard list from the log,
+`done: false` on a continue), the new `continueWithoutTurn`, and the `ending` and `close`
+hooks; `unitsOwingReport`, `hasWork` and `open` are untouched. `src/dispatcher.ts`: the
+`bookkeeping.applyAssignments` lambda (a third argument), the pass's setup (the `unheard`
+variable and `ranInUnit` gone, `PassView` down to `remaining`, `running`, `done`,
+`halted`), two comments in the loop, `runOne`'s return (the `insufficient` ending), and
+the import list; the loop's body, `start` and `runOne`'s records are untouched.
+`src/units/registry.ts`: `TaskEnding`, `Lack`, `lacksOf`, `PassContext.bookkeeping`,
+`PassView`, `Protocol` (`unheard` gone), `leaderRequest`. `src/units/ic.ts`: the form's
+descriptions, `IC_ROLE`, the protocol's `unheard` gone. `src/ic.ts`: one call site.
+`src/models.ts`: `TurnFields.consult`. `src/runtime.ts`: `applyLeaderTasks`.
+`src/review.ts`: the turn loop and the summary line. `src/units/index.ts`: two exports.
+
+Not exactly to spec, with reasons:
+
+- "The endings it was not called for ride on its next turn as R4-9's unheard list does"
+  is built by reading the log at every turn rather than carrying the list in the pass:
+  R4-9's list was computed once at the pass's start so that this pass's endings, each
+  about to get a turn of its own, stayed out of it; under this rule most of this pass's
+  endings get no turn, so the list must include them, and the log is the one place that
+  knows which. That made the sequence cutoff wrong for a landing during a turn (above),
+  so a turn now records what it put to the leader, which is a payload field, not a new
+  event type.
+- An ending that needs a decision but was already put to the leader on an earlier turn
+  this pass (two failures land together: the first's turn carries the second as unheard)
+  gets no second call. The block does not say; a second call for something the leader
+  has read and could act on is a call for process.
+- After a halt (a picture-changing report elsewhere, or `budget.exceeded`) a completed
+  landing calls nobody and `close` takes no turn, so a unit whose task lands after the
+  halt owes its report to the next pass; before, the ending's turn ran after the halt.
+  Nothing new starts after a halt, and a leader turn is a call. A failed, insufficient or
+  consulted landing after a halt still calls the leader (PR 62's review: a failure is a
+  decision whatever the pass is doing), though what it continues to does not start, and
+  the runtime's `unit.continued` says zero ready tasks start after a halt whatever is
+  runnable.
+- `consult` is one field on the turn taking ids or refs, rather than a flag on the
+  assignment and a list on the turn: the leader names a task the same way whether it
+  assigned it this turn or saw it earlier, and the resolved ids land on the record that
+  creates the task.

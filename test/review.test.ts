@@ -878,7 +878,16 @@ describe("incident review", () => {
             tasks: ["t2", "t3"],
           }),
         ),
-        event(7, "unit.reported", {
+        // An ending that needed no turn (R5-5): the runtime's record, no turn, no spend.
+        event(7, "unit.continued", {
+          unitId: "u1",
+          sessionId: "s-u1",
+          model: "claude-haiku-4-5",
+          taskId: "t2",
+          remaining: 1,
+          writtenBy: "runtime",
+        }),
+        event(8, "unit.reported", {
           unitId: "u1",
           sessionId: "s-u1",
           model: "claude-haiku-4-5",
@@ -906,7 +915,12 @@ describe("incident review", () => {
     expect(text).toContain(
       "plans: 1 drafted in 1 cycle(s), 1 applied, 0 rejected (0 rule lines)",
     );
-    expect(text).toContain("leader turns: 3 (1 reports)");
+    expect(text).toContain(
+      "leader turns: 3 (1 reports); endings that needed no turn: 1",
+    );
+    expect(text).toContain(
+      "  runtime for u1: task t2 ended with no turn, 1 ready task(s) start",
+    );
     expect(text).toContain(
       "lacks: 2 task(s) assigned by a leader, 1 resource request(s) sent up",
     );

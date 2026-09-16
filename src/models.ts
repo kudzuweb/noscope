@@ -712,13 +712,19 @@ export const LeaderReport = LeaderReportFields.superRefine((r, ctx) => {
     });
 });
 
-/** The fields both kinds of turn carry: tasks the leader assigns under its unit (without `settles`, which names the IC's open items a leader never sees; R5-2), and a discrepancy. A strike team is declared on a task by whoever defines it (R5-4), so a turn carries no request for one. */
+/** The fields both kinds of turn carry: tasks the leader assigns under its unit (without `settles`, which names the IC's open items a leader never sees; R5-2), the tasks it asks to be consulted on (R5-5), and a discrepancy. A strike team is declared on a task by whoever defines it (R5-4), so a turn carries no request for one. */
 const TurnFields = {
   assignTasks: z
     .array(TaskProposal.omit({ settles: true }))
     .optional()
     .describe(
       "Tasks to assign under your own unit, to capabilities your unit holds, inside your unit's budget: how you get a retrievable fact yourself, without waiting for the next plan. Each names your unit id as its unit and runs in a session of its own or in process; a strike team for one of them goes in that task's own strikeTeam field. They are checked by the validator's rules and run in this pass on a continue, next pass on a report",
+    ),
+  consult: z
+    .array(z.string().min(1))
+    .optional()
+    .describe(
+      "Task ids of your unit, or refs of tasks in assignTasks on this turn, whose ending you want to be called on however it ends. A completed task you have not named here starts what depends on it without you and reaches you on your next turn; a failed or insufficient one calls you regardless. Name a task once; the flag holds until it ends",
     ),
   discrepancy: z
     .string()
@@ -730,8 +736,8 @@ const TurnFields = {
 };
 
 /**
- * A leader's next move: `continue` to the next ready task in its unit, or `report` against
- * the unit's objective, which ends the unit's pass. One closed object, not a union: the
+ * A leader's next move: `continue`, which starts the ready tasks in its unit, or `report`
+ * against the unit's objective, which ends the unit's pass. One closed object, not a union: the
  * API refuses `oneOf`, `anyOf` and `allOf` at the top level of a tool's input schema
  * (verified 2026-09-15 on Claude Code 2.1.272: "input_schema does not support oneOf,
  * allOf, or anyOf at the top level"). `report` is required and null on a continue turn,
