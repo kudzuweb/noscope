@@ -197,7 +197,6 @@ describe("unit types (R4-10)", () => {
         validateAssignments: () => true,
         applyAssignments: () => 0,
         raiseRequests: () => undefined,
-        strikeTeamRejections: () => [],
       },
     };
     expect(protocolOf(unit).hasWork(ctx, unit)).toBe(false);

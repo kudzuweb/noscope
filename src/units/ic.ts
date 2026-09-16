@@ -11,8 +11,8 @@ import { defineUnitType, OWN_UNIT_RULE } from "./registry.js";
 // parent. Its protocol is the IC's turns in src/ic.ts (the command turn, the review turn,
 // the change report, the handoff, the transfers of command and the fallback after a
 // refusal) plus the root's pass (R4-6): its runnable tasks all start at once with no turn
-// between, none inside the IC's session, and the pass ends without a report once they have
-// landed; the IC judges their results at its command turn. The runtime creates the one
+// between, each in process or in a session of its own, and the pass ends without a report
+// once they have landed; the IC judges their results at its command turn. The runtime creates the one
 // unit of this type with the incident (`newCommandUnit`); a plan may not.
 
 export const IC_TYPE = "ic";
@@ -113,14 +113,6 @@ export const icUnitType = defineUnitType({
     // The IC's assignments under command are held to Own unit (against command) and, in
     // `validateCommand`, to the command rule Deterministic only.
     rules: [OWN_UNIT_RULE],
-    // Nothing runs inside the IC's session (R4-6): a session-backed task under command
-    // runs in a session of its own.
-    runsInside: () => false,
-    insideRequest: (_ctx, unit) => {
-      throw new Error(
-        `unit ${unit.id} is command: no task runs inside the IC's session (R4-6)`,
-      );
-    },
     // The root's pass (R4-6): nothing but a runnable task starts it, no ending of an earlier
     // pass rides on it (the change report carries them), no turn opens it, an ending gets
     // no turn (a task refused on both models ends as its `task.failed`, R4-7, which the

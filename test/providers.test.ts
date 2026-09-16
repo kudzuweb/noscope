@@ -173,7 +173,10 @@ describe("claude code provider", () => {
       /^Your place: you are the leader of one unit\./,
     );
     expect(SEAT_PLACES.leader).toContain(
-      "continue to the next ready task, or report against your unit's objective",
+      "No task runs in this session and you hold no tools",
+    );
+    expect(SEAT_PLACES.leader).toContain(
+      "continue, which starts what is ready, or report against your unit's objective",
     );
     expect(SEAT_PLACES.ic).toMatch(
       /^Your place: you are the Incident Commander, the leader of the root unit, command/,
@@ -207,17 +210,19 @@ describe("claude code provider", () => {
       "- Budget within share:",
     ])
       expect(LEADER_ROLE).toContain(line);
-    // R4-9: tasks in their own sessions start at once; dependsOn serializes.
+    // R5-4: the leader directs and never does; R4-9: tasks start at once and dependsOn serializes.
     expect(LEADER_ROLE).toContain(
-      "tasks in sessions of their own start at once when nothing they depend on is still open",
+      "You direct and never do: no task runs in this session and you hold no tools",
     );
-    expect(LEADER_ROLE).toContain("dependsOn is what serializes tasks");
-    // R3-5: the leader may send a team the task declares or ask for one, choosing its shape.
-    expect(LEADER_ROLE).toContain("You may send a strike team");
-    expect(LEADER_ROLE).toContain("requestStrikeTeam");
+    expect(LEADER_ROLE).toContain(
+      "tasks start at once when nothing they depend on is still open, dependsOn is what serializes them",
+    );
+    // R3-5, R5-4: a team is declared on the task by whoever defines it; a turn asks for none.
+    expect(LEADER_ROLE).toContain("declared by whoever defines the task");
+    expect(LEADER_ROLE).not.toContain("requestStrikeTeam");
     expect(LEADER_ROLE).toContain("No kind exists by default");
     expect(SESSION_PREAMBLE).toContain(
-      "whoever asks chooses the kind, model, tools and count and says why",
+      "whoever declares it chooses the kind, model, tools and count and says why",
     );
     const ic = IC_ROLE;
     expect(ic).toMatch(

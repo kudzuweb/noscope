@@ -3949,3 +3949,180 @@ Not exactly to spec, with reasons:
   `src/planner.ts`, the plan and IC lines of `src/review.ts`, and the review paragraph of
   `IC_ROLE`; R5-6 and R5-7 add sentences to the review prompt and R5-11 to the schema
   descriptions, so those merge onto this prompt and schema.
+
+
+## R5-4: The leader directs and never does (#57, merged 2026-09-16)
+
+R5-4 of the round 5 plan, ruled by Mauria on 2026-09-15 (22:35 to 22:38): a leader running
+a task "would block them from being responsive to the other sessions and the changing
+situation", and "it shouldn't do anything that will take awhile because that interferes
+with the system, so maybe 'never does' is really the better rule"; a deterministic task the
+leader assigns already ran in process, so "never does" has no exception. Run 004's
+evidence (`docs/first-incident.md`, "Fourth run"): the code leader grew from 34k to 100k
+context from three investigates run inside its session, paid for that context on every
+continue turn ($1.81 for four turns of 74 output tokens), and two of the three
+investigates, independent, ran one after another because the session takes one call at a
+time. Built on R4-10's types in one commit: the base protocol, the dispatcher, the
+registry, the models, the store, the validator, the planner and seat texts, the tests and
+the docs together, since the inside-task chain ran through all of them.
+
+The base protocol (`src/units/base.ts`, rewritten): `runsInsideLeader`, `insideRequest`,
+`STRIKE_TEAM_OFFER`, `SESSION_SECONDS` and `declareRequestedTeam` are gone, and with them
+the orientation's `beforeBrief` form. `holdsCapability` stays as the check behind the
+"Capability held" rule and now decides only whether a task may run under the unit, never
+where: a deterministic capability is held by every unit, a session-backed one when its
+equipment and Bash allowlist are within what the unit's tasks may use. `LEADER_ROLE` says
+the leader directs and never does: no task runs in its session and it holds no tools,
+every session task runs in a session of its own and every deterministic task in process,
+tasks start at once when nothing they depend on is open, and each reaches the leader as a
+line when it ends; the strike-team paragraph says a team is declared by whoever defines
+the task, and a task the leader assigns carries its own in `strikeTeam`. `TaskEnding`
+(`src/units/registry.ts`) loses `inside` and a completed ending carries the task's
+`claims`: the dispatcher lands them from `runOne`'s record, and `endedSinceLastTurn`
+(the unheard endings) filters the store's claims by `provenance.taskId`, so `unheard`
+passes `listClaims` through. `renderEnding` renders one line per ending: a failure with
+its reason; an insufficiency with what it needed and what the leader does about each kind
+(as before, less "in this session"); a completion as `Task <id> (<capability>) completed;
+summary: <the session's summary, else its conclusion, else its observation count, cut at
+300 characters>` for a session task, or `its result, <N match(es) | N commit(s) | N
+line(s) of JSON>, is recorded under its id` for a deterministic one, then `claims (<n>
+observed, <m> inferred): ` with a session's claims each as `<id>: <subject> <predicate>
+(<basis>; confidence <n>)`, the reassignment brief's form, since a `met` report rests on
+observed claims and the leader must tell which are which (PR 57's design review), and a
+deterministic task's as the first and last id, since they are one per match. The
+result itself never reaches the leader: a task the leader assigns reads it through
+`evidenceFrom`, as before. The orientation's equipment line reads "Equipment your unit's
+tasks may use". `renderTurnPrompt` takes the ready tasks themselves rather than a count
+and a next task, lists them in the ask ("N ready task(s) remain in your unit and start
+when you continue: <ids>"), and no longer names a next task or offers a request; the
+"still running" and "ended already" lines stay. `leaderTurn` and `settle` lose the `next`
+argument, and `unit.continued` still records `remaining` as a count. The three hooks
+call `settle` directly with the unit the dispatcher passes: `PassView` loses `unit()` and
+`onLeader`, since no task runs on the session and the pass's loop runs the turns one
+after another. The `ending` hook's comment names it as the one place that decides
+whether an ending calls the leader, for R5-5 to narrow: today a refusal on both models
+files the runtime's report, a unit done for the pass hears the ending on its next turn,
+and every other ending calls the leader.
+
+The dispatcher (`src/dispatcher.ts`): `runTask` builds every session task's request with
+`buildSessionRequest` and runs it through `runSession`, whose explicit `request`
+parameter is gone (`src/capabilities/session.ts`); the refusal fallback no longer
+releases a leader session, since none was resumed (`Outcome.inside` and `released`,
+`TaskRefused.released` gone). `pass` has no leader chain, no `insideTask` and no
+one-inside-task gate: every runnable task starts on the sweep, `runOne` returns the
+`Landed` ending itself (with the claims, and the refusals on a double refusal) rather
+than an ending and a unit, and records no session on the unit in either branch (the
+`leader.started`-from-a-task and the orphaned-session cases are gone). The bookkeeping
+lent to protocols loses `strikeTeamRejections`.
+
+The registry (`src/units/registry.ts`): `Protocol` loses `runsInside` and
+`insideRequest`; `leaderRequest` takes a `LeaderTools` argument, none by default
+(`--tools ""`, which Claude Code 2.1.273's help says disables every built-in, verified
+2026-09-15; no `--allowedTools`), and `src/ic.ts` passes the ic unit's form equipment and
+allowlist so the IC's session is unchanged. The ic type (`src/units/ic.ts`) loses its
+`runsInside: () => false` and the throwing `insideRequest`; its pass is unchanged.
+
+Round 5's first open question, settled here: a session task's strike team is declared by
+whoever defines the task, and the leader's `requestStrikeTeam` goes. The request targeted
+the task the leader's own session would run next; with no task on that session, and
+R5-5 about to start a completed ending's dependents without a turn, there is no call the
+leader could put a team on that it does not already define through `assignTasks`, whose
+`strikeTeam` the validator holds to the three team rules with the rest of the assignment
+(`validateLeaderTasks` runs the plan's task rules, Model known, Effect policy and Budget
+respected among them) and `applyLeaderTasks` writes as `strike_team.defined` by
+`leader`. Removed with it: `TurnFields.requestStrikeTeam` (`src/models.ts`), the
+validator's `strikeTeamRejections` (the plan-side `strikeTeamReasons` stays), the store's
+`setTaskStrikeTeam` and the `task.strikeTeam` mutation kind with its replay case; the
+preamble, `TaskProposal.strikeTeam`'s description, `StrikeTeam`'s comment and
+`src/strike-team.ts` say a team is declared by whoever defines the task, and the Effect
+policy rule's reasons name the unit's tasks rather than its leader (no
+recorded database holds one: the five files under `~/.noscope/` were queried for the
+mutation and for `declaredBy: "leader"` on 2026-09-15 and hold none, so replaying them
+still works). The `strike_team.rejected` event type and its
+renderers in `review.ts` and `incident show` stay, since a log written by round 3 or 4
+can hold one and the review's "N refused" count reads it; nothing writes it now, and
+DESIGN.md Step 2 and Step 6 say so. `BaseUnitForm.equipment` and `bashAllowlist`
+describe what the unit's tasks may use, and `leader` a session that directs, runs
+nothing and holds no tools. The planner's preamble says a leader directs and never does
+and that no kind exists unless the task declares it; the leader seat's place
+(`src/providers/base.ts`) and the preamble's "unit leader" term say the same.
+
+Tests: `test/dispatcher.test.ts` deletes the four that pinned inside-leader behaviour
+(the investigate as a resumed call on the leader's session in the chain test, the task
+over its bound recording the leader's session, tasks inside the leader one at a time, and
+the task landing while a turn was queued on the chain) and the strike-team request test,
+and `test/refusal.test.ts` the task refused inside its leader's resumed session. In their
+place, the two acceptance tests: two independent investigates on the leader's model under
+the led unit (whose equipment matches, the round 4 inside case) both start before either
+completes, two task sessions precede the first leader call in the log, `leader.started`
+comes after the first `task.completed`, and the leader is created by the first ending's
+turn and resumed for the second; and a chain of three investigates whose sessions each
+make a tool call with a marked result and answer with a marked observation and claim
+object, where the three turns' prompts together carry none of the marks, each carries
+its ending's line with the claim's id, subject and predicate, every turn runs with
+`--tools ""`, and the marked tool results are filed under the tasks. Also: the chain test
+now pins each task's own session (the capability's role text, the task's model, the
+capability's tools, no "Your next task follows"), the leader's `--tools ""` and no
+`--allowedTools` on every turn, and the grep's ending line with its claim id and without
+the match text; the strike-team test declares a team on a task the leader assigns
+(validated, `strike_team.defined` by `leader`, defined for that task's own session with
+`Agent` beside its tools), refuses an assignment whose team names `Edit` under Effect
+policy with the reason opening the next turn, and checks no turn defines kinds or offers
+a request; a `holdsCapability` test replaces the `runsInsideLeader` one (a per-task pick
+held when the unit names it, investigate held by the led unit and not by one with no
+equipment, grep by every unit, and neither protocol has a `runsInside`); the "landed
+while a turn was in progress" case is rebuilt on a new stub knob,
+`NOSCOPE_STUB_TURN_SLEEP_MS` (the stub sleeps that long on a leader's turn alone), with
+three sessions of their own where two land during the first ending's turn, so the second
+turn lists the third as ended already. The lacks test pins the assigned investigate's own
+session carrying the grep's match text while the leader's turn does not. Every ending
+expectation across `dispatcher`, `ic` and `blocking` tests reads the new line; the
+`renderTurnPrompt` unit test takes the tasks; `models` pins that `LeaderTurn` refuses
+`requestStrikeTeam` and its schema lacks it; `store` keeps the version 4 migration test
+without the leader's declaration; `validator` drops the rejections helper's case;
+`providers` pins the new role and seat sentences; the planner snapshot carries the new
+preamble sentences.
+
+Docs: DESIGN.md Vocabulary (unit, unit type, task, strike team), the ICS mapping rows for
+the Operations Section and the strike team, Step 2's event list, Step 3's brief
+paragraph, Step 4's `LeaderTurn` paragraph, Step 5's Effect policy row, Step 6 (the
+protocol's hooks, the leader session's creation and tools, the pass, the ending line,
+`leader.started`, the task refusal, the strike-team paragraph, the activity's session
+id), the Model choices row for unit leaders and the Speed section; `docs/architecture.html`
+on the dispatcher node, the leader node, the session-backed capability node, cycle step
+7 and the record list; README's `NOSCOPE_PARALLEL` and live-test lines; CLAUDE.md's
+paragraph on the led unit.
+
+Files rewritten, for the merge order: `src/units/base.ts` and `src/dispatcher.ts` (both
+whole), `src/units/registry.ts` (the types and `leaderRequest`), and
+`test/dispatcher.test.ts` (five tests replaced, a dozen expectations changed). Touched
+lightly: `src/units/ic.ts`, `src/ic.ts`, `src/capabilities/session.ts`,
+`src/capabilities/index.ts`, `src/models.ts`, `src/store.ts`, `src/validator.ts`,
+`src/planner.ts`, `src/providers/base.ts`, `src/leader.ts`, `src/review.ts`,
+`test/stub-claude`. R5-10 touches the dispatcher's pass after this.
+
+Not exactly to spec, with reasons:
+
+- "One line per ending" is one line for the ending plus the task's claims on that line,
+  each by id, subject and predicate for a session task: a report names the claim ids a
+  change rests on, and a leader that has read only a summary cannot choose ids it has
+  not seen; run 004's leaders had no ids to cite at all, since the old rendering showed
+  findings without them. A deterministic task's claims render as a count and an id range,
+  so a wide grep's 150 claims (run 004) stay one line until R5-1 makes them evidence.
+  An insufficient ending keeps its needed items on lines of their own, as before, since
+  they are what the leader decides on.
+- The R4-9 cap (`NOSCOPE_PARALLEL`) bounds unit passes, not tasks: a unit's independent
+  session tasks all start at once, as R4-9 already had them do for tasks outside the
+  leader, and the plan's task count bounds that side. The block's "under the R4-9 cap"
+  is read as the pass cap it names; a process cap stays a follow-up, as R4-9's record
+  said.
+- `holdsCapability` decides admission for a leader's assignments only, through the
+  "Capability held" rule, as before; a plan's tasks are not checked against their
+  unit's equipment by any validator rule today, and adding one is a validator change
+  (R5-3, R5-6 and R5-10 touch the validator) left for a follow-up.
+- The IC's session keeps its form's equipment (`Read`, `Grep`, `Glob`, `Bash` by
+  default) through the explicit `LeaderTools` argument, since the block says the ic
+  type's root pass is unchanged and the IC form's `equipment` field is R4-10's. Ruled at
+  PR 57's review and carried to R5-5: those tools are residue under "never does" too,
+  since the IC's deterministic tasks run in process, so R5-5 drops `LeaderTools` and the
+  IC form's equipment for its session.

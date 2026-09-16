@@ -186,13 +186,13 @@ export const Unit = z.object({
   type: z.string().min(1),
   objective: z.string().min(1),
   leader: Leader,
-  /** Built-in tool names and external equipment names the leader's session may use, declared as a capability declares them. */
+  /** Built-in tool names and external equipment names the unit's tasks may use, declared as a capability declares them; the leader's session holds none (R5-4). */
   equipment: z.array(z.string()),
   bashAllowlist: z.array(z.string()),
   role: z.string().min(1).nullable(),
   /** The saved config the unit was deployed from (R4-11), null when its form was filled by hand. */
   config: z.string().min(1).nullable(),
-  /** The leader's session, once it has run; null until the unit first has a ready task. */
+  /** The leader's session, once it has run; null until the unit's first turn. */
   sessionId: z.string().nullable(),
   status: UnitStatus,
   createdAt: Timestamp,
@@ -206,10 +206,10 @@ export const EvidenceFrom = z.object({
 });
 
 /**
- * A strike team: several subagents of one kind and model a leader may send on one task
- * (DESIGN.md Vocabulary). Whoever defines the task defines the team with it, the plan or the
- * leader in a turn; no kind exists by default. A task that declares more than one kind
- * declares a task force.
+ * A strike team: several subagents of one kind and model sent on one task from the task's
+ * own session (DESIGN.md Vocabulary). Whoever defines the task defines the team with it,
+ * the plan or the leader that assigns the task; no kind exists by default. A task that
+ * declares more than one kind declares a task force.
  */
 export const StrikeTeam = z.object({
   kind: z
@@ -348,16 +348,16 @@ export const BaseUnitForm = z.object({
       "What the unit is to establish; its leader reports against it, and the IC judges the report",
     ),
   leader: Leader.describe(
-    "The provider and model of the unit's leader session, which runs the unit's tasks and reports against its objective",
+    "The provider and model of the unit's leader session, which directs the unit's tasks, runs none of them and holds no tools, and reports against its objective",
   ),
   equipment: z
     .array(z.string())
     .describe(
-      "Built-in tool names and external equipment names the leader's session may use; a task whose capability needs no more than this, on the leader's model, runs inside the leader's session",
+      "Built-in tool names and external equipment names the unit's tasks may use; a session task under the unit needs no more than this, and every session task runs in a session of its own",
     ),
   bashAllowlist: z
     .array(z.string())
-    .describe("Commands the leader's read-only Bash may run"),
+    .describe("Commands the unit's tasks' read-only Bash may run"),
   role: z
     .string()
     .min(1)
@@ -463,7 +463,7 @@ export const TaskProposal = z.object({
     .array(StrikeTeam)
     .optional()
     .describe(
-      "The subagent kinds the unit's leader may send on this task, each with its model, tools, prompt, count and why; more than one kind is a task force. No kind exists unless declared here or requested by the leader",
+      "The subagent kinds the session running this task may send, each with its model, tools, prompt, count and why; more than one kind is a task force. No kind exists unless declared here, by whoever defines the task",
     ),
 });
 
@@ -647,19 +647,13 @@ export const LeaderReport = LeaderReportFields.superRefine((r, ctx) => {
     });
 });
 
-/** The fields both kinds of turn carry: tasks the leader assigns under its unit, a strike-team request for the next task, and a discrepancy. */
+/** The fields both kinds of turn carry: tasks the leader assigns under its unit, and a discrepancy. A strike team is declared on a task by whoever defines it (R5-4), so a turn carries no request for one. */
 const TurnFields = {
   assignTasks: z
     .array(TaskProposal)
     .optional()
     .describe(
-      "Tasks to assign under your own unit, to capabilities your unit holds, inside your unit's budget: how you get a retrievable fact yourself, without waiting for the next plan. Each names your unit id as its unit; a strike team for one of them goes in that task's own strikeTeam field. They are checked by the validator's rules and run in this pass on a continue, next pass on a report",
-    ),
-  requestStrikeTeam: z
-    .array(StrikeTeam)
-    .optional()
-    .describe(
-      "A strike team to send on your next task, each kind with its model, tools, prompt, count and why; the runtime declares it on that task and provides the kinds on your next call for it",
+      "Tasks to assign under your own unit, to capabilities your unit holds, inside your unit's budget: how you get a retrievable fact yourself, without waiting for the next plan. Each names your unit id as its unit and runs in a session of its own or in process; a strike team for one of them goes in that task's own strikeTeam field. They are checked by the validator's rules and run in this pass on a continue, next pass on a report",
     ),
   discrepancy: z
     .string()

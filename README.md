@@ -58,9 +58,10 @@ retry; refused on it too, a unit reports `not_met` for the IC to decide and the 
 refusal blocks the incident on a question that `incident answer <id> "<model>"` resolves.
 `NOSCOPE_PARALLEL` is how many units run their passes at once (default 3; a positive whole
 number): units with no `dependsOn` between their tasks run concurrently, and inside a unit
-the tasks in sessions of their own start together; set it to 1 for one unit at a time.
+every session task runs in a session of its own and independent ones start together (the
+leader's session runs no task); set it to 1 for one unit at a time.
 `NOSCOPE_LIVE=1` also runs the live tests, which call the real binary: a Haiku session, a
-Haiku leader sending a two-member `pinger` strike team, a Haiku initial IC sizing up this
+Haiku session sending a two-member `pinger` strike team, a Haiku initial IC sizing up this
 checkout read-only and one sizing up a diagnostic objective on it, and a
 `reproduce` session that drives Playwright's MCP server, which needs Playwright's Chromium
 installed (`npx playwright install chromium`) and network access for

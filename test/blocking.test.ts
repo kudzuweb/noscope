@@ -154,7 +154,7 @@ describe("blocking channels", () => {
     // The lack went to the unit's leader, whose turn says what to do with it; the planner's
     // section 5 no longer lists a retrievable fact, since it is the leader's to get.
     expect(h.leaderPrompt()).toContain(
-      "Task 001-t01 (interpret) came back insufficient in this session. It needed:\n  - retrievable_fact: the scroll handler's source\nA retrievable fact is yours to get",
+      "Task 001-t01 (interpret) came back insufficient. It needed:\n  - retrievable_fact: the scroll handler's source\nA retrievable fact is yours to get",
     );
     h.out.length = 0;
     expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);

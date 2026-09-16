@@ -655,7 +655,7 @@ describe("contracts", () => {
     ).toBeUndefined();
   });
 
-  it("a strike team is a kind with a model, tools, prompt, count and why; a task may declare several, a leader may request one, and a task without one parses with none", () => {
+  it("a strike team is a kind with a model, tools, prompt, count and why; a task may declare several, a leader's turn cannot request one (R5-4), and a task without one parses with none", () => {
     const team = {
       kind: "pinger",
       model: "claude-haiku-4-5",
@@ -682,24 +682,18 @@ describe("contracts", () => {
         strikeTeam: [team, { ...team, kind: "reader" }],
       }).strikeTeam,
     ).toHaveLength(2);
-    expect(
+    // A team is declared by whoever defines the task: the turn is strict and refuses a request.
+    expect(() =>
       LeaderTurn.parse({
         kind: "continue",
         report: null,
         requestStrikeTeam: [team],
-      }).requestStrikeTeam,
-    ).toEqual([team]);
+      }),
+    ).toThrow();
     const schema = jsonSchemaFor(LeaderTurn) as {
-      properties: { requestStrikeTeam: { items: { required: string[] } } };
+      properties: Record<string, unknown>;
     };
-    expect(schema.properties.requestStrikeTeam.items.required).toEqual([
-      "kind",
-      "model",
-      "tools",
-      "prompt",
-      "count",
-      "why",
-    ]);
+    expect(schema.properties).not.toHaveProperty("requestStrikeTeam");
   });
 
   it("exports provider-facing JSON Schema as a top-level object with no $schema key", () => {
