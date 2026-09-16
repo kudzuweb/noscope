@@ -429,6 +429,100 @@ describe("planner", () => {
     store.close();
   });
 
+  it("section 4 lists every task that will never complete since the last cycle with the tasks cancelled because they waited on it, a failure with its reason and a cancelled root on its own (R5-10)", () => {
+    const store = new Store(":memory:");
+    const s = scriptedIncident(store, "i1", AT);
+    s.addUnit({ id: "u-code", objective: "read the code" });
+    s.task({
+      id: "t-grep",
+      unitId: "u-code",
+      capability: "grep",
+      objective: "grep the package",
+      status: "failed",
+    });
+    s.task({
+      id: "t-inv",
+      unitId: "u-code",
+      capability: "investigate",
+      objective: "read the matches",
+      dependsOn: ["t-grep"],
+      status: "cancelled",
+    });
+    s.task({
+      id: "t-old",
+      unitId: "u-code",
+      capability: "grep",
+      objective: "the first grep",
+      status: "cancelled",
+    });
+    s.task({
+      id: "t-after",
+      unitId: "u-code",
+      capability: "read",
+      objective: "read what the first grep found",
+      dependsOn: ["t-old"],
+      status: "cancelled",
+    });
+    store.setTaskStatus("i1", "t-grep", "failed", "dispatcher", "task.failed", {
+      extra: { reason: "ENOENT: no such file or directory" },
+    });
+    store.setTaskStatus(
+      "i1",
+      "t-inv",
+      "cancelled",
+      "dispatcher",
+      "task.cancelled",
+      {
+        extra: {
+          because: "t-grep",
+          reason:
+            "depends on t-grep, which failed: ENOENT: no such file or directory",
+        },
+      },
+    );
+    store.setTaskStatus(
+      "i1",
+      "t-old",
+      "cancelled",
+      "runtime",
+      "task.cancelled",
+      {
+        extra: { rationale: "re-cut" },
+      },
+    );
+    store.setTaskStatus(
+      "i1",
+      "t-after",
+      "cancelled",
+      "runtime",
+      "task.cancelled",
+      {
+        extra: {
+          because: "t-old",
+          reason: "depends on t-old, which was cancelled by the plan",
+        },
+      },
+    );
+    const text = renderPlannerInput(store, s.incident, [fakeProvider]);
+    expect(
+      text.slice(
+        text.indexOf("failed or cancelled since the last cycle"),
+        text.indexOf("## 5."),
+      ),
+    ).toBe(
+      [
+        "failed or cancelled since the last cycle, each with the tasks cancelled because they waited on it; nothing waits on a task that will never complete:",
+        '  - t-grep (grep, under u-code): objective "grep the package"; failed: ENOENT: no such file or directory; cancelled because they waited on it: t-inv (investigate, under u-code)',
+        "  - t-old (grep, under u-code) was cancelled; cancelled because they waited on it: t-after (read, under u-code)",
+        "",
+        "",
+      ].join("\n"),
+    );
+    // A cancelled task is not open: section 7 no longer lists it.
+    expect(text).not.toContain("t-inv [cancelled]");
+    store.close();
+  });
+
   it("renders the incident file as the ten sections in the design's order, the IC's situation last", () => {
     const store = new Store(":memory:");
     cycledIncident(store);
@@ -476,6 +570,8 @@ describe("planner", () => {
 
       ## 4. Tasks completed since the last cycle
         - t-grep (grep, under u-scroll): objective "find scrollTo calls"; inputs {"root":"src","pattern":"scrollTo"}; expected "every call site"; criteria ["each match cited"]; result {"matches":1}; claims c-verified
+      failed or cancelled since the last cycle, each with the tasks cancelled because they waited on it; nothing waits on a task that will never complete:
+        (none)
 
       ## 5. Tasks that came back insufficient since the last cycle
         - t-interp (interpret): "say why the view scrolls" needed human_knowledge: which scroll position is wanted
@@ -516,6 +612,7 @@ describe("planner", () => {
         - No cycles: the tree stays a tree; a unit ref is used once, is not an existing unit id, and does not start with the incident id; a task ref likewise against task ids, and new tasks' dependsOn form no cycle.
         - No duplicates: no new task repeats an open or completed one, or another new task, with the same capability and effective inputs under the same unit; a task this plan cancels does not count.
         - Inputs validate: task inputs parse against the capability's input schema; a task that takes evidence names it by id in evidenceFrom (claims, and tasks whose results it needs) rather than copying it into inputs, or carries it inline.
+        - Paths exist: every path input of a deterministic task (a grep's root, a read's path, a git_history's cwd) resolves against the working directory the incident runs in, relative or absolute, to a path that exists; check_path is exempt, since whether its path exists is its answer. A package in a pnpm workspace lives under the package's own node_modules, not the root's.
         - Span of control: no unit ends the plan with more than 7 direct children, units and tasks combined; target 5.
         - Effect policy: only read_only capabilities in v0; a new unit's equipment names built-in tools, default, or registered external equipment, and its bashAllowlist names only commands from this list, as whole entries: ls, cat, head, tail, wc, find, stat, grep, rg, diff, pwd, which, basename, dirname, realpath, git log, git status, git diff, git show, git blame, git ls-files, git rev-parse; a strike team's tools name only the read-only built-ins (Read, Grep, Glob, Bash under the session's allowlist).
         - Budget respected: a task's budget, where it sets one, fits inside the incident's remaining budget; a session-backed task carries a time bound and, when the incident bounds tokens, a token bound; a deterministic task needs neither; a strike team's count, at 600 tokens a member, fits the task's token bound where it sets one.
@@ -659,6 +756,6 @@ describe("planner", () => {
       delete process.env.NOSCOPE_STUB_OUTPUT;
     }
     store.close();
-    expect(PLANNER_RULES).toHaveLength(16);
+    expect(PLANNER_RULES).toHaveLength(17);
   });
 });

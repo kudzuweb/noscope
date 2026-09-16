@@ -215,7 +215,8 @@ function seeded(
       "verifier",
     );
   const incident = { ...s.incident, budget };
-  const ctx = () => validationContext(store, incident, [fakeProvider]);
+  const ctx = () =>
+    validationContext(store, incident, [fakeProvider], process.cwd());
   return { store, incident, ctx };
 }
 
@@ -335,6 +336,17 @@ describe("validator", () => {
     [
       "Inputs validate",
       { ...empty, createTasks: [grepTask({ inputs: { root: "src" } })] },
+    ],
+    [
+      "Paths exist",
+      {
+        ...empty,
+        createTasks: [
+          grepTask({
+            inputs: { root: "node_modules/@tiptap/core", pattern: "x" },
+          }),
+        ],
+      },
     ],
     [
       "Span of control",
@@ -472,9 +484,13 @@ describe("validator", () => {
         },
       ],
     });
-    const recorded = validateAndRecord(store, seededIncident, unfilled, [
-      fakeProvider,
-    ]);
+    const recorded = validateAndRecord(
+      store,
+      seededIncident,
+      unfilled,
+      [fakeProvider],
+      process.cwd(),
+    );
     expect(recorded.ok).toBe(false);
     expect(
       store
@@ -604,6 +620,95 @@ describe("validator", () => {
         ],
       }),
     ).toEqual([]);
+  });
+
+  it("Paths exist: a deterministic task's path inputs resolve against the working directory to something that exists; check_path may name a missing path, since that is its answer; a leader's assignments and the IC's are held to it (R5-10)", () => {
+    const { store, incident, ctx } = seeded();
+    const cwd = process.cwd();
+    const readTask = (path: string) =>
+      grepTask({
+        capability: "read",
+        objective: `read ${path}`,
+        inputs: { path },
+      });
+    expect(
+      reasonsOf({
+        ...empty,
+        createTasks: [
+          grepTask({
+            inputs: { root: "node_modules/@tiptap/core", pattern: "scroll" },
+          }),
+          readTask("packages/app/src/PageCard.tsx"),
+          readTask(`${cwd}/src/nothing.ts`),
+          grepTask({
+            capability: "git_history",
+            objective: "the history",
+            inputs: { cwd: "elsewhere" },
+          }),
+        ],
+      }),
+    ).toEqual([
+      `Paths exist: task "find scrollTo calls" names root node_modules/@tiptap/core, which does not resolve against the working directory ${cwd} to a path that exists`,
+      `Paths exist: task "read packages/app/src/PageCard.tsx" names path packages/app/src/PageCard.tsx, which does not resolve against the working directory ${cwd} to a path that exists`,
+      `Paths exist: task "read ${cwd}/src/nothing.ts" names path ${cwd}/src/nothing.ts, which does not resolve against the working directory ${cwd} to a path that exists`,
+      `Paths exist: task "the history" names cwd elsewhere, which does not resolve against the working directory ${cwd} to a path that exists`,
+    ]);
+    // A path that exists, relative or absolute, and a check_path on one that does not.
+    expect(
+      reasonsOf({
+        ...empty,
+        createTasks: [
+          readTask("package.json"),
+          readTask(`${cwd}/src/validator.ts`),
+          grepTask({
+            capability: "check_path",
+            objective: "is the package here?",
+            inputs: { path: "node_modules/@tiptap/core" },
+          }),
+          grepTask({
+            capability: "git_history",
+            objective: "the history",
+            inputs: { cwd: "." },
+          }),
+        ],
+      }),
+    ).toEqual([]);
+    // Inputs that do not parse are Inputs validate's alone.
+    expect(
+      rulesHit({
+        ...empty,
+        createTasks: [grepTask({ inputs: { pattern: "x" } })],
+      }),
+    ).toEqual(["Inputs validate"]);
+    // A leader's assignment and the IC's assignment under command are held to it too.
+    const unit = store.listUnits("i1").find((u) => u.id === "u-scroll") as Unit;
+    const bad = grepTask({
+      unit: "u-scroll",
+      inputs: { root: "no-such-dir", pattern: "x" },
+    });
+    const leader = validateLeaderTasks([bad], unit, ctx());
+    expect(
+      leader.ok ? [] : leader.rejections.map((r) => `${r.rule}: ${r.reason}`),
+    ).toEqual([
+      `Paths exist: task "find scrollTo calls" names root no-such-dir, which does not resolve against the working directory ${cwd} to a path that exists`,
+    ]);
+    expect(
+      validateCommand(
+        { ...turn, assignTasks: [{ ...bad, unit: "i1-command" }] },
+        ctx(),
+      ).map((r) => `${r.rule}: ${r.reason}`),
+    ).toEqual([
+      `Paths exist: task "find scrollTo calls" names root no-such-dir, which does not resolve against the working directory ${cwd} to a path that exists`,
+    ]);
+    // The context carries the directory the incident runs in, and the check follows it.
+    expect(
+      validatePlan(
+        { ...empty, createTasks: [readTask("a.txt")] },
+        { ...ctx(), cwd: `${cwd}/test/fixtures/tree` },
+      ).ok,
+    ).toBe(true);
+    expect(incident.id).toBe("i1");
+    store.close();
   });
 
   it("Dependencies resolve: a dependency must be able to complete, and a cancel must name an open task once", () => {
@@ -1329,7 +1434,13 @@ describe("validator", () => {
       ],
       rationale: "try something",
     };
-    const verdict = validateAndRecord(store, incident, plan, [fakeProvider]);
+    const verdict = validateAndRecord(
+      store,
+      incident,
+      plan,
+      [fakeProvider],
+      process.cwd(),
+    );
     expect(verdict.ok).toBe(false);
     const rejected = store
       .listEvents("i1")
@@ -1351,7 +1462,13 @@ describe("validator", () => {
         corrected: false,
       },
     ]);
-    const good = validateAndRecord(store, incident, empty, [fakeProvider]);
+    const good = validateAndRecord(
+      store,
+      incident,
+      empty,
+      [fakeProvider],
+      process.cwd(),
+    );
     expect(good).toEqual({ ok: true, plan: empty, warnings: [] });
     expect(
       store.listEvents("i1").filter((e) => e.type === "plan.rejected"),
@@ -1373,7 +1490,13 @@ describe("validator", () => {
       ],
       rationale: "read at command",
     };
-    const verdict = validateAndRecord(store, incident, plan, [fakeProvider]);
+    const verdict = validateAndRecord(
+      store,
+      incident,
+      plan,
+      [fakeProvider],
+      process.cwd(),
+    );
     expect(verdict).toEqual({
       ok: true,
       plan,
@@ -1423,7 +1546,13 @@ describe("validator", () => {
       ],
       rationale: "read after the grep",
     };
-    const verdict = validateAndRecord(store, incident, plan, [fakeProvider]);
+    const verdict = validateAndRecord(
+      store,
+      incident,
+      plan,
+      [fakeProvider],
+      process.cwd(),
+    );
     expect(verdict).toEqual({
       ok: true,
       plan,
@@ -1500,7 +1629,13 @@ describe("validator", () => {
       ],
       rationale: "opus everywhere",
     };
-    const verdict = validateAndRecord(store, incident, plan, [tiered]);
+    const verdict = validateAndRecord(
+      store,
+      incident,
+      plan,
+      [tiered],
+      process.cwd(),
+    );
     expect(verdict.ok ? verdict.warnings : verdict.rejections).toEqual([
       {
         rule: "Smallest model that fits",
@@ -1787,7 +1922,12 @@ describe("validator, a leader's assignments", () => {
       "dispatcher",
       "unit.waiting",
     );
-    const ctx = validationContext(store, incident, [fakeProvider]);
+    const ctx = validationContext(
+      store,
+      incident,
+      [fakeProvider],
+      process.cwd(),
+    );
     const many = Array.from({ length: SPAN_OF_CONTROL }, (_, i) =>
       grepTask({ inputs: { root: "src", pattern: `p${i}` } }),
     );
@@ -1851,6 +1991,7 @@ describe("validator, a leader's assignments", () => {
       unit,
       [under({ unit: "i1-command" })],
       [fakeProvider],
+      process.cwd(),
     );
     expect(bad.ok).toBe(false);
     expect(
@@ -1875,6 +2016,7 @@ describe("validator, a leader's assignments", () => {
       unit,
       [under()],
       [fakeProvider],
+      process.cwd(),
     );
     expect(good.ok).toBe(true);
     expect(

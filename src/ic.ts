@@ -8,6 +8,8 @@ import {
   openRequests,
   type RefusedCall,
   reportsAwaitingVerdict,
+  type Settled,
+  settledBy,
 } from "./leader.js";
 import {
   type ActionPlan,
@@ -245,15 +247,37 @@ const SUMMARY_CHARS = 300;
 const clipSummary = (text: string): string =>
   text.length <= SUMMARY_CHARS ? text : `${text.slice(0, SUMMARY_CHARS)}…`;
 
+/** The tasks cancelled because they waited on a failed task (R5-10), in one clause under its failure, each named with its unit when that is not the failed task's; empty when none. */
+function describeSettled(
+  task: Task,
+  settled: readonly Settled[],
+  tasks: ReadonlyMap<string, Task>,
+): string {
+  if (settled.length === 0) return "";
+  const named = settled.map((s) => {
+    const unit = tasks.get(s.taskId)?.unitId;
+    return unit === undefined || unit === task.unitId
+      ? s.taskId
+      : `${s.taskId} (under ${unit})`;
+  });
+  return `; cancelled because they waited on it: ${named.join(", ")}`;
+}
+
 /**
  * What a task came to, in one line: a session result's outcome and its summary (the
  * conclusion, or the observation count, when the capability's findings carry no summary),
  * clipped at `SUMMARY_CHARS`, a deterministic result's size in lines of JSON, or the
- * failure's reason. The result itself stays in the task record.
+ * failure's reason with the tasks cancelled because they waited on it (R5-10). The result
+ * itself stays in the task record.
  */
-function describeEnding(task: Task, ended: Event): string {
+function describeEnding(
+  task: Task,
+  ended: Event,
+  settled: readonly Settled[] = [],
+  tasks: ReadonlyMap<string, Task> = new Map(),
+): string {
   if (ended.type === "task.failed")
-    return `failed: ${str(ended.payload.reason) || "(no reason recorded)"}`;
+    return `failed: ${str(ended.payload.reason) || "(no reason recorded)"}${describeSettled(task, settled, tasks)}`;
   const result = mutationOf(ended)?.result;
   if (task.model === null) {
     const lines =
@@ -368,11 +392,12 @@ function renderTasksUnderCommand(
     events,
     new Set(ended.map((t) => t.task.id)),
   );
+  const settled = settledBy(events);
   return ended.flatMap(({ task, event }) => {
     const ending =
       event.type === "task.completed" && task.model === null
         ? `completed; result: ${JSON.stringify(mutationOf(event)?.result ?? null)}`
-        : describeEnding(task, event);
+        : describeEnding(task, event, settled.get(task.id), tasks);
     return clipBlock(
       [
         `  - task ${task.id} (${task.capability}${task.model === null ? "" : `, ${task.model}`}): ${task.objective}`,
@@ -426,6 +451,7 @@ function renderReportWork(
   }
   const taskIds = new Set(ended.map((t) => t.task.id));
   const claimsByTask = claimsUnder(events, taskIds);
+  const settled = settledBy(events);
   const byTool = new Map<string, number>();
   for (const e of window) {
     if (e.type !== "tool.called" || str(e.payload.unitId) !== unitId) continue;
@@ -448,7 +474,7 @@ function renderReportWork(
         [
           `      task ${task.id} (${task.capability}${task.model === null ? "" : `, ${task.model}`}): ${task.objective}`,
           `        claims: ${describeClaims(task, claims)}`,
-          `        ${describeEnding(task, event)}`,
+          `        ${describeEnding(task, event, settled.get(task.id), tasks)}`,
         ],
         task.id,
         cap,
@@ -560,6 +586,23 @@ export function renderChangeReport(
     commandUnitOf(units),
     workChars,
   );
+  // A cascade whose root failed is listed under the failure, in a report's work or under
+  // command; one whose root was cancelled (by a plan, or with a reassigned unit) has no
+  // failure to sit under and is listed here, so the IC knows what will not run.
+  const failedRecently = new Set(
+    recent
+      .filter((e) => e.type === "task.failed")
+      .map((e) => str(mutationOf(e)?.taskId)),
+  );
+  const created = tasksCreated(events);
+  const settled = [...settledBy(recent)]
+    .filter(([cause]) => !failedRecently.has(cause))
+    .flatMap(([, list]) =>
+      list.map(
+        (x) =>
+          `${x.taskId}${created.has(x.taskId) ? ` (under ${created.get(x.taskId)?.unitId})` : ""}: ${x.reason}`,
+      ),
+    );
   const spend = spendSince(events, since);
   return [
     changeReportHeading(last),
@@ -575,6 +618,12 @@ export function renderChangeReport(
       : [
           "tasks under command, ended with no leader to report them:",
           ...underCommand,
+        ]),
+    ...(settled.length === 0
+      ? []
+      : [
+          "tasks cancelled because what they waited on will never complete:",
+          ...bullets(settled),
         ]),
     "resource requests:",
     ...bullets(requests),

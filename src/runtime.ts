@@ -9,6 +9,7 @@ import {
   type RequestTarget,
   reassignments,
   requestTargetOf,
+  type Settled,
 } from "./leader.js";
 import {
   type ActionPlan,
@@ -38,11 +39,65 @@ export type Applied = {
   closedUnits: string[];
   tasks: Task[];
   cancelledTasks: string[];
+  /** The tasks cancelled because they waited on one the plan cancelled (R5-10). */
+  settled: Settled[];
   questions: Question[];
   incidentStatus: IncidentStatus;
 };
 
 const pad = (n: number) => String(n).padStart(2, "0");
+
+/**
+ * A task that will never complete settles its dependents (R5-10): every pending task that
+ * depends on it, and every pending task that depends on one of those, is cancelled here,
+ * breadth first, each `task.cancelled` carrying `because`, the id of the task at the root
+ * of the chain, and `reason`, naming the task it waited on directly and what became of the
+ * root (`what`: "failed: ..." for a failure, or how it was cancelled). Written in the
+ * caller's transaction with the failure or cancellation that caused it, so a pass that
+ * dies between the two cannot leave a dependent pending forever. A task that has started
+ * depends on nothing that could fail after it, so only pending tasks are settled.
+ */
+export function cancelDependents(
+  store: Store,
+  incidentId: string,
+  cause: { id: string; what: string },
+  actor: string,
+): Settled[] {
+  const tasks = store.listTasks(incidentId);
+  const settled: Settled[] = [];
+  const done = new Set([cause.id]);
+  const queue = [cause.id];
+  for (let at = 0; at < queue.length; at++) {
+    const waitedOn = queue[at] as string;
+    for (const t of tasks) {
+      if (t.status !== "pending" || done.has(t.id)) continue;
+      if (!t.dependsOn.includes(waitedOn)) continue;
+      done.add(t.id);
+      queue.push(t.id);
+      const reason =
+        waitedOn === cause.id
+          ? `depends on ${cause.id}, which ${cause.what}`
+          : `depends on ${waitedOn}, cancelled because ${cause.id} ${cause.what}`;
+      store.setTaskStatus(
+        incidentId,
+        t.id,
+        "cancelled",
+        actor,
+        "task.cancelled",
+        {
+          extra: { because: cause.id, reason, unitId: t.unitId },
+        },
+      );
+      settled.push({
+        taskId: t.id,
+        unitId: t.unitId,
+        because: cause.id,
+        reason,
+      });
+    }
+  }
+  return settled;
+}
 
 /** The incident's status after a plan or a command turn: a closing status stands, a raised channel blocks, otherwise open. */
 function statusAfter(turn: {
@@ -617,6 +672,7 @@ export function applyPlan(
   const fromUnit = new Map(
     reassignments(store.listEvents(incident.id)).map((r) => [r.id, r.unitId]),
   );
+  const settled: Settled[] = [];
 
   store.batch(() => {
     for (const u of units) {
@@ -650,6 +706,19 @@ export function applyPlan(
         "task.cancelled",
         { extra: { rationale: plan.rationale } },
       );
+    // Cascaded after every cancel of the plan's own, so a dependent the plan cancels
+    // itself is already cancelled when the cascade reads the tasks and is not settled
+    // a second time as the runtime's (PR 55's review: run 004's cycle 2 cancelled a task
+    // and its dependent in one plan).
+    for (const id of plan.cancelTasks)
+      settled.push(
+        ...cancelDependents(
+          store,
+          incident.id,
+          { id, what: "was cancelled by the plan" },
+          actor,
+        ),
+      );
     for (const c of plan.closeUnits)
       store.closeUnit(incident.id, c.unitId, c.reason, actor);
     recordChannels(store, incident, plan, questions, incidentStatus, actor);
@@ -669,16 +738,18 @@ export function applyPlan(
     closedUnits: plan.closeUnits.map((c) => c.unitId),
     tasks,
     cancelledTasks: plan.cancelTasks,
+    settled,
     questions,
     incidentStatus,
   };
 }
 
-/** What applying a command turn changed: the units closed (by `closeUnits` and by verdict), the reassignments recorded and the tasks cancelled by reassign verdicts (R4-4), the questions raised, the requests answered, the tasks assigned under command, the period set and the incident's status. */
+/** What applying a command turn changed: the units closed (by `closeUnits` and by verdict), the reassignments recorded and the tasks cancelled by reassign verdicts (R4-4) with the tasks settled because they waited on one of those (R5-10), the questions raised, the requests answered, the tasks assigned under command, the period set and the incident's status. */
 export type Commanded = {
   closedUnits: string[];
   reassignments: Reassignment[];
   cancelledTasks: string[];
+  settled: Settled[];
   questions: Question[];
   answered: Answered[];
   tasks: Task[];
@@ -804,6 +875,7 @@ export function applyCommand(
         t.status === "ready" ||
         t.status === "running"),
   );
+  const settled: Settled[] = [];
   store.batch(() => {
     store.setIncidentPeriod(incident.id, period, actor, {
       ...extra,
@@ -858,6 +930,18 @@ export function applyCommand(
         },
       );
     }
+    // A task of another unit that waited on a cancelled one will never run: settled here,
+    // after every reassigned unit's own tasks are cancelled, so a chain across two
+    // reassigned units is not settled twice.
+    for (const t of cancelled)
+      settled.push(
+        ...cancelDependents(
+          store,
+          incident.id,
+          { id: t.id, what: `was cancelled with unit ${t.unitId}, reassigned` },
+          actor,
+        ),
+      );
     recordChannels(store, incident, turn, questions, incidentStatus, actor);
     for (const a of turn.answers) {
       const current = store.getIncident(incident.id);
@@ -888,6 +972,7 @@ export function applyCommand(
     closedUnits: closes.map((c) => c.unitId),
     reassignments: reassigned,
     cancelledTasks: cancelled.map((t) => t.id),
+    settled,
     questions,
     answered,
     tasks,

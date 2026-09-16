@@ -4126,3 +4126,145 @@ Not exactly to spec, with reasons:
   PR 57's review and carried to R5-5: those tools are residue under "never does" too,
   since the IC's deterministic tasks run in process, so R5-5 drops `LeaderTools` and the
   IC form's equipment for its session.
+
+## R5-10: A failed or cancelled task settles its dependents (#55, merged 2026-09-16)
+
+R5-10 of the round 5 plan. Built: a task that will never complete settles what waited on
+it, in the transaction that ended it. `cancelDependents` in `src/runtime.ts` walks the
+incident's tasks breadth first from the cause and cancels every pending task that depends
+on it, and every pending task that depends on one of those, each `task.cancelled` carrying
+`because`, the id of the task at the root of the chain, and `reason`, naming the task it
+waited on directly and what became of the root: `depends on 001-t05, which failed: ENOENT
+...` for a direct dependent, `depends on 001-t06, cancelled because 001-t05 failed: ...`
+for a transitive one, `which was cancelled by the plan` and `which was cancelled with unit
+001-u02, reassigned` for the two cancellations. It is called at every site that writes a
+`task.failed` or a `task.cancelled`: `runOne`'s failure batch in `src/dispatcher.ts` (the
+run's own failure, a time bound, a refusal on both models), the dispatcher's failure of a
+task naming no capability, `failInterrupted` (a task left running by a pass that died, now
+batched with its dependents), `applyPlan`'s `cancelTasks` and `applyCommand`'s reassign
+cancels, each after the cause's own event, so a pass that dies between the two cannot
+leave a dependent pending forever; both apply sites cancel every task of their own first
+and cascade after, so a dependent the plan or the verdict cancels itself is not settled a
+second time as the runtime's (PR 55's review: run 004's cycle 2 cancelled a task and its
+dependent in one plan, and the first cut wrote two `task.cancelled` for the dependent and
+made its unit owe a report on a plan decision). Only pending tasks are settled: a task that has started
+depends on nothing that could fail after it. The event also carries `unitId`, and
+`settledBy` in `src/leader.ts` reads the cascades back keyed by the root (`Settled`: the
+task and its unit, `because`, the reason), for every renderer. `Applied` and `Commanded` gain `settled`, and `step` prints each as `task
+001-t06 cancelled: depends on ...`; a `Ran` failure carries `settled` when any task was.
+
+What the leader sees (`src/units/base.ts`): `TaskEnding`'s failed variant carries `settled`
+(`src/units/registry.ts`), filled by `runOne` from the cascade and by `endedSinceLastTurn`
+from the log, and `renderEnding` writes `Task 001-t05 (grep) failed: <reason> Cancelled
+because they waited on it: 001-t06, 001-t08 (under 001-u03); nothing of yours waits on it
+now.`, naming a settled task's unit when it is not the leader's own (PR 55's review); with
+nothing else runnable the same turn asks for the report, as before, so the unit whose
+ready work was all settled reports at once rather than idling with its dependents pending
+(run 004's code unit). A new `cancelled` variant, `{ because, reason }`, is what a unit
+hears when the cascade reached it from another unit's failure or from a cancellation above
+it: `unitsOwingReport` counts a `task.cancelled` carrying `because` as an ending, so the
+unit owes a report and its next pass takes the owed turn under `close` with the unheard
+ending rendered as `Task 001-t08 (investigate) was cancelled: depends on 001-t05, which
+failed: ...`; a plan's or a reassign's own cancel (no `because`) owes nothing, since that
+is a decision above the unit. `endedSinceLastTurn` drops a cancelled ending whose root is a
+failure in the same unheard list, since the failure's line names it. `LEADER_ROLE` gains one
+sentence saying a failure settles what waited on it and the leader assigns the work again in
+a form that can run, or reports. Compatible with R5-5: the failed ending is one of the
+endings a leader is called on, and the owed turn is the "nothing ready and a report owed"
+case.
+
+What the IC and the planner see: `describeEnding` in `src/ic.ts` appends `; cancelled
+because they waited on it: 001-t06, 001-t07 (under 001-u03)` to a failure, under a
+report's work and under the tasks under command, naming the unit when it is not the failed
+task's; a cascade whose root was cancelled rather than failed has no failure to sit under, so
+the change report lists it under a heading of its own, `tasks cancelled because what they
+waited on will never complete:`, after the tasks under command, one line per task with its
+unit and reason. The planner's section 4 gains, after the completed tasks, `failed or
+cancelled since the last cycle, each with the tasks cancelled because they waited on it;
+nothing waits on a task that will never complete:`, one line per failure since the last
+cycle (id, capability, unit, objective, reason, the settled tasks with their capability
+and unit) and one per cancelled root something waited on; until now a failed task
+appeared nowhere in the planner's input (section 4 was completed tasks, 5 insufficient, 7
+open), and run 004's planner learned of the grep's failure only through the IC's text.
+`incident review` prints `cancelled because they waited on it: ...` under a task's
+`failed:` line.
+
+The validator (`src/validator.ts`): a new plan rule, "Paths exist", seventeenth in
+`PLANNER_RULES`, holds every path input of a deterministic task (the fields the capability
+declares in `paths`, read as the capability parses the inputs) to resolving against the
+working directory, with `node:path`'s `resolve` and checked with `existsSync`, to a path
+that exists, and refuses one that does not naming the field, the value and the directory; inputs that
+do not parse are left to Inputs validate. `check_path` is exempt through a new capability
+field, `pathsMayBeMissing` (`src/capabilities/registry.ts`, default false, true on
+`check_path` alone), since whether its path exists is its answer. The rule is in
+`TASK_RULES`, so a leader's assignments and the IC's `assignTasks` are held to it as a
+plan's tasks are. `ValidationContext` gains `cwd`, required, and `validationContext`,
+`validateAndRecord` and `validateLeaderTasksAndRecord` take it: `cycle` passes `ctx.cwd`
+for the command turn and the plan, the dispatcher passes `options.cwd` for a leader's
+assignments, and every test builds its context with `process.cwd()` (the repository, where
+the fixtures' `root: "src"` and `root: "."` exist). The rule's line to the planner names
+the three path fields and says a package in a pnpm workspace lives under the package's own
+`node_modules`, which is where run 004's grep went wrong.
+
+Docs: DESIGN.md Step 2 (the second shape of `task.cancelled`), Step 4 (the change report's
+failure lines and the new heading; the planner's section 4), Step 5 (the Paths exist row;
+the task-rule list), Step 6 (the opening paragraph; the turn's ending; the unheard and owed
+passages; the task run's transaction), Step 7 (`step` and `review`); `docs/architecture.html`
+(the validator node, the briefing step, the apply step, the dispatch step). README and
+CLAUDE.md enumerate nothing this changes.
+
+Tests: `test/dispatcher.test.ts` runs a led unit whose grep names
+`node_modules/@tiptap/core` under the fixture tree, with an investigate and an interpret
+chained behind it: the grep fails with `ENOENT`, both dependents are cancelled with
+`because: "t-grep"` and the two reason forms, `task.cancelled` follows `task.failed` and
+`task.usage` directly, the leader's one call carries the failure with what it settled and
+the ask for its report, one report is filed, nothing is owed, and a second dispatch writes
+no event; and a grep in one unit whose dependent is in another: the second unit owes a
+report, takes its owed turn with the cancelled ending rendered before "Your unit has not
+reported", both units report, and the change report lists the settled task under the
+failure with its unit (breaking the owed-report count fails the test). `test/runtime.test.ts`
+applies a plan cancelling the first of a three-task chain beside an unrelated task: both
+dependents are settled with the plan's reasons, the events sit between the plan's cancel
+and `plan.applied`, and the plan's own `task.cancelled` carries no `because`; and a plan
+cancelling a task and its dependent together writes one `task.cancelled` per task, the
+plan's own, and settles only the third.
+`test/ic.test.ts` applies a reassign verdict on a unit with a ready grep that a second
+unit's read depends on: the read is settled with the reassign reason, the second unit owes
+a report, and the change report's new heading lists it. `test/planner.test.ts` pins section
+4's list with a failure and a plan-cancelled root, and the rule count (17); the snapshot
+gains the empty list line and the rule's line. `test/review.test.ts` pins the review's
+line under a failure. `test/validator.test.ts` pins Paths exist in the one-rule table
+(a grep on the workspace path) and in a test of its own: a grep root, a relative and an
+absolute read path and a git_history cwd that do not exist are refused with the reason,
+existing ones and a check_path on a missing path pass, unparseable inputs hit Inputs
+validate alone, a leader's assignment and a command assignment are refused, and a context
+whose `cwd` is the fixture tree accepts `a.txt`.
+
+Files rewritten, for the merge order: `src/dispatcher.ts` (three failure sites and the
+bookkeeping's `cwd`; R5-4 rewrites the pass), `src/units/base.ts` (`unitsOwingReport`,
+`endedSinceLastTurn`, `renderEnding`, `LEADER_ROLE`; R5-4 and R5-5 touch the same file),
+`src/units/registry.ts` (`TaskEnding`), `src/runtime.ts`, `src/leader.ts`, `src/ic.ts`,
+`src/planner.ts` (section 4 and `PLANNER_RULES`; R5-6 and R5-7 add rule lines, R5-11
+edits the schema), `src/validator.ts` (`ValidationContext`, one rule, three signatures;
+R5-2, R5-3 and R5-6 touch the validator), `src/review.ts`, `src/commands/incident.ts`
+(three print sites and two `cwd` arguments in `cycle`, which R5-3 rewrites),
+`src/capabilities/registry.ts` and `deterministic.ts`.
+
+Not exactly to spec, with reasons:
+
+- The cascade runs on a plan's and a reassign verdict's cancels as well as on a failure,
+  though the block's evidence is a failure: the block says "when `task.failed` or
+  `task.cancelled` is recorded", and PR 47's finding was a dependent of a cancelled task,
+  which a plan's cancel and a reassign's both produce. A unit reached by one of those
+  cascades owes a report on it, as on a failure's, since the leader never chose it; the
+  plan's or the verdict's own cancels owe nothing.
+- `because` names the root of the chain, not the direct dependency, so the change report
+  and the planner group a whole chain under the failure that caused it with one lookup;
+  the direct dependency is in the reason text.
+- `check_path` is exempt from Paths exist through a capability field rather than by name,
+  so a later capability whose answer is whether something exists declares the same.
+- `Ran.settled` is present only when a task was settled, so the review's and the tests'
+  pins on a plain failure stand.
+- No sweep at dispatch start for dependents stranded before this PR: the cascade is written
+  in the cause's transaction, so a database written by this runtime cannot hold one, and a
+  database from before the tag is a replay concern the plan does not ask for.

@@ -57,6 +57,8 @@ type CapabilityBase<I extends z.ZodType, O extends z.ZodType> = {
   equipment: readonly string[];
   /** The input fields that are paths; a relative value resolves against the incident's cwd before the run. */
   paths: readonly string[];
+  /** Whether a path input that does not exist is an answer rather than a failure: true for check_path, whose result is whether the path exists; every other deterministic capability's path inputs are checked against the working directory at validation (R5-10, "Paths exist"). */
+  pathsMayBeMissing: boolean;
   input: I;
   output: O;
   effect: Effect;
@@ -96,8 +98,13 @@ export type Capability<
 
 type Spec<I extends z.ZodType, O extends z.ZodType> = Omit<
   CapabilityBase<I, O>,
-  "cost" | "paths" | "summarize"
-> & { cost?: Cost; paths?: readonly string[]; summarize?: string };
+  "cost" | "paths" | "pathsMayBeMissing" | "summarize"
+> & {
+  cost?: Cost;
+  paths?: readonly string[];
+  pathsMayBeMissing?: boolean;
+  summarize?: string;
+};
 
 const registry = new Map<string, Capability>();
 
@@ -139,6 +146,7 @@ export function defineCapability<I extends z.ZodType, O extends z.ZodType>(
     description: spec.description,
     equipment: spec.equipment,
     paths: spec.paths ?? [],
+    pathsMayBeMissing: spec.pathsMayBeMissing ?? false,
     summarize: spec.summarize ?? null,
     input: spec.input,
     output: spec.output,

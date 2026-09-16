@@ -31,6 +31,7 @@ import {
   raiseResourceRequests,
 } from "../src/runtime.js";
 import { now, Store } from "../src/store.js";
+import { unitsOwingReport } from "../src/units/index.js";
 import {
   validateCommand,
   validatePlan,
@@ -1966,7 +1967,8 @@ describe("the IC above the planner", () => {
       '  - u-a (waiting) asks missing_means, request "a browser": to watch it',
       '  - u-a (waiting) asks permission, request "rm": to clean up; only a grant answers it',
     ]);
-    const ctx = () => validationContext(store, incident(), [fakeProvider]);
+    const ctx = () =>
+      validationContext(store, incident(), [fakeProvider], process.cwd());
     expect(
       validateCommand(
         command({
@@ -2760,6 +2762,104 @@ describe("the IC above the planner", () => {
     );
   });
 
+  it("a reassign verdict's cancels settle the tasks of other units that waited on them, in the turn's transaction, and the change report lists them with the cause since no failure carries them (R5-10)", () => {
+    const store = new Store(":memory:");
+    const s = scriptedIncident(store);
+    const a = reportedUnit(s, "u-a", "the handler resets the scroll");
+    s.addUnit({ id: "u-b", objective: "read what u-a finds" });
+    s.task({
+      id: "t-next",
+      unitId: "u-a",
+      capability: "grep",
+      objective: "the second grep",
+      status: "ready",
+    });
+    s.task({
+      id: "t-read",
+      unitId: "u-b",
+      capability: "read",
+      objective: "read the match",
+      inputs: { path: "a.txt" },
+      dependsOn: ["t-next"],
+      status: "pending",
+    });
+    const commanded = applyCommand(
+      store,
+      { id: "i1" },
+      command({
+        reportVerdicts: [
+          {
+            reportId: a.id,
+            unitId: "u-a",
+            verdict: "reassign",
+            instructions: "a reader takes the scroll from the claims",
+            why: "u-a is the wrong shape",
+          },
+        ],
+      }),
+      1,
+      {},
+    );
+    expect(commanded.cancelledTasks).toEqual(["t-next"]);
+    expect(commanded.settled).toEqual([
+      {
+        taskId: "t-read",
+        unitId: "u-b",
+        because: "t-next",
+        reason:
+          "depends on t-next, which was cancelled with unit u-a, reassigned",
+      },
+    ]);
+    expect(
+      store
+        .listTasks("i1")
+        .filter((t) => t.status !== "completed")
+        .map((t) => [t.id, t.status]),
+    ).toEqual([
+      ["t-next", "cancelled"],
+      ["t-read", "cancelled"],
+    ]);
+    const events = store.listEvents("i1");
+    expect(
+      events
+        .filter((e) => e.type === "task.cancelled")
+        .map((e) => [
+          (e.payload.mutation as { taskId: string }).taskId,
+          e.payload.reassignmentId ?? e.payload.because,
+        ]),
+    ).toEqual([
+      ["t-next", "i1-r01"],
+      ["t-read", "t-next"],
+    ]);
+    // u-b owes a report on the cancellation; the IC's next change report names it.
+    expect(
+      unitsOwingReport(store.listUnits("i1"), store.listTasks("i1"), events),
+    ).toEqual(new Set(["u-b"]));
+    const report = renderChangeReport(
+      events,
+      s.incident,
+      store.listUnits("i1"),
+    );
+    expect(
+      report.slice(
+        report.indexOf(
+          "tasks cancelled because what they waited on will never complete:",
+        ),
+      ),
+    ).toEqual([
+      "tasks cancelled because what they waited on will never complete:",
+      "  - t-read (under u-b): depends on t-next, which was cancelled with unit u-a, reassigned",
+      "resource requests:",
+      "  (none)",
+      "questions answered:",
+      "  (none)",
+      "capabilities provided:",
+      "  (none)",
+      "spend since then: tokens 0, seconds 0.0",
+    ]);
+    store.close();
+  });
+
   it("Reassignments taken: an open reassignment must be taken by exactly one new unit naming it in takes, a takes names an open one, a drop: verdict closes the reassignment as it is recorded, and a taking plan records reassignment.taken (R4-4)", () => {
     const store = new Store(":memory:");
     const s = scriptedIncident(store);
@@ -2811,7 +2911,8 @@ describe("the IC above the planner", () => {
       "i1-r01",
       "i1-r02",
     ]);
-    const ctx = () => validationContext(store, s.incident, [fakeProvider]);
+    const ctx = () =>
+      validationContext(store, s.incident, [fakeProvider], process.cwd());
     const reasons = (plan: ActionPlan) => {
       const v = validatePlan(plan, ctx());
       return v.ok
@@ -2956,7 +3057,8 @@ describe("the IC above the planner", () => {
     const s = scriptedIncident(store);
     const a = reportedUnit(s, "u-a", "the handler resets the scroll");
     const b = reportedUnit(s, "u-b", "the caller is in the list view");
-    const ctx = () => validationContext(store, s.incident, [fakeProvider]);
+    const ctx = () =>
+      validationContext(store, s.incident, [fakeProvider], process.cwd());
     const verdict = (over: Partial<ReportVerdict> = {}): ReportVerdict => ({
       reportId: a.id,
       unitId: "u-a",
@@ -3129,7 +3231,8 @@ describe("the IC above the planner", () => {
       `  - u-r, report ${earlier.id}: met; changed: the handler is found (claims u-r-c-grep, u-r-c-inv) [an earlier report this window; the verdict answers report ${refused.id}]`,
       `  - u-r, report ${refused.id}: not_met, picture changed; changed: nothing; why: leader was refused by the API on both models; suggestion: the IC decides`,
     ]);
-    const ctx = () => validationContext(store, s.incident, [fakeProvider]);
+    const ctx = () =>
+      validationContext(store, s.incident, [fakeProvider], process.cwd());
     const verdict = (over: Partial<ReportVerdict> = {}): ReportVerdict => ({
       reportId: a.id,
       unitId: "u-a",

@@ -10,6 +10,7 @@ import {
   openReassignments,
   openRequestsByUnit,
   type Reassignment,
+  settledBy,
 } from "./leader.js";
 import {
   ActionPlan,
@@ -58,6 +59,7 @@ export const PLANNER_RULES = [
   "No cycles: the tree stays a tree; a unit ref is used once, is not an existing unit id, and does not start with the incident id; a task ref likewise against task ids, and new tasks' dependsOn form no cycle.",
   "No duplicates: no new task repeats an open or completed one, or another new task, with the same capability and effective inputs under the same unit; a task this plan cancels does not count.",
   "Inputs validate: task inputs parse against the capability's input schema; a task that takes evidence names it by id in evidenceFrom (claims, and tasks whose results it needs) rather than copying it into inputs, or carries it inline.",
+  "Paths exist: every path input of a deterministic task (a grep's root, a read's path, a git_history's cwd) resolves against the working directory the incident runs in, relative or absolute, to a path that exists; check_path is exempt, since whether its path exists is its answer. A package in a pnpm workspace lives under the package's own node_modules, not the root's.",
   "Span of control: no unit ends the plan with more than 7 direct children, units and tasks combined; target 5.",
   `Effect policy: only read_only capabilities in v0; a new unit's equipment names built-in tools, default, or registered external equipment, and its bashAllowlist names only commands from this list, as whole entries: ${READ_ONLY_SESSION_COMMANDS.join(", ")}; a strike team's tools name only the read-only built-ins (Read, Grep, Glob, Bash under the session's allowlist).`,
   "Budget respected: a task's budget, where it sets one, fits inside the incident's remaining budget; a session-backed task carries a time bound and, when the incident bounds tokens, a token bound; a deterministic task needs neither; a strike team's count, at 600 tokens a member, fits the task's token bound where it sets one.",
@@ -288,6 +290,41 @@ export function renderPlannerInput(
       return `${t.id} (${t.capability}, under ${t.unitId}): objective "${t.objective}"; inputs ${clip(t.inputs)}; expected "${t.expectedOutput || "(per schema)"}"; criteria ${JSON.stringify(t.completionCriteria)}; result ${resultForPlanner(t)}; claims ${evidence.join(", ") || "none"}`;
     });
 
+  // A task that will never complete, with what was cancelled because it waited on it
+  // (R5-10): every failure since the last cycle, with its reason, and every cascade whose
+  // root was cancelled rather than failed (by the last plan, or with a reassigned unit).
+  const settled = settledBy(recent);
+  const failedIds = recent
+    .filter((e) => e.type === "task.failed")
+    .map((e) => (e.payload.mutation as { taskId?: string } | undefined)?.taskId)
+    .filter((id): id is string => typeof id === "string");
+  const under = (id: string) => {
+    const t = taskById.get(id);
+    return t === undefined ? id : `${id} (${t.capability}, under ${t.unitId})`;
+  };
+  const cascade = (id: string) => {
+    const list = settled.get(id) ?? [];
+    return list.length === 0
+      ? ""
+      : `; cancelled because they waited on it: ${list.map((x) => under(x.taskId)).join(", ")}`;
+  };
+  const neverCompleting = [
+    ...failedIds.map((id) => {
+      const reason = String(
+        recent.find(
+          (e) =>
+            e.type === "task.failed" &&
+            (e.payload.mutation as { taskId?: string } | undefined)?.taskId ===
+              id,
+        )?.payload.reason ?? "",
+      );
+      return `${under(id)}: objective "${taskById.get(id)?.objective ?? "?"}"; failed: ${reason}${cascade(id)}`;
+    }),
+    ...[...settled.keys()]
+      .filter((id) => !failedIds.includes(id))
+      .map((id) => `${under(id)} was cancelled${cascade(id)}`),
+  ];
+
   // A retrievable fact a task lacked is its unit leader's to get, so it is not the
   // planner's; the other kinds are shown here and reach the planner again as the leader's
   // resource requests in section 6.
@@ -504,6 +541,8 @@ export function renderPlannerInput(
     "",
     "## 4. Tasks completed since the last cycle",
     ...bullets(completed),
+    "failed or cancelled since the last cycle, each with the tasks cancelled because they waited on it; nothing waits on a task that will never complete:",
+    ...bullets(neverCompleting),
     "",
     "## 5. Tasks that came back insufficient since the last cycle",
     ...bullets(insufficient),

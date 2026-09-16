@@ -68,7 +68,13 @@ function fresh() {
     return i;
   };
   const apply = (plan: ActionPlan) => {
-    const verdict = validateAndRecord(store, current(), plan, [provider]);
+    const verdict = validateAndRecord(
+      store,
+      current(),
+      plan,
+      [provider],
+      process.cwd(),
+    );
     if (!verdict.ok)
       throw new Error(
         verdict.rejections.map((r) => `${r.rule}: ${r.reason}`).join("; "),
@@ -152,6 +158,103 @@ describe("apply and tree", () => {
       ["i1-t01", [], "ready"],
       ["i1-t02", ["i1-t01"], "pending"],
     ]);
+  });
+
+  it("a plan's cancel settles the tasks that waited on the cancelled one, transitively, in the plan's transaction, each recorded with the cause (R5-10)", () => {
+    const { store, apply } = fresh();
+    apply({
+      ...empty,
+      createTasks: [
+        grepTask("i1-command", "first", { ref: "first" }),
+        grepTask("i1-command", "second", {
+          ref: "second",
+          dependsOn: ["first"],
+        }),
+        grepTask("i1-command", "third", { dependsOn: ["second"] }),
+        grepTask("i1-command", "apart"),
+      ],
+    });
+    const applied = apply({ ...empty, cancelTasks: ["i1-t01"] });
+    expect(applied.cancelledTasks).toEqual(["i1-t01"]);
+    expect(applied.settled).toEqual([
+      {
+        taskId: "i1-t02",
+        unitId: "i1-command",
+        because: "i1-t01",
+        reason: "depends on i1-t01, which was cancelled by the plan",
+      },
+      {
+        taskId: "i1-t03",
+        unitId: "i1-command",
+        because: "i1-t01",
+        reason:
+          "depends on i1-t02, cancelled because i1-t01 was cancelled by the plan",
+      },
+    ]);
+    expect(store.listTasks("i1").map((t) => [t.id, t.status])).toEqual([
+      ["i1-t01", "cancelled"],
+      ["i1-t02", "cancelled"],
+      ["i1-t03", "cancelled"],
+      ["i1-t04", "ready"],
+    ]);
+    const events = store.listEvents("i1");
+    const cancelled = events.filter((e) => e.type === "task.cancelled");
+    expect(cancelled.map((e) => e.payload.because)).toEqual([
+      undefined,
+      "i1-t01",
+      "i1-t01",
+    ]);
+    expect(cancelled[0]?.payload).toEqual({
+      rationale: "test",
+      mutation: expect.objectContaining({ taskId: "i1-t01" }),
+    });
+    // The cascade sits between the plan's cancel and plan.applied, in one transaction.
+    const types = events.map((e) => e.type);
+    expect(types.slice(types.indexOf("task.cancelled"))).toEqual([
+      "task.cancelled",
+      "task.cancelled",
+      "task.cancelled",
+      "plan.applied",
+    ]);
+    store.close();
+  });
+
+  it("a plan that cancels a task and its dependent together cancels each once, as the plan's own, and settles nothing (PR 55's review: run 004's cycle 2)", () => {
+    const { store, apply } = fresh();
+    apply({
+      ...empty,
+      createTasks: [
+        grepTask("i1-command", "first", { ref: "first" }),
+        grepTask("i1-command", "second", {
+          ref: "second",
+          dependsOn: ["first"],
+        }),
+        grepTask("i1-command", "third", { dependsOn: ["second"] }),
+      ],
+    });
+    const applied = apply({ ...empty, cancelTasks: ["i1-t01", "i1-t02"] });
+    expect(applied.cancelledTasks).toEqual(["i1-t01", "i1-t02"]);
+    expect(applied.settled).toEqual([
+      {
+        taskId: "i1-t03",
+        unitId: "i1-command",
+        because: "i1-t02",
+        reason: "depends on i1-t02, which was cancelled by the plan",
+      },
+    ]);
+    const cancelled = store
+      .listEvents("i1")
+      .filter((e) => e.type === "task.cancelled")
+      .map((e) => [
+        (e.payload.mutation as { taskId: string }).taskId,
+        e.payload.because ?? "the plan's",
+      ]);
+    expect(cancelled).toEqual([
+      ["i1-t01", "the plan's"],
+      ["i1-t02", "the plan's"],
+      ["i1-t03", "i1-t02"],
+    ]);
+    store.close();
   });
 
   it("a task's declared strike team lands on the task row and is recorded as the plan's declaration", () => {
@@ -288,6 +391,7 @@ describe("apply and tree", () => {
         closeUnits: [{ unitId: "001-u02", reason: "the path is known" }],
       },
       [provider],
+      process.cwd(),
     );
     expect(verdict.ok).toBe(true);
     applyPlan(store, incident(), {
@@ -325,7 +429,13 @@ describe("apply and tree", () => {
         grepTask("i1-command", `p${i}`),
       ),
     };
-    const rejected = validateAndRecord(store, current(), flat, [provider]);
+    const rejected = validateAndRecord(
+      store,
+      current(),
+      flat,
+      [provider],
+      process.cwd(),
+    );
     expect(rejected.ok).toBe(false);
     expect(
       store.listEvents("i1").filter((e) => e.type === "plan.rejected"),

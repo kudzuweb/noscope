@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { type Capability, getCapability } from "./capabilities/index.js";
 import {
   configReasons,
@@ -79,6 +81,8 @@ export type ValidationContext = {
   events: readonly Event[];
   /** The saved unit configs (R4-11), which a new unit may name in `config`. */
   configs: readonly UnitConfig[];
+  /** The working directory the incident runs in, which a deterministic task's path inputs resolve against (R5-10, "Paths exist"). */
+  cwd: string;
 };
 
 export type Rejection<R = RuleName> = { rule: R; reason: string };
@@ -396,6 +400,28 @@ const CHECKS: Record<RuleName, Rule> = {
             `${label(t)} carries no evidence: name claims or tasks in evidenceFrom, or give evidence inline`,
           ]
         : [];
+    }),
+
+  // A deterministic run on a path that does not exist fails in milliseconds and settles
+  // everything that waited on it (run 004's TipTap grep, on a workspace package's path
+  // guessed at the root), so the path is checked where the plan is, not where it runs.
+  // The inputs are read as the capability parses them (defaults applied), and a task
+  // whose inputs do not parse is Inputs validate's to refuse.
+  "Paths exist": (plan, ctx) =>
+    perRegisteredTask(plan, (t, capability) => {
+      if (capability.kind !== "deterministic" || capability.pathsMayBeMissing)
+        return [];
+      const parsed = capability.input.safeParse(t.inputs);
+      if (!parsed.success) return [];
+      const inputs = parsed.data as Record<string, unknown>;
+      return capability.paths.flatMap((key) => {
+        const value = inputs[key];
+        if (typeof value !== "string" || existsSync(resolve(ctx.cwd, value)))
+          return [];
+        return [
+          `${label(t)} names ${key} ${value}, which does not resolve against the working directory ${ctx.cwd} to a path that exists`,
+        ];
+      });
     }),
 
   "Span of control": (plan, ctx) => {
@@ -803,6 +829,7 @@ const TASK_RULES: readonly RuleName[] = [
   "No cycles",
   "No duplicates",
   "Inputs validate",
+  "Paths exist",
   "Span of control",
   "Effect policy",
   "Budget respected",
@@ -877,11 +904,12 @@ export function validateLeaderTasksAndRecord(
   unit: Unit,
   tasks: readonly TaskProposal[],
   providers: readonly Provider[],
+  cwd: string,
 ): Verdict<string> {
   const verdict = validateLeaderTasks(
     tasks,
     unit,
-    validationContext(store, incident, providers),
+    validationContext(store, incident, providers, cwd),
   );
   if (!verdict.ok)
     store.batch(() => {
@@ -924,6 +952,7 @@ export function validationContext(
   store: Store,
   incident: Incident,
   providers: readonly Provider[],
+  cwd: string,
 ): ValidationContext {
   const units = store.listUnits(incident.id);
   const tasks = store.listTasks(incident.id);
@@ -941,6 +970,7 @@ export function validationContext(
     situation: icSituation(events),
     events,
     configs: store.listUnitConfigs(),
+    cwd,
   };
 }
 
@@ -1233,11 +1263,12 @@ export function validateAndRecord(
   incident: Incident,
   plan: ActionPlan,
   providers: readonly Provider[],
+  cwd: string,
   origin: PlanOrigin = { draft: 1, corrected: false },
 ): Verdict {
   const verdict = validatePlan(
     plan,
-    validationContext(store, incident, providers),
+    validationContext(store, incident, providers, cwd),
   );
   store.batch(() => {
     if (verdict.ok)

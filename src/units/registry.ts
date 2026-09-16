@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { resolveEquipment } from "../capabilities/index.js";
-import type { RefusedCall } from "../leader.js";
+import type { RefusedCall, Settled } from "../leader.js";
 import type {
   Claim,
   Event,
@@ -26,10 +26,16 @@ import type { Store } from "../store.js";
 // the same place in the hierarchy and reports the same way. Types are registered here by
 // name, as capabilities are in `src/capabilities/registry.ts`, so more can be written.
 
-/** How a task ended, for the leader's next turn: completed, with the claims it produced, or failed with the reason. */
+/** How a task ended, for the leader's next turn: completed, with the claims it produced; failed with the reason and the tasks cancelled because they waited on it (R5-10, `settled`); or cancelled because a task it waited on will never complete (`because`, the task at the root of the chain, and the reason), which only reaches a leader as an ending it has not heard. */
 export type TaskEnding =
   | { task: Task; status: "completed"; claims: readonly Claim[] }
-  | { task: Task; status: "failed"; reason: string };
+  | {
+      task: Task;
+      status: "failed";
+      reason: string;
+      settled: readonly Settled[];
+    }
+  | { task: Task; status: "cancelled"; because: string; reason: string };
 
 /** An ending as it lands in a pass: the task's ending, and the refusals when its session was refused on both models (R4-7), for the unit's report. */
 export type Landed = TaskEnding & { refusals?: readonly RefusedCall[] };

@@ -1511,6 +1511,181 @@ describe("dispatcher, unit leaders", () => {
     expect(store.listUnits("i1")[1]?.sessionId).toBeNull();
     store.close();
   });
+
+  it("a grep that fails settles its dependents in the same pass: both are cancelled with the cause recorded in the failure's transaction, the leader hears the failure with what it settled and is asked for its report, and nothing is owed after (R5-10)", async () => {
+    const store = new Store(":memory:");
+    const { incident, led, task } = scriptedIncident(store);
+    const unit = led();
+    task({
+      id: "t-grep",
+      unitId: unit.id,
+      capability: "grep",
+      inputs: { root: "node_modules/@tiptap/core", pattern: "scrollIntoView" },
+      status: "ready",
+    });
+    task({
+      id: "t-inv",
+      unitId: unit.id,
+      capability: "investigate",
+      inputs: { question: "which call scrolls?" },
+      provider: "claude-code",
+      model: "claude-haiku-4-5",
+      budget: { seconds: 30 },
+      dependsOn: ["t-grep"],
+      evidenceFrom: { claims: [], tasks: ["t-grep"] },
+      status: "pending",
+    });
+    task({
+      id: "t-read",
+      unitId: unit.id,
+      capability: "interpret",
+      inputs: {
+        question: "so what?",
+        evidence: [{ source: "x", content: "y" }],
+      },
+      provider: "claude-code",
+      model: "claude-haiku-4-5",
+      budget: { seconds: 30 },
+      dependsOn: ["t-inv"],
+      status: "pending",
+    });
+    const log = callsLog();
+    process.env.NOSCOPE_STUB_CALLS = log;
+    let dispatched: Awaited<ReturnType<typeof dispatch>>;
+    try {
+      dispatched = await dispatch(store, incident, stubbed);
+    } finally {
+      delete process.env.NOSCOPE_STUB_CALLS;
+    }
+    expect(dispatched.ran).toEqual([
+      {
+        taskId: "t-grep",
+        capability: "grep",
+        status: "failed",
+        claims: 0,
+        reason: expect.stringMatching(/ENOENT/),
+        settled: ["t-inv", "t-read"],
+      },
+    ]);
+    expect(store.listTasks("i1").map((t) => [t.id, t.status])).toEqual([
+      ["t-grep", "failed"],
+      ["t-inv", "cancelled"],
+      ["t-read", "cancelled"],
+    ]);
+    const events = store.listEvents("i1");
+    const types = events.map((e) => e.type);
+    // The cascade is written with the failure, before anything else in the pass.
+    const failedAt = types.indexOf("task.failed");
+    expect(types.slice(failedAt, failedAt + 3)).toEqual([
+      "task.failed",
+      "task.usage",
+      "task.cancelled",
+    ]);
+    const cancelled = events.filter((e) => e.type === "task.cancelled");
+    const reason = String(
+      events.find((e) => e.type === "task.failed")?.payload.reason,
+    );
+    expect(
+      cancelled.map((e) => [
+        (e.payload.mutation as { taskId: string }).taskId,
+        e.payload.because,
+        e.payload.reason,
+      ]),
+    ).toEqual([
+      ["t-inv", "t-grep", `depends on t-grep, which failed: ${reason}`],
+      [
+        "t-read",
+        "t-grep",
+        `depends on t-inv, cancelled because t-grep failed: ${reason}`,
+      ],
+    ]);
+    // The leader's one turn: the failure with what it settled, and the report asked for.
+    const calls = readCalls(log);
+    expect(calls.map((c) => c.kind)).toEqual(["leader"]);
+    expect(calls[0]?.prompt).toContain(
+      `Task t-grep (grep) failed: ${reason} Cancelled because they waited on it: t-inv, t-read; nothing of yours waits on it now.`,
+    );
+    expect(calls[0]?.prompt).toContain(
+      "No ready tasks remain in your unit. File your report",
+    );
+    expect(dispatched.reports.map((r) => r.unitId)).toEqual(["u-led"]);
+    expect(types.at(-1)).toBe("unit.reported");
+    expect(
+      unitsOwingReport(store.listUnits("i1"), store.listTasks("i1"), events),
+    ).toEqual(new Set());
+    // Nothing waits: a second pass finds nothing to do.
+    const again = await dispatch(store, incident, stubbed);
+    expect(again.ran).toEqual([]);
+    expect(store.listEvents("i1")).toHaveLength(events.length);
+    store.close();
+  });
+
+  it("a failure in one unit settles a dependent in another: the dependent's unit owes a report on the cancellation, takes it on an owed turn that names the task it waited on, and the change report lists the settled task under the failure (R5-10)", async () => {
+    const store = new Store(":memory:");
+    const { incident, task, addUnit } = scriptedIncident(store);
+    addUnit({ id: "u-a", objective: "grep the package" });
+    addUnit({ id: "u-b", objective: "read what the grep found" });
+    task({
+      id: "t-grep",
+      unitId: "u-a",
+      capability: "grep",
+      inputs: { root: "no-such-dir", pattern: "scrollIntoView" },
+      status: "ready",
+    });
+    task({
+      id: "t-inv",
+      unitId: "u-b",
+      capability: "investigate",
+      inputs: { question: "which call scrolls?" },
+      provider: "claude-code",
+      model: "claude-haiku-4-5",
+      budget: { seconds: 30 },
+      dependsOn: ["t-grep"],
+      evidenceFrom: { claims: [], tasks: ["t-grep"] },
+      status: "pending",
+    });
+    const log = callsLog();
+    process.env.NOSCOPE_STUB_CALLS = log;
+    let dispatched: Awaited<ReturnType<typeof dispatch>>;
+    try {
+      dispatched = await dispatch(store, incident, stubbed);
+    } finally {
+      delete process.env.NOSCOPE_STUB_CALLS;
+    }
+    expect(dispatched.reports.map((r) => r.unitId)).toEqual(["u-a", "u-b"]);
+    expect(store.listTasks("i1").map((t) => [t.id, t.status])).toEqual([
+      ["t-grep", "failed"],
+      ["t-inv", "cancelled"],
+    ]);
+    const events = store.listEvents("i1");
+    const reason = String(
+      events.find((e) => e.type === "task.failed")?.payload.reason,
+    );
+    const calls = readCalls(log);
+    expect(calls.map((c) => c.kind)).toEqual(["leader", "leader"]);
+    expect(calls[0]?.prompt).toContain(
+      `Task t-grep (grep) failed: ${reason} Cancelled because they waited on it: t-inv (under u-b); nothing of yours waits on it now.`,
+    );
+    // u-b ran nothing and heard nothing: its owed turn carries the cancellation.
+    expect(calls[1]?.prompt).toContain(
+      "Your unit's objective: read what the grep found",
+    );
+    expect(calls[1]?.prompt).toContain(
+      `Since your last turn these tasks also ended:\nTask t-inv (investigate) was cancelled: depends on t-grep, which failed: ${reason}.\n\nYour unit has not reported since its last task ended.`,
+    );
+    expect(calls[1]?.prompt).toContain("No ready tasks remain in your unit.");
+    expect(
+      unitsOwingReport(store.listUnits("i1"), store.listTasks("i1"), events),
+    ).toEqual(new Set());
+    const report = renderChangeReport(events, incident, store.listUnits("i1"));
+    expect(report).toContain(
+      `        failed: ${reason}; cancelled because they waited on it: t-inv (under u-b)`,
+    );
+    expect(report).not.toContain(
+      "tasks cancelled because what they waited on will never complete:",
+    );
+    store.close();
+  });
 });
 
 describe("dispatcher, lacks at the leader", () => {
@@ -3207,7 +3382,7 @@ describe("dispatcher, revise (R4-3)", () => {
         period: undefined,
         answers: ["which file matters → the first one"],
       },
-      [{ task, status: "failed", reason: "no such root" }],
+      [{ task, status: "failed", reason: "no such root", settled: [] }],
       [task],
     );
     expect(prompt).toBe(
