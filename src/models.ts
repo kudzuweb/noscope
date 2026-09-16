@@ -186,13 +186,13 @@ export const Unit = z.object({
   type: z.string().min(1),
   objective: z.string().min(1),
   leader: Leader,
-  /** Built-in tool names and external equipment names the leader's session may use, declared as a capability declares them. */
+  /** Built-in tool names and external equipment names the unit's tasks may use, declared as a capability declares them; the leader's session holds none (R5-4). */
   equipment: z.array(z.string()),
   bashAllowlist: z.array(z.string()),
   role: z.string().min(1).nullable(),
   /** The saved config the unit was deployed from (R4-11), null when its form was filled by hand. */
   config: z.string().min(1).nullable(),
-  /** The leader's session, once it has run; null until the unit first has a ready task. */
+  /** The leader's session, once it has run; null until the unit's first turn. */
   sessionId: z.string().nullable(),
   status: UnitStatus,
   createdAt: Timestamp,
@@ -206,10 +206,10 @@ export const EvidenceFrom = z.object({
 });
 
 /**
- * A strike team: several subagents of one kind and model a leader may send on one task
- * (DESIGN.md Vocabulary). Whoever defines the task defines the team with it, the plan or the
- * leader in a turn; no kind exists by default. A task that declares more than one kind
- * declares a task force.
+ * A strike team: several subagents of one kind and model sent on one task from the task's
+ * own session (DESIGN.md Vocabulary). Whoever defines the task defines the team with it,
+ * the plan or the leader that assigns the task; no kind exists by default. A task that
+ * declares more than one kind declares a task force.
  */
 export const StrikeTeam = z.object({
   kind: z
@@ -463,7 +463,7 @@ export const TaskProposal = z.object({
     .array(StrikeTeam)
     .optional()
     .describe(
-      "The subagent kinds the unit's leader may send on this task, each with its model, tools, prompt, count and why; more than one kind is a task force. No kind exists unless declared here or requested by the leader",
+      "The subagent kinds the session running this task may send, each with its model, tools, prompt, count and why; more than one kind is a task force. No kind exists unless declared here, by whoever defines the task",
     ),
 });
 

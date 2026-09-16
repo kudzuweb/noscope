@@ -125,7 +125,7 @@ The terms, each ICS's own except claim and subagent:
 - capability: the assignable thing: declared equipment plus, when judgment is needed, a session like this one.
 - equipment: the primitive a capability uses: a function, a tool, a server, a browser. Never assigned on its own.
 - subagent: a session spawned inside another and recorded with it.
-- strike team: several subagents of one kind and model, sent by a leader on one task. No kind exists by default: the task declares the team, or the leader asks for one in its turn, and whoever asks chooses the kind, model, tools and count and says why.
+- strike team: several subagents of one kind and model, sent on one task from the task's own session. No kind exists by default: the team is declared on the task by whoever defines it, the plan or the leader that assigns it, and whoever declares it chooses the kind, model, tools and count and says why.
 - task force: a team of subagents of mixed kinds, sent for one mission.
 - claim: a statement about the world with a status: asserted (stated by a session), verified (established by deterministic equipment), or rejected. Every claim also carries a basis: observed, when you saw it in code or in output, or inferred, when you reasoned to it from what you saw. The status names the source and gates nothing; the basis is what counts.
 - situation report: what a unit leader files against its unit's objective: whether it is met, what is now true that was not and on which claims, and whether the picture changed.

@@ -222,7 +222,7 @@ describe("claude code provider", () => {
     expect(LEADER_ROLE).not.toContain("requestStrikeTeam");
     expect(LEADER_ROLE).toContain("No kind exists by default");
     expect(SESSION_PREAMBLE).toContain(
-      "whoever asks chooses the kind, model, tools and count and says why",
+      "whoever declares it chooses the kind, model, tools and count and says why",
     );
     const ic = IC_ROLE;
     expect(ic).toMatch(

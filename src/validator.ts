@@ -441,7 +441,7 @@ const CHECKS: Record<RuleName, Rule> = {
         )
         .map(
           (name) =>
-            `${unitLabel(u)} gives its leader ${name}, which is no built-in tool, default, or registered external equipment`,
+            `${unitLabel(u)} gives its tasks ${name}, which is no built-in tool, default, or registered external equipment`,
         ),
       ...u.bashAllowlist
         .filter(
@@ -449,7 +449,7 @@ const CHECKS: Record<RuleName, Rule> = {
         )
         .map(
           (c) =>
-            `${unitLabel(u)} allows its leader's Bash to run ${c}, which is not read-only`,
+            `${unitLabel(u)} allows its tasks' Bash to run ${c}, which is not read-only`,
         ),
     ]),
   ],

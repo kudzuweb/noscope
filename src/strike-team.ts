@@ -1,9 +1,8 @@
 import type { StrikeTeam } from "./models.js";
 
-// A strike team is declared on a task (by the plan, or by the unit's leader in a turn) and
-// provided to whichever session runs that task: the leader's, or the task's own. The
-// session reads what it may send in its brief; the provider defines the kinds for that
-// call alone (DESIGN.md Step 6).
+// A strike team is declared on a task by whoever defines it (the plan, or the leader that
+// assigns it) and provided to the task's own session (R5-4). The session reads what it may
+// send in its brief; the provider defines the kinds for that call alone (DESIGN.md Step 6).
 
 /**
  * The least a member spends: the runtime's stripped setup gives a member no CLAUDE.md and

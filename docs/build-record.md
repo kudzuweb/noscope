@@ -3951,7 +3951,7 @@ Not exactly to spec, with reasons:
   descriptions, so those merge onto this prompt and schema.
 
 
-## R5-4: The leader directs and never does (#PR, merged 2026-09-16)
+## R5-4: The leader directs and never does (#57, merged 2026-09-16)
 
 R5-4 of the round 5 plan, ruled by Mauria on 2026-09-15 (22:35 to 22:38): a leader running
 a task "would block them from being responsive to the other sessions and the changing
@@ -3986,8 +3986,10 @@ its reason; an insufficiency with what it needed and what the leader does about 
 summary: <the session's summary, else its conclusion, else its observation count, cut at
 300 characters>` for a session task, or `its result, <N match(es) | N commit(s) | N
 line(s) of JSON>, is recorded under its id` for a deterministic one, then `claims (<n>
-observed, <m> inferred): ` with a session's claims each as `<id> <subject> <predicate>`
-and a deterministic task's as the first and last id, since they are one per match. The
+observed, <m> inferred): ` with a session's claims each as `<id>: <subject> <predicate>
+(<basis>; confidence <n>)`, the reassignment brief's form, since a `met` report rests on
+observed claims and the leader must tell which are which (PR 57's design review), and a
+deterministic task's as the first and last id, since they are one per match. The
 result itself never reaches the leader: a task the leader assigns reads it through
 `evidenceFrom`, as before. The orientation's equipment line reads "Equipment your unit's
 tasks may use". `renderTurnPrompt` takes the ready tasks themselves rather than a count
@@ -4030,7 +4032,10 @@ leader could put a team on that it does not already define through `assignTasks`
 respected among them) and `applyLeaderTasks` writes as `strike_team.defined` by
 `leader`. Removed with it: `TurnFields.requestStrikeTeam` (`src/models.ts`), the
 validator's `strikeTeamRejections` (the plan-side `strikeTeamReasons` stays), the store's
-`setTaskStrikeTeam` and the `task.strikeTeam` mutation kind with its replay case (no
+`setTaskStrikeTeam` and the `task.strikeTeam` mutation kind with its replay case; the
+preamble, `TaskProposal.strikeTeam`'s description, `StrikeTeam`'s comment and
+`src/strike-team.ts` say a team is declared by whoever defines the task, and the Effect
+policy rule's reasons name the unit's tasks rather than its leader (no
 recorded database holds one: the five files under `~/.noscope/` were queried for the
 mutation and for `declaredBy: "leader"` on 2026-09-15 and hold none, so replaying them
 still works). The `strike_team.rejected` event type and its
@@ -4117,6 +4122,7 @@ Not exactly to spec, with reasons:
   (R5-3, R5-6 and R5-10 touch the validator) left for a follow-up.
 - The IC's session keeps its form's equipment (`Read`, `Grep`, `Glob`, `Bash` by
   default) through the explicit `LeaderTools` argument, since the block says the ic
-  type's root pass is unchanged and the IC form's `equipment` field is R4-10's; the IC
-  role text already says its tools serve no turn, so passing none is a one-line change
-  for a later row.
+  type's root pass is unchanged and the IC form's `equipment` field is R4-10's. Ruled at
+  PR 57's review and carried to R5-5: those tools are residue under "never does" too,
+  since the IC's deterministic tasks run in process, so R5-5 drops `LeaderTools` and the
+  IC form's equipment for its session.

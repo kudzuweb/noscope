@@ -538,8 +538,10 @@ function sizeOf(task: Task): string {
 
 /**
  * A task's claims in one clause, so the leader can name them in a report or in
- * `evidenceFrom` without reading the work: a session's each by id, subject and predicate;
- * a deterministic task's as a count and the range of ids, since they are one per match.
+ * `evidenceFrom` without reading the work: a session's each by id, subject, predicate,
+ * basis and confidence (the form the reassignment brief uses), since a `met` report
+ * rests on observed claims and the leader must tell which are which; a deterministic
+ * task's as a count and the range of ids, since they are one per match.
  */
 function claimsLine(task: Task, claims: readonly Claim[]): string {
   if (claims.length === 0) return "claims: none";
@@ -547,7 +549,7 @@ function claimsLine(task: Task, claims: readonly Claim[]): string {
   const count = `${observed} observed, ${claims.length - observed} inferred`;
   if (task.model === null)
     return `claims (${count}): ${claims.length === 1 ? claims[0]?.id : `${claims[0]?.id} to ${claims.at(-1)?.id}`}`;
-  return `claims (${count}): ${claims.map((c) => `${c.id} ${c.subject} ${c.predicate}`).join("; ")}`;
+  return `claims (${count}): ${claims.map((c) => `${c.id}: ${c.subject} ${c.predicate} (${c.basis}; confidence ${c.confidence ?? "n/a"})`).join("; ")}`;
 }
 
 /**

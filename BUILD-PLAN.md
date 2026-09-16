@@ -1159,6 +1159,6 @@ which did not.
 ### Round 5 open questions
 | Question | Blocks |
 |---|---|
-| Whether a session task may still ask the leader for a strike team (R3-5), given the leader no longer runs tasks; the least change is that the task's own session declares the strike team from its brief and the leader's `requestStrikeTeam` goes. | R5-4's scope; decide at its build. |
+| Whether a session task may still ask the leader for a strike team (R3-5), given the leader no longer runs tasks; the least change is that the task's own session declares the strike team from its brief and the leader's `requestStrikeTeam` goes. Settled at R5-4's build (#57): a strike team is declared on the task by whoever defines it, the plan or the leader that assigns it in `assignTasks`; the leader's request path (`requestStrikeTeam`, and `strike_team.rejected` as something written) is gone. | Settled. |
 | Whether the size-up should run at all on an objective whose verb makes it a diagnosis, or whether the IC's first turn could start from the objective alone; run 004's size-up cost $0.20 and 95 seconds and its objectives were rewritten by the IC anyway. | Nothing in this round; a candidate for round 6 after run 005 shows what the briefing is worth to a Sonnet IC. |
 | Whether a run should know the runs before it: the selection's origin stayed open across runs 003 and 004 because the code unit re-read what run 002 had already identified, and nothing carries a claim from one incident to the next. A new capability (memory across incidents), not a fix, so round 6. | Nothing in this round. |

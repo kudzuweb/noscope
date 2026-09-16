@@ -747,9 +747,9 @@ describe("validator", () => {
         ],
       }),
     ).toEqual([
-      "Effect policy: new unit a gives its leader Write, which is no built-in tool, default, or registered external equipment",
-      "Effect policy: new unit a gives its leader grep_files, which is no built-in tool, default, or registered external equipment",
-      "Effect policy: new unit a allows its leader's Bash to run rm, which is not read-only",
+      "Effect policy: new unit a gives its tasks Write, which is no built-in tool, default, or registered external equipment",
+      "Effect policy: new unit a gives its tasks grep_files, which is no built-in tool, default, or registered external equipment",
+      "Effect policy: new unit a allows its tasks' Bash to run rm, which is not read-only",
     ]);
   });
 

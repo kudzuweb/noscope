@@ -2665,7 +2665,7 @@ describe("dispatcher, parallel dispatch", () => {
     expect(context).not.toContain("Your next task follows");
     for (const [i, id] of ["t-1", "t-2", "t-3"].entries())
       expect(turns[i]?.prompt).toContain(
-        `Task ${id} (investigate) completed; summary: a.txt:2 is the handler; claims (1 observed, 0 inferred): i1-c00${i + 1} a.txt:2 handles deletion`,
+        `Task ${id} (investigate) completed; summary: a.txt:2 is the handler; claims (1 observed, 0 inferred): i1-c00${i + 1}: a.txt:2 handles deletion (observed; confidence 0.9)`,
       );
     // The tool results were filed under the tasks (the stub prints the same tool lines
     // on a turn, which a leader holding no tools could not make; those file under the
