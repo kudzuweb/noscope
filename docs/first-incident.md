@@ -626,14 +626,14 @@ Each is a candidate for round 5, with its evidence.
 
 ## Fifth run
 
-The same objective run a fifth time on 2026-09-16 (06:59 to 07:57 UTC; 02:00 to 02:57 CDT),
+The same objective run a fifth time on 2026-09-16 (06:59 to 07:57 UTC; 01:59 to 02:57 CDT),
 with round 5 merged (PRs 53 to 62 on `round-5`; every event carries the runtime tag
 `ef5ad67`), from the same roughdraftplus working directory at commit 6a996e8, on
 `NOSCOPE_DB=~/.noscope/fifth-run.sqlite`, with the scratch document restored from its
 pristine copy before `create`, run 003's objective, two constraints and priority word for
 word, and no `--ic-model`, so the IC ran on Sonnet 5 by R5-6's default. The session running
-the build stepped it by hand, one detached `step` per cycle, unattended; Mauria was asleep,
-and nothing asked for an operator, since the size-up proposed no question.
+the build stepped it by hand, one detached `step` per cycle, unattended; nothing asked
+for an operator, since the size-up proposed no question.
 
 The run is one incident of five cycles, each one operational period, each accepted whole.
 The size-up on Haiku wrote a diagnostic briefing (three objectives, two units, no fix, no
@@ -732,7 +732,7 @@ Where the money went, from the three reviews' per-role tables:
 
 | Seat | Run 003 | Run 004 | Run 005 |
 |---|---|---|---|
-| The IC | Five calls on Sonnet 5 cost $1.28. | Eight calls cost $5.83, three on Opus 5 and five on Opus 4.8. | Ten calls on Sonnet 5 cost $2.94: five command turns $1.54, four reviews $0.82, the handoff turn $0.60. Run 005 made two more command turns and two more reviews than run 003, and the handoff. |
+| The IC | Five calls on Sonnet 5 cost $1.28. | Eight calls cost $5.83, three on Opus 5 and five on Opus 4.8. | Ten calls on Sonnet 5 cost $2.94: five command turns $1.53, four reviews $0.81, the handoff turn $0.60. Run 005 made two more command turns and two more reviews than run 003, and the handoff. |
 | Task sessions | Three sessions cost $1.99. | Five sessions, all Opus 5, cost $5.75. | Eight sessions cost $4.01: four reproduces on Sonnet 5 $1.63 (`001-t01` $0.78, `001-t07` $0.34, `001-t12` $0.09, `001-t11` $0.42), one investigate on Sonnet 5 $0.91, three interprets $1.47 (`001-t08` $0.63 and `001-t15` $0.64 on Opus 5, `001-t10` $0.20 on Sonnet 5). Run 004's one Opus reproduce cost $1.85; run 005's four on Sonnet cost $1.63 together. |
 | Leader turns | Five turns on the root cost $0.94. | Six turns on Opus 5 cost $2.37. | Five turns on Sonnet 5 cost $0.59, on inputs of 20k to 30k tokens (contexts of 11k to 21k). |
 | The planner | Two calls cost $0.50. | Three calls cost $1.79. | Four calls on Opus 5 cost $1.80 ($0.29, $0.47, $0.37, $0.68), a fifth of the run; the planner's own seat is the one model choice round 5 did not touch. |
@@ -766,9 +766,9 @@ turn on the same session, resumed with the draft alone.
 The handoff cost $0.89 of IC calls where a resumed review cost $0.15 to $0.21 ($0.60 for
 the document and $0.29 for the fresh session's review), and the successor's command turn,
 resumed on that review, read 88k. Cache reads: five of the eight resumed calls read the previous
-call's context; the first review, the handoff turn and the successor's command turn wrote
-their whole context at cache-write rates, the intermittent miss the Reference table
-records.
+call's context; the first review, the handoff turn and the successor's command turn did
+not read the previous call's context (the first two wrote their whole context, the third
+78,597 of its 88,136), the intermittent miss the Reference table records.
 
 ### Wall time per cycle beside the tasks' seconds
 
@@ -777,7 +777,7 @@ records.
 | 1, period 1 | 101 s | 505 s: the planner 90 s, the review 41 s, the dispatch. | 371 s: the reproduce `001-t01` 323 s, then its unit's report turn 46 s. | One task, 323 s. The code unit's three greps and investigate were ready and never started. | 0.87x. | 323 s (`001-t01`), 1.00x possible: the interpret `001-t06` depended on `001-t01`, which related the two units and held the code unit's pass behind the reproduce unit's. |
 | 2, period 2 | 83 s | 833 s: the planner 153 s, the review 37 s, the dispatch. | 642 s: three greps in 0.1 s, `001-t05` 350 s, the code unit's continue turn 81 s, then `001-t07` 138 s and its unit's report turn 69 s. | Five tasks, 488 s. | 0.76x. | 350 s (`001-t03` then `001-t05`), 1.40x possible: `001-t07` had no dependency and ran after `001-t05` because `001-t08` depended on both, relating the units again. |
 | 3, period 3 | 163 s | 552 s: the planner 57 s, the review 39 s, the dispatch. | 455 s: the grep in 0.0 s, `001-t08` 213 s, `001-t10` 149 s, the report turn 91 s. | Three tasks, 362 s. | 0.80x. | 362 s (`001-t08` then `001-t10`), 1.00x possible: the plan was a chain. |
-| 4, period 4 | 158 s, then the handoff 49 s | 753 s: the planner 170 s, the handoff, the successor's review 73 s, the dispatch. | 458 s: two greps and `001-t12` (58 s) beside `001-t11` (203 s), then `001-t15` 185 s, the report turn 68 s. | Five tasks, 445 s. | 0.97x. | 388 s (`001-t11` then `001-t15`), 1.15x possible. The two reproduces ran together as the priority asked. |
+| 4, period 4 | 158 s, then the handoff 49 s | 753 s: the planner 170 s, the handoff, the successor's review 72 s, the dispatch. | 458 s: two greps and `001-t12` (58 s) beside `001-t11` (203 s), then `001-t15` 185 s, the report turn 68 s. | Five tasks, 445 s. | 0.97x. | 388 s (`001-t11` then `001-t15`), 1.15x possible. The two reproduces ran together as the priority asked. |
 | 5, the closing turn | 126 s | No plan and no dispatch. | none | none | none | none |
 
 The run was a chain. Its seats' seconds sum to 3,371 (the IC 869, the planner 470, the
@@ -833,7 +833,7 @@ Which of the eleven rows earned its keep, in the acceptance's words. R5-6 did: S
 every reproduce, investigate and leader, Opus on three interprets each with a why, the IC
 on Sonnet 5 through ten calls with no refusal, and four reproduces for $1.63 against run
 004's one for $1.85. R5-4 and R5-5 did: eight sessions of their own, leaders' contexts of
-11k to 21k where run 004's code leader grew to 100k, fourteen endings that called nobody,
+11k to 21k where run 004's code leader grew to 124k, fourteen endings that called nobody,
 five leader turns for $0.59 against six for $2.37. R5-1 did: six evidence lines and 96
 claims where run 004's file carried 162 grep-promoted claims, and the planner's largest
 input 38k against run 004's 56k. R5-2 did: the assessments, the reversed stance and the
@@ -842,7 +842,7 @@ dispatcher undid it: both plans that allowed parallel work were serialized by
 `relatedUnits`, and the critical path line is what shows it. R5-3, R5-8 and R5-10 had no
 occasion: no draft broke a rule, no question was proposed, no task failed; each cost
 nothing and proved nothing this run. R5-11 did not: the changed sections were most of the
-file every period, the context grew about 30k per period across the command turn and the
+file every period, the context grew 30k to 47k per period across the command turn and the
 review, and the handoff came on the fourth command turn at 129k, against run 004's 170k on
 its fourth under whole-file briefings, past the threshold either way.
 
@@ -854,8 +854,8 @@ Each is a candidate for round 6, with its evidence.
   relates two units when any unended task of one depends on any unended task of the other,
   and a related unit's pass waits for the other's to end. In period 1 `001-t06` depended on
   `001-t01`, so the code unit's three greps and its investigate, which needed nothing from
-  the browser, waited behind the reproduce (events 38 to 91 are `001-t01` alone) and were
-  cancelled by the halt; in period 2 `001-t08` depended on `001-t07`, so the instrumented
+  the browser, waited behind the reproduce (events 38 to 91 are `001-t01` alone) and never
+  started, since the halt ended the pass; in period 2 `001-t08` depended on `001-t07`, so the instrumented
   reproduce started at 07:23:16, after `001-t05` had landed at 07:21:53 and the leader had
   turned, though nothing of its own waited. The critical path line reads 1.00x and 1.40x
   possible against 0.87x and 0.76x measured. R5-7's warning could not fire: every
@@ -869,8 +869,9 @@ Each is a candidate for round 6, with its evidence.
   whose objective is met has by construction changed the picture. In period 1 the halt
   cancelled the code unit's pass; in period 2 it left `001-t08`, ready, for the next period.
   A period costs its command turn, planner call and review before the next wave, $0.86
-  to $0.92 of seats and 12 to 15 minutes of wall in cycles 2 and 3, which is why a run
-  whose session work sums to 27 minutes took 55. Candidates: the halt holds only tasks that depend on the
+  to $0.92 of seats in cycles 2 and 3, where the period took 12 to 15 minutes, 4 to 5 of
+  them the command turn, the planner and the review, which is why a run whose session work
+  sums to 27 minutes took 55. Candidates: the halt holds only tasks that depend on the
   reporting unit's output, or the report says which other units the change concerns; or
   the IC's verdict runs while unrelated ready work continues.
 - **A unit's share counts cache reads as spend, so one session exhausts it.** The
@@ -898,7 +899,8 @@ Each is a candidate for round 6, with its evidence.
   retained answers (7k to 12k characters of turn JSON, about 2k to 3k tokens; the billed
   output of 8k to 15k is mostly reasoning the session does not keep), the resumed
   briefings were about 18k, 21k and 28k tokens and the review prompts about 15k, 7k and
-  16k, so the session grew about 30k per period. The whole file at the same moments is
+  16k, so the session grew 30k to 47k per period (35.6k, 30.5k and 47.1k between command
+  turns). The whole file at the same moments is
   bounded by the planner's context, 20k, 30k and 38k including the planner's own preamble
   and rule texts, so the changed-section briefing was within a few thousand tokens of the
   whole file: every period changed the command picture, the claims, the tasks, the units,

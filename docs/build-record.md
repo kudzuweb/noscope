@@ -5073,7 +5073,7 @@ time with every code row of round 5 merged (PRs 53 to 62 on `round-5`, the runti
 6a996e8 with the scratch document restored before `create`, run 003's objective,
 constraints and priority, and no `--ic-model`, so the IC ran on Sonnet 5 by R5-6's
 default. Stepped by hand by the orchestrating session, one detached `step` per cycle,
-2026-09-16 02:00 to 02:57 CDT, unattended: the size-up proposed no question and nothing
+2026-09-16 01:59 to 02:57 CDT, unattended: the size-up proposed no question and nothing
 else asked for an operator. Written up under "## Fifth run" in `docs/first-incident.md`
 in the fourth run's form: the run, the answer and how it was reached, the measures beside
 runs 001 to 004 with two new rows (evidence beside claims; leader turns beside endings
@@ -5092,7 +5092,7 @@ scheduling stack, `001-c074`; no sourcemap by three routes, `001-c063` to `001-c
 and the code trace's weaker on one link: the origin from the bundle to `deleteComment`
 was graded inferred at 0.7 where run 004 had raised it to 0.95 by a token-for-token body
 comparison that no task in run 005 made. The cost and time targets were missed: $9.52
-against run 003's $4.86 (95 percent over), and 55.0 minutes from the first command turn
+against run 003's $4.86 (96 percent over), and 55.0 minutes from the first command turn
 against 29 (90 percent over; 57.9 from `create`). Where they went: five periods for run
 003's one dispatch, because `relatedUnits` in the dispatcher serialized the two units of
 period 1 and the two of period 2 (each dependent task related its whole unit) and every

@@ -98,7 +98,7 @@ validator warns on an unexplained one and the IC's review refuses it.
 | Want | Read |
 |---|---|
 | How it works, in order | `docs/architecture.html`, then `DESIGN.md` Steps 4 to 6 |
-| What has been built and what is next | `BUILD-PLAN.md` (rounds 3 and 4 at the end) and `docs/build-record.md` |
+| What has been built and what is next | `BUILD-PLAN.md` (rounds 3 to 5 at the end) and `docs/build-record.md` |
 | What a run looks like and what it cost | `docs/first-incident.md` (five runs of one objective) |
 | The runtime against plain instructions | `docs/instructions-only-run.md` |
 
