@@ -1967,7 +1967,8 @@ describe("the IC above the planner", () => {
       '  - u-a (waiting) asks missing_means, request "a browser": to watch it',
       '  - u-a (waiting) asks permission, request "rm": to clean up; only a grant answers it',
     ]);
-    const ctx = () => validationContext(store, incident(), [fakeProvider]);
+    const ctx = () =>
+      validationContext(store, incident(), [fakeProvider], process.cwd());
     expect(
       validateCommand(
         command({
@@ -2909,7 +2910,8 @@ describe("the IC above the planner", () => {
       "i1-r01",
       "i1-r02",
     ]);
-    const ctx = () => validationContext(store, s.incident, [fakeProvider]);
+    const ctx = () =>
+      validationContext(store, s.incident, [fakeProvider], process.cwd());
     const reasons = (plan: ActionPlan) => {
       const v = validatePlan(plan, ctx());
       return v.ok
@@ -3054,7 +3056,8 @@ describe("the IC above the planner", () => {
     const s = scriptedIncident(store);
     const a = reportedUnit(s, "u-a", "the handler resets the scroll");
     const b = reportedUnit(s, "u-b", "the caller is in the list view");
-    const ctx = () => validationContext(store, s.incident, [fakeProvider]);
+    const ctx = () =>
+      validationContext(store, s.incident, [fakeProvider], process.cwd());
     const verdict = (over: Partial<ReportVerdict> = {}): ReportVerdict => ({
       reportId: a.id,
       unitId: "u-a",
@@ -3227,7 +3230,8 @@ describe("the IC above the planner", () => {
       `  - u-r, report ${earlier.id}: met; changed: the handler is found (claims u-r-c-grep, u-r-c-inv) [an earlier report this window; the verdict answers report ${refused.id}]`,
       `  - u-r, report ${refused.id}: not_met, picture changed; changed: nothing; why: leader was refused by the API on both models; suggestion: the IC decides`,
     ]);
-    const ctx = () => validationContext(store, s.incident, [fakeProvider]);
+    const ctx = () =>
+      validationContext(store, s.incident, [fakeProvider], process.cwd());
     const verdict = (over: Partial<ReportVerdict> = {}): ReportVerdict => ({
       reportId: a.id,
       unitId: "u-a",

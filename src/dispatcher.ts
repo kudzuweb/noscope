@@ -522,7 +522,14 @@ export async function dispatch(
   // neither the validator nor the runtime.
   const bookkeeping: PassContext["bookkeeping"] = {
     validateAssignments: (unit, tasks) =>
-      validateLeaderTasksAndRecord(store, incident, unit, tasks, providers).ok,
+      validateLeaderTasksAndRecord(
+        store,
+        incident,
+        unit,
+        tasks,
+        providers,
+        options.cwd,
+      ).ok,
     applyAssignments: (unit, tasks) =>
       applyLeaderTasks(store, incident, unit, tasks).length,
     raiseRequests: (unit, requests) =>

@@ -19,6 +19,7 @@ export const checkPath = defineCapability({
   description: "Establish whether a path exists and what it is",
   equipment: ["stat_path"],
   paths: ["path"],
+  pathsMayBeMissing: true,
   input: statPathEquipment.input,
   output: statPathEquipment.output,
   effect: "read_only",

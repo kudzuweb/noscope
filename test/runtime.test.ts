@@ -68,7 +68,13 @@ function fresh() {
     return i;
   };
   const apply = (plan: ActionPlan) => {
-    const verdict = validateAndRecord(store, current(), plan, [provider]);
+    const verdict = validateAndRecord(
+      store,
+      current(),
+      plan,
+      [provider],
+      process.cwd(),
+    );
     if (!verdict.ok)
       throw new Error(
         verdict.rejections.map((r) => `${r.rule}: ${r.reason}`).join("; "),
@@ -345,6 +351,7 @@ describe("apply and tree", () => {
         closeUnits: [{ unitId: "001-u02", reason: "the path is known" }],
       },
       [provider],
+      process.cwd(),
     );
     expect(verdict.ok).toBe(true);
     applyPlan(store, incident(), {
@@ -382,7 +389,13 @@ describe("apply and tree", () => {
         grepTask("i1-command", `p${i}`),
       ),
     };
-    const rejected = validateAndRecord(store, current(), flat, [provider]);
+    const rejected = validateAndRecord(
+      store,
+      current(),
+      flat,
+      [provider],
+      process.cwd(),
+    );
     expect(rejected.ok).toBe(false);
     expect(
       store.listEvents("i1").filter((e) => e.type === "plan.rejected"),

@@ -809,7 +809,7 @@ async function planPeriod(
     return verdict.rejections.map((r) => `${r.rule}: ${r.reason}`);
   };
   const validate = (plan: ActionPlan, corrected: boolean) =>
-    validateAndRecord(store, current, plan, providers, {
+    validateAndRecord(store, current, plan, providers, ctx.cwd, {
       draft: drafts,
       corrected,
     });
@@ -1008,7 +1008,7 @@ async function cycle(
   ctx.io.out(`  status: ${turn.incidentStatus}`);
   const rejections = validateCommand(
     turn,
-    validationContext(store, incident, providers),
+    validationContext(store, incident, providers, ctx.cwd),
   );
   if (rejections.length > 0) {
     store.batch(() => {
