@@ -4477,3 +4477,133 @@ Not exactly to spec, with reasons:
   "was worked by task X (completed); needs a task or a deferral", since the validator
   counts open tasks alone. DESIGN.md's Vocabulary says a new item carries no id and a
   carried one keeps the id the file lists.
+
+## R5-1: Evidence is not a claim (#PR, merged 2026-09-16)
+
+R5-1 of the round 5 plan, the first row: a deterministic task's output is evidence, kept
+whole under the task id and never turned into claims. The evidence behind it is run 004
+(`docs/first-incident.md` "## Fourth run"): 162 of its 216 claims were promoted from
+deterministic output (80 and 74 grep matches from two inventory greps, 5 from a third, 3
+git facts), every one landed in the incident file every seat reads, the planner's third
+call read 115k input tokens against run 003's 17k, and run 003 reached the same answer with
+24 claims. Built in two commits: the change with its tests and docs, then this entry.
+
+The runtime. `src/capabilities/registry.ts`: a deterministic capability's `run` returns
+its output alone, parsed through the capability's schema, and the capability declares a
+`measure`, one phrase counting that output (`Measure<O>`), which registration requires
+beside `run`; `produces` is `evidence` or `claims`; `CapabilityResult`, the claim
+proposals and `summarize` are gone. `src/capabilities/deterministic.ts` is rewritten:
+each of the four capabilities runs its equipment and returns the equipment's output as it
+came (a grep's matches relative to its root, as `grep_files` returns them), and measures
+it: `check_path` as `exists, a file` or `does not exist`, `read` in lines with
+`, truncated` when it was, `grep` as `74 matches in 11 files` (or `no matches`, and
+`, truncated` past `maxMatches`), `git_history` as `10 commits, 7 working-tree changes, on
+main`. `src/evidence.ts` is new and is the one place the evidence line comes from:
+`isEvidence(task)` (deterministic and completed), `measureEvidence(capability, result)`
+(the capability's `measure` on the parsed result; a result the schema no longer fits, or
+from a capability the registry no longer has, measures as lines of JSON so an old record
+still renders) and `isSessionClaim(claim)` (a session id in the provenance; the claims a
+record from before R5-1 holds from deterministic tasks fail it and no seat lists them).
+`src/verifier.ts` keeps `recordSessionResult` only: a session's claims enter `asserted`
+with the session id, and a claim's `cites` (new on `SessionClaimProposal`, task ids of
+the attached results the claim rests on, described for the session in its output schema)
+goes into the provenance (`Provenance.cites`, optional, present when non-empty); the
+verifier keeps the session's basis only when every cited task is a completed deterministic
+task named in the reading task's `evidenceFrom.tasks`, and enters the claim `inferred`
+otherwise, since the session did not see what it cites. `src/dispatcher.ts` records
+nothing for a deterministic run beyond the result on `task.completed`, and the pass
+summary's `Ran.produced` says `evidence: 1 match in 1 file` for it and `N claim(s)` for a
+session. `src/store.ts`'s `createClaim` refuses anything but `asserted` with a session id;
+replay applies an older record's `verified` claims as before. `src/models.ts`: `Produces`
+is `evidence | claims`; `ClaimStatus` keeps `verified` for those records and says so.
+
+The renderers, each on `measureEvidence` and `isSessionClaim`. `src/planner.ts`: section
+2 is "Claims and evidence", the session's claims (each line naming what it cites), then
+one evidence line per completed deterministic task, `001-t01 (grep {inputs clipped}): 74
+matches in 11 files`, under a heading that says a task reads it whole by naming the id in
+`evidenceFrom.tasks`; section 4 renders a deterministic task's ending as its measure
+instead of a clipped result and a claim list; the collapse-after-first-cycle logic and
+`summarize` are gone; the system prompt's terms paragraph defines evidence and says a
+claim about attached evidence cites its task id. `src/ic.ts`: `describeEnding` renders a
+deterministic task as `completed; evidence: <measure>, attached whole to a task naming
+<id> in evidenceFrom.tasks`, the same line in the change report's "tasks under command"
+block (which rendered the result's text whole under the cap before) and in a report's
+work block; a deterministic task's block has no claims line; `claimsUnder` reads session
+claims only, so the three-then-by-id listing for a wide grep is gone. `src/review.ts`: a
+task line ends `evidence <measure>` for a deterministic task and `claims N (M inferred)`
+for a session, and the totals line reads `claims: 54 asserted (44 observed, 10 inferred),
+0 rejected; evidence: 4 deterministic result(s)`. `src/commands/incident.ts`: `show`
+prints the claims counted by basis, one line each with its basis, then `evidence: N
+deterministic result(s)` with one line per task, and `step` ends with the same counts.
+The session preamble (`src/providers/base.ts`) defines a claim as a session's statement
+and evidence as what a deterministic capability returned, and the task seat says a claim
+resting on attached evidence cites its task id; the IC's role text (`src/units/ic.ts`)
+says a deterministic task's ending is its evidence, a count with the task id.
+
+Tests. `test/capabilities.test.ts` covers the four measures, the run's shape (`output`
+and `inputs`, nothing else), the fallback measure and the registration guard.
+`test/dispatcher.test.ts` has the acceptance: a grep under a unit lands its output on the
+task and on `task.completed` with no `claim.*` event; an investigate whose brief names
+the grep in `evidenceFrom.tasks` asserts an observed claim whose provenance cites the task
+id, a claim citing a grep the brief did not carry enters `inferred`, and a claim citing
+nothing keeps its basis; the `incident step` test runs grep, then investigate reading it,
+then `satisfied`, and reads the planner's incident file from the stub's call log: section 2
+lists the one claim (citing `001-t01`) and one evidence line and none of the grep's
+matches. `test/replay.test.ts` is the replay acceptance, run when `NOSCOPE_REPLAY_DB`
+names a copy of run 004's record (the record is not in the repository, and the test copies
+the copy before opening it, since opening migrates in place): the file lists 54 claims,
+all asserted, and evidence lines for `001-t01` (74 matches), `001-t02` (80), `001-t03` (10
+commits) and `001-t08` (5), and `incident review` prints `claims: 54 asserted (44
+observed, 10 inferred), 0 rejected; evidence: 4 deterministic result(s)` with four
+deterministic task lines carrying a measure. Verified against a copy of
+`~/.noscope/fourth-run.sqlite` on 2026-09-15. The fixtures changed with the design:
+`reportedUnit` in `test/fixtures/models.ts` has its grep as evidence and its observed
+claim asserted by the investigate citing the grep; `readsEvidence` and `citingOutput` are
+the investigate task and stub output the run, review and step tests use to reach
+`satisfied`, since "Status is earned" still needs an observed claim and a grep no longer
+supplies one; `test/ic.test.ts`'s four run tests use `findAndSay` (the grep, then an
+investigate reading it by reference, the leader continuing past the grep's ending and
+reporting on the investigate's, by `leaderTurns`), so each has a session claim to accept,
+revise, reassign or hold in `keep`. The planner snapshot was updated and its diff read.
+
+Docs travelling with the change: `DESIGN.md` Vocabulary (Capability, Claim, and a new
+Evidence row), Step 2 (the claims table, the event list), Step 3 (`produces`, `measure` in
+place of `summarize`, the capability table), Step 4 (sections 2 and 4), Step 6 (the
+verifier), Step 7 (`show` and `review`), Step 8 and the v0 acceptance (an observed claim
+names the code path); `docs/architecture.html` (the legend, the dispatcher and
+deterministic-capability nodes, steps 1 and 7, the claim's life, the tree example, the
+capability card); `README.md` (`NOSCOPE_REPLAY_DB`); `CLAUDE.md` (the framework
+paragraph).
+
+Files rewritten, for the merge order: `src/capabilities/deterministic.ts` and
+`src/verifier.ts` whole; `src/capabilities/registry.ts` (the deterministic types and
+`defineCapability`), `src/planner.ts` (section 2's block and `claimLine`), `src/ic.ts`
+(`describeEnding`, `describeClaims`, `claimsUnder`, both work blocks), `src/review.ts`
+(the per-task claim loop and the totals line), `src/commands/incident.ts` (the claim lines
+of `show` and `step`) in part; `src/units/base.ts` is untouched (its `renderEnding` still
+hands a leader a deterministic result whole, which R5-4 owns); the situation is untouched
+(R5-2 changes its `evidence` field).
+
+Not exactly to spec, with reasons:
+
+- The acceptance says run 004's file renders "8 evidence lines"; the record has five
+  deterministic tasks, of which four completed (`001-t01`, `001-t02`, `001-t03`, `001-t08`)
+  and one failed (`001-t05`, the TipTap grep on a missing root, no output), so the file
+  renders four evidence lines and the test asserts four. A failed task has no evidence to
+  measure; its failure stays in the change report and the review as before.
+- A claim's citation is `cites` on the session's claim proposal and `cites` in the
+  provenance, rather than an entry in the claim's free-text `evidence` list, so the
+  verifier can check it against `evidenceFrom.tasks` and a renderer can print it; the
+  plan said "names the task id in the claim's provenance" and left the field to the build.
+- A claim that cites an attached session task's result (an interpret citing an
+  investigate's findings) is `inferred`, not observed: only a completed deterministic
+  task counts as evidence for the basis rule, since a session's findings are themselves
+  claims with a basis of their own.
+- The evidence line carries the task's inputs, clipped, beside the capability and the
+  count: the count alone (`74 matches`) does not say what was searched for, and the inputs
+  are what the planner needs to decide whether a task should read it.
+- The replay test is gated on `NOSCOPE_REPLAY_DB` rather than shipping the record: the
+  record carries paths under Mauria's home directory and the repository is public.
+- The `verified` status and the `claim.verified` event type stay in the enums so a record
+  from before R5-1 parses and replays; nothing writes either now, `createClaim` refuses
+  them, and no renderer lists a verified claim.
