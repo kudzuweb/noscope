@@ -1,7 +1,7 @@
 # Handoff: noscope round 4, the build in progress
 
-Refreshed 2026-09-16 00:18 CDT by session noscope-round4 [f7cb98]; round 5 building
-overnight on the `round-5` branch, seven of twelve merged, main untouched. Written by the successor session; the relay session mauriaparker-91 has stopped.
+Refreshed 2026-09-16 01:30 CDT by session noscope-round4 [f7cb98]; round 5 building
+overnight on the `round-5` branch, ten of twelve merged, main untouched. Written by the successor session; the relay session mauriaparker-91 has stopped.
 
 **First actions, in order:** (1) `/warp-pin title noscope-round4-<n>`. (2) Read this file,
 then `BUILD-PLAN.md` "## Round 4" in full (rows R4-10 to R4-12 are new; the fourth run is now R4-13), then the round 4
@@ -51,20 +51,18 @@ thread `~/Documents/Projects/my-quipu/ics-runtime.md`, whose Head carries every 
 ## 3. STATE (as of this refresh)
 
 Round 5 is building overnight on the branch `round-5` (cut from main at `d4ad608`; main
-is at `deab9cf` plus nothing since, untouched by the build). Merged into `round-5`, in
-order: R5-7 (#53), R5-6 (#54), R5-3 (#56), R5-4 (#57), R5-10 (#55), R5-2 (#58), R5-1
-(#60, 00:17). Seven of twelve. Building: R5-5 (`pr-leader-on-decision`, `scratchpad/wt-r5-5`,
-builder `build-r5-5`, cut at eae2b8a, told to rebase over R5-10 before reporting; it also
-drops the IC's session tools per the orchestrator's ruling), R5-8 (`pr-ic-gates-questions`,
-`wt-r5-8`, builder `build-r5-8`, cut at 7924282). Holding: R5-11 (PR 59,
-`pr-turns-say-less`, `wt-r5-11`, reviewed, fixes in, merges last after a final rebase that
-always renders section 10 on a resumed turn and marks section 2 on a deterministic
-`task.completed`). Then R5-12: `pnpm build` on `round-5`, restore the scratch document,
-`incident create` from roughdraftplus with run 003's objective, constraints and priority,
-no `--ic-model` (Sonnet 5 by R5-6), `NOSCOPE_DB=~/.noscope/fifth-run.sqlite`, step by hand
-with `~/.noscope/fourth-run/step.sh` adapted, then a builder for the write-up as the last
-PR into `round-5`. Every merge so far had one reviewer (R5-4 two); every review's fixes
-are in the PR bodies. Heartbeat cron `68507b23` hourly at :17.
+untouched by the build; the handoff refreshes are committed on local main and not pushed,
+per the branch rule of 23:08). Merged into `round-5`, in order: R5-7 (#53), R5-6 (#54),
+R5-3 (#56), R5-4 (#57), R5-10 (#55), R5-2 (#58), R5-1 (#60), R5-8 (#61), R5-5 (#62, 01:22).
+Ten of twelve. In flight: R5-11 (PR 59, `pr-turns-say-less`, `scratchpad/wt-r5-11`, builder
+`build-r5-11`, reviewed, doing its final rebase onto 0907d51 with two integration items:
+section 10 always rendered on a resumed turn; section 2 as claims and evidence with evidence
+narrowed to the window). Then R5-12: `pnpm build` on `round-5`, restore the scratch document,
+`incident create` from roughdraftplus with run 003's objective, constraints and priority, no
+`--ic-model` (Sonnet 5 by R5-6), `NOSCOPE_DB=~/.noscope/fifth-run.sqlite`, step by hand with
+`~/.noscope/fourth-run/step.sh` adapted, then a builder for the write-up as the last PR into
+`round-5`. Every merge had one reviewer (R5-4 two); every review's fixes are in the PR
+bodies. Heartbeat cron `68507b23` hourly at :17.
 
 Ruled by the orchestrator overnight, for Mauria's morning read: the IC's session tools
 are residue under "never does" (R5-5 drops them); a strike team is declared by whoever
