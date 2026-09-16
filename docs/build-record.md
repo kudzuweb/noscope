@@ -3541,3 +3541,63 @@ Not exactly to spec, with reasons:
 - For the next type (PR 49's design review, still open): a saved form is read back as the
   base form's fields in `outfit`, since `base` is the one type a plan may create; a second
   plannable type needs `UnitProposal` built from the registry first.
+
+## R4-13: Fourth run (#52, merged 2026-09-15)
+
+R4-13 of the round 4 plan, the last row: the first incident's objective run live a fourth
+time with every code row of round 4 merged (PRs 40 to 51, the runtime tag `3b2cd7a` on every
+event), on `~/.noscope/fourth-run.sqlite`, from roughdraftplus at 6a996e8 with the scratch
+document restored before `create`, run 003's objective, constraints and priority, and
+`--ic-model claude-opus-5` chosen so that R4-7's fallback would be exercised. Stepped by hand
+by the session running the build, which answered the size-up's two questions as the
+operator. Written up under "## Fourth run" in `docs/first-incident.md` in the third run's
+form: the run, the answer and how it was reached, the measures beside runs 001 to 003 with a
+per-seat account of the cost difference, the IC's verdicts by kind with what each cost, the
+wall time per cycle beside the tasks' summed seconds, the round-4 changes step by step, and
+what the run found in the runtime as candidates for round 5. Docs only; no code changed.
+
+The acceptance holds. Run 004 reached `satisfied` in three operational periods (four `step`s,
+the first a rejected command turn) with the same code path named as runs 001 to 003, the
+bare `.focus()` at `PageCard.tsx:1884` in `deleteComment` scrolling a selection that already
+sat at the document end. The IC neither revised nor reassigned any unit: both reports were
+accepted, so R4-3 and R4-4 had no occasion and the write-up says so. The selection's origin,
+open since run 003, was not settled: the IC recorded it as a residual at confidence 0.5
+(`001-c209`), outside the objective. $15.96 at list rates against run 003's $4.86, the IC on
+Opus 5 and then Opus 4.8 ($5.83 against $1.28) and the planner putting every leader and
+session task on Opus 5 ($8.12 against $2.93) being the difference.
+
+What the run measured of round 4: R4-8 held on objectives and units and not on questions;
+R4-5's "Situation grounded" rejected the IC's first turn for inferred links under invented
+claim ids, there being no claims yet; R4-7 captured the category, fell back once and ran
+five calls on Opus 4.8 with no refusal; R4-6 ran three deterministic tasks under command
+with no leader turn; R4-9 started five tasks together and gained nothing (0.92x in both
+cycles that ran tasks) because one unit did the session work each cycle and the code unit's
+investigates ran inside its leader's session; R4-1, R4-2, R4-10 and R4-12 did what their
+rows say; R4-11 had no occasion with two units.
+
+Docs travelling with the change: `CLAUDE.md`'s "What to read next" row (four runs) and its
+note on the refusal (the fallback exercised); `README.md`'s line on `docs/first-incident.md`;
+`DESIGN.md`'s Reference row on the refusal (seen a second time, the category captured), the
+Model choices rows for the initial IC (the questions clause did not hold) and the fallback
+(Opus 4.8 did not refuse), and the Speed section's pointer at the fourth run with the
+measured factor.
+
+Not exactly to spec, with reasons:
+
+- The plan's row promises "what each revise or reassign cost and found"; none happened, so
+  the verdicts table carries the two accepted verdicts and the three draft verdicts
+  (approve, correct, approve) with their costs, and says plainly that no revise or reassign
+  occurred.
+- The measures table's new column matches the earlier columns' form (fragments beside
+  fragments), since the three earlier columns are copied verbatim from the third run's
+  table; the tables new to this section are written in full sentences.
+- The write-up counts the run's four `step`s as steps 1 to 4 and its operational periods
+  as 1 to 3, because the rejected first turn did not advance the period; `incident review`
+  prints the same as "cycle 1 rejected", "cycle 1", "cycle 2" and "cycle 3".
+- Which of the stream or the transcript carried the refusal category is not recorded on the
+  `command.failed` event, so the DESIGN.md row says the category was captured and not which
+  source R4-7's provider read it from.
+- The fourth run's grep on `node_modules/@tiptap/core` failed because roughdraftplus is a
+  pnpm workspace and the package is under `packages/app/node_modules/`; the write-up
+  verified the real path by `readlink` on 2026-09-15 rather than from the run's record,
+  and says so.

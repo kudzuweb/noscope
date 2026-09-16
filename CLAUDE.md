@@ -74,8 +74,10 @@ read-only allowlist, and nothing that writes runs without a grant, which is not 
 Opus 5's safeguards refused the IC's resumed turns on 2026-09-15 (`DESIGN.md` Reference
 table); since R4-7 a refused IC call falls back to Opus 4.8 for the rest of the incident, and
 a refusal there too blocks the incident on a question you answer with a model name
-(`noscope incident answer <id> "claude-sonnet-5"`). Sonnet 5 ran every turn in the third run,
-so `--ic-model claude-sonnet-5` at `create` still avoids the refusal outright.
+(`noscope incident answer <id> "claude-sonnet-5"`). The fourth run took that fallback: Opus 5
+refused the review turn once and Opus 4.8 ran the rest of the incident with no refusal, at
+Opus prices. Sonnet 5 ran every turn in the third run, so `--ic-model claude-sonnet-5` at
+`create` still avoids the refusal outright and costs less.
 
 ## What to read next
 
@@ -83,7 +85,7 @@ so `--ic-model claude-sonnet-5` at `create` still avoids the refusal outright.
 |---|---|
 | How it works, in order | `docs/architecture.html`, then `DESIGN.md` Steps 4 to 6 |
 | What has been built and what is next | `BUILD-PLAN.md` (rounds 3 and 4 at the end) and `docs/build-record.md` |
-| What a run looks like and what it cost | `docs/first-incident.md` (three runs of one objective) |
+| What a run looks like and what it cost | `docs/first-incident.md` (four runs of one objective) |
 | The runtime against plain instructions | `docs/instructions-only-run.md` |
 
 ## Working in this repository
