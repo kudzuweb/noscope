@@ -521,6 +521,7 @@ describe("planner", () => {
         - Reassignments taken: every open reassignment section 10 lists is taken by exactly one new unit in this plan, naming its id in takes; a takes names an open reassignment, and no reassignment is taken twice; a reassignment the IC dropped (its instructions begin drop:) is closed already and takes nothing.
       warned on, and applied anyway:
         - Session work under a unit: a task to a session-backed capability belongs under a unit with a leader, never under command, the root; one placed under command runs in a session of its own, with no leader to judge it and no leader turn after it, and its result reaches the IC as a task result; the IC's own session runs no task. A deterministic task under command is fine.
+        - Independent work runs together: units and tasks with no dependency between them belong in the same period and start at once, so a unit that can start now goes in this plan, never the next. A task waits only for a task whose result it takes, named in its evidenceFrom.tasks; a dependsOn on a task the dependent does not read is a wait for nothing, and a code reading never waits behind a reproduce it does not need (run 004's code unit sat idle for the 278 seconds of a reproduce while its reading waited on a grep that had failed at once, then read its files one after another). A wait the plan needs for another reason is kept, and the rationale says why.
       rejected last cycle:
         - Span of control: u-scroll would have 8 children
       warned last cycle:
@@ -606,6 +607,10 @@ describe("planner", () => {
       // R4-9: the rule text says what runs at once and what dependsOn does.
       expect(PLANNER_SYSTEM_PROMPT).toContain(
         "Independent tasks run at once, across units and within one (only tasks inside a leader's session run one at a time), and dependsOn is what serializes them",
+      );
+      // R5-7: the warning text says independent units and tasks share a period and a wait is earned by reading the result.
+      expect(sent.prompt).toContain(
+        "  - Independent work runs together: units and tasks with no dependency between them belong in the same period and start at once",
       );
       // R4-10: a new unit is a type plus a config, and base is the one type a plan may create.
       expect(PLANNER_SYSTEM_PROMPT).toContain(

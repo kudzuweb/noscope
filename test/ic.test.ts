@@ -256,6 +256,13 @@ describe("the IC above the planner", () => {
     expect(calls[2]?.prompt).toContain(
       "# The planner's draft for operational period 1",
     );
+    // R5-7: every review asks whether the draft serializes independent work.
+    expect(calls[2]?.prompt).toContain(
+      "Check whether the draft serializes independent work",
+    );
+    expect(calls[4]?.prompt).toContain(
+      "Check whether the draft serializes independent work",
+    );
     expect(schemaOf(calls[2] as Call).properties.verdict?.enum).toEqual([
       "approve",
       "correct",

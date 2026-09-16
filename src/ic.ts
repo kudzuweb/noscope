@@ -855,6 +855,16 @@ export function renderCommandBriefing(
 }
 
 /**
+ * The review's question on parallelism (R5-7): a draft that leaves a unit for the next
+ * period when it could start now, or chains a task behind one whose result it does not
+ * read, serializes work the runtime would run at once (run 004's code unit idled for a
+ * 278-second reproduce while its reading waited on a failed grep, and its period 2
+ * planned three readings in sequence). Asked on every review, its own line.
+ */
+const SERIALIZED_WORK_ASK =
+  "Check whether the draft serializes independent work: a unit or task that could start this period but is left for the next, or a dependsOn on a task whose result the dependent does not name in evidenceFrom.tasks, holds work behind work it does not need, and a code reading never waits behind a reproduce it does not need; independent units and tasks run at once, so correct or amend a draft that serializes them, naming what runs together.";
+
+/**
  * The user message of a review: the draft, and after a redraft the corrections it answers.
  * A session that has not read the file (a fresh one, after the command turn's session was
  * lost) gets the briefing first, so it never reviews blind.
@@ -887,6 +897,7 @@ function renderReviewPrompt(
     corrections === null
       ? `${evaluate}eview it against the period objectives and priorities: approve it, correct it once with text the planner redrafts against, or amend it and return the whole plan. Correct when the planner must re-plan, since it holds the file's refs and tasks; amend when the change is small and exact.`
       : `${evaluate}eview it against the period objectives and priorities: approve it, or amend it and return the whole plan.`,
+    SERIALIZED_WORK_ASK,
   ].join("\n");
 }
 

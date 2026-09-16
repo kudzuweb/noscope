@@ -265,7 +265,11 @@ describe("validator", () => {
       ],
       createTasks: [
         grepTask({ unit: "u-new", inputs: { root: "src", pattern: "delete" } }),
-        investigateTask({ unit: "u-new", dependsOn: ["t-done", "t-running"] }),
+        investigateTask({
+          unit: "u-new",
+          dependsOn: ["t-done", "t-running"],
+          evidenceFrom: { claims: [], tasks: ["t-running"] },
+        }),
       ],
     };
     expect(verdictOf(plan)).toEqual({ ok: true, plan, warnings: [] });
@@ -1412,6 +1416,46 @@ describe("validator", () => {
     expect(
       store.listEvents("i1").filter((e) => e.type === "plan.rejected"),
     ).toHaveLength(0);
+    store.close();
+  });
+
+  it("Independent work runs together warns on a dependsOn whose result the task does not read, and not on one it names in evidenceFrom.tasks or one already completed (R5-7)", () => {
+    const { store, incident } = seeded();
+    const plan: ActionPlan = {
+      ...empty,
+      createTasks: [
+        grepTask({
+          ref: "g",
+          unit: "u-scroll",
+          inputs: { root: "src", pattern: "focus" },
+        }),
+        investigateTask({
+          unit: "u-scroll",
+          inputs: { question: "what does the focus do?" },
+          dependsOn: ["g", "t-running", "t-done"],
+          evidenceFrom: { claims: [], tasks: ["g"] },
+        }),
+      ],
+      rationale: "read after the grep",
+    };
+    const verdict = validateAndRecord(store, incident, plan, [fakeProvider]);
+    expect(verdict).toEqual({
+      ok: true,
+      plan,
+      warnings: [
+        {
+          rule: "Independent work runs together",
+          reason:
+            'task "read the scroll handler" waits on t-running and does not read its result; the wait holds the task and its unit behind work it does not need, so drop the dependsOn, name t-running in evidenceFrom.tasks, or say in the rationale why the order is needed',
+        },
+      ],
+    });
+    expect(
+      store
+        .listEvents("i1")
+        .filter((e) => e.type === "plan.warned")
+        .map((e) => e.payload.rule),
+    ).toEqual(["Independent work runs together"]);
     store.close();
   });
 });

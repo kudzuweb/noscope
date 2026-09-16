@@ -3601,3 +3601,98 @@ Not exactly to spec, with reasons:
   pnpm workspace and the package is under `packages/app/node_modules/`; the write-up
   verified the real path by `readlink` on 2026-09-15 rather than from the run's record,
   and says so.
+
+## R5-7: Independent work runs together (#53, merged 2026-09-16)
+
+R5-7 of the round 5 plan. Built: the planner's rule text, the IC's review ask and
+`incident review`'s wall-time line each carry the rule that independent work runs
+together, and the validator checks the half of it that can be checked.
+
+The planner's `PLANNER_WARNINGS` (`src/planner.ts`) gains "Independent work runs
+together", rendered in section 9 under "warned on, and applied anyway": units and tasks
+with no dependency between them belong in the same period and start at once, so a unit
+that can start now goes in this plan and never the next; a task waits only for a task
+whose result it takes, named in its `evidenceFrom.tasks`; a `dependsOn` on a task the
+dependent does not read is a wait for nothing; a code reading never waits behind a
+reproduce it does not need; a wait the plan needs for another reason is kept and the
+rationale says why. The validator's `WARNING_CHECKS` (`src/validator.ts`) checks the
+checkable half: each `dependsOn` naming an open task or a ref of this plan whose id the
+task does not name in `evidenceFrom.tasks` draws one warning, since the dispatcher holds
+the dependent, and its unit's pass, until the dependency completes and the brief carries
+nothing from it (`briefContext` attaches only what `evidenceFrom` names); a completed
+dependency holds nothing and draws nothing, and one that will never complete is
+Dependencies resolve's to reject. The R4-9 sentence in the planner's preamble ("Independent
+tasks run at once, across units and within one (only tasks inside a leader's session run
+one at a time)...") is untouched; R5-4 owns the inside-the-leader clause.
+
+The IC's review prompt (`renderReviewPrompt` in `src/ic.ts`) ends every review, of a
+draft or a redraft, with `SERIALIZED_WORK_ASK` on a line of its own: whether the draft
+serializes independent work, a unit or task left for the next period that could start now
+or a `dependsOn` on a task whose result the dependent does not name, and to correct or
+amend such a draft naming what runs together. The role text (`src/units/ic.ts`) is
+unchanged.
+
+`incident review`'s wall-time line (`wallTimeLine` in `src/review.ts`) now reads `wall
+time: cycle N s, dispatch N s; K task(s) summing N s, parallel Rx; critical path N s (t1 ->
+t2), Px possible`: `criticalPath` walks the `dependsOn` graph of the tasks that recorded
+usage in the cycle (a task's seconds summed over its usages, so a refused call's and its
+retry's count together) and returns the chain whose seconds sum highest, named in run
+order; `possible` is the summed seconds over the chain's, an upper bound on `parallel`,
+what the plan's dependencies allowed, which `parallel` never reaches since its span also
+holds the leader turns. A dependency that completed in an earlier
+cycle held nothing in this one and is off the graph; a task the log has no `dependsOn`
+for stands alone. Run 004's period 1 would read `critical path 278.0 s (<the reproduce's task
+id>), 1.00x possible` beside its `parallel 0.92x`, which is the evidence the row was written from:
+the reproduce was the only session task that ran while the code unit's investigate waited
+on a grep that had failed at once; period 2 would read 375 seconds of path under 612 of
+work, 1.63x possible against 0.92x measured. `secondsByTask` replaces
+`ranInCycle` and the summed `taskSeconds` in `renderReview`, and the "failed before
+running" check reads it. DESIGN.md Step 4 (the review's ask), Step 5 (the warning table,
+now two rows), Step 6 (the wall-time sentence), Step 7 (the review row) and the Speed
+section follow; `docs/architecture.html` follows on cycle steps 4 and 5 and the speed
+line. README and CLAUDE.md enumerate neither the warnings nor the line, so they are
+unchanged.
+
+Files touched, for the merge order: `src/planner.ts` (one line added to
+`PLANNER_WARNINGS`), `src/validator.ts` (one entry added to `WARNING_CHECKS` and its
+comment), `src/ic.ts` (a constant above `renderReviewPrompt` and one line in its array),
+`src/review.ts` (`wallTimeLine`'s signature and last lines, the new `criticalPath`, the
+`task.usage` loop's accumulator, the failed-before-running check), and the tests and docs
+named below. Nothing was rewritten.
+
+Tests: the planner snapshot shows the warning in section 9 and the stub-call test pins its
+first clause; the validator warns on a `dependsOn` naming an open task the dependent does
+not read, records `plan.warned`, and draws nothing for a ref named in `evidenceFrom.tasks`
+or a completed task (the passes-every-rule fixture now names the running task it waits on
+in `evidenceFrom.tasks`); the IC test pins the ask on the draft's review and the
+redraft's; the review test on the scripted run pins the line with its critical path (the
+one grep, 1.00x possible), and a review test on a synthesized log with two independent
+units prints the reproduce alone as the path (278 s of path under 379 s of work, 1.36x
+possible), the grep-then-investigate chain as the path when the reproduce is shortened
+(101 s, `a1 -> a2`, 1.59x), and leaves a dependency from the previous cycle off the chain.
+`pnpm check` exits 0.
+
+Not exactly to spec, with reasons:
+
+- The plan says "the planner's rule text says"; the text is a warning the validator
+  applies, not a sentence in the preamble, because section 9 is where the planner reads
+  rules by name, the acceptance says the snapshot shows the rule, and a rule listed under
+  "rules the validator applies" that the validator did not apply would be false. The
+  validator can check only the wait-for-nothing half (a `dependsOn` with no
+  `evidenceFrom.tasks` behind it); whether a unit was left for a later period is not
+  visible in one plan, so that half is text and the IC's ask.
+- It is a warning and never a rejection, since a plan may order two tasks for a reason the
+  runtime cannot see, two reproduces on one dev server for instance; the rationale carries
+  the reason and the IC's review weighs it.
+- The IC reviews before the validator runs in the current cycle order (R5-3 reverses it),
+  so the ask does not point the IC at the validator's warnings; it names the same shape in
+  its own words so it holds under either order.
+- Review of PR 53 found that run 004 did not exhibit the wait-for-nothing shape: every
+  `dependsOn` in its plans was also in `evidenceFrom.tasks` (001-t06 and t07 named t01,
+  t02 and t05; t10 and t12 named all of theirs), and the code unit's idle came from a real
+  evidence dependency on a grep that failed in 4 milliseconds, which R5-10's row settles.
+  The warning guards a shape the runtime cannot otherwise tell from a needed wait; the
+  comments, the warning text and DESIGN.md say so rather than crediting it with run 004.
+  The warning's reason also offers the rationale as the third way out, so a planner does
+  not attach unread evidence to silence it, and `possible` is written as an upper bound on
+  `parallel` rather than a value it could reach.

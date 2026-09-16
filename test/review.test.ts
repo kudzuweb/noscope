@@ -179,7 +179,7 @@ describe("incident review", () => {
     // The cycle's wall time beside the sum of its tasks' seconds (R4-9): the dispatch span
     // runs from the grep's start to the leader's report, so it is never zero here.
     expect(text).toMatch(
-      /^ {2}wall time: cycle \d+\.\d s, dispatch \d+\.\d s; 1 task\(s\) summing \d+\.\d s, parallel \d+\.\d\dx$/m,
+      /^ {2}wall time: cycle \d+\.\d s, dispatch \d+\.\d s; 1 task\(s\) summing \d+\.\d s, parallel \d+\.\d\dx; critical path \d+\.\d s \(001-t01\), 1\.00x possible$/m,
     );
     expect(text.match(/^ {2}wall time:/gm)).toHaveLength(1);
     expect(text).toMatch(/cycle 2 {2}\S+ {2}applied satisfied/);
@@ -420,6 +420,83 @@ describe("incident review", () => {
     // 0.75+2.15+0.30+2.15+1.00+2.00 = 8.35 low; 10.25+2.15+4.10+2.15+1.00+2.00 = 21.65 high.
     expect(lines.at(-1)).toMatch(
       /^cost: est \$8\.35-\$21\.65 \(estimated at list rates cached 2026-06-24; .*; planner model assumed claude-opus-5 where plan\.proposed did not record it\)$/,
+    );
+  });
+
+  it("names the cycle's critical path beside the summed seconds: the longest chain of dependent tasks that ran in the cycle, across two independent units, ignoring a dependency completed in an earlier cycle (R5-7)", () => {
+    const usage = (seconds: number) => ({
+      inputTokens: 1_000,
+      uncachedInputTokens: 1_000,
+      cacheWriteTokens: 0,
+      cacheReadTokens: 0,
+      outputTokens: 100,
+      seconds,
+      costUsd: 0.01,
+    });
+    // Unit A: a grep (1 s) then an investigate (100 s) that reads it; unit B: a reproduce
+    // (278 s) with no dependency; the investigate also waited on a task from cycle 1.
+    const events: Event[] = [
+      event(1, "plan.proposed", { usage: usage(1), model: "claude-opus-5" }),
+      event(2, "plan.applied", {
+        units: [],
+        closedUnits: [],
+        tasks: ["old"],
+        cancelledTasks: [],
+        claimsToVerify: [],
+        incidentStatus: "continue",
+      }),
+      event(3, "task.completed", { taskId: "old" }),
+      event(4, "task.usage", { taskId: "old", usage: usage(50) }),
+      event(5, "plan.proposed", { usage: usage(1), model: "claude-opus-5" }),
+      event(6, "plan.applied", {
+        units: ["uA", "uB"],
+        closedUnits: [],
+        tasks: ["a1", "a2", "b1"],
+        cancelledTasks: [],
+        claimsToVerify: [],
+        incidentStatus: "continue",
+      }),
+      event(7, "task.started", { taskId: "a1" }),
+      event(8, "task.started", { taskId: "b1" }),
+      event(9, "task.completed", { taskId: "a1" }),
+      event(10, "task.usage", { taskId: "a1", usage: usage(1) }),
+      event(11, "task.started", { taskId: "a2" }),
+      event(12, "task.completed", { taskId: "a2" }),
+      event(13, "task.usage", { taskId: "a2", usage: usage(100) }),
+      event(14, "task.completed", { taskId: "b1" }),
+      event(15, "task.usage", { taskId: "b1", usage: usage(278) }),
+    ];
+    const tasks: Task[] = [
+      { ...task("old", "grep", null), unitId: "uA" },
+      { ...task("a1", "grep", null), unitId: "uA" },
+      {
+        ...task("a2", "investigate", "claude-sonnet-5"),
+        unitId: "uA",
+        dependsOn: ["a1", "old"],
+        evidenceFrom: { claims: [], tasks: ["a1"] },
+      },
+      { ...task("b1", "reproduce", "claude-sonnet-5"), unitId: "uB" },
+    ];
+    const text = renderReview(incident, events, tasks, []).join("\n");
+    const walls = text.match(/^ {2}wall time:.*$/gm) ?? [];
+    expect(walls).toHaveLength(2);
+    expect(walls[0]).toMatch(
+      /; 1 task\(s\) summing 50\.0 s; critical path 50\.0 s \(old\), 1\.00x possible$/,
+    );
+    // The reproduce alone is longer than the grep-then-investigate chain, so it is the
+    // path; 379 s of work over 278 s of path is what parallel dispatch could reach.
+    expect(walls[1]).toMatch(
+      /^ {2}wall time: cycle \d+\.\d s, dispatch \d+\.\d s; 3 task\(s\) summing 379\.0 s, parallel \d+\.\d\dx; critical path 278\.0 s \(b1\), 1\.36x possible$/,
+    );
+    // With the reproduce shortened, the dependent chain is the path, printed in run order.
+    const shorter = events.map((e) =>
+      e.id === "e15"
+        ? { ...e, payload: { taskId: "b1", usage: usage(60) } }
+        : e,
+    );
+    const text2 = renderReview(incident, shorter, tasks, []).join("\n");
+    expect(text2).toMatch(
+      /; 3 task\(s\) summing 161\.0 s, parallel \d+\.\d\dx; critical path 101\.0 s \(a1 -> a2\), 1\.59x possible$/m,
     );
   });
 
