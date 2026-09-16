@@ -926,7 +926,7 @@ fix is a rewrite, not a rule bolted on; code is cheap and bad logic is expensive
 reached the same answer as run 004 for $4.86 and 29 minutes against $15.96 and 35, with a
 Sonnet 5 IC, Sonnet task sessions and 24 claims. Every row below keeps what round 4 added
 (verdicts, revise and reassign, the IC's situation, the fallback, unit types and configs,
-the runtime tag) and changes the logic that made run 004 slow and expensive. Nine PRs in
+the runtime tag) and changes the logic that made run 004 slow and expensive. Twelve PRs in
 dependency order, each mergeable on its own; the last reruns the first incident.
 
 What round 5 changes, in one paragraph. A model is called when a decision needs a model,
@@ -953,9 +953,12 @@ Mauria, and the IC decides which reach her.
 | R5-6 | Smallest model that fits | none | The planner's rule and the IC's review hold every session task and leader to the smallest model its kind of work needs, with a why for any upgrade; `create` puts the IC on Sonnet 5 unless `--ic-model` says otherwise, recording the briefing's recommendation without following it. |
 | R5-7 | Independent work runs together | none | The planner's rule text and the IC's review put units that do not depend on each other in the same period, so code reading never waits behind a reproduce it does not need. |
 | R5-8 | The IC gates the briefing's questions | R5-2 | The initial IC's questions do not block the incident; they reach the IC's first turn as proposals, and only a question the IC raises reaches Mauria. |
-| R5-9 | Fifth run | all | The first incident rerun with everything above, measured beside runs 001 to 004; the target is run 003's cost and time or better with run 004's evidence. |
+| R5-10 | A failed or cancelled task settles its dependents | none | When a task fails or is cancelled, every task that depends on it is cancelled in the same pass with the reason recorded, the planner reads it next cycle, and nothing waits on a task that will never complete. |
+| R5-11 | Turns say less | none | Schema descriptions ask for decisions, not prose; the IC's period text and the planner's rationale are bounded; a resumed IC turn carries the change since its last turn rather than the whole file again, so output length and context stop being the clock. |
+| R5-12 | Fifth run | all | The first incident rerun with everything above, measured beside runs 001 to 004; the target is run 003's cost and time or better with run 004's evidence. |
 
-R5-1 to R5-4, R5-6 and R5-7 can run in parallel; R5-5 after R5-4; R5-8 after R5-2.
+R5-1 to R5-4, R5-6, R5-7, R5-10 and R5-11 can run in parallel; R5-5 after R5-4; R5-8 after
+R5-2; R5-12 last.
 ### R5-1: Evidence is not a claim
 Scope: a deterministic run's output (a grep's matches, a read's text, a git history) is
 recorded on `task.completed` as it is today and stops being turned into claims: the
@@ -1104,7 +1107,39 @@ scope; run 003's did the same. DESIGN.md Step 4 and Step 7 follow.
 Acceptance: a run test on the stub where the briefing carries one question, the IC
 discards it, and the incident is never blocked; one where the IC accepts it and the
 incident blocks on it.
-### R5-9: Fifth run
+### R5-10: A failed or cancelled task settles its dependents
+Scope: when `task.failed` or `task.cancelled` is recorded, the dispatcher cancels every
+pending task that depends on it, transitively, in the same pass, each with
+`task.cancelled` carrying `because: <task id>` and the reason, and the change report and
+the planner's input list them under the failure that caused them; a unit whose ready work
+was all cancelled this way takes a report turn under R5-5's rule rather than sitting
+idle. Run 004's TipTap grep failed in 4 milliseconds on a path that did not exist
+(roughdraftplus is a pnpm workspace) and its two dependents sat pending for a whole period
+with no event saying why; PR 47's review found a task depending on a cancelled task stays
+pending forever. The deterministic capabilities' path inputs are checked against the
+working directory at validation, so a plan naming a path that does not exist is rejected
+with the reason rather than failing at run time. DESIGN.md Step 5 and Step 6 follow.
+
+Acceptance: a dispatcher test on the stub where a grep fails and its two dependents are
+cancelled in the same pass with the cause recorded; a validator test rejecting a grep whose
+root does not exist.
+### R5-11: Turns say less
+Scope: the schema descriptions on `CommandTurn`, `ActionPlan` and `LeaderTurn` ask for
+decisions in the fewest words that carry them and stop asking for justification in
+prose: `why` fields are bounded to a sentence, the period's objectives to one line each,
+the planner's `rationale` to how the plan works the open items and nothing else, the
+situation's `picture` to a paragraph; the validator warns on a turn past its bound and
+the role texts say a turn is read by the runtime and the next seat, not by a person. The
+IC's briefing on a resumed turn carries the change report and the file's changed sections
+only, since the session already holds the rest, and the whole file again only after a
+handoff or a fallback. Run 004's IC and planner wrote 78k output tokens at about 13
+seconds per thousand, 17 of the run's 35 minutes, and the IC's last turn read a 170k
+context. DESIGN.md Step 4 and the Speed section follow.
+
+Acceptance: the planner and IC schemas render the bounds in their descriptions; a
+validator test warns on an over-long why; a test that a resumed IC briefing omits the
+unchanged sections and a post-handoff one carries them.
+### R5-12: Fifth run
 Scope: the first incident's objective run a fifth time from the same roughdraftplus
 working directory at commit 6a996e8, with the scratch document restored, the same
 constraints and priority as runs 003 and 004, and the IC on Sonnet 5 by R5-6's default;
@@ -1115,10 +1150,11 @@ the planner chose with their whys.
 
 Acceptance: run 005 reaches `satisfied` with the same code path named; cost at or below
 run 003's $4.86 and wall time below 29 minutes, with the reproduce's and the code trace's
-claims as good as run 004's; the write-up says which of the nine rows earned its keep and
+claims as good as run 004's; the write-up says which of the twelve rows earned its keep and
 which did not.
 ### Round 5 open questions
 | Question | Blocks |
 |---|---|
 | Whether a session task may still ask the leader for a strike team (R3-5), given the leader no longer runs tasks; the least change is that the task's own session declares the strike team from its brief and the leader's `requestStrikeTeam` goes. | R5-4's scope; decide at its build. |
 | Whether the size-up should run at all on an objective whose verb makes it a diagnosis, or whether the IC's first turn could start from the objective alone; run 004's size-up cost $0.20 and 95 seconds and its objectives were rewritten by the IC anyway. | Nothing in this round; a candidate for round 6 after run 005 shows what the briefing is worth to a Sonnet IC. |
+| Whether a run should know the runs before it: the selection's origin stayed open across runs 003 and 004 because the code unit re-read what run 002 had already identified, and nothing carries a claim from one incident to the next. A new capability (memory across incidents), not a fix, so round 6. | Nothing in this round. |
