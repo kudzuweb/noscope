@@ -4938,3 +4938,82 @@ Not exactly to spec, with reasons:
   assignment and a list on the turn: the leader names a task the same way whether it
   assigned it this turn or saw it earlier, and the resolved ids land on the record that
   creates the task.
+
+## R5-11: The IC's briefing carries the change (#PR, merged 2026-09-16)
+
+R5-11 of the round 5 plan, rescoped by Mauria after a check on 2026-09-15 23:05: the
+earlier block, "Turns say less", bounded the turns' prose fields, but run 004's largest
+command turn is 8.9k characters (about 2.2k tokens) of decisions against 16.9k output
+tokens billed, and the IC made no tool calls, so the rest is the model's reasoning before
+it answers and bounding the fields would save nothing; those edits were discarded before
+this PR. What stands is the IC's context: a resumed session keeps every past briefing,
+every briefing through round 4 carried the whole incident file, and run 004's last turn
+read 170k, one turn short of the handoff, in an incident of three periods.
+
+Built (`src/ic.ts`, `src/planner.ts`): `renderPlannerInput` is split into
+`incidentFileSections` (the ten sections as `FileSection`, number, title and lines, with
+a `FileView` that narrows section 2 to the claims created after a sequence and drops
+section 9's fixed rule texts) and `renderFile`, which joins them under a heading;
+`renderPlannerInput` joins all ten under "# Incident file" and the planner snapshot is
+unchanged. `renderCommandBriefing` takes an options object, `{ handoff, env, resumed }`,
+where `resumed` is the session the call resumes; `commandTurn` passes the unit's session
+as the prompt function sees it, so a fallback's fresh session, a replaced session and a
+handoff's successor pass null and read the file whole, as does the first turn. On a
+resumed session `lastCallOn` finds the session's last `command.turned` (rejected or not),
+`plan.reviewed` or `command.failed`, each of which carried the file or followed a call on
+the session that did, and `renderChangedFile` renders the sections that the events after
+it changed, told by sequence number (`sectionsChangedBy`: the command picture on a
+question, capability request, grant, budget stop or incident status change; the claims
+on a claim landing, and then only the claims created since, marked so at the top of the
+section; the unit tree on a unit created, closed, waiting, resumed, reporting, judged,
+reassigned or taking a reassignment, a leader's fallback or a transfer of command, never
+a session starting or released, since the tree names leaders by model; sections 4 to 7
+on the task and report events each lists; section 9 on a plan rejected or warned by the
+planner, without the rule texts; the situation on an accepted command turn or a
+reassignment recorded, taken or dropped), under "# Incident file: the sections that
+changed since your review of period 1's draft" and a line naming the sections left out
+as unchanged, or, when nothing changed, one line saying so and no section. A review on a
+resumed session carries the draft alone, as before; a review on a fresh session carries
+the whole file, as before. The stub gains `NOSCOPE_STUB_INPUT_FROM_PROMPT`, under which
+an IC call's input tokens are its prompt's length over four, so a run test can compare
+what two briefings cost to read. DESIGN.md's Cycle row, Step 4 (the briefing on a
+resumed call, section by section), the Speed section (the IC's context as the clock,
+and the check that the turns are not padded) and the Reference row on the IC's context
+follow; the architecture page's IC node and cycle step 1 follow.
+
+Tests: `test/handoff.test.ts` runs three cycles on the stub and pins the first command
+turn's whole file, the resumed one's heading, its unchanged list (1, 5, 8, 9, 10),
+section 2's narrowing line and claim, sections 3, 4, 6 and 7 present, sections 1, 5, 8,
+9, 10 and the rule texts absent, and the handoff successor's whole file with the transfer
+and sections 1, 9 and 10; `test/refusal.test.ts` pins the fallback's fresh review reading
+the whole file and the command turn resumed on it reading the changed sections;
+`test/ic.test.ts` pins, in the rejected-turn test, that the retry's briefing says nothing
+in the file changed and carries no section, and a new run where the second turn reads
+the changed sections, the third (after a verdict closed the unit and an empty plan) the
+one-line "nothing changed", and the recorded input tokens fall from the first turn to
+the second to the third.
+
+Not exactly to spec, with reasons:
+
+- The window a resumed briefing is dated from is the session's last call of any kind, a
+  rejected command turn and a failed call included, not the IC's last accepted turn:
+  the session read the file on that call and holds it, and dating from the last accepted
+  turn would send a retry after a rejection the whole previous period's changes again.
+  A refused fresh session, or a failed call that got no session id, is not put on the
+  unit, so the next call is fresh and reads the file whole.
+- Section 8 is never listed as changed: capabilities and models are fixed for a run, and
+  a config saved by `config save` is a system event outside the incident's log (verified
+  in `src/store.ts`), so a resumed IC does not see a config saved mid-incident until its
+  next fresh session; the planner reads the whole file every cycle and sees it at once.
+- The evidence lines the block names among the changed sections are R5-1's; on this
+  branch a deterministic task's output is still claims, which section 2 carries, so
+  "claims and evidence" is section 2 here, and R5-1's merge adds its evidence events to
+  `sectionsChangedBy` if it renders them in a section of their own.
+- The input-token acceptance is met on the stub by a knob rather than by the stub's
+  fixed usage figures, which every other usage pin relies on: `NOSCOPE_STUB_INPUT_FROM_PROMPT`
+  is set by the one test that compares briefings.
+- Files rewritten, for the merge order: `src/planner.ts` (`renderPlannerInput` split into
+  `incidentFileSections` and `renderFile`, the section bodies unchanged), `src/ic.ts`
+  (`renderBriefingBody`, `renderCommandBriefing` and `commandTurn`'s prompt; new
+  `lastCallOn`, `describeCall`, `sectionsChangedBy`, `renderChangedFile`,
+  `BriefingOptions`), `test/stub-claude` (one knob).
