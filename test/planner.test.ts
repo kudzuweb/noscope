@@ -613,7 +613,7 @@ describe("planner", () => {
       );
       // R4-9: the rule text says what runs at once and what dependsOn does.
       expect(PLANNER_SYSTEM_PROMPT).toContain(
-        "Independent tasks run at once, across units and within one (only tasks inside a leader's session run one at a time), and dependsOn is what serializes them",
+        "Independent tasks run at once, across units and within one, each session task in a session of its own, and dependsOn is what serializes them",
       );
       // R5-7: the warning text says independent units and tasks share a period and a wait is earned by reading the result.
       expect(sent.prompt).toContain(

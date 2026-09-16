@@ -2334,7 +2334,9 @@ describe("the IC above the planner", () => {
         "No ready tasks remain in your unit. Assign tasks for what the instructions say is missing and continue, or file your report against the unit's objective.",
       ].join("\n"),
     );
-    expect(turns[2]?.prompt).toContain("Task 001-t02 (grep) completed.");
+    expect(turns[2]?.prompt).toContain(
+      "Task 001-t02 (grep) completed; its result, 0 match(es), is recorded under its id; claims (1 observed, 0 inferred): 001-c002",
+    );
     const store = h.store();
     const events = store.listEvents("001");
     const reviewed = events.find((e) => e.type === "report.reviewed");
@@ -2581,7 +2583,7 @@ describe("the IC above the planner", () => {
     expect(brief).toContain(
       [
         "You lead unit 001-u03. Your unit's objective: read the delete handler",
-        "Your equipment: none; Bash allowlist: none",
+        "Equipment your unit's tasks may use: none; Bash allowlist: none",
         `Your unit takes reassignment 001-r01: the slice of unit 001-u02 (its objective: locate the delete handler), which the IC closed after reviewing its report ${report.id}. The IC's instructions, from what that unit found and did not find:`,
         `  ${instructions}`,
         "Why: a reader would do better than another grep",

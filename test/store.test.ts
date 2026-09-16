@@ -661,7 +661,7 @@ describe("store", () => {
     s2.close();
   });
 
-  it("migrates a version 4 file, giving every task an empty strike team, and replays a leader's declaration", async () => {
+  it("migrates a version 4 file, giving every task an empty strike team, and a task recorded before tasks declared teams replays with none", async () => {
     const { mkdtempSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
     const path = `${mkdtempSync(`${tmpdir()}/noscope-`)}/v4.sqlite`;
@@ -673,28 +673,6 @@ describe("store", () => {
     const s2 = new Store(path);
     expect(s2.db.pragma("user_version", { simple: true })).toBe(9);
     expect(s2.listTasks("i1").map((t) => t.strikeTeam)).toEqual([[]]);
-    const team = {
-      kind: "pinger",
-      model: "claude-haiku-4-5",
-      tools: ["Read"],
-      prompt: "Reply PONG.",
-      count: 2,
-      why: "two readers",
-    };
-    s2.setTaskStrikeTeam("i1", "t1", [team], "dispatcher", {
-      taskId: "t1",
-      unitId: "u1",
-      declaredBy: "leader",
-      strikeTeam: [team],
-    });
-    expect(s2.listTasks("i1")[0]?.strikeTeam).toEqual([team]);
-    const defined = s2.listEvents("i1").at(-1);
-    expect(defined?.type).toBe("strike_team.defined");
-    expect(defined?.payload).toMatchObject({
-      declaredBy: "leader",
-      mutation: { kind: "task.strikeTeam", taskId: "t1" },
-    });
-    // A task recorded before tasks declared teams replays with none; the declaration replays.
     const events = s2.listEvents("i1").map((e) => {
       const m = e.payload.mutation as
         | { kind: string; task?: Record<string, unknown> }
@@ -707,7 +685,7 @@ describe("store", () => {
     const b = new Store(":memory:");
     b.replay([...s2.listEvents(null), ...events]);
     expect(b.snapshot()).toEqual(s2.snapshot());
-    expect(b.listTasks("i1")[0]?.strikeTeam).toEqual([team]);
+    expect(b.listTasks("i1")[0]?.strikeTeam).toEqual([]);
     s2.close();
     b.close();
   });

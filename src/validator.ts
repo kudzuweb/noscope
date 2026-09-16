@@ -133,7 +133,8 @@ const STRIKE_TEAM_RULES = [
  * provider's list (Model known), the tools against the read-only built-ins (Effect policy:
  * no Edit, Write or unallowlisted Bash until grants exist), and the count against the
  * task's token bound (Budget respected: each member spends at least
- * `STRIKE_MEMBER_MIN_TOKENS`). Shared by a plan's tasks and a leader's request.
+ * `STRIKE_MEMBER_MIN_TOKENS`). A leader's assignments are held to the same rules through
+ * `validateLeaderTasks`, since a team is declared on a task by whoever defines it (R5-4).
  */
 function strikeTeamReasons(
   rule: (typeof STRIKE_TEAM_RULES)[number],
@@ -168,21 +169,6 @@ function strikeTeamReasons(
         ]
       : [];
   });
-}
-
-/** Every rejection a strike team draws, for a request made outside a plan (a leader's turn). */
-export function strikeTeamRejections(
-  teams: readonly StrikeTeam[],
-  task: Pick<Task, "provider" | "budget">,
-  providers: readonly Provider[],
-  label: string,
-): Rejection[] {
-  return STRIKE_TEAM_RULES.flatMap((rule) =>
-    strikeTeamReasons(rule, teams, task, providers, label).map((reason) => ({
-      rule,
-      reason,
-    })),
-  );
 }
 
 /** A plan's new tasks' strike teams under one rule. */

@@ -1,7 +1,6 @@
 import { recordActivity } from "./activity.js";
 import {
   type BriefContext,
-  buildSessionRequest,
   type Capability,
   getCapability,
   runDeterministic,
@@ -23,7 +22,6 @@ import {
 } from "./models.js";
 import {
   getProvider,
-  listProviders,
   type Provider,
   type SessionActivity,
   SessionError,
@@ -41,10 +39,7 @@ import {
   type TaskEnding,
   type Turned,
 } from "./units/index.js";
-import {
-  strikeTeamRejections,
-  validateLeaderTasksAndRecord,
-} from "./validator.js";
+import { validateLeaderTasksAndRecord } from "./validator.js";
 import { recordClaims, recordSessionResult } from "./verifier.js";
 
 /** What one task's run came to, for the step's printout. */
@@ -183,19 +178,15 @@ function failInterrupted(store: Store, incident: Incident, actor: string) {
 
 /**
  * A finished run; `sessionId` and `activity` are present for a session, so its transcript
- * can be found from `task.completed` and its tool calls are filed under the task. `inside`
- * says the session was the unit's leader's, so the id is recorded on the unit.
+ * can be found from `task.completed` and its tool calls are filed under the task.
  */
 type Outcome = {
   result: unknown;
   usage: Usage;
   sessionId?: string;
   activity?: SessionActivity;
-  inside: boolean;
   /** The task's model, and the one it was retried on after a refusal (R4-7), when the run fell back. */
   fallback?: { from: string; to: string };
-  /** The leader's session the refused first call ran in, released so the leader's next turn starts fresh (R4-7). */
-  released?: string;
   record: () => Claim[];
 };
 
@@ -209,8 +200,6 @@ class TaskRefused extends SessionError {
   constructor(
     readonly refusals: readonly RefusedCall[],
     readonly fallbackFrom: string | null,
-    /** The leader's session the first call ran in, released for its refusal (R4-7). */
-    readonly released: string | null,
     last: SessionError,
   ) {
     super(
@@ -252,17 +241,13 @@ function briefContext(
 }
 
 /**
- * Run one task: a deterministic capability in process; a session-backed one inside its
- * unit's leader session when the task's model and equipment match the leader's (the
- * leader's request with the task's brief and the capability's schema, resumed once the
- * session exists), otherwise in a session of its own. A session call the API refused is
- * retried once, in the task's own session on the fallback model (R4-7): the refused call
- * is filed on the task (`task.usage` with the refusal, the model and the fallback, so the
- * budget counts what it spent, plus its activity), and the retry's outcome carries the
- * models; a first call refused inside the leader's resumed session releases that session
- * (`leader.released`, the outcome's `released`), since it is refused on every later call.
- * Refused on the fallback too, or refused when the task's own model is the fallback,
- * `TaskRefused` carries both.
+ * Run one task: a deterministic capability in process; a session-backed one in a session
+ * of its own, whatever its unit's leader holds (R5-4: the leader directs and never does).
+ * A session call the API refused is retried once, in a fresh session on the fallback model
+ * (R4-7): the refused call is filed on the task (`task.usage` with the refusal, the model
+ * and the fallback, so the budget counts what it spent, plus its activity), and the
+ * retry's outcome carries the models. Refused on the fallback too, or refused when the
+ * task's own model is the fallback, `TaskRefused` carries both.
  */
 async function runTask(
   ctx: PassContext,
@@ -290,7 +275,6 @@ async function runTask(
         seconds: (Date.now() - started) / 1000,
         costUsd: 0,
       },
-      inside: false,
       record: () =>
         recordClaims(store, task, capability, run.claims, {
           inputs: run.inputs,
@@ -301,14 +285,8 @@ async function runTask(
     throw new Error(`task ${task.id} names no provider`);
   const provider = getProvider(task.provider, options.env);
   const context = briefContext(store, incident, task, units);
-  const protocol = protocolOf(unit);
-  const inside = protocol.runsInside(capability, task, unit);
-  const request = inside
-    ? protocol.insideRequest(ctx, unit, task, capability, context)
-    : buildSessionRequest(capability, task, unit, options.cwd, context);
   let session: Awaited<ReturnType<typeof runSession>>;
   let fallback: Outcome["fallback"];
-  let releasedLeader: string | undefined;
   try {
     session = await runSession(
       capability,
@@ -317,7 +295,6 @@ async function runTask(
       provider,
       options.cwd,
       context,
-      request,
     );
   } catch (error) {
     if (
@@ -334,30 +311,8 @@ async function runTask(
       refused,
     };
     const to = fallbackModel(options.env, provider);
-    // A refusal inside the leader's resumed session flags that session (a refused session
-    // stays refused on every later call), so it is released here with the category, as a
-    // refused leader turn releases it, and the leader's next turn starts fresh rather than
-    // paying a refusal the runtime already knows is coming.
-    const released =
-      inside && unit.sessionId !== null && error.sessionId === unit.sessionId
-        ? unit.sessionId
-        : null;
-    const releaseLeader = () => {
-      if (released !== null)
-        store.setUnitSession(incident.id, unit.id, null, actor, {
-          unitId: unit.id,
-          released,
-          ...unit.leader,
-          reason: `refused: ${refused.category}`,
-          refused,
-        });
-    };
-    if (model === to) {
-      releaseLeader();
-      throw new TaskRefused([first], null, released, error);
-    }
+    if (model === to) throw new TaskRefused([first], null, error);
     store.batch(() => {
-      releaseLeader();
       if (error.sessionId !== null)
         recordActivity(store, incident.id, actor, error.activity, {
           sessionId: error.sessionId,
@@ -383,7 +338,6 @@ async function runTask(
         provider,
         options.cwd,
         context,
-        buildSessionRequest(capability, retry, unit, options.cwd, context),
       );
     } catch (again) {
       if (again instanceof SessionError && again.refused !== null)
@@ -393,13 +347,11 @@ async function runTask(
             { model: to, sessionId: again.sessionId, refused: again.refused },
           ],
           model,
-          released,
           again,
         );
       throw again;
     }
     fallback = { from: model, to };
-    if (released !== null) releasedLeader = released;
   }
   const result = SessionResult.parse(session.result);
   const sessionId = session.sessionId;
@@ -408,10 +360,7 @@ async function runTask(
     usage: session.usage,
     sessionId,
     activity: session.activity,
-    // A retry runs in its own session, whatever the first call ran in.
-    inside: fallback === undefined && inside,
     ...(fallback === undefined ? {} : { fallback }),
-    ...(releasedLeader === undefined ? {} : { released: releasedLeader }),
     record: () =>
       recordSessionResult(store, task, capability, result, sessionId),
   };
@@ -466,8 +415,8 @@ function relatedUnits(
  * it has to take, `hasWork`), no unit it is related to (`relatedUnits`) is mid-pass, and fewer than
  * `NOSCOPE_PARALLEL` passes are running; related units keep tree order. In a unit, every
  * runnable task not yet attempted starts at once, each in process or in a session of its
- * own, except that tasks inside the leader's session run one at a time, each followed by
- * the leader's turn on it: a pending task whose dependencies are complete becomes ready
+ * own, never on the leader's session (R5-4): a pending task whose dependencies are
+ * complete becomes ready
  * (`task.ready`), then `task.started`, then the claims, the result with `task.completed`
  * and `task.usage` in one transaction, or `task.failed` with the reason and the usage the
  * run still spent. Each ending reaches the leader on a turn of its own, in the order the
@@ -491,8 +440,8 @@ function relatedUnits(
  * three points, `open` before any task, `ending` on each landing, `close` once every run
  * has landed; what is written above about turns is the base protocol's
  * (`src/units/base.ts`), and under the ic protocol (`src/units/ic.ts`, R4-6) command
- * takes no turn at all: its runnable tasks all start at once with no turn between, none
- * inside the IC's session, and its pass ends without a report once its ready tasks have
+ * takes no turn at all: its runnable tasks all start at once with no turn between, and
+ * its pass ends without a report once its ready tasks have
  * landed; the IC judges their results at its command turn, where the change report lists
  * them. The pass
  * ends when every unit that ran has reported, when a report says the picture changed
@@ -565,13 +514,6 @@ export async function dispatch(
       applyLeaderTasks(store, incident, unit, tasks).length,
     raiseRequests: (unit, requests) =>
       raiseResourceRequests(store, incident, unit, requests, actor),
-    strikeTeamRejections: (team, task, label) =>
-      strikeTeamRejections(
-        team,
-        task,
-        listProviders().map((name) => getProvider(name, options.env)),
-        label,
-      ),
   };
   const ctx: PassContext = {
     store,
@@ -592,14 +534,6 @@ export async function dispatch(
     let unit =
       store.listUnits(incident.id).find((u) => u.id === listed.id) ?? listed;
     const protocol = protocolOf(unit);
-    // The leader's session takes one call at a time: a task that runs inside it and every
-    // turn queue here, in the order they are asked for.
-    let leader: Promise<unknown> = Promise.resolve();
-    const onLeader = <T>(fn: () => Promise<T>): Promise<T> => {
-      const run = leader.then(fn);
-      leader = run.catch(() => undefined);
-      return run;
-    };
     // Tasks started and not yet landed, the endings landed and not yet heard (with the
     // refusals when the task's session was refused on both models, R4-7), and the waker
     // for the loop below when it has nothing to hear.
@@ -613,27 +547,23 @@ export async function dispatch(
     // A run that threw past `runOne` (a store that failed in its record) ends the pass with
     // that error once the other runs have landed.
     let crashed: unknown;
-    let insideTask: string | null = null;
     let ranInUnit = false;
     // What the protocol sees of the pass at a turn: the runnable tasks not yet attempted,
     // the endings of earlier passes (given once), the tasks still running in sessions of
-    // their own (an inside task queues on the leader's chain as a turn does, so at a turn
-    // it has landed or not started; the filter keeps it out either way), the tasks that
-    // landed and wait for turns of their own, and the pass's state.
+    // their own, the tasks that landed and wait for turns of their own, and the pass's
+    // state.
     const view: PassView = {
-      unit: () => unit,
       remaining: () => runnableIn(unit.id),
       hear: () => {
         const heard = unheard;
         unheard = [];
         return heard;
       },
-      running: () => [...inFlight.values()].filter((t) => t.id !== insideTask),
+      running: () => [...inFlight.values()],
       landed: () => landed.map((e) => e.task),
       ran: () => ranInUnit,
       done: () => done.has(unit.id),
       halted: () => halt !== null,
-      onLeader,
     };
     // What a protocol's turn came to lands in the pass's tally: the unit as it now stands,
     // the report filed, the unit done for the pass, the halt when the picture changed.
@@ -698,16 +628,7 @@ export async function dispatch(
           return "stopped";
         }
         reserved.set(next.id, reservationFor(next, capability));
-        const inside = protocol.runsInside(capability, next, unit);
-        const runIt = async () => {
-          const one = await runOne(ctx, next, capability, unit, ran);
-          if (inside) unit = one.unit;
-          return one.refusals === undefined
-            ? one.ending
-            : { ...one.ending, refusals: one.refusals };
-        };
-        if (inside) insideTask = next.id;
-        run = inside ? onLeader(runIt) : runIt();
+        run = runOne(ctx, next, capability, unit, ran);
       }
       const landing = run.then(
         (ending) => {
@@ -745,14 +666,6 @@ export async function dispatch(
         let deferred = false;
         if (halt === null && !done.has(unit.id))
           for (const next of runnableIn(unit.id)) {
-            const capability = getCapability(next.capability);
-            // One task at a time inside the leader: the next waits for the turn on this one.
-            if (
-              insideTask !== null &&
-              capability !== undefined &&
-              protocol.runsInside(capability, next, unit)
-            )
-              continue;
             const started = start(next);
             if (started === "started") continue;
             deferred = started === "deferred";
@@ -775,7 +688,6 @@ export async function dispatch(
         // a task refused on both models, under the base protocol; under the ic's it stays
         // recorded for the change report.
         take(await protocol.ending(ctx, unit, ending, view));
-        if (ending.task.id === insideTask) insideTask = null;
       }
       // Once every run has landed: the protocol's closing turn (the report owed from an
       // earlier pass under the base protocol; command is simply done for the pass).
@@ -820,9 +732,9 @@ export async function dispatch(
 /**
  * One task's run and its record: the outcome with its claims, `task.completed` and
  * `task.usage` in one transaction, or `task.failed` with the reason and the usage the run
- * still spent, the session's activity filed under the task either way. A task that ran
- * inside the leader's first call records the session on the unit (`leader.started`) in
- * the same transaction, and the unit returned carries it.
+ * still spent, the session's activity filed under the task either way. The landed ending
+ * carries the claims, and the refusals when the task's session was refused on both
+ * models (R4-7: the unit reports, not its leader).
  */
 async function runOne(
   ctx: PassContext,
@@ -830,20 +742,13 @@ async function runOne(
   capability: Capability,
   unit: Unit,
   ran: Ran[],
-): Promise<{
-  ending: TaskEnding;
-  unit: Unit;
-  /** The task's session was refused on both models (R4-7): the unit reports, not its leader. */
-  refusals?: readonly RefusedCall[];
-}> {
+): Promise<Landed> {
   // A session is bounded by its request's timeout, which kills the process and files its
   // calls under the session id; a dispatcher-side timer would fail the task while that
-  // process still ran and the leader's next call would find its session in use.
+  // process still ran.
   const { store, incident, actor } = ctx;
-  const options = { cwd: ctx.cwd };
   const bound =
     capability.kind === "deterministic" ? next.budget.seconds : undefined;
-  const inside = protocolOf(unit).runsInside(capability, next, unit);
   store.setTaskStatus(incident.id, next.id, "running", actor, "task.started");
   const running: Task = { ...next, status: "running" };
   const started = Date.now();
@@ -853,20 +758,7 @@ async function runOne(
       runTask(ctx, running, capability, unit),
     );
     let claims: Claim[] = [];
-    const started =
-      outcome.inside &&
-      unit.sessionId === null &&
-      outcome.sessionId !== undefined
-        ? outcome.sessionId
-        : null;
     store.batch(() => {
-      if (started !== null)
-        store.setUnitSession(incident.id, unit.id, started, actor, {
-          unitId: unit.id,
-          sessionId: started,
-          ...unit.leader,
-          cwd: options.cwd,
-        });
       if (outcome.sessionId !== undefined && outcome.activity !== undefined)
         recordActivity(store, incident.id, actor, outcome.activity, {
           sessionId: outcome.sessionId,
@@ -910,15 +802,7 @@ async function runOne(
       status: "completed",
       claims: claims.length,
     });
-    return {
-      ending: { task: next, status: "completed", inside: outcome.inside },
-      unit:
-        started !== null
-          ? { ...unit, sessionId: started }
-          : outcome.released !== undefined
-            ? { ...unit, sessionId: null }
-            : unit,
-    };
+    return { task: next, status: "completed", claims };
   } catch (error) {
     const reason = describeError(error);
     const usage: Usage =
@@ -934,25 +818,7 @@ async function runOne(
             // A deterministic run costs nothing; a session that failed before answering cost something unknown.
             ...(capability.kind === "deterministic" ? { costUsd: 0 } : {}),
           };
-    // The leader's first call failed but its session exists: record it so the turn resumes
-    // it rather than starting one that has read neither the orientation nor the brief. A
-    // refused session is not recorded: it would be refused again, and the turn starts fresh.
-    const orphaned =
-      inside &&
-      unit.sessionId === null &&
-      error instanceof SessionError &&
-      error.sessionId !== null &&
-      error.refused === null
-        ? error.sessionId
-        : null;
     store.batch(() => {
-      if (orphaned !== null)
-        store.setUnitSession(incident.id, unit.id, orphaned, actor, {
-          unitId: unit.id,
-          sessionId: orphaned,
-          ...unit.leader,
-          cwd: options.cwd,
-        });
       if (error instanceof SessionError && error.sessionId !== null)
         recordActivity(store, incident.id, actor, error.activity, {
           sessionId: error.sessionId,
@@ -1007,13 +873,9 @@ async function runOne(
       reason,
     });
     return {
-      ending: { task: next, status: "failed", reason },
-      unit:
-        orphaned !== null
-          ? { ...unit, sessionId: orphaned }
-          : error instanceof TaskRefused && error.released !== null
-            ? { ...unit, sessionId: null }
-            : unit,
+      task: next,
+      status: "failed",
+      reason,
       ...(error instanceof TaskRefused ? { refusals: error.refusals } : {}),
     };
   }

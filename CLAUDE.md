@@ -18,10 +18,11 @@ whether the incident is met. The planner is a stateless call that drafts each pe
 tactics from the incident file and the IC's situation, as a suggestion for the IC. A unit
 is a type plus a config: the type is the form (the fields a kind of unit fills) and the
 protocol (how it uses what is in the box), the config is the filled form; `base` is the led
-unit, whose leader session runs the unit's tasks in order and reports against the unit's
+unit, whose leader session directs the unit's tasks, runs none of them (every session task
+runs in a session of its own, independent ones at once) and reports against the unit's
 objective, and `ic` is command, the root, whose leader is the IC. A filled form the planner
-keeps producing is saved under a name and deployed by name. A leader can send a
-strike team of subagents at a task. Tasks run through capabilities (grep, read, investigate, reproduce in a
+keeps producing is saved under a name and deployed by name. Whoever defines a task can
+declare a strike team of subagents on it. Tasks run through capabilities (grep, read, investigate, reproduce in a
 browser, interpret) and produce claims with a basis (observed or inferred), a confidence and
 evidence. Deterministic code validates every plan, dispatches, records every call and claim
 as an event, and prints an After Action Review. The human above the IC is the Agency

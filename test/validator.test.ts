@@ -24,7 +24,6 @@ import {
   RULES,
   type RuleName,
   SPAN_OF_CONTROL,
-  strikeTeamRejections,
   validateAndRecord,
   validateCommand,
   validateLeaderTasks,
@@ -811,26 +810,6 @@ describe("validator", () => {
       }),
     ).toEqual([
       'Model known: task "find scrollTo calls" declares strike team pinger but runs no session to send it from',
-    ]);
-    // The same checks serve a leader's request outside a plan.
-    expect(
-      strikeTeamRejections(
-        [{ ...team, tools: ["Bash", "Edit"], count: 3 }],
-        { provider: "fake", budget: { tokens: 1_000 } },
-        [fakeProvider],
-        "task t-next",
-      ),
-    ).toEqual([
-      {
-        rule: "Effect policy",
-        reason:
-          "task t-next gives strike team pinger the tool Edit, which is not one of the read-only built-ins (Read, Grep, Glob, Bash)",
-      },
-      {
-        rule: "Budget respected",
-        reason:
-          "task t-next sends 3 member(s) of strike team pinger, at least 1800 tokens, over its token bound of 1000",
-      },
     ]);
   });
 

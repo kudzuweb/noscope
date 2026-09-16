@@ -15,7 +15,6 @@ import {
   Leader,
   Period,
   Question,
-  StrikeTeam,
   Task,
   TaskStatus,
   Timestamp,
@@ -279,11 +278,6 @@ export const Mutation = z.discriminatedUnion("kind", [
     status: TaskStatus,
     at: Timestamp,
     result: z.unknown().optional(),
-  }),
-  z.object({
-    kind: z.literal("task.strikeTeam"),
-    taskId: z.string(),
-    strikeTeam: z.array(StrikeTeam),
   }),
   z.object({
     kind: z.literal("claim.create"),
@@ -721,21 +715,6 @@ export class Store {
     this.write(incidentId, type, actor, options.extra ?? {}, mutation);
   }
 
-  /** A leader's strike-team request, accepted, becomes the declaration on the task in flight (`strike_team.defined`); the payload says who asked. */
-  setTaskStrikeTeam(
-    incidentId: string,
-    taskId: string,
-    strikeTeam: StrikeTeam[],
-    actor: string,
-    extra: Extra = {},
-  ): void {
-    this.write(incidentId, "strike_team.defined", actor, extra, {
-      kind: "task.strikeTeam",
-      taskId,
-      strikeTeam,
-    });
-  }
-
   /** A claim enters asserted or verified, never rejected; verified on entry means deterministic provenance (DESIGN.md Step 6). */
   createClaim(claim: Claim, actor: string): void {
     if (claim.status === "rejected")
@@ -1097,16 +1076,6 @@ export class Store {
         );
         return;
       }
-      case "task.strikeTeam":
-        one(
-          this.db
-            .prepare(
-              "UPDATE tasks SET strike_team_json = ? WHERE id = ? AND incident_id = ?",
-            )
-            .run(j(m.strikeTeam), m.taskId, incidentId),
-          `task ${m.taskId}`,
-        );
-        return;
       case "claim.create": {
         const c = m.claim;
         owned(c.incidentId, `claim ${c.id}`);

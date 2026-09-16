@@ -19,7 +19,6 @@ export {
   type BriefContext,
   buildSessionRequest,
   renderTaskBrief,
-  renderTaskResult,
   resolveEquipment,
   runSession,
   type SessionRun,

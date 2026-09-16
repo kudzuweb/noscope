@@ -60,8 +60,8 @@ function renderObservation(o: unknown): string {
   return JSON.stringify(o);
 }
 
-/** A session's findings in full; any other result as JSON. Also what a leader reads of a task that ran outside its session. */
-export function renderTaskResult(t: Task): string {
+/** A session's findings in full; any other result as JSON: what a brief attaches for a result named in `evidenceFrom`. */
+function renderTaskResult(t: Task): string {
   const findings = (t.result as { findings?: unknown } | null)?.findings;
   if (findings !== null && typeof findings === "object") {
     const f = findings as {
@@ -218,9 +218,8 @@ export type SessionRun = {
 };
 
 /**
- * Run one task's session: the request built from the capability, or a request the caller
- * prepared from it (a task run inside its unit's leader session, whose request is the
- * leader's with the task's brief and schema; DESIGN.md Step 6).
+ * Run one task's session, in a session of its own from the request built from the
+ * capability (DESIGN.md Step 6; R5-4: no task runs on a leader's session).
  */
 export async function runSession(
   capability: SessionCapability,
@@ -229,15 +228,10 @@ export async function runSession(
   provider: Provider,
   cwd: string,
   context: BriefContext = NO_CONTEXT,
-  request: SessionRequest = buildSessionRequest(
-    capability,
-    task,
-    unit,
-    cwd,
-    context,
-  ),
 ): Promise<SessionRun> {
-  const outcome = await provider.run(request);
+  const outcome = await provider.run(
+    buildSessionRequest(capability, task, unit, cwd, context),
+  );
   const parsed = capability.output.safeParse(outcome.output);
   if (!parsed.success)
     throw new SessionError(

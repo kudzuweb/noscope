@@ -1,16 +1,12 @@
 import { z } from "zod";
-import {
-  type BriefContext,
-  type Capability,
-  resolveEquipment,
-} from "../capabilities/index.js";
+import { resolveEquipment } from "../capabilities/index.js";
 import type { RefusedCall } from "../leader.js";
 import type {
+  Claim,
   Event,
   Incident,
   LeaderReport,
   ResourceRequest,
-  StrikeTeam,
   Task,
   TaskProposal,
   Unit,
@@ -30,9 +26,9 @@ import type { Store } from "../store.js";
 // the same place in the hierarchy and reports the same way. Types are registered here by
 // name, as capabilities are in `src/capabilities/registry.ts`, so more can be written.
 
-/** How a task ended, for the leader's next turn: completed inside the leader's session or elsewhere, or failed. */
+/** How a task ended, for the leader's next turn: completed, with the claims it produced, or failed with the reason. */
 export type TaskEnding =
-  | { task: Task; status: "completed"; inside: boolean }
+  | { task: Task; status: "completed"; claims: readonly Claim[] }
   | { task: Task; status: "failed"; reason: string };
 
 /** An ending as it lands in a pass: the task's ending, and the refusals when its session was refused on both models (R4-7), for the unit's report. */
@@ -84,28 +80,19 @@ export type PassContext = {
     applyAssignments: (unit: Unit, tasks: readonly TaskProposal[]) => number;
     /** Raise a report's resource requests: the unit waits. */
     raiseRequests: (unit: Unit, requests: readonly ResourceRequest[]) => void;
-    /** A requested strike team against the task it would run on: the reasons it is refused, none when it passes. */
-    strikeTeamRejections: (
-      team: readonly StrikeTeam[],
-      task: Task,
-      label: string,
-    ) => { rule: string; reason: string }[];
   };
 };
 
 /**
- * What a protocol sees of the dispatcher's pass around a turn: the unit as the pass now
- * holds it (`unit`: a task that ran inside the leader's session, or a refusal that released
- * it, changes the session the next call must resume, so a turn queued on the leader's
- * chain reads it when the chain reaches it, never when it was queued), the unit's runnable
- * tasks not yet attempted, the endings of earlier passes its leader has not heard (given once),
+ * What a protocol sees of the dispatcher's pass around a turn: the unit's runnable tasks
+ * not yet attempted, the endings of earlier passes its leader has not heard (given once),
  * the tasks still running in sessions of their own, the endings landed and not yet heard,
- * whether the unit ran anything this pass, whether it is done, whether the pass has
- * halted (nothing new starts), and the leader's chain, on which a call on the unit's
- * session queues behind the task running inside it.
+ * whether the unit ran anything this pass, whether it is done, and whether the pass has
+ * halted (nothing new starts). The unit itself is the hook's argument: no task runs on the
+ * leader's session (R5-4), so only a turn changes the unit, and the turns run one after
+ * another in the pass's loop.
  */
 export type PassView = {
-  unit: () => Unit;
   remaining: () => Task[];
   hear: () => readonly TaskEnding[];
   running: () => Task[];
@@ -113,7 +100,6 @@ export type PassView = {
   ran: () => boolean;
   done: () => boolean;
   halted: () => boolean;
-  onLeader: <T>(fn: () => Promise<T>) => Promise<T>;
 };
 
 /** What an assignment rule reads beyond the assignments and the unit: the incident's tasks and log, for the unit's share of the budget. */
@@ -162,9 +148,9 @@ export const OWN_UNIT_RULE = assignmentRule(
  * prompt's place), the role text its session reads when the config carries none, whether
  * the unit files reports the IC answers with verdicts (command does not: its tasks'
  * results are judged at the command turn, R4-6), the rules its leader's assignments are
- * held to beyond the plan's task rules, whether a session-backed task runs inside the
- * unit's own session, whether the unit has a turn to take this pass beyond its runnable
- * tasks (`hasWork`: a brief to read, answers, a report owed; the dispatcher starts a pass
+ * held to beyond the plan's task rules, whether the unit has a turn to take this pass
+ * beyond its runnable tasks (`hasWork`: a brief to read, answers, a report owed; the
+ * dispatcher starts a pass
  * on it or on a runnable task), the endings of earlier passes its leader has not heard
  * (`unheard`, which ride on the pass's first turn), and the turns the unit takes around
  * its tasks in a pass:
@@ -172,22 +158,15 @@ export const OWN_UNIT_RULE = assignmentRule(
  * on each task ending that lands (the leader's turn on it; the runtime's report after two
  * refusals), and `close` once every run has landed (the report owed from an earlier pass;
  * for command, nothing, the pass ending with its tasks). Each returns what the turn came
- * to, or null when the protocol takes no turn there.
+ * to, or null when the protocol takes no turn there. No task ever runs on a unit's
+ * session, whatever its type (R5-4): a session task runs in a session of its own, a
+ * deterministic one in process, and either's result reaches the protocol as an ending.
  */
 export type Protocol = {
   seat: Seat;
   role: string;
   reports: boolean;
   rules: readonly AssignmentRule[];
-  runsInside: (capability: Capability, task: Task, unit: Unit) => boolean;
-  /** The request a task that `runsInside` is run with on the unit's session. */
-  insideRequest: (
-    ctx: PassContext,
-    unit: Unit,
-    task: Task,
-    capability: Capability,
-    context: BriefContext,
-  ) => SessionRequest;
   hasWork: (ctx: PassContext, unit: Unit) => boolean;
   unheard: (ctx: PassContext, unit: Unit) => TaskEnding[];
   open: (
@@ -270,11 +249,20 @@ export function describeError(error: unknown): string {
 /** A turn is one structured call with no task of its own; it gets the planner's bound. */
 const LEADER_TURN_SECONDS = 300;
 
+/** What a leader session holds: nothing by default, since a turn is decided from what is in front of it (R5-4); the ic type passes its form's equipment. */
+export type LeaderTools = {
+  equipment: readonly string[];
+  bashAllowlist: readonly string[];
+};
+
+const NO_TOOLS: LeaderTools = { equipment: [], bashAllowlist: [] };
+
 /**
- * A call on the unit's leader session: the leader's model, equipment and allowlist, the
- * seat's system prompt under the unit's role text (kept from the first call when the
- * session is resumed), the unit's session to resume once it has one, and, when the call
- * runs a task that declares one, the task's strike team, defined for this call alone.
+ * A call on the unit's leader session: the leader's model, the seat's system prompt under
+ * the unit's role text (kept from the first call when the session is resumed), the unit's
+ * session to resume once it has one, and the tools the session holds: none unless the
+ * caller names them, since a leader directs and never does (R5-4; `--tools ""` disables
+ * every built-in on Claude Code 2.1.273).
  */
 export function leaderRequest(
   unit: Unit,
@@ -282,19 +270,18 @@ export function leaderRequest(
   outputSchema: Record<string, unknown>,
   cwd: string,
   timeoutSeconds = LEADER_TURN_SECONDS,
-  strikeTeam: readonly StrikeTeam[] = [],
+  tools: LeaderTools = NO_TOOLS,
 ): SessionRequest {
   return {
     model: unit.leader.model,
     systemPrompt: sessionSystemPrompt(roleOf(unit), protocolOf(unit).seat),
     prompt,
-    ...resolveEquipment(unit.equipment),
-    bashAllowlist: unit.bashAllowlist,
+    ...resolveEquipment(tools.equipment),
+    bashAllowlist: tools.bashAllowlist,
     cwd,
     addDirs: [],
     outputSchema,
     timeoutSeconds,
     ...(unit.sessionId === null ? {} : { resume: unit.sessionId }),
-    ...(strikeTeam.length === 0 ? {} : { strikeTeam }),
   };
 }

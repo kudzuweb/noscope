@@ -6,9 +6,8 @@ import {
 } from "./models.js";
 import type { Refusal } from "./providers/index.js";
 
-// A unit's leader is a persistent session: created when the unit first has a ready task,
-// resumed for every task that runs inside it and for every turn, demobilized when the unit
-// closes. What a leader of any type shares is here: the log's windows and records (reports,
+// A unit's leader is a persistent session: created at the unit's first turn, resumed for
+// every turn after, demobilized when the unit closes; no task runs on it (R5-4). What a leader of any type shares is here: the log's windows and records (reports,
 // verdicts, reassignments, requests, the IC's situation), the refusal fallback and the
 // actors. The led unit's own protocol, its role text, rules, turns and prompts, is
 // `src/units/base.ts`; the IC's is `src/units/ic.ts` and `src/ic.ts` (DESIGN.md Step 6).

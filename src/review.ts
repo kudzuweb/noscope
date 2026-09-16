@@ -1122,7 +1122,7 @@ export function renderReview(
     // A leader's turns: every one costs its own call on the unit's leader model; a turn
     // that filed a report is listed with the report's outcome. The turns' own tool calls
     // are filed under the unit with no task, so they are listed once per unit after its
-    // turns; a task run inside the leader's session lists its calls under the task.
+    // turns.
     const turnedUnits = new Map<string, string | null>();
     for (const e of cycle.events) {
       // A leader's turn the API refused: priced like a turn, named by its category.

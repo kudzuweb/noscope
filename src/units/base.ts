@@ -1,10 +1,7 @@
 import { recordActivity } from "../activity.js";
 import {
-  type BriefContext,
   type Capability,
   getCapability,
-  renderTaskBrief,
-  renderTaskResult,
   resolveEquipment,
 } from "../capabilities/index.js";
 import { READ_ONLY_SESSION_COMMANDS } from "../equipment/index.js";
@@ -34,13 +31,7 @@ import {
   type Unit,
   type Usage,
 } from "../models.js";
-import {
-  getProvider,
-  type Refusal,
-  SessionError,
-  type SessionRequest,
-} from "../providers/index.js";
-import { describeStrikeTeam } from "../strike-team.js";
+import { getProvider, type Refusal, SessionError } from "../providers/index.js";
 import { renderHierarchy, renderPeriod } from "../tree.js";
 import {
   assignmentRule,
@@ -57,15 +48,21 @@ import {
 
 // The base type (R4-10): the led unit, the generic unit run since round 3. Its form is the
 // planner's unit proposal less the ref and the parent (`BaseUnitForm` in src/models.ts:
-// objective, leader, equipment, Bash allowlist, and the role text, which defaults to
-// `LEADER_ROLE`); its protocol is the leader's: a persistent session created when the unit
-// first has a ready task, resumed for every task that runs inside it and for every turn,
-// and demobilized when the unit closes, that runs the unit's tasks in order and reports
-// against the objective (DESIGN.md Step 6). Everything the leader's turns need is here: the
-// role text and rules, what runs inside the session, the unit's share of the budget, the
-// turns a unit is owed (a report, a resume, a revision brief), the orientation and the
-// turn prompt, the turn itself with its refusal fallback, and the pass hooks the
-// dispatcher calls (`open`, `ending`, `close`).
+// objective, leader, the equipment and Bash allowlist the unit's tasks may use, and the
+// role text, which defaults to `LEADER_ROLE`); its protocol is the leader's: a persistent
+// session created at the unit's first turn, resumed for every turn after, and demobilized
+// when the unit closes, that directs the unit's tasks and reports against the objective
+// (DESIGN.md Step 6). The leader directs and never does (R5-4, ruled by Mauria on
+// 2026-09-15): no task runs on its session, since a task there would keep it from
+// answering while the situation changed and would fill its context with tool results
+// (run 004's code leader grew from 34k to 100k context from three investigates run
+// inside it, paid for it on every turn, and could not be called for 494 seconds); every
+// session task runs in a session of its own and a deterministic one in process, and the
+// leader's session holds the orientation, the revise brief and a line per ending with its
+// claims by id. Everything the leader's turns need is here: the role text and rules, the
+// unit's share of the budget, the turns a unit is owed (a report, a resume, a revision
+// brief), the orientation and the turn prompt, the turn itself with its refusal fallback,
+// and the pass hooks the dispatcher calls (`open`, `ending`, `close`).
 
 export const BASE_TYPE = "base";
 
@@ -121,7 +118,7 @@ export const BASE_RULES = [
 export const LEADER_RULES = BASE_RULES.map((r) => r.text);
 
 /** The role text as a unit leader reads it; the IC reads `IC_ROLE`. */
-export const LEADER_ROLE = `Your role: unit leader. You own your unit's objective and direct its tasks until you can report against it. A task that runs inside this session runs one at a time, in order; tasks in sessions of their own start at once when nothing they depend on is still open, and each reaches you on the turn after it ends. dependsOn is what serializes tasks; a task with none waits for nothing.
+export const LEADER_ROLE = `Your role: unit leader. You own your unit's objective and direct its tasks until you can report against it. You direct and never do: no task runs in this session and you hold no tools, since a leader busy on a task cannot answer for its unit. Every session task runs in a session of its own and every deterministic task in process; tasks start at once when nothing they depend on is still open, dependsOn is what serializes them, a task with none waits for nothing, and each reaches you as a line when it ends, with the claims it produced by id.
 
 Report what changed, not what you did: each item in changed is something now true that was not, naming the claim ids it rests on; a change with no claims behind it is a claim of its own and counts for less. Outcome met means the unit's objective is established by observed claims; not_met means it cannot be met as set, and then why and suggestion are required, because the IC, who has more perspective, decides what happens next; progress means the unit has more to run or more to say. Set pictureChanged, and report rather than continue, the moment an outcome changes the picture the incident is working from: the IC acts on it before anything new starts.
 
@@ -132,7 +129,7 @@ The IC answers every report of yours with a verdict. A revise sends your report 
 
 You cannot change the organization above or beside you: no new units, no tasks outside your unit, no budget beyond your unit's, no change to the incident's objective. What you lack and cannot get goes in your report.
 
-You may send a strike team: several subagents of one kind and model on one task, each a session of its own with a prompt and tools you choose. A task may declare its team already; otherwise ask for one in your turn with requestStrikeTeam, choosing the kind, its model, its tools, its prompt and how many to send, and saying why. No kind exists by default. The runtime declares the team on your next task, defines the kinds for the call that runs it, and records every member; a claim that rests on a member's finding cites the member's agentId.
+A strike team, several subagents of one kind and model on one task, is declared by whoever defines the task: a task you assign carries its team in its own strikeTeam field, choosing the kind, its model, its tools, its prompt and how many to send, and saying why. No kind exists by default. The runtime defines the kinds for the session that runs the task and records every member; a claim that rests on a member's finding cites the member's agentId.
 
 discrepancy is for one thing only: the update you received describes a different problem from the one you have been working, as if you believed you were fighting a fire and the update describes a hurricane. Say what differs. A different detail, a wrong line number, a claim you disagree with, is not a discrepancy; it goes in your report or your next task.`;
 
@@ -146,41 +143,14 @@ const NO_TASKS_REMAIN =
 const NO_TASKS_REMAIN_ON_BRIEF =
   "No ready tasks remain in your unit. Assign tasks for what the instructions say is missing and continue, or file your report against the unit's objective.";
 
-/** What a continuing leader is told about asking for a team on the task that runs next. */
-const STRIKE_TEAM_OFFER =
-  "To send a strike team on it, set requestStrikeTeam: each kind with its model, tools, prompt, count and why; the kinds are defined for the call that runs the task.";
-
 /**
- * Whether a task runs inside its unit's leader session: a session-backed capability on the
- * leader's provider and model whose equipment and Bash allowlist the leader already holds
- * (`default` covers every built-in tool). A capability that picks one piece of external
- * equipment per task (`equipmentSelect`) never does, since the leader's session attaches
- * all of its equipment. Anything else runs in a session of its own, or in process, and its
- * result reaches the leader on its next turn. Under the ic type nothing runs inside (its
- * protocol's `runsInside` is false: R4-6, run 003 had the IC's own session take an
- * investigate under command), and the dispatcher asks each unit's type.
- */
-export function runsInsideLeader(
-  capability: Capability,
-  task: Task,
-  unit: Unit,
-): boolean {
-  if (capability.kind !== "session") return false;
-  if (capability.session.equipmentSelect !== undefined) return false;
-  if (
-    task.provider !== unit.leader.provider ||
-    task.model !== unit.leader.model
-  )
-    return false;
-  return holdsCapability(capability, unit, task.inputs);
-}
-
-/**
- * Whether a unit holds a capability, so its leader may assign a task to it (the validator's
- * "Capability held"): a deterministic one always, since it composes in-process equipment
- * and needs no session tool; a session-backed one when its equipment and Bash allowlist are
- * within the unit's (`default` covers every built-in), and, when it picks one piece of
- * equipment per task, when the task's pick is held.
+ * Whether a unit holds a capability, so a task to it may run under the unit (the
+ * validator's "Capability held" on a leader's assignments): a deterministic one always,
+ * since it composes in-process equipment and needs no session tool; a session-backed one
+ * when its equipment and Bash allowlist are within what the unit's tasks may use
+ * (`default` covers every built-in), and, when it picks one piece of equipment per task,
+ * when the task's pick is held. It decides whether, never where: every session task runs
+ * in a session of its own (R5-4).
  */
 export function holdsCapability(
   capability: Capability,
@@ -201,8 +171,7 @@ export function holdsCapability(
   // A read-only allowlist is held whenever the unit holds Bash and every entry the capability
   // asks for is on the session list: the list bounds what a plan may declare, and in print
   // mode Claude Code permits read-only commands beyond the allowlist anyway (DESIGN.md
-  // Reference, 2026-09-15), so a unit declared with a subset still runs the capability inside
-  // its leader, under the unit's own allowlist.
+  // Reference, 2026-09-15), so a unit declared with a subset still holds the capability.
   const wanted = capability.session.bashAllowlist ?? [];
   if (wanted.length === 0) return true;
   if (!unit.equipment.includes("Bash") && !unit.equipment.includes("default"))
@@ -431,38 +400,31 @@ function renderTakenReassignment(taken: TakenReassignment): string[] {
 }
 
 /**
- * What a leader reads on its first call, before the first task's brief or result: the
- * incident, the situation, the hierarchy, and its own unit, with the reassignment the unit
- * took when it took one (R4-4). When the call is a task's brief, which already carries the
- * incident, the situation and the hierarchy, only the unit's own lines are added.
+ * What a leader reads on its first call, before the first ending: the incident, the
+ * situation, the hierarchy, and its own unit, with the equipment its tasks may use and the
+ * reassignment the unit took when it took one (R4-4).
  */
 export function renderLeaderOrientation(
   incident: Incident,
   situation: Situation | null,
   unit: Unit,
   units: readonly Unit[],
-  beforeBrief = false,
   taken: TakenReassignment | null = null,
 ): string[] {
   const list = (items: readonly string[]) =>
     items.length === 0 ? "  (none)" : items.map((i) => `  - ${i}`).join("\n");
-  const own = [
+  return [
+    `Incident objective: ${incident.objective}`,
+    ...renderPeriod(incident.period),
+    `Current hypothesis: ${situation?.hypothesis ?? "(none yet)"}`,
+    "Established so far:",
+    list((situation?.proven ?? []).map((p) => `${p.claimId}: ${p.line}`)),
+    "",
+    ...renderHierarchy(unit, units),
     `You lead unit ${unit.id}. Your unit's objective: ${unit.objective}`,
-    `Your equipment: ${unit.equipment.join(", ") || "none"}; Bash allowlist: ${unit.bashAllowlist.join(", ") || "none"}`,
+    `Equipment your unit's tasks may use: ${unit.equipment.join(", ") || "none"}; Bash allowlist: ${unit.bashAllowlist.join(", ") || "none"}`,
     ...(taken === null ? [] : renderTakenReassignment(taken)),
   ];
-  return beforeBrief
-    ? own
-    : [
-        `Incident objective: ${incident.objective}`,
-        ...renderPeriod(incident.period),
-        `Current hypothesis: ${situation?.hypothesis ?? "(none yet)"}`,
-        "Established so far:",
-        list((situation?.proven ?? []).map((p) => `${p.claimId}: ${p.line}`)),
-        "",
-        ...renderHierarchy(unit, units),
-        ...own,
-      ];
 }
 
 /**
@@ -488,14 +450,14 @@ export type TurnCause =
  * The endings a unit's leader has not heard: tasks of the unit that completed or failed
  * after the leader's last turn (`unit.reported` or `unit.continued`). A report the runtime
  * wrote on the leader's behalf after two refusals (`writtenBy: "runtime"`, R4-7) is not a
- * turn and moves nothing. Empty when every ending reached a turn. A completed task ran
- * inside the leader when `runsInsideLeader` says its capability, model and equipment put
- * it there.
+ * turn and moves nothing. Empty when every ending reached a turn. A completed task's
+ * ending carries the claims it produced, from the store.
  */
 export function endedSinceLastTurn(
   unit: Unit,
   tasks: readonly Task[],
   events: readonly Event[],
+  claims: readonly Claim[] = [],
 ): TaskEnding[] {
   const byId = new Map(tasks.map((t) => [t.id, t]));
   let lastTurn = -1;
@@ -514,15 +476,12 @@ export function endedSinceLastTurn(
       ?.taskId;
     const task = typeof taskId === "string" ? byId.get(taskId) : undefined;
     if (task === undefined || task.unitId !== unit.id) continue;
-    const capability = getCapability(task.capability);
     ended.push(
       e.type === "task.completed"
         ? {
             task,
             status: "completed",
-            inside:
-              capability !== undefined &&
-              runsInsideLeader(capability, task, unit),
+            claims: claims.filter((c) => c.provenance.taskId === task.id),
           }
         : { task, status: "failed", reason: String(e.payload.reason ?? "") },
     );
@@ -543,7 +502,61 @@ function insufficiencyOf(task: Task): { kind: string; what: string }[] {
 const RESOLVE_LACKS =
   "A retrievable fact is yours to get: assign a task for it under your unit (assignTasks) and continue. Permission, missing means and something only a human knows go up as resourceRequests on your report.";
 
-/** How one ending reads to the leader: a failure with its reason, an insufficiency with what it needed and what the leader does about each kind, or a completion with its result (recorded already when it ran in this session). */
+/** A session's summary is cut here in the leader's ending line; the full result is in the task record, which a task the leader assigns may name in evidenceFrom. */
+const SUMMARY_CHARS = 300;
+
+/** A session result's gist in one clause: its summary, else its conclusion, else the count of its observations. */
+function gistOf(task: Task): string {
+  const f = ((task.result as { findings?: unknown } | null)?.findings ??
+    {}) as {
+    summary?: unknown;
+    conclusion?: unknown;
+    observations?: unknown;
+  };
+  const text =
+    typeof f.summary === "string"
+      ? f.summary
+      : typeof f.conclusion === "string"
+        ? f.conclusion
+        : Array.isArray(f.observations)
+          ? `${f.observations.length} observation(s), in the task record`
+          : "(no summary)";
+  return text.length <= SUMMARY_CHARS
+    ? text
+    : `${text.slice(0, SUMMARY_CHARS)}…`;
+}
+
+/** A deterministic result's size, since its content is evidence for a task to read, never for the leader. */
+function sizeOf(task: Task): string {
+  const r = task.result as { matches?: unknown; commits?: unknown } | null;
+  if (r !== null && typeof r === "object") {
+    if (Array.isArray(r.matches)) return `${r.matches.length} match(es)`;
+    if (Array.isArray(r.commits)) return `${r.commits.length} commit(s)`;
+  }
+  return `${r === null ? 0 : JSON.stringify(r, null, 2).split("\n").length} line(s) of JSON`;
+}
+
+/**
+ * A task's claims in one clause, so the leader can name them in a report or in
+ * `evidenceFrom` without reading the work: a session's each by id, subject and predicate;
+ * a deterministic task's as a count and the range of ids, since they are one per match.
+ */
+function claimsLine(task: Task, claims: readonly Claim[]): string {
+  if (claims.length === 0) return "claims: none";
+  const observed = claims.filter((c) => c.basis === "observed").length;
+  const count = `${observed} observed, ${claims.length - observed} inferred`;
+  if (task.model === null)
+    return `claims (${count}): ${claims.length === 1 ? claims[0]?.id : `${claims[0]?.id} to ${claims.at(-1)?.id}`}`;
+  return `claims (${count}): ${claims.map((c) => `${c.id} ${c.subject} ${c.predicate}`).join("; ")}`;
+}
+
+/**
+ * How one ending reads to the leader (R5-4: a line, never the work): a failure with its
+ * reason; an insufficiency with what it needed and what the leader does about each kind;
+ * a completion with a session's gist or a deterministic result's size, then its claims by
+ * id. The result itself stays in the task record, which a task the leader assigns reads
+ * through `evidenceFrom`.
+ */
 function renderEnding(ending: TaskEnding): string[] {
   const { task } = ending;
   if (ending.status === "failed")
@@ -551,16 +564,16 @@ function renderEnding(ending: TaskEnding): string[] {
   const needed = insufficiencyOf(task);
   if (needed.length > 0)
     return [
-      `Task ${task.id} (${task.capability}) came back insufficient${ending.inside ? " in this session" : ""}. It needed:`,
+      `Task ${task.id} (${task.capability}) came back insufficient. It needed:`,
       ...needed.map((n) => `  - ${n.kind}: ${n.what}`),
       RESOLVE_LACKS,
     ];
-  if (ending.inside)
-    return [
-      `Task ${task.id} (${task.capability}) completed in this session; its result is recorded.`,
-    ];
+  const what =
+    task.model === null
+      ? `its result, ${sizeOf(task)}, is recorded under its id`
+      : `summary: ${gistOf(task)}`;
   return [
-    `Task ${task.id} (${task.capability}) completed. Its result:\n  ${renderTaskResult(task)}`,
+    `Task ${task.id} (${task.capability}) completed; ${what}; ${claimsLine(task, ending.claims)}`,
   ];
 }
 
@@ -607,7 +620,7 @@ function renderRevisionBrief(
  * turn is for (the last task's ending, with its insufficiency and what the leader does
  * about each kind when it came back insufficient; the answers when the unit resumed; the
  * revision brief when the IC sent its report back, R4-3; that a report is owed), any assignment the validator refused since the last turn, then how
- * many ready tasks remain, which runs next and the team it declares if any, which tasks of
+ * many ready tasks wait to start, which tasks of
  * the unit are still running in sessions of their own, which have ended in this pass and
  * reach the leader on turns of their own, and what the leader is asked for: its report when
  * nothing remains, nothing runs and nothing is left to hear (on a revision brief, to
@@ -616,8 +629,7 @@ function renderRevisionBrief(
 export function renderTurnPrompt(
   cause: TurnCause,
   unheard: readonly TaskEnding[],
-  remaining: number,
-  next: Task | null = null,
+  remaining: readonly Task[],
   rejections: readonly string[] = [],
   running: readonly Task[] = [],
   landed: readonly Task[] = [],
@@ -645,8 +657,8 @@ export function renderTurnPrompt(
       ...rejections.map((r) => `  - ${r}`),
     );
   const ask =
-    remaining > 0
-      ? `${remaining} ready task(s) remain in your unit. Your next move: continue to the next, or report now if the picture changed.`
+    remaining.length > 0
+      ? `${remaining.length} ready task(s) remain in your unit and start when you continue: ${remaining.map((t) => `${t.id} (${t.capability})`).join(", ")}. Your next move: continue, or report now if the picture changed.`
       : running.length > 0
         ? "No task of yours is ready to start. Your next move: continue and wait for the running ones, or report now if the picture changed."
         : landed.length > 0
@@ -658,12 +670,6 @@ export function renderTurnPrompt(
     ...came,
     "",
     ask,
-    ...(remaining === 0 || next === null
-      ? []
-      : [
-          `Next: task ${next.id} (${next.capability}): ${next.objective}${next.strikeTeam.length === 0 ? "" : `; it declares a strike team: ${next.strikeTeam.map(describeStrikeTeam).join("; ")}`}`,
-          STRIKE_TEAM_OFFER,
-        ]),
     ...(running.length === 0
       ? []
       : [
@@ -677,12 +683,8 @@ export function renderTurnPrompt(
   ].join("\n");
 }
 
-/** The leader's orientation, sent once at the top of its first call, before the first brief or result; a unit that took a reassignment (R4-4) reads its instructions and the predecessor's claims here. */
-function orientation(
-  ctx: PassContext,
-  unit: Unit,
-  beforeBrief = false,
-): string[] {
+/** The leader's orientation, sent once at the top of its first call, before the first ending; a unit that took a reassignment (R4-4) reads its instructions and the predecessor's claims here. */
+function orientation(ctx: PassContext, unit: Unit): string[] {
   if (unit.sessionId !== null) return [];
   const events = ctx.store.listEvents(ctx.incident.id);
   const reassignment = reassignmentTakenBy(events, unit.id);
@@ -701,41 +703,10 @@ function orientation(
       icSituation(events),
       unit,
       ctx.units,
-      beforeBrief,
       taken,
     ),
     "",
   ];
-}
-
-/** A session with no time bound of its own still gets one, since a hung process must end; the validator normally requires the task to carry one. */
-const SESSION_SECONDS = 600;
-
-/**
- * The request a task that runs inside the leader's session is run with: the leader's
- * request, opening with the orientation on the session's first call, then the task's brief
- * under the capability's schema, bounded by the task's seconds and carrying its strike team.
- */
-function insideRequest(
-  ctx: PassContext,
-  unit: Unit,
-  task: Task,
-  capability: Capability,
-  context: BriefContext,
-): SessionRequest {
-  return leaderRequest(
-    unit,
-    [
-      ...orientation(ctx, unit, true),
-      `${unit.sessionId === null ? "Your first" : "Your next"} task follows; run it and answer against its schema.`,
-      "",
-      renderTaskBrief(task, unit, context),
-    ].join("\n"),
-    jsonSchemaFor(capability.output),
-    ctx.cwd,
-    task.budget.seconds ?? SESSION_SECONDS,
-    task.strikeTeam,
-  );
 }
 
 /** What a leader's turn came to: the leader's move, the session it ran on (null for a report the runtime wrote after two refusals), the unit as it now stands (the session recorded on the first call), and how many tasks the leader assigned and the validator let through. */
@@ -813,62 +784,10 @@ function couldNotResume(error: unknown, unit: Unit): error is SessionError {
 }
 
 /**
- * A leader's `requestStrikeTeam`, held to the team's three rules against the task that runs
- * next: accepted, it becomes that task's declaration (`strike_team.defined`, the mutation
- * `task.strikeTeam`, a kind the task already declares replaced by name); refused, or asked
- * with no task left to send it on, `strike_team.rejected` keeps what the leader asked for
- * and why it was not provided.
- */
-function declareRequestedTeam(
-  ctx: PassContext,
-  turn: LeaderTurn,
-  next: Task | null,
-  seat: Record<string, unknown>,
-): void {
-  const { store, incident, actor } = ctx;
-  const requested = turn.requestStrikeTeam;
-  if (requested === undefined || requested.length === 0) return;
-  const asked = { ...seat, declaredBy: "leader", strikeTeam: requested };
-  if (next === null) {
-    store.record(incident.id, "strike_team.rejected", actor, {
-      ...asked,
-      taskId: null,
-      reasons: [
-        turn.kind === "report"
-          ? "the unit reported, so no task runs next in this pass to send it on"
-          : "no ready task remains in the unit to send it on",
-      ],
-    });
-    return;
-  }
-  const rejections = ctx.bookkeeping.strikeTeamRejections(
-    requested,
-    next,
-    `task ${next.id}`,
-  );
-  if (rejections.length > 0) {
-    store.record(incident.id, "strike_team.rejected", actor, {
-      ...asked,
-      taskId: next.id,
-      reasons: rejections.map((r) => `${r.rule}: ${r.reason}`),
-    });
-    return;
-  }
-  const kinds = new Set(requested.map((t) => t.kind));
-  store.setTaskStrikeTeam(
-    incident.id,
-    next.id,
-    [...next.strikeTeam.filter((t) => !kinds.has(t.kind)), ...requested],
-    actor,
-    { ...asked, taskId: next.id },
-  );
-}
-
-/**
  * Ask the unit's leader for its next move: the endings it has not heard from earlier passes
  * (`unheard`, on a pass's first turn), the last task's ending or the IC's revision brief
- * (R4-3; delivered on this turn, recorded as `unit.revised` with the turn), how many ready tasks remain
- * and which runs next, which tasks of the unit are still running and which have ended and
+ * (R4-3; delivered on this turn, recorded as `unit.revised` with the turn), which ready
+ * tasks wait to start, which tasks of the unit are still running and which have ended and
  * reach it on turns of their own, under the `LeaderTurn` schema. The first call creates the
  * session and opens with the orientation; `leader.started` records its id on the unit,
  * with the cwd it was launched from. A session that cannot be resumed (the call died
@@ -876,9 +795,9 @@ function declareRequestedTeam(
  * and its `leader.started` names the dead session and the reason; a session the API
  * refused is replaced the same way on the fallback model, once (R4-7). Every turn is recorded,
  * `unit.reported` with the report (and `revision`, the count of revise verdicts on the
- * unit, when the report answers one) or `unit.continued`, each with the call's usage, a
- * `discrepancy` becomes `picture.discrepancy`, and a `requestStrikeTeam` is declared on
- * the next task or refused. A leader that cannot answer otherwise ends the pass. In the
+ * unit, when the report answers one) or `unit.continued`, each with the call's usage, and
+ * a `discrepancy` becomes `picture.discrepancy`. A leader that cannot answer otherwise
+ * ends the pass. In the
  * same transaction: tasks the leader assigns are validated and applied under its unit
  * (`plan.applied` with the leader as actor) or refused (`plan.rejected`, read back into
  * its next prompt), then a report carrying resource requests, forced `pictureChanged`, is
@@ -889,8 +808,7 @@ async function leaderTurn(
   listed: Unit,
   cause: TurnCause,
   unheard: readonly TaskEnding[],
-  remaining: number,
-  next: Task | null,
+  remaining: readonly Task[],
   running: readonly Task[],
   landed: readonly Task[],
 ): Promise<LeaderTurned> {
@@ -905,15 +823,7 @@ async function leaderTurn(
         unit,
         [
           ...orientation(ctx, unit),
-          renderTurnPrompt(
-            cause,
-            unheard,
-            remaining,
-            next,
-            refused,
-            running,
-            landed,
-          ),
+          renderTurnPrompt(cause, unheard, remaining, refused, running, landed),
         ].join("\n"),
         LEADER_TURN_SCHEMA,
         ctx.cwd,
@@ -1084,10 +994,9 @@ async function leaderTurn(
     else
       store.record(incident.id, "unit.continued", actor, {
         ...seat,
-        remaining,
+        remaining: remaining.length,
         usage: outcome.usage,
       });
-    declareRequestedTeam(ctx, turn, turn.kind === "report" ? null : next, seat);
     const proposals = turn.assignTasks ?? [];
     if (
       proposals.length > 0 &&
@@ -1123,8 +1032,7 @@ async function settle(
     unit,
     cause,
     view.hear(),
-    remaining.length,
-    remaining[0] ?? null,
+    remaining,
     running,
     landed,
   );
@@ -1174,8 +1082,6 @@ export const baseUnitType = defineUnitType({
     role: LEADER_ROLE,
     reports: true,
     rules: BASE_RULES,
-    runsInside: runsInsideLeader,
-    insideRequest,
     // A pass starts when the unit has a turn to take before or without a task: a revision
     // brief to read (R4-3), answers to its requests (R3-6), or a report owed from an
     // earlier pass; the dispatcher adds a runnable task.
@@ -1199,6 +1105,7 @@ export const baseUnitType = defineUnitType({
         unit,
         ctx.store.listTasks(ctx.incident.id),
         ctx.store.listEvents(ctx.incident.id),
+        ctx.store.listClaims(ctx.incident.id),
       ),
     // The pass opens with the turns the unit is owed before any task runs: the IC's
     // revision brief (R4-3), on a fresh oriented session when the leader has none, with the
@@ -1208,41 +1115,35 @@ export const baseUnitType = defineUnitType({
       const events = ctx.store.listEvents(ctx.incident.id);
       const brief = revisedUnits([unit], events).get(unit.id);
       const resumed = resumedUnits([unit], events).has(unit.id);
-      // The unit is read inside the queued call, since the chain may reach it after a
-      // task inside the session has recorded that session on the unit.
       if (brief !== undefined)
-        return view.onLeader(() =>
-          settle(
-            ctx,
-            view.unit(),
-            {
-              status: "revise",
-              brief,
-              period: ctx.incident.period,
-              answers: resumed ? answered(ctx, unit) : [],
-            },
-            view,
-          ),
+        return settle(
+          ctx,
+          unit,
+          {
+            status: "revise",
+            brief,
+            period: ctx.incident.period,
+            answers: resumed ? answered(ctx, unit) : [],
+          },
+          view,
         );
       if (resumed)
-        return view.onLeader(() =>
-          settle(
-            ctx,
-            view.unit(),
-            { status: "answered", answers: answered(ctx, unit) },
-            view,
-          ),
+        return settle(
+          ctx,
+          unit,
+          { status: "answered", answers: answered(ctx, unit) },
+          view,
         );
       return null;
     },
-    // A task refused on both models (R4-7): the runtime reports `not_met` for the unit with
-    // both refusals, picture-changing, and the pass ends for the IC to decide, whether or
-    // not the leader has reported this pass. Otherwise the leader hears the ending on a turn
-    // of its own, unless it reported already this pass, in which case the ending is
-    // recorded and its next turn hears it.
-    ending: async (ctx, _unit, ending, view) => {
+    // Whether an ending calls the leader is decided here and nowhere else. A task refused
+    // on both models (R4-7): the runtime reports `not_met` for the unit with both
+    // refusals, picture-changing, and the pass ends for the IC to decide, whether or not
+    // the leader has reported this pass. A unit that reported already this pass hears the
+    // ending on its next turn (`unheard`). Every other ending calls the leader on a turn
+    // of its own; R5-5 narrows that to the endings that need a decision.
+    ending: async (ctx, unit, ending, view) => {
       if (ending.refusals !== undefined) {
-        const unit = view.unit();
         const { report, revision } = reportRefusals(
           ctx,
           unit,
@@ -1262,11 +1163,7 @@ export const baseUnitType = defineUnitType({
         };
       }
       if (view.done()) return null;
-      // Queued behind the task running inside the session: the unit is read when the chain
-      // reaches the turn, so the session that task recorded is the one resumed.
-      return view.onLeader(() =>
-        settle(ctx, view.unit(), ending, view, view.running(), view.landed()),
-      );
+      return settle(ctx, unit, ending, view, view.running(), view.landed());
     },
     // A unit that ran nothing this pass and owes a report from an earlier one is asked for
     // it, unless the pass has halted.
@@ -1278,10 +1175,7 @@ export const baseUnitType = defineUnitType({
         ctx.store.listEvents(ctx.incident.id),
       );
       if (!owing.has(unit.id)) return null;
-      const turned = await view.onLeader(() =>
-        settle(ctx, view.unit(), OWED, view),
-      );
-      return { ...turned, done: true };
+      return { ...(await settle(ctx, unit, OWED, view)), done: true };
     },
   },
 });
