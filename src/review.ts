@@ -768,18 +768,61 @@ function briefingKept(events: readonly Event[]): string {
 }
 
 /**
+ * The cycle's critical path (R5-7): the chain of dependent tasks, among those that ran in
+ * the cycle, whose seconds sum highest; its length is the least the dispatch could have
+ * taken with every independent task running at once. A dependency that ran in an earlier
+ * cycle held nothing this cycle, so only tasks with seconds here are on the graph; a
+ * task the log knows no `dependsOn` for stands alone.
+ */
+function criticalPath(
+  secondsByTask: ReadonlyMap<string, number>,
+  taskById: ReadonlyMap<string, Task>,
+): { seconds: number; path: string[] } {
+  const longest = new Map<string, { seconds: number; path: string[] }>();
+  const walk = (id: string): { seconds: number; path: string[] } => {
+    const known = longest.get(id);
+    if (known !== undefined) return known;
+    const own = secondsByTask.get(id) ?? 0;
+    const deps = (taskById.get(id)?.dependsOn ?? []).filter((d) =>
+      secondsByTask.has(d),
+    );
+    // A cycle in dependsOn is refused at validation; this guard only keeps a bad log finite.
+    longest.set(id, { seconds: own, path: [id] });
+    const best = deps
+      .map(walk)
+      .reduce((a, b) => (b.seconds > a.seconds ? b : a), {
+        seconds: 0,
+        path: [] as string[],
+      });
+    const result = { seconds: own + best.seconds, path: [...best.path, id] };
+    longest.set(id, result);
+    return result;
+  };
+  return [...secondsByTask.keys()]
+    .map(walk)
+    .reduce((a, b) => (b.seconds > a.seconds ? b : a), {
+      seconds: 0,
+      path: [] as string[],
+    });
+}
+
+/**
  * The cycle's wall time beside what its tasks spent (R4-9): the cycle from the event that
  * opened it to its last event; the dispatch from the first `task.started` to the last task
- * ending or leader turn; the tasks' recorded seconds summed; and `parallel`, the sum over
+ * ending or leader turn; the tasks' recorded seconds summed; `parallel`, the sum over
  * the dispatch span, which is 1.0 when tasks ran one after another and higher when they
- * overlapped. Nothing when no task ran in the cycle.
+ * overlapped; and the critical path (R5-7), the longest chain of dependent tasks by their
+ * seconds, with the factor the sum over that chain, which is what `parallel` could have
+ * reached had every independent task run at once. Nothing when no task ran in the cycle.
  */
 function wallTimeLine(
   cycle: Cycle,
-  taskSeconds: number,
-  tasks: number,
+  secondsByTask: ReadonlyMap<string, number>,
+  taskById: ReadonlyMap<string, Task>,
 ): string | null {
-  if (tasks === 0) return null;
+  if (secondsByTask.size === 0) return null;
+  const tasks = secondsByTask.size;
+  const taskSeconds = [...secondsByTask.values()].reduce((a, b) => a + b, 0);
   const at = (e: Event | undefined) =>
     e === undefined ? Number.NaN : Date.parse(e.createdAt);
   const all = [cycle.opened, ...cycle.proposals, ...cycle.events];
@@ -801,7 +844,12 @@ function wallTimeLine(
   const dispatch = Number.isFinite(dispatchSpan)
     ? `, dispatch ${dispatchSpan.toFixed(1)} s`
     : "";
-  return `  wall time: cycle ${cycleSpan.toFixed(1)} s${dispatch}; ${tasks} task(s) summing ${taskSeconds.toFixed(1)} s${parallel}`;
+  const critical = criticalPath(secondsByTask, taskById);
+  const possible =
+    critical.seconds > 0
+      ? `, ${(taskSeconds / critical.seconds).toFixed(2)}x possible`
+      : "";
+  return `  wall time: cycle ${cycleSpan.toFixed(1)} s${dispatch}; ${tasks} task(s) summing ${taskSeconds.toFixed(1)} s${parallel}; critical path ${critical.seconds.toFixed(1)} s (${critical.path.join(" -> ")})${possible}`;
 }
 
 const OUTCOME_TYPES = new Set<Event["type"]>([
@@ -990,15 +1038,17 @@ export function renderReview(
           );
       }
     }
-    const ranInCycle = new Set<string>();
-    let taskSeconds = 0;
+    // Each task's seconds in this cycle, a refused call's and its retry's summed (R4-7).
+    const secondsByTask = new Map<string, number>();
     for (const e of cycle.events) {
       if (e.type !== "task.usage") continue;
       const taskId = taskIdOf(e);
-      ranInCycle.add(taskId);
       const task = taskById.get(taskId);
       const usage = (e.payload.usage ?? {}) as Partial<Usage>;
-      taskSeconds += usage.seconds ?? 0;
+      secondsByTask.set(
+        taskId,
+        (secondsByTask.get(taskId) ?? 0) + (usage.seconds ?? 0),
+      );
       // A retry on the fallback (R4-7) records its model on the usage; the task's own is the plan's.
       const model = str(e.payload.model) || task?.model || null;
       const capability = task?.capability ?? "unknown";
@@ -1050,7 +1100,7 @@ export function renderReview(
           `    insufficient: ${list(outcome.payload.needed).map(String).join("; ")}`,
         );
     }
-    const wall = wallTimeLine(cycle, taskSeconds, ranInCycle.size);
+    const wall = wallTimeLine(cycle, secondsByTask, taskById);
     if (wall !== null) lines.push(wall);
     // A leader's turns: every one costs its own call on the unit's leader model; a turn
     // that filed a report is listed with the report's outcome. The turns' own tool calls
@@ -1166,7 +1216,7 @@ export function renderReview(
         ),
       );
     for (const e of cycle.events) {
-      if (e.type === "task.failed" && !ranInCycle.has(taskIdOf(e))) {
+      if (e.type === "task.failed" && !secondsByTask.has(taskIdOf(e))) {
         failedWithoutRunning += 1;
         const taskId = taskIdOf(e);
         lines.push(
