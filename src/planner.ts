@@ -280,6 +280,28 @@ function lastCycleSequence(events: readonly Event[]): number {
   return last;
 }
 
+/** One of the incident file's ten sections: its number, its title as the heading reads, and its lines. */
+export type FileSection = { number: number; title: string; lines: string[] };
+
+/**
+ * How a rendering of the file is narrowed for a reader that has read it before (R5-11):
+ * `claimsSince` lists only the claims created and the evidence completed after that
+ * sequence, and `rulesOmitted` drops the rule and warning texts from section 9, keeping
+ * what was rejected and warned.
+ */
+export type FileView = { claimsSince?: number; rulesOmitted?: boolean };
+
+/** The sections joined as the file reads, under one heading. */
+export function renderFile(
+  heading: string,
+  sections: readonly FileSection[],
+): string {
+  return [
+    heading,
+    ...sections.flatMap((s) => ["", `## ${s.number}. ${s.title}`, ...s.lines]),
+  ].join("\n");
+}
+
 /**
  * The incident file rendered as the ten labeled sections in the design's order, each in a
  * stable form, so the prompt prefix caches across cycles; the IC's situation, which
@@ -290,6 +312,39 @@ export function renderPlannerInput(
   incident: Incident,
   providers: readonly Provider[],
 ): string {
+  return renderFile(
+    "# Incident file",
+    incidentFileSections(store, incident, providers),
+  );
+}
+
+/** The ids of the claims created and the tasks completed after `since`, from their mutations. */
+function landedAfter(
+  events: readonly Event[],
+  since: number,
+): { claims: Set<string>; tasks: Set<string> } {
+  const claims = new Set<string>();
+  const tasks = new Set<string>();
+  for (const e of events) {
+    if (e.sequence <= since) continue;
+    const m = e.payload.mutation as
+      | { kind?: string; claim?: { id?: string }; taskId?: string }
+      | undefined;
+    if (m?.kind === "claim.create" && typeof m.claim?.id === "string")
+      claims.add(m.claim.id);
+    if (e.type === "task.completed" && typeof m?.taskId === "string")
+      tasks.add(m.taskId);
+  }
+  return { claims, tasks };
+}
+
+/** The file's ten sections as `renderPlannerInput` joins them, narrowed by `view` for a reader that holds the rest (R5-11). */
+export function incidentFileSections(
+  store: Store,
+  incident: Incident,
+  providers: readonly Provider[],
+  view: FileView = {},
+): FileSection[] {
   const units = store.listUnits(incident.id);
   const tasks = store.listTasks(incident.id);
   const claims = store.listClaims(incident.id);
@@ -457,137 +512,155 @@ export function renderPlannerInput(
   // Claims are a session's; a deterministic task's output is evidence, one line per task
   // with its measure, read whole only by a task that names the id in evidenceFrom (R5-1).
   const situation = icSituation(events);
-  const claimLines = claims.filter(isSessionClaim).map(claimLine);
+  // A reader that holds the file already (R5-11) is shown the claims created and the
+  // evidence completed since its last read.
+  const landed =
+    view.claimsSince === undefined
+      ? null
+      : landedAfter(events, view.claimsSince);
+  const claimLines = claims
+    .filter(isSessionClaim)
+    .filter((c) => landed === null || landed.claims.has(c.id))
+    .map(claimLine);
   const evidenceLines = tasks
     .filter(isEvidence)
+    .filter((t) => landed === null || landed.tasks.has(t.id))
     .map(
       (t) =>
         `${t.id} (${t.capability} ${clip(t.inputs)}): ${measureEvidence(t.capability, t.result)}`,
     );
 
-  const lines: string[] = [
-    "# Incident file",
-    "",
-    "## 1. Command picture",
-    `incident ${incident.id} [${incident.status}]`,
-    `objective: ${incident.objective}`,
-    "constraints:",
-    ...bullets(incident.constraints),
-    "priorities:",
-    ...bullets(incident.priorities),
-    `operational period: ${incident.period === undefined ? "none set yet" : `${incident.period.number}`}`,
-    "period objectives:",
-    ...bullets(incident.period?.objectives ?? []),
-    "period priorities:",
-    ...bullets(incident.period?.priorities ?? []),
-    `budget remaining: tokens ${remaining(incident.budget.tokens, spentTokens)}, seconds ${remaining(incident.budget.seconds, usage.seconds)} (spent tokens ${spentTokens}, seconds ${usage.seconds.toFixed(1)})`,
-    ...budgetStops,
-    "grants:",
-    ...bullets(
-      grants.map(
-        (g) => `${g.scope} ${g.capability} (${g.effect}): ${g.reason}`,
-      ),
-    ),
-    "grant requests waiting:",
-    ...bullets(
-      events
-        .filter(
-          (e) => e.type === "grant.requested" && e.payload.unitId === undefined,
-        )
-        .slice(events.filter((e) => e.type === "grant.given").length)
-        .map(
-          (e) =>
-            `${String(e.payload.capability)} (${String(e.payload.effect)}): ${String(e.payload.reason)}`,
+  const section = (
+    number: number,
+    title: string,
+    lines: string[],
+  ): FileSection => ({ number, title, lines });
+  return [
+    section(1, "Command picture", [
+      `incident ${incident.id} [${incident.status}]`,
+      `objective: ${incident.objective}`,
+      "constraints:",
+      ...bullets(incident.constraints),
+      "priorities:",
+      ...bullets(incident.priorities),
+      `operational period: ${incident.period === undefined ? "none set yet" : `${incident.period.number}`}`,
+      "period objectives:",
+      ...bullets(incident.period?.objectives ?? []),
+      "period priorities:",
+      ...bullets(incident.period?.priorities ?? []),
+      `budget remaining: tokens ${remaining(incident.budget.tokens, spentTokens)}, seconds ${remaining(incident.budget.seconds, usage.seconds)} (spent tokens ${spentTokens}, seconds ${usage.seconds.toFixed(1)})`,
+      ...budgetStops,
+      "grants:",
+      ...bullets(
+        grants.map(
+          (g) => `${g.scope} ${g.capability} (${g.effect}): ${g.reason}`,
         ),
-    ),
-    "questions still unanswered:",
-    ...bullets(
-      incident.questions
-        .filter((q) => q.answer === undefined)
-        .map((q) => `${q.id}: ${q.text}`),
-    ),
-    "questions answered:",
-    ...bullets(
-      incident.questions
-        .filter((q) => q.answer !== undefined)
-        .map((q) => `${q.id}: ${q.text} → ${q.answer}`),
-    ),
-    "capability requests outstanding:",
-    ...bullets(
-      incident.capabilityRequests
-        .filter((r) => r.answer === undefined)
-        .map((r) => `${r.need}: ${r.why}`),
-    ),
-    "capability requests answered:",
-    ...bullets(
-      incident.capabilityRequests
-        .filter((r) => r.answer !== undefined)
-        .map((r) => `${r.need} → ${r.answer}`),
-    ),
-    "",
-    "## 2. Claims and evidence",
-    "claims:",
-    ...bullets(claimLines),
-    "evidence, each attached whole to a task that names its id in evidenceFrom.tasks:",
-    ...bullets(evidenceLines),
-    "",
-    "## 3. Unit tree",
-    ...unitTree(units, events, openRequestsByUnit(incident, events)),
-    "",
-    "## 4. Tasks completed since the last cycle",
-    ...bullets(completed),
-    "failed or cancelled since the last cycle, each with the tasks cancelled because they waited on it; nothing waits on a task that will never complete:",
-    ...bullets(neverCompleting),
-    "",
-    "## 5. Tasks that came back insufficient since the last cycle",
-    ...bullets(insufficient),
-    "",
-    "## 6. Unit reports since the last cycle",
-    ...bullets(reported),
-    "",
-    "## 7. Open tasks",
-    ...bullets(open.map(taskLine)),
-    "",
-    "## 8. Capabilities and models",
-    "capabilities, each with the inputs a task to it must carry:",
-    ...listCapabilities().flatMap((c) => [
-      `  - ${c.name} [${c.kind}, ${c.effect}]: ${c.description}${c.cost.typicalSeconds === undefined ? "" : ` (typical ${c.cost.typicalSeconds}s${c.cost.typicalTokens === undefined ? "" : `, ${c.cost.typicalTokens} tokens`})`}`,
-      `    inputs: ${describeInputs(c.input)}`,
+      ),
+      "grant requests waiting:",
+      ...bullets(
+        events
+          .filter(
+            (e) =>
+              e.type === "grant.requested" && e.payload.unitId === undefined,
+          )
+          .slice(events.filter((e) => e.type === "grant.given").length)
+          .map(
+            (e) =>
+              `${String(e.payload.capability)} (${String(e.payload.effect)}): ${String(e.payload.reason)}`,
+          ),
+      ),
+      "questions still unanswered:",
+      ...bullets(
+        incident.questions
+          .filter((q) => q.answer === undefined)
+          .map((q) => `${q.id}: ${q.text}`),
+      ),
+      "questions answered:",
+      ...bullets(
+        incident.questions
+          .filter((q) => q.answer !== undefined)
+          .map((q) => `${q.id}: ${q.text} → ${q.answer}`),
+      ),
+      "capability requests outstanding:",
+      ...bullets(
+        incident.capabilityRequests
+          .filter((r) => r.answer === undefined)
+          .map((r) => `${r.need}: ${r.why}`),
+      ),
+      "capability requests answered:",
+      ...bullets(
+        incident.capabilityRequests
+          .filter((r) => r.answer !== undefined)
+          .map((r) => `${r.need} → ${r.answer}`),
+      ),
     ]),
-    "providers and models:",
-    ...bullets(providers.map((p) => `${p.name}: ${p.models.join(", ")}`)),
-    "saved unit configs, each deployed by name in a new unit's config, its fields filling the form:",
-    ...bullets(
-      store
-        .listUnitConfigs()
-        .map((c) => `${c.name} (${c.type}): ${describeForm(c.form)}`),
+    section(2, "Claims and evidence", [
+      "claims:",
+      ...bullets(claimLines),
+      "evidence, each attached whole to a task that names its id in evidenceFrom.tasks:",
+      ...bullets(evidenceLines),
+    ]),
+    section(
+      3,
+      "Unit tree",
+      unitTree(units, events, openRequestsByUnit(incident, events)),
     ),
-    "",
-    "## 9. Rules the validator applies",
-    ...bullets(PLANNER_RULES),
-    "warned on, and applied anyway:",
-    ...bullets(PLANNER_WARNINGS),
-    "rejected last cycle:",
-    ...bullets(rejections, "(nothing rejected)"),
-    "warned last cycle:",
-    ...bullets(warnings, "(nothing warned)"),
-    "",
-    "## 10. The IC's situation",
-    ...(situation === null
-      ? [
-          `  ${situationPredatesShape(events) ? SITUATION_PREDATES_SHAPE : "(none)"}`,
-        ]
-      : []),
-    ...renderSituation(
-      situation,
-      openReassignments(events),
-      "in this plan",
-      claims,
-      openItemsWorked(events),
-      tasks,
+    section(4, "Tasks completed since the last cycle", [
+      ...bullets(completed),
+      "failed or cancelled since the last cycle, each with the tasks cancelled because they waited on it; nothing waits on a task that will never complete:",
+      ...bullets(neverCompleting),
+    ]),
+    section(
+      5,
+      "Tasks that came back insufficient since the last cycle",
+      bullets(insufficient),
     ),
+    section(6, "Unit reports since the last cycle", bullets(reported)),
+    section(7, "Open tasks", bullets(open.map(taskLine))),
+    section(8, "Capabilities and models", [
+      "capabilities, each with the inputs a task to it must carry:",
+      ...listCapabilities().flatMap((c) => [
+        `  - ${c.name} [${c.kind}, ${c.effect}]: ${c.description}${c.cost.typicalSeconds === undefined ? "" : ` (typical ${c.cost.typicalSeconds}s${c.cost.typicalTokens === undefined ? "" : `, ${c.cost.typicalTokens} tokens`})`}`,
+        `    inputs: ${describeInputs(c.input)}`,
+      ]),
+      "providers and models:",
+      ...bullets(providers.map((p) => `${p.name}: ${p.models.join(", ")}`)),
+      "saved unit configs, each deployed by name in a new unit's config, its fields filling the form:",
+      ...bullets(
+        store
+          .listUnitConfigs()
+          .map((c) => `${c.name} (${c.type}): ${describeForm(c.form)}`),
+      ),
+    ]),
+    section(9, "Rules the validator applies", [
+      ...(view.rulesOmitted === true
+        ? ["  (the rules, and what is warned on, as you read them)"]
+        : [
+            ...bullets(PLANNER_RULES),
+            "warned on, and applied anyway:",
+            ...bullets(PLANNER_WARNINGS),
+          ]),
+      "rejected last cycle:",
+      ...bullets(rejections, "(nothing rejected)"),
+      "warned last cycle:",
+      ...bullets(warnings, "(nothing warned)"),
+    ]),
+    section(10, "The IC's situation", [
+      ...(situation === null
+        ? [
+            `  ${situationPredatesShape(events) ? SITUATION_PREDATES_SHAPE : "(none)"}`,
+          ]
+        : []),
+      ...renderSituation(
+        situation,
+        openReassignments(events),
+        "in this plan",
+        claims,
+        openItemsWorked(events),
+        tasks,
+      ),
+    ]),
   ];
-  return lines.join("\n");
 }
 
 /** A planner call's outcome: the validated action plan plus what it cost, which is its provenance. */

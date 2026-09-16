@@ -40,7 +40,10 @@
 // the provider records as contextTokens): input_tokens is NOSCOPE_STUB_IC_CONTEXT on the
 // IC's calls (command, review, handoff), or the next entry of NOSCOPE_STUB_IC_CONTEXTS
 // (counter file NOSCOPE_STUB_IC_CONTEXT_COUNTER, the last entry repeating), or 1000 like
-// every call; the envelope's usage repeats the same figures. A fresh call's session id is stub-session, or
+// every call; the envelope's usage repeats the same figures. NOSCOPE_STUB_INPUT_FROM_PROMPT
+// makes an IC call's input_tokens the prompt's length in characters over four instead, in both
+// places, so a test can compare what two briefings cost to read (R5-11); contextTokens follows it.
+// A fresh call's session id is stub-session, or
 // stub-session-N when NOSCOPE_STUB_SESSION_COUNTER names a counter file, so a test can tell
 // one fresh session from the next. NOSCOPE_STUB_CALLS,
 // when set, gets one JSON line appended per call: its kind (planner, leader, command,
@@ -334,7 +337,9 @@ const nextHandoff = () =>
   }));
 
 const icContext = isIcCall
-  ? nextOf("NOSCOPE_STUB_IC_CONTEXT", "NOSCOPE_STUB_IC_CONTEXTS", "NOSCOPE_STUB_IC_CONTEXT_COUNTER", () => 1000)
+  ? process.env.NOSCOPE_STUB_INPUT_FROM_PROMPT
+    ? Math.ceil(prompt.length / 4)
+    : nextOf("NOSCOPE_STUB_IC_CONTEXT", "NOSCOPE_STUB_IC_CONTEXTS", "NOSCOPE_STUB_IC_CONTEXT_COUNTER", () => 1000)
   : 1000;
 
 function nextTurn() {

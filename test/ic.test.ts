@@ -1202,6 +1202,12 @@ describe("the IC above the planner", () => {
       "# Change report since your command turn for period 1",
     );
     expect(briefing).toContain("# Your command turn for operational period 1");
+    // The retry resumes the session that read the file on the rejected turn, and nothing
+    // in the file changed since (R5-11): the briefing says so in place of the file.
+    expect(briefing).toContain(
+      "\n# Incident file: nothing in it changed since your command turn for period 1; it is as you read it\n\n# Your command turn",
+    );
+    expect(briefing).not.toContain("## 1. Command picture");
     const store = h.store();
     const events = store.listEvents("001");
     expect(
@@ -1577,13 +1583,9 @@ describe("the IC above the planner", () => {
         /NOSCOPE_REPORT_WORK_CHARS must be a positive whole number/,
       );
     // The briefing reads the cap from the call's environment.
-    const briefing = renderCommandBriefing(
-      store,
-      s.incident,
-      [fakeProvider],
-      null,
-      { NOSCOPE_REPORT_WORK_CHARS: "200" },
-    );
+    const briefing = renderCommandBriefing(store, s.incident, [fakeProvider], {
+      env: { NOSCOPE_REPORT_WORK_CHARS: "200" },
+    });
     expect(briefing).toContain(
       "chars clipped; the full record is task u-a-investigate]",
     );
@@ -2144,6 +2146,67 @@ describe("the IC above the planner", () => {
     expect(types.slice(-2)).toEqual(["command.turned", "capability.answered"]);
     expect(incident().status).toBe("open");
     store.close();
+  });
+
+  it("a run on the stub: the IC's second turn reads the file's changed sections and its third, after a cycle that changed nothing, reads fewer input tokens than its second (R5-11)", {
+    timeout: 60_000,
+  }, async () => {
+    const h = harness(
+      [findIt, empty, empty],
+      [
+        command(),
+        command({
+          reportVerdicts: [
+            {
+              reportId: "",
+              unitId: "001-u02",
+              verdict: "accepted",
+              instructions: "",
+              why: "the grep placed it",
+            },
+          ],
+          rationale: "second period",
+        }),
+        command({ rationale: "third period" }),
+      ],
+      [{ verdict: "approve", rationale: "fine" }],
+    );
+    // The stub prices an IC call's input by its prompt's length under this knob, so the
+    // recorded usage compares what each briefing cost to read.
+    h.ctx.env.NOSCOPE_STUB_INPUT_FROM_PROMPT = "1";
+    await run(
+      ["incident", "create", "--no-size-up", "where is the delete handler"],
+      h.ctx,
+    );
+    for (let i = 0; i < 3; i++)
+      expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    const store = h.store();
+    const turns = store
+      .listEvents("001")
+      .filter((e) => e.type === "command.turned")
+      .map((e) => (e.payload.usage as { inputTokens: number }).inputTokens);
+    store.close();
+    expect(turns).toHaveLength(3);
+    const [first = 0, second = 0, third = 0] = turns;
+    // The first turn read the whole file; the second the sections the first cycle
+    // changed; the third, after a cycle whose verdict closed the unit and whose plan
+    // created nothing and ran nothing, the change report and one line saying the file
+    // is as it read it.
+    expect(second).toBeLessThan(first);
+    expect(third).toBeLessThan(second);
+    const prompts = h
+      .calls()
+      .filter((c) => c.kind === "command")
+      .map((c) => c.prompt);
+    expect(prompts[0]).toContain(
+      "\n# Incident file\n\n## 1. Command picture\n",
+    );
+    expect(prompts[1]).toContain(
+      "\n# Incident file: the sections that changed since your review of period 1's draft\n",
+    );
+    expect(prompts[2]).toContain(
+      "\n# Incident file: nothing in it changed since your review of period 2's draft; it is as you read it\n",
+    );
   });
 
   it("a run on the stub: an accepted verdict closes the unit through the close path, a verdict naming no listed report is rejected and the report is listed again, and review and tree carry the verdict (R4-2)", {

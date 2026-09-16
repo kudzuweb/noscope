@@ -322,6 +322,85 @@ describe("the IC handoff at the context threshold", () => {
     expect(review).toMatch(/ic\s+claude-sonnet-5\s+5\s+/);
   });
 
+  it("a resumed IC turn reads the file's changed sections only, and after a handoff the successor reads it whole (R5-11)", {
+    timeout: 60_000,
+  }, async () => {
+    // Cycle 1 and 2's calls stay small; cycle 2's review reaches 6,000, so cycle 3's
+    // command turn runs on a fresh session after the handoff.
+    const h = harness([findIt, empty, empty], [1000, 1000, 1000, 6000, 1000]);
+    await run(
+      ["incident", "create", "where is the delete handler", "--no-size-up"],
+      h.ctx,
+    );
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    const calls = h.calls();
+    // Cycle 1's command turn, on a fresh session, reads the whole file.
+    const first = calls[0]?.prompt ?? "";
+    expect(first).toContain("\n# Incident file\n\n## 1. Command picture\n");
+    expect(first).toContain(
+      "\n## 9. Rules the validator applies\n  - Capabilities exist:",
+    );
+    // Cycle 2's, resumed on the same session, reads what changed since its review: the
+    // claim the grep produced, the unit created and reporting, the task completed and
+    // the report, the open tasks; the command picture, the rules and its own situation
+    // are as it read them.
+    const second = calls.find(
+      (c) => c.kind === "command" && c.resume === "stub-session-1",
+    );
+    expect(second?.prompt).toContain(
+      [
+        "# Incident file: the sections that changed since your review of period 1's draft",
+        "The sections not shown are as you read them: 1. Command picture; 5. Tasks that came back insufficient since the last cycle; 8. Capabilities and models; 9. Rules the validator applies; 10. The IC's situation.",
+        "",
+        "## 2. Claims",
+        "  (the claims created since your review of period 1's draft; the rest as you read them)",
+        "  - 001-c001: ",
+      ].join("\n"),
+    );
+    for (const heading of [
+      "## 3. Unit tree",
+      "## 4. Tasks completed since the last cycle",
+      "## 6. Unit reports since the last cycle",
+      "## 7. Open tasks",
+    ])
+      expect(second?.prompt).toContain(`\n${heading}\n`);
+    for (const gone of [
+      "## 1. Command picture",
+      "## 5. Tasks that came back",
+      "## 8. Capabilities and models",
+      "## 9. Rules the validator applies",
+      "## 10. The IC's situation",
+      "Capabilities exist:",
+    ])
+      expect(second?.prompt).not.toContain(gone);
+    expect(second?.prompt).toContain(
+      "# Your command turn for operational period 2",
+    );
+    // Cycle 3: the handoff, then the successor's command turn on a fresh session with the
+    // transfer, the document and the whole file.
+    h.out.length = 0;
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    expect(h.out[0]).toMatch(
+      /^IC handoff: session stub-session-1 wrote its handoff document after 6500 tokens/,
+    );
+    const after = h.calls();
+    const successor = after.find(
+      (c) => c.kind === "command" && c.resume === null && c !== after[0],
+    );
+    expect(successor?.prompt).toContain(
+      "# Transfer of command: the outgoing IC's handoff document",
+    );
+    expect(successor?.prompt).toContain(
+      "\n# Incident file\n\n## 1. Command picture\n",
+    );
+    expect(successor?.prompt).toContain(
+      "\n## 9. Rules the validator applies\n  - Capabilities exist:",
+    );
+    expect(successor?.prompt).toContain("\n## 10. The IC's situation\n");
+    expect(successor?.prompt).not.toContain("the sections that changed since");
+  });
+
   it("below the threshold no handoff happens and the IC's session is kept", {
     timeout: 60_000,
   }, async () => {
