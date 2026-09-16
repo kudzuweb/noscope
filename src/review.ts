@@ -1,5 +1,7 @@
 import { isSessionClaim, measureEvidence } from "./evidence.js";
 import {
+  briefingQuestionOutcomes,
+  describeProposal,
   describeRefusedCall,
   IC_ACTOR,
   LEADER_ACTOR,
@@ -563,7 +565,7 @@ function sizeUpLines(
         }
       | undefined;
     lines.push(
-      `  initial ic ${model ?? "(no model)"}: ${describeUsage(usage, callCost)}  briefed: ${str(b?.kind) || "(no kind)"}, ${list(b?.initialObjectives).length} objective(s), ${list(b?.initialOrganization).length} unit(s) sketched, ${list(b?.questionsForHuman).length} question(s), recommended ${str(b?.incomingCommander?.provider)}/${str(b?.incomingCommander?.model)}${session(str(e.payload.sessionId))}`,
+      `  initial ic ${model ?? "(no model)"}: ${describeUsage(usage, callCost)}  briefed: ${str(b?.kind) || "(no kind)"}, ${list(b?.initialObjectives).length} objective(s), ${list(b?.initialOrganization).length} unit(s) sketched, ${list(b?.questionsForHuman).length} question(s) proposed, recommended ${str(b?.incomingCommander?.provider)}/${str(b?.incomingCommander?.model)}${session(str(e.payload.sessionId))}`,
     );
   }
   for (const e of events)
@@ -782,6 +784,18 @@ function briefingKept(events: readonly Event[]): string {
   return `briefing kept: ${count("accepted")} of ${verdicts.length} item(s) accepted, ${count("rewritten")} rewritten, ${count("discarded")} discarded`;
 }
 
+/** What the IC made of the briefing's questions (R5-8): how many it accepted, discarded and answered, how many a log from before R5-8 asked at create, or that none was proposed or none ruled on yet. */
+function briefingQuestionsKept(events: readonly Event[]): string {
+  const outcomes = briefingQuestionOutcomes(events);
+  if (outcomes.length === 0) return "briefing questions: none proposed";
+  if (outcomes.every((o) => o.ruling === null))
+    return `briefing questions: ${outcomes.length} proposed, not ruled on yet`;
+  const count = (verdict: string) =>
+    outcomes.filter((o) => o.ruling?.verdict === verdict).length;
+  const early = count("asked_at_create");
+  return `briefing questions: ${outcomes.length} proposed, ${count("accept")} accepted and asked, ${count("discard")} discarded, ${count("answer")} answered by the IC${early === 0 ? "" : `, ${early} asked at create by the initial IC (before R5-8)`}`;
+}
+
 /**
  * The cycle's critical path (R5-7): the chain of dependent tasks, among those that ran in
  * the cycle, whose seconds sum highest; its length is the least the dispatch could have
@@ -958,13 +972,17 @@ export function renderReview(
       `size-up  ${(briefed ?? events.find((e) => e.type === "command.failed"))?.createdAt ?? ""}`,
     );
     lines.push(...sizedUp);
-    for (const e of events)
-      if (e.type === "question.asked" && e.payload.seat === "initial_ic")
-        for (const q of list(e.payload.questions)) {
-          const text = str((q as { text?: unknown }).text);
-          questions.push(`asked in the size-up: ${text}`);
-          lines.push(`  question: ${text}`);
-        }
+    // The briefing's questions are proposals to the IC (R5-8): each is listed with what
+    // the IC made of it, and an accepted or answered one is listed again under the
+    // cycle that asked it.
+    for (const o of briefingQuestionOutcomes(events)) {
+      questions.push(
+        `proposed in the size-up: ${o.text}: ${describeProposal(o)}`,
+      );
+      lines.push(
+        `  question proposed ${o.proposal}: ${o.text}: ${describeProposal(o)}`,
+      );
+    }
     lines.push("");
   }
 
@@ -1280,8 +1298,11 @@ export function renderReview(
           lines.push(`  question: ${text}`);
         }
       if (e.type === "question.answered" && str(e.payload.answer) !== "") {
-        questions.push(`answered at ${e.createdAt}: ${str(e.payload.answer)}`);
-        lines.push(`  answered: ${str(e.payload.answer)}`);
+        const by = e.actor === IC_ACTOR ? " by the IC" : "";
+        questions.push(
+          `answered${by} at ${e.createdAt}: ${str(e.payload.answer)}`,
+        );
+        lines.push(`  answered${by}: ${str(e.payload.answer)}`);
       }
       if (e.type === "capability.requested")
         for (const r of list(e.payload.capabilityRequests))
@@ -1340,6 +1361,7 @@ export function renderReview(
   lines.push(...revisionLines(events, taskById));
   lines.push(...reassignmentLines(events));
   lines.push(briefingKept(events));
+  lines.push(briefingQuestionsKept(events));
   lines.push(refusalsLine(events));
   const transfers = events.filter((e) => e.type === "command.transferred");
   lines.push(

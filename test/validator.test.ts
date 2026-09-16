@@ -1374,6 +1374,73 @@ describe("validator", () => {
     store.close();
   });
 
+  it("Proposals ruled: the first turn rules on each of the briefing's questions once and on none it did not propose; after an accepted turn none is pending (R5-8)", () => {
+    const { store, ctx } = seeded();
+    const briefing = {
+      kind: "diagnosis",
+      dominantProblem: "the seed",
+      obviouslyNeeded: [],
+      initialObjectives: ["find it"],
+      initialOrganization: [],
+      questionsForHuman: ["which branch ships?", "what should the scroll do?"],
+      hazards: [],
+      incomingCommander: {
+        provider: "claude-code",
+        model: "claude-sonnet-5",
+        why: "judgment",
+      },
+    };
+    store.record("i1", "incident.briefed", "initial_ic", { briefing });
+    const rules = (t: CommandTurn) =>
+      validateCommand(t, ctx())
+        .filter((r) => r.rule === "Proposals ruled")
+        .map((r) => r.reason);
+    expect(rules(turn)).toEqual([
+      'the briefing\'s question 1 ("which branch ships?") has no ruling; accept, discard or answer it in briefingQuestions',
+      'the briefing\'s question 2 ("what should the scroll do?") has no ruling; accept, discard or answer it in briefingQuestions',
+    ]);
+    const ruled: CommandTurn = {
+      ...turn,
+      briefingQuestions: [
+        { proposal: 1, verdict: "accept", why: "only she knows" },
+        { proposal: 2, verdict: "discard", why: "a diagnosis" },
+      ],
+    };
+    expect(rules(ruled)).toEqual([]);
+    expect(
+      rules({
+        ...turn,
+        briefingQuestions: [
+          { proposal: 1, verdict: "accept", why: "only she knows" },
+          { proposal: 1, verdict: "discard", why: "twice" },
+          { proposal: 3, verdict: "discard", why: "none" },
+        ],
+      }),
+    ).toEqual([
+      "question 3 is ruled on, and the briefing proposed 2",
+      "the briefing's question 1 is ruled on 2 times",
+      'the briefing\'s question 2 ("what should the scroll do?") has no ruling; accept, discard or answer it in briefingQuestions',
+    ]);
+    // A rejected first turn leaves the questions proposed; an accepted one settles them.
+    store.record("i1", "command.turned", "runtime", {
+      cycle: 1,
+      turn: ruled,
+      rejected: true,
+    });
+    expect(rules(turn)).toHaveLength(2);
+    store.record("i1", "command.turned", "runtime", { cycle: 1, turn: ruled });
+    expect(rules(turn)).toEqual([]);
+    expect(
+      rules({
+        ...turn,
+        briefingQuestions: [{ proposal: 1, verdict: "accept", why: "again" }],
+      }),
+    ).toEqual([
+      "question 1 is ruled on, and no briefing question is pending: a question of your own goes in questionsForHuman",
+    ]);
+    store.close();
+  });
+
   it("Situation grounded: a first-turn situation with open items and no claims passes; evidence names claims the incident has, and a carried open item names one of the last picture's, once (R5-2)", () => {
     const { store, ctx } = seeded();
     // The first turn: two open items, no evidence, no ids (the runtime numbers them).

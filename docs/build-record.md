@@ -4609,3 +4609,155 @@ Not exactly to spec, with reasons:
 - The `verified` status and the `claim.verified` event type stay in the enums so a record
   from before R5-1 parses and replays; nothing writes either now, `createClaim` refuses
   them, and no renderer lists a verified claim.
+
+## R5-8: The IC gates the briefing's questions (#61, merged 2026-09-16)
+
+R5-8 of the round 5 plan. Forced by runs 003 and 004 (`docs/first-incident.md`, "R4-8
+stopped the fix and not the questions"): both size-ups asked two intended-behavior
+questions on a diagnostic objective, `create` blocked the incident on them until the
+operator answered as out of scope, and the IC's first turn discarded them anyway. Built on
+R5-2 (the briefing seeds the IC's first picture and the first turn edits it; `briefingOf`
+in `src/leader.ts`), R3-8's evaluation of briefing items and R5-6's `create`. One commit
+of code, tests and docs, one of this entry.
+
+The shape (`src/models.ts`): `BriefingQuestionVerdict` is `{ proposal, verdict, why,
+answer? }`, one strict object: `proposal` is the question's number in the briefing as the
+transfer of command lists it; `verdict` is `accept` (the question becomes one the IC
+raises, recorded and blocking as an IC question does), `discard` (with why) or `answer`
+(from the objective, the constraints or the file; `answer` is required there and refused
+on the other two, by a refinement after parse, as `ReportVerdict.instructions` is).
+`CommandTurn.briefingQuestions` is optional; `FirstCommandTurn` requires it, empty when
+the briefing proposed none or command came by handoff. The description says a question
+the IC would ask differently is discarded here and raised in `questionsForHuman`.
+`IncidentBriefing.questionsForHuman`'s description says the questions are proposals to the
+IC, who accepts, discards or answers each, and keeps R4-8's scoping; the briefing's
+docstring says only an accepted one reaches Mauria.
+
+`create` (`src/commands/incident.ts`) records no question and sets no status: the
+incident stays `open` after the transfer, the `question.asked` with `seat: initial_ic` and
+the `incident.blocked` with "the initial IC's briefing raised N question(s)" are gone, and
+each question prints as `question proposed for Mauria, N: <text> (the IC's first turn
+rules on it)`; the "blocked on N question(s)" line is gone. The IC's first briefing
+(`renderTransfer`, `src/ic.ts`) lists the questions numbered under "questions it proposed
+for Mauria, by number; each is yours to rule on in briefingQuestions (accept: …; discard:
+…; answer: …)", and `evaluateAsk` adds, for an initial transfer only, the sentence asking
+for a ruling on each by number and saying only an accepted question reaches her; the
+handoff ask is unchanged. `IC_ROLE` (`src/units/ic.ts`) gains the gate in its briefing
+paragraph: accept only what no tool could find and the objective does not settle, discard
+what the incident does not need (a diagnosis needs no ruling on intended behavior),
+answer what the objective already settles. `INITIAL_IC_ROLE` and the size-up ask
+(`src/size-up.ts`) and the initial IC's place (`src/providers/base.ts`) say a question is
+a proposal the IC gates.
+
+The readers (`src/leader.ts`): `proposedQuestions(events)` is the briefing's questions
+while no accepted `command.turned` follows `incident.briefed` (a rejected first turn
+leaves them proposed for the retry, as `pendingTransfer` leaves the briefing pending);
+`briefingQuestionOutcomes(events)` pairs each proposal with the ruling on the first
+accepted turn that carries `briefingQuestions` and the question id from the
+`question.asked` that recorded it, or, in a log from before R5-8, with the id the
+`question.asked` of seat `initial_ic` gave it (`asked_at_create`); `describeProposal` renders one outcome ("accepted by
+the IC, asked as 001-q02: <why>", "discarded by the IC: <why>", "answered by the IC as
+001-q01: <answer> (<why>)", or "not yet ruled on; the IC's first turn does").
+
+The rule (`src/validator.ts`): `ValidationContext.proposals` is `proposedQuestions(events)`,
+and `validateCommand` gains "Proposals ruled": every proposal has exactly one ruling by
+number, a ruling naming a number the briefing did not propose is refused ("the briefing
+proposed N"), and once none is pending a ruling is refused with "a question of your own
+goes in questionsForHuman". The rule runs on every command turn, so a later turn that
+rules again is rejected.
+
+The apply (`src/runtime.ts`): `applyCommand` reads the proposals, takes the rulings that
+are not discards in proposal order, and makes a `Question` of each before the turn's own
+`questionsForHuman`, so the briefing's questions are numbered first; an answered one
+carries the IC's answer from creation. `question.asked` carries `proposals`
+(`[{ proposal, questionId }]`) beside `questions`, and each answered one is followed by
+`question.answered` with the actor `ic`, the answer and the why. `statusAfter` now takes
+the questions and blocks on an open one (a plan's questions are all open, so nothing
+changes there), so an incident whose first turn only answers or discards stays open. A
+ruling naming a proposal the briefing lacks throws, as an answer naming no open request
+does; the validator refuses it first.
+
+The surface: `step` prints `briefing question N (<text>): <verdict>: <why>[; answer: …]`
+per ruling and marks an IC-answered question `(answered by the IC: …)` in its question
+lines; `show` prints "questions the briefing proposed for Mauria, as the IC ruled:" with
+one line per proposal, before the questions waiting on a human, only when the briefing
+proposed any; `review` lists each proposal with its outcome under the size-up (in place
+of the `seat: initial_ic` question lines, which nothing writes now; a log from before
+R5-8 carries them, and each of its questions reads as `asked at create by the initial IC,
+before R5-8, as 001-q01`, in `show`, `review` and the "briefing questions:" count, which
+is what run 004's record prints), says "N question(s) proposed" on the briefed line, marks an IC answer "answered by the IC" in its
+cycle, and adds a "briefing questions:" line after "briefing kept:" (none proposed; N
+proposed, not ruled on yet; or the counts accepted and asked, discarded, answered by the
+IC). The change report marks an IC-answered question "(your own answer, on taking
+command)" under "questions answered". The stub fills `briefingQuestions: []` on a first
+turn that carries none; a test whose briefing proposes questions scripts the rulings.
+
+DESIGN.md's Vocabulary (the briefing row), the ICS mapping row for the initial IC, Step 2
+(the `question.asked` and `question.answered` the first turn writes), Step 4 (the ask,
+the paragraph on the proposals, the `CommandTurn` and `IncidentBriefing` sketches), Step
+5 (the six command rules), Step 6 (the handoff's empty `briefingQuestions`), Step 7
+(`create`, `show`, `step`, `review`, `answer`) and the Model choices row for the initial
+IC follow; `docs/architecture.html`'s initial IC, IC, brief, command-turn and question
+nodes follow; CLAUDE.md's `create` row follows. README enumerates none of it.
+
+Files rewritten, for the merge order: the questions block of `create` and the
+`briefingEvaluation` print of `step` in `src/commands/incident.ts`; the questions section
+of `renderTransfer` and `evaluateAsk` in `src/ic.ts`; the question handling at the top
+of `applyCommand` and `statusAfter`'s signature in `src/runtime.ts`; the size-up block of
+`renderReview` in `src/review.ts`. Touched lightly: `src/models.ts` (the new verdict, two
+fields, two descriptions), `src/leader.ts` (three readers added after `briefingOf`),
+`src/validator.ts` (one context field, one rule), `src/units/ic.ts`, `src/size-up.ts`,
+`src/providers/base.ts` (sentences), `test/stub-claude`. The branch was cut from
+`round-5` at 7924282 (R5-2 merged) and rebased onto 14e5c17 (R5-1 merged): every source
+and test file rebased clean, and DESIGN.md, `docs/architecture.html` and this file
+conflicted on adjacent edits, resolved by re-applying R5-8's phrases onto R5-1's text.
+
+Tests: models tests that `FirstCommandTurn` requires `briefingQuestions` (empty allowed)
+and `CommandTurn` does not, and that a ruling is accept, discard or answer by a positive
+number with the answer required on `answer` and refused otherwise; a validator test of
+"Proposals ruled" (two unruled proposals name both; a ruling on number 3 of 2, a doubled
+ruling and a missing one each name their reason; a rejected first turn leaves them
+proposed and an accepted one settles them, after which a ruling is refused); run tests
+on the stub (`test/size-up.test.ts`): the briefing carries one question, `create` prints
+it as proposed and records no question and no block, the IC's first briefing lists it
+numbered with the ask and its schema requires `briefingQuestions`, the IC discards it,
+`step` prints the ruling, no `question.asked` or `incident.blocked` is ever written, the
+incident stays `open`, `show` and `review` say it was discarded, and the second turn is
+not asked to rule; the briefing carries two, the IC accepts the second and answers the
+first from the objective, both are recorded (`001-q01` with the IC's answer and a
+`question.answered` by `ic`, `001-q02` open, `proposals` on `question.asked`), the
+incident blocks at the command turn with no planner call, `step` is refused, `show` lists
+both outcomes, Mauria's `answer` goes to the accepted one and reopens the incident, and
+the next change report carries both answers with the IC's marked as its own; a first
+turn that rules on none is rejected under "Proposals ruled", one that rules on a number
+the briefing lacks is rejected, and the retry that rules on the one question passes. The
+transfer and ask snapshots, the review's "question(s) proposed" line, the role and schema
+pins follow; a replay test on run 004's record (`test/replay.test.ts`, behind
+`NOSCOPE_REPLAY_DB` beside R5-1's) asserts `show` and `review` say both questions were
+asked at create by the initial IC. `pnpm check` exits 0.
+
+Not exactly to spec, with reasons:
+
+- The rulings are a field of their own (`briefingQuestions`) rather than a third item
+  kind in `briefingEvaluation`: the verdict words differ (accept, discard, answer against
+  accepted, rewritten, discarded), an accepted question has a consequence the runtime
+  acts on (a recorded, blocking question) where an evaluation verdict is a record only,
+  and `briefingKept`'s counts stay honest.
+- A ruling names the question by its number in the briefing, not by its text: the runtime
+  knows the text, a number is copied reliably where a paraphrase would have cost a
+  rejected turn (run 004's first turn cost $0.31 and 66 seconds), and the recorded
+  question's text is the briefing's. A question the IC would reword is discarded and
+  raised in `questionsForHuman`, which the field's description says.
+- An answered question is recorded as a `Question` with the IC's answer and a
+  `question.answered` by the actor `ic`, rather than as the ruling alone, so the change
+  report's "questions answered" and the file's section 8 show the ruling where the planner
+  reads answers, and `incident answer` passes over it as answered.
+- The rule is the validator's ("Proposals ruled"), not the schema's: the schema cannot
+  know how many questions the briefing proposed, and a rejected turn with the reason is
+  the house form for a turn that does not fit the file.
+- Review of PR 61 (review61, 2026-09-16), applied before merge: `show` and `review` on a
+  log from before R5-8 (run 004's) printed "not yet ruled on; the IC's first turn does"
+  for questions that `create` had asked and the operator had answered; a fourth outcome,
+  `asked_at_create`, reads the `question.asked` of seat `initial_ic` after the briefing
+  and renders each with its id, counted on the "briefing questions:" line, with the
+  replay assertion above.
