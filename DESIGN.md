@@ -666,7 +666,13 @@ into each plan and read it back the next cycle). It never runs a tool, never wri
 store, and never marks its own conclusions true. Its rationale says how the plan works the
 situation and names the priority that chose between the plans it could have drafted.
 
-The IC reviews each draft once. `approve` applies the draft as drafted. `correct` sends the
+The IC reviews each draft once. The review's ask holds the draft to the period objectives
+and priorities and, on every review (R5-7), asks whether the draft serializes independent
+work: a unit or task left for the next period that could start now, or a `dependsOn` on a
+task whose result the dependent does not name in `evidenceFrom.tasks`, holds work behind
+work it does not need, and a code reading never waits behind a reproduce it does not need;
+the IC corrects or amends such a draft naming what runs together. `approve` applies the
+draft as drafted. `correct` sends the
 corrections to the planner, whose input is the same file with its draft and the corrections
 appended after section 10 (last, so the file's prefix still caches), and the redraft comes
 back to the IC under `FinalReviewTurn`, which cannot say `correct` again. `amend` applies
