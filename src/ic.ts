@@ -868,8 +868,7 @@ const SERIALIZED_WORK_ASK =
  * since run 004's planner put every session and both leaders on Opus 5 with no reason and
  * the review approved it without a word; the planner's own rule is Smallest model that fits.
  */
-const MODELS_ASK =
-  `Hold every session task and every new unit's leader to the smallest model its kind of work needs: recording, reproducing and reading are Haiku or Sonnet work, and so is a leader that directs such tasks; weighing evidence to a conclusion may take Opus. A task or leader on an Opus or Fable model with no modelWhy, or with one the work does not bear out, is an unreasoned upgrade: do not approve the draft as drafted, correct or amend it to the smaller model.`;
+const MODELS_ASK = `Hold every session task and every new unit's leader to the smallest model its kind of work needs: recording, reproducing and reading are Haiku or Sonnet work, and so is a leader that directs such tasks; weighing evidence to a conclusion may take Opus. A task or leader on an Opus or Fable model with no modelWhy, or with one the work does not bear out, is an unreasoned upgrade: do not approve the draft as drafted, correct or amend it to the smaller model.`;
 
 /**
  * The user message of a review (R5-3): the draft the validator has passed, its tasks

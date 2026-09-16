@@ -324,7 +324,9 @@ describe("the IC above the planner", () => {
     expect(aar).toContain(
       "ic verdicts: 1 review(s): 1 approve, 0 correct, 0 amend",
     );
-    expect(aar).toMatch(/ic\s+claude-sonnet-5\s+2\s+3,000\s+84\s+3\.0\s+\$0\.02/);
+    expect(aar).toMatch(
+      /ic\s+claude-sonnet-5\s+2\s+3,000\s+84\s+3\.0\s+\$0\.02/,
+    );
   });
 
   it("validate before review (R5-3): a draft that breaks Dependencies resolve goes back to the planner with the reasons, the redraft passes, and the IC is called once, on the redraft", {
@@ -396,6 +398,9 @@ describe("the IC above the planner", () => {
     expect(redraft).toContain(
       `The rules it broke:\n  - ${reason}\n\nRedraft the plan so that every rule passes; the IC has not seen the draft and reviews the redraft.`,
     );
+    // Section 9 lists last cycle's rejections, not this cycle's, which the appendix carries.
+    expect(redraft).toContain("rejected last cycle:\n  (nothing rejected)\n");
+    expect(redraft.split(reason)).toHaveLength(2);
     expect(calls[3]?.prompt).toContain(
       '"rationale": "two greps, the second after the first"',
     );

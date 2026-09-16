@@ -95,7 +95,11 @@ export function applyPatches(
       slots[i] = null;
       return;
     }
-    const field = p.field ?? "objective";
+    if (p.field === undefined) {
+      reasons.push(`${label} names no field to set`);
+      return;
+    }
+    const field = p.field;
     const edited = TaskProposal.safeParse({ ...slot, [field]: p.value });
     if (!edited.success) {
       reasons.push(

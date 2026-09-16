@@ -3812,7 +3812,7 @@ Not exactly to spec, with reasons:
   task or unit record, so `incident review` cannot yet list the models the planner chose
   with their whys, which R5-12's write-up asks for; a follow-up reads them from the plan
   events.
-## R5-3: Validate before review (#PR, merged 2026-09-16)
+## R5-3: Validate before review (#56, merged 2026-09-16)
 
 R5-3 of the round 5 plan, under Mauria's ruling of 2026-09-15 that a model is called when
 a decision needs a model, never for process. The evidence: in run 004 the IC's review turn
@@ -3839,13 +3839,22 @@ rejected cycle did before, and the next command turn's briefing lists the reject
 
 The patch (`PlanPatch` in `src/models.ts`): one strict object with `kind` (`set`, `add`,
 `cancel`), `task`, `field` (one of `TASK_FIELDS`, the task proposal's fields), `value`
-(`z.unknown()`, which renders as a typeless property; a live Haiku call on 2026-09-15
-returned a well-formed patch against the schema, so the API accepts it), `proposal` and
-`why`, with a refinement tying the fields to the kind. A draft task is addressed by its
+(`z.unknown()`, which `jsonSchemaFor` renders as a property with a description and no
+`type`), `proposal` and `why`, with a refinement tying the fields to the kind. That the
+API accepts the typeless property was checked live on 2026-09-15 with one Haiku call
+through `claudeCodeProvider().run` on the real binary, `outputSchema:
+jsonSchemaFor(ReviewTurn)`, prompt `Return verdict "correct" with one patch: kind "set",
+task "#1", field "dependsOn", value the list ["first"], why "in order". rationale:
+"test".` (the script `review-schema-live.mjs`, kept in the session's scratch directory,
+not the repository); the call returned `{"verdict":"correct","rationale":"test",
+"patches":[{"kind":"set","task":"#1","field":"dependsOn","value":["first"],"why":"in
+order"}]}`, which `ReviewTurn.safeParse` accepts, at 5,065 input and 446 output tokens,
+4.5 s, $0.013. A draft task is addressed by its
 ref or by `#N`, its position in `createTasks` as the review prompt lists them; positions
 name the draft as listed, so a cancel shifts nothing and a set on a task an earlier patch
 cancelled is a reason. `set` replaces the field and parses the task again through
-`TaskProposal`, so a value of the wrong shape is a reason and not a crash; `add` appends
+`TaskProposal`, so a value of the wrong shape is a reason and not a crash, and a `set`
+naming no field is a reason too; `add` appends
 the proposal after the draft's tasks; `cancel` removes a draft task, or adds an open
 task's id to `cancelTasks` once. A patch that does not apply is recorded `plan.rejected`
 under the rule `Patch applies` with `corrected: true` (`recordUnapplied`), and the
@@ -3866,7 +3875,10 @@ patch is, and never to correct for a rule. The planner's system prompt says the 
 its side; `Redraft` (`src/planner.ts`) is the two-cause union, `renderRedraft` renders
 each after the file, and `plan.proposed` on a redraft carries `cause`, `reasons` and, on
 a correction, `patches`; section 9's "warned last cycle" lines are deduplicated, since a
-draft validated twice in one cycle records its warnings twice.
+draft validated twice in one cycle records its warnings twice, and section 9's "rejected
+last cycle" lists only rejections before this cycle's first draft (those after the last
+`command.turned`'s first `plan.proposed` are this cycle's, which the redraft appendix
+carries), so a redraft never reads the same rejection twice under two labels.
 
 `incident review` (`src/review.ts`) marks each redraft's planner line `redraft after a
 rule` or `redraft after a correction` (a log from before R5-3 marks a redraft with no
@@ -3916,16 +3928,21 @@ Not exactly to spec, with reasons:
   it to `cancelTasks`), by whichever the address names, since "a task to cancel" reads
   both ways and both are one-line edits the IC will want.
 - A patch's `value` is `z.unknown()` rather than JSON text, so the IC writes the field's
-  own shape; the typeless property was checked live rather than assumed.
+  own shape; the typeless property was checked live (the call above) rather than assumed.
 - The stub needed no extension: `NOSCOPE_STUB_PLANS` already scripts the first and second
   drafts, and `NOSCOPE_STUB_REVIEW(S)` passes a patch verdict through unchanged.
 - The `plan.applied` diff is between the reviewed draft and the applied plan, not the
   planner's first draft, since a rule redraft before the review is not the IC's hand and
   the diff is the record of the IC's hand.
-- Rebased onto R5-7 (#53): `SERIALIZED_WORK_ASK` stays the last element of the review
-  prompt's array after the substance ask; R5-7's test assertion on a second review's
-  prompt is gone with the second review, and the patch test sets `evidenceFrom` beside
-  `dependsOn` so R5-7's "Independent work runs together" warning has nothing to warn on.
+- Rebased onto R5-7 (#53) and R5-6 (#54): the review prompt's array ends with the
+  substance ask, then `SERIALIZED_WORK_ASK`, then `MODELS_ASK`, which was R5-6's
+  `reviewModelsAsk(corrections)` and is a constant with the "correct or amend" wording
+  now that there is one review and it may always correct; R5-7's and R5-6's assertions on
+  a second review's prompt are gone with the second review, the patch test sets
+  `evidenceFrom` beside `dependsOn` so R5-7's "Independent work runs together" warning has
+  nothing to warn on, and the IC's usage lines in the tests read `claude-sonnet-5`, R5-6's
+  default. The planner snapshot fixture records this cycle's `command.turned` before the
+  render, as every planner call has one before it, so its last-cycle rejection still shows.
 - Files rewritten, for the merge order: `src/commands/incident.ts` (the planning steps of
   `cycle` are now `planPeriod`), the review schema in `src/models.ts`, `reviewTurn` and
   `renderReviewPrompt` in `src/ic.ts`, the `Redraft` type and `renderRedraft` in

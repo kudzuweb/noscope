@@ -207,6 +207,19 @@ describe("the IC's patches on a valid draft (R5-3)", () => {
         ),
       ],
     });
+    // A set with no field is a reason, never a default field.
+    expect(
+      applyPatches(
+        draft,
+        [{ kind: "set", task: "first", value: "x", why: "no field" }],
+        [],
+      ),
+    ).toEqual({
+      ok: false,
+      reasons: [
+        'patch 1 (set first.undefined to "x": no field) names no field to set',
+      ],
+    });
     // A completed task is not open, so it cannot be cancelled.
     expect(
       applyPatches(

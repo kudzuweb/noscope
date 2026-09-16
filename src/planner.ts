@@ -338,8 +338,24 @@ export function renderPlannerInput(
       t.status === "pending" || t.status === "ready" || t.status === "running",
   );
 
+  // On a redraft (R5-3) this cycle's rejections ride in the appendix after the file, so
+  // section 9 lists only those before this cycle's first draft: the last cycle's.
+  const lastTurn = [...events]
+    .reverse()
+    .find((e) => e.type === "command.turned");
+  const firstDraft =
+    lastTurn === undefined
+      ? undefined
+      : events.find(
+          (e) => e.type === "plan.proposed" && e.sequence > lastTurn.sequence,
+        );
   const rejections = recent
-    .filter((e) => e.type === "plan.rejected" && e.actor !== LEADER_ACTOR)
+    .filter(
+      (e) =>
+        e.type === "plan.rejected" &&
+        e.actor !== LEADER_ACTOR &&
+        (firstDraft === undefined || e.sequence < firstDraft.sequence),
+    )
     .map((e) => `${String(e.payload.rule)}: ${String(e.payload.reason)}`);
   // A plan's warnings are recorded before it is applied, so the last applied plan's sit
   // before `since`: the window opens at the plan applied before it. When the last cycle

@@ -235,6 +235,12 @@ function cycledIncident(store: Store) {
     rule: "Span of control",
     reason: "u-scroll would have 8 children",
   });
+  // This cycle's command turn, which precedes every planner call (R3-7); the rejection
+  // above is last cycle's, and section 9 lists it because it sits before this turn (R5-3).
+  store.record("i1", "command.turned", "runtime", {
+    cycle: 2,
+    turn: { situation: null },
+  });
   return s;
 }
 
