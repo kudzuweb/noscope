@@ -179,11 +179,13 @@ describe("apply and tree", () => {
     expect(applied.settled).toEqual([
       {
         taskId: "i1-t02",
+        unitId: "i1-command",
         because: "i1-t01",
         reason: "depends on i1-t01, which was cancelled by the plan",
       },
       {
         taskId: "i1-t03",
+        unitId: "i1-command",
         because: "i1-t01",
         reason:
           "depends on i1-t02, cancelled because i1-t01 was cancelled by the plan",
@@ -213,6 +215,44 @@ describe("apply and tree", () => {
       "task.cancelled",
       "task.cancelled",
       "plan.applied",
+    ]);
+    store.close();
+  });
+
+  it("a plan that cancels a task and its dependent together cancels each once, as the plan's own, and settles nothing (PR 55's review: run 004's cycle 2)", () => {
+    const { store, apply } = fresh();
+    apply({
+      ...empty,
+      createTasks: [
+        grepTask("i1-command", "first", { ref: "first" }),
+        grepTask("i1-command", "second", {
+          ref: "second",
+          dependsOn: ["first"],
+        }),
+        grepTask("i1-command", "third", { dependsOn: ["second"] }),
+      ],
+    });
+    const applied = apply({ ...empty, cancelTasks: ["i1-t01", "i1-t02"] });
+    expect(applied.cancelledTasks).toEqual(["i1-t01", "i1-t02"]);
+    expect(applied.settled).toEqual([
+      {
+        taskId: "i1-t03",
+        unitId: "i1-command",
+        because: "i1-t02",
+        reason: "depends on i1-t02, which was cancelled by the plan",
+      },
+    ]);
+    const cancelled = store
+      .listEvents("i1")
+      .filter((e) => e.type === "task.cancelled")
+      .map((e) => [
+        (e.payload.mutation as { taskId: string }).taskId,
+        e.payload.because ?? "the plan's",
+      ]);
+    expect(cancelled).toEqual([
+      ["i1-t01", "the plan's"],
+      ["i1-t02", "the plan's"],
+      ["i1-t03", "i1-t02"],
     ]);
     store.close();
   });

@@ -2804,6 +2804,7 @@ describe("the IC above the planner", () => {
     expect(commanded.settled).toEqual([
       {
         taskId: "t-read",
+        unitId: "u-b",
         because: "t-next",
         reason:
           "depends on t-next, which was cancelled with unit u-a, reassigned",

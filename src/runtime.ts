@@ -85,10 +85,15 @@ export function cancelDependents(
         actor,
         "task.cancelled",
         {
-          extra: { because: cause.id, reason },
+          extra: { because: cause.id, reason, unitId: t.unitId },
         },
       );
-      settled.push({ taskId: t.id, because: cause.id, reason });
+      settled.push({
+        taskId: t.id,
+        unitId: t.unitId,
+        because: cause.id,
+        reason,
+      });
     }
   }
   return settled;
@@ -692,7 +697,7 @@ export function applyPlan(
           strikeTeam: t.strikeTeam,
         });
     }
-    for (const id of plan.cancelTasks) {
+    for (const id of plan.cancelTasks)
       store.setTaskStatus(
         incident.id,
         id,
@@ -701,6 +706,11 @@ export function applyPlan(
         "task.cancelled",
         { extra: { rationale: plan.rationale } },
       );
+    // Cascaded after every cancel of the plan's own, so a dependent the plan cancels
+    // itself is already cancelled when the cascade reads the tasks and is not settled
+    // a second time as the runtime's (PR 55's review: run 004's cycle 2 cancelled a task
+    // and its dependent in one plan).
+    for (const id of plan.cancelTasks)
       settled.push(
         ...cancelDependents(
           store,
@@ -709,7 +719,6 @@ export function applyPlan(
           actor,
         ),
       );
-    }
     for (const c of plan.closeUnits)
       store.closeUnit(incident.id, c.unitId, c.reason, actor);
     recordChannels(store, incident, plan, questions, incidentStatus, actor);

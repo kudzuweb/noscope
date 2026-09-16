@@ -11,6 +11,7 @@ import {
   fallbackModel,
   icSituation,
   type RefusedCall,
+  type Settled,
 } from "./leader.js";
 import {
   type Claim,
@@ -619,7 +620,7 @@ export async function dispatch(
       let run: Promise<Landed>;
       if (capability === undefined) {
         const reason = `no capability named ${next.capability}`;
-        let settled: string[] = [];
+        let settled: Settled[] = [];
         store.batch(() => {
           store.setTaskStatus(
             incident.id,
@@ -636,7 +637,7 @@ export async function dispatch(
             incident.id,
             { id: next.id, what: `failed: ${reason}` },
             actor,
-          ).map((s) => s.taskId);
+          );
         });
         ran.push({
           taskId: next.id,
@@ -644,7 +645,9 @@ export async function dispatch(
           status: "failed",
           claims: 0,
           reason,
-          ...(settled.length === 0 ? {} : { settled }),
+          ...(settled.length === 0
+            ? {}
+            : { settled: settled.map((s) => s.taskId) }),
         });
         run = Promise.resolve({
           task: next,
@@ -854,7 +857,7 @@ async function runOne(
             // A deterministic run costs nothing; a session that failed before answering cost something unknown.
             ...(capability.kind === "deterministic" ? { costUsd: 0 } : {}),
           };
-    let settled: string[] = [];
+    let settled: Settled[] = [];
     store.batch(() => {
       if (error instanceof SessionError && error.sessionId !== null)
         recordActivity(store, incident.id, actor, error.activity, {
@@ -906,7 +909,7 @@ async function runOne(
         incident.id,
         { id: next.id, what: `failed: ${reason}` },
         actor,
-      ).map((s) => s.taskId);
+      );
     });
     ran.push({
       taskId: next.id,
@@ -914,7 +917,9 @@ async function runOne(
       status: "failed",
       claims: 0,
       reason,
-      ...(settled.length === 0 ? {} : { settled }),
+      ...(settled.length === 0
+        ? {}
+        : { settled: settled.map((s) => s.taskId) }),
     });
     return {
       task: next,

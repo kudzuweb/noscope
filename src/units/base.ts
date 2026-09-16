@@ -504,7 +504,7 @@ export function endedSinceLastTurn(
               task,
               status: "failed",
               reason: String(e.payload.reason ?? ""),
-              settled: (settled.get(task.id) ?? []).map((s) => s.taskId),
+              settled: settled.get(task.id) ?? [],
             }
           : {
               task,
@@ -597,7 +597,7 @@ function renderEnding(ending: TaskEnding): string[] {
   const { task } = ending;
   if (ending.status === "failed")
     return [
-      `Task ${task.id} (${task.capability}) failed: ${ending.reason}${ending.settled.length === 0 ? "" : ` Cancelled because they waited on it: ${ending.settled.join(", ")}; nothing of yours waits on it now.`}`,
+      `Task ${task.id} (${task.capability}) failed: ${ending.reason}${ending.settled.length === 0 ? "" : ` Cancelled because they waited on it: ${ending.settled.map((s) => (s.unitId === task.unitId ? s.taskId : `${s.taskId} (under ${s.unitId})`)).join(", ")}; nothing of yours waits on it now.`}`,
     ];
   if (ending.status === "cancelled")
     return [

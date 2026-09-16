@@ -1664,7 +1664,7 @@ describe("dispatcher, unit leaders", () => {
     const calls = readCalls(log);
     expect(calls.map((c) => c.kind)).toEqual(["leader", "leader"]);
     expect(calls[0]?.prompt).toContain(
-      `Task t-grep (grep) failed: ${reason} Cancelled because they waited on it: t-inv; nothing of yours waits on it now.`,
+      `Task t-grep (grep) failed: ${reason} Cancelled because they waited on it: t-inv (under u-b); nothing of yours waits on it now.`,
     );
     // u-b ran nothing and heard nothing: its owed turn carries the cancellation.
     expect(calls[1]?.prompt).toContain(

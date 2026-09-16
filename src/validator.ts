@@ -419,7 +419,7 @@ const CHECKS: Record<RuleName, Rule> = {
         if (typeof value !== "string" || existsSync(resolve(ctx.cwd, value)))
           return [];
         return [
-          `${label(t)} names ${key} ${value}, which does not exist under the working directory ${ctx.cwd}`,
+          `${label(t)} names ${key} ${value}, which does not resolve against the working directory ${ctx.cwd} to a path that exists`,
         ];
       });
     }),

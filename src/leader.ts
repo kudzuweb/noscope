@@ -105,8 +105,13 @@ function reassignmentOf(e: Event): Reassignment {
   };
 }
 
-/** A task cancelled because what it waited on will never complete (R5-10): the task, the failed or cancelled task at the root of the chain (`because`), and the reason as the event carries it, naming the task it waited on directly. */
-export type Settled = { taskId: string; because: string; reason: string };
+/** A task cancelled because what it waited on will never complete (R5-10): the task and its unit, the failed or cancelled task at the root of the chain (`because`), and the reason as the event carries it, naming the task it waited on directly. */
+export type Settled = {
+  taskId: string;
+  unitId: string;
+  because: string;
+  reason: string;
+};
 
 /** The tasks cancelled because a failed or cancelled task will never complete (R5-10), keyed by that task's id, in the order they were cancelled: every `task.cancelled` carrying `because`. */
 export function settledBy(events: readonly Event[]): Map<string, Settled[]> {
@@ -120,6 +125,7 @@ export function settledBy(events: readonly Event[]): Map<string, Settled[]> {
     const list = settled.get(e.payload.because) ?? [];
     list.push({
       taskId,
+      unitId: String(e.payload.unitId ?? ""),
       because: e.payload.because,
       reason: String(e.payload.reason ?? ""),
     });

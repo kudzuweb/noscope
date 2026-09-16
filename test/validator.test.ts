@@ -648,10 +648,10 @@ describe("validator", () => {
         ],
       }),
     ).toEqual([
-      `Paths exist: task "find scrollTo calls" names root node_modules/@tiptap/core, which does not exist under the working directory ${cwd}`,
-      `Paths exist: task "read packages/app/src/PageCard.tsx" names path packages/app/src/PageCard.tsx, which does not exist under the working directory ${cwd}`,
-      `Paths exist: task "read ${cwd}/src/nothing.ts" names path ${cwd}/src/nothing.ts, which does not exist under the working directory ${cwd}`,
-      `Paths exist: task "the history" names cwd elsewhere, which does not exist under the working directory ${cwd}`,
+      `Paths exist: task "find scrollTo calls" names root node_modules/@tiptap/core, which does not resolve against the working directory ${cwd} to a path that exists`,
+      `Paths exist: task "read packages/app/src/PageCard.tsx" names path packages/app/src/PageCard.tsx, which does not resolve against the working directory ${cwd} to a path that exists`,
+      `Paths exist: task "read ${cwd}/src/nothing.ts" names path ${cwd}/src/nothing.ts, which does not resolve against the working directory ${cwd} to a path that exists`,
+      `Paths exist: task "the history" names cwd elsewhere, which does not resolve against the working directory ${cwd} to a path that exists`,
     ]);
     // A path that exists, relative or absolute, and a check_path on one that does not.
     expect(
@@ -690,7 +690,7 @@ describe("validator", () => {
     expect(
       leader.ok ? [] : leader.rejections.map((r) => `${r.rule}: ${r.reason}`),
     ).toEqual([
-      `Paths exist: task "find scrollTo calls" names root no-such-dir, which does not exist under the working directory ${cwd}`,
+      `Paths exist: task "find scrollTo calls" names root no-such-dir, which does not resolve against the working directory ${cwd} to a path that exists`,
     ]);
     expect(
       validateCommand(
@@ -698,7 +698,7 @@ describe("validator", () => {
         ctx(),
       ).map((r) => `${r.rule}: ${r.reason}`),
     ).toEqual([
-      `Paths exist: task "find scrollTo calls" names root no-such-dir, which does not exist under the working directory ${cwd}`,
+      `Paths exist: task "find scrollTo calls" names root no-such-dir, which does not resolve against the working directory ${cwd} to a path that exists`,
     ]);
     // The context carries the directory the incident runs in, and the check follows it.
     expect(
