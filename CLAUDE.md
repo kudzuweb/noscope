@@ -84,7 +84,9 @@ Everything is read-only in this version: sessions get `Read`, `Grep`, `Glob` and
 read-only allowlist, and nothing that writes runs without a grant, which is not built yet.
 The IC runs on Sonnet 5 unless `--ic-model` names another (R5-6): Opus 5's safeguards
 refused the IC's resumed review turn in the third and fourth runs (`DESIGN.md` Reference
-table) and Sonnet 5 ran every turn of the third run for a fifth of the cost. A refused IC
+table) and Sonnet 5 ran every turn of the third run for a fifth of the cost; the fifth run
+ran on the default, ten Sonnet 5 calls with no refusal, $9.52 and 55 minutes for the
+incident (`docs/first-incident.md`). A refused IC
 call still falls back to Opus 4.8 for the rest of the incident (R4-7), and a refusal there
 too blocks the incident on a question you answer with a model name (`noscope incident
 answer <id> "claude-sonnet-5"`). The planner names the smallest model that fits for every
@@ -96,8 +98,8 @@ validator warns on an unexplained one and the IC's review refuses it.
 | Want | Read |
 |---|---|
 | How it works, in order | `docs/architecture.html`, then `DESIGN.md` Steps 4 to 6 |
-| What has been built and what is next | `BUILD-PLAN.md` (rounds 3 and 4 at the end) and `docs/build-record.md` |
-| What a run looks like and what it cost | `docs/first-incident.md` (four runs of one objective) |
+| What has been built and what is next | `BUILD-PLAN.md` (rounds 3 to 5 at the end) and `docs/build-record.md` |
+| What a run looks like and what it cost | `docs/first-incident.md` (five runs of one objective) |
 | The runtime against plain instructions | `docs/instructions-only-run.md` |
 
 ## Working in this repository

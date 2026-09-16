@@ -623,3 +623,338 @@ Each is a candidate for round 5, with its evidence.
   read (`PageCard.tsx:1422`, in `001-t11`'s read of lines 1355 to 1479) and in run 002's
   record, and no seat connected them; each incident starts from its own briefing. Whether an
   incident should be able to cite another's claims is a design call for the revisit.
+
+## Fifth run
+
+The same objective run a fifth time on 2026-09-16 (06:59 to 07:57 UTC; 01:59 to 02:57 CDT),
+with round 5 merged (PRs 53 to 62 on `round-5`; every event carries the runtime tag
+`ef5ad67`), from the same roughdraftplus working directory at commit 6a996e8, on
+`NOSCOPE_DB=~/.noscope/fifth-run.sqlite`, with the scratch document restored from its
+pristine copy before `create`, run 003's objective, two constraints and priority word for
+word, and no `--ic-model`, so the IC ran on Sonnet 5 by R5-6's default. The session running
+the build stepped it by hand, one detached `step` per cycle, unattended; nothing asked
+for an operator, since the size-up proposed no question.
+
+The run is one incident of five cycles, each one operational period, each accepted whole.
+The size-up on Haiku wrote a diagnostic briefing (three objectives, two units, no fix, no
+question), recommended Haiku as commander, and command went to Sonnet 5 by the default
+with the recommendation recorded. The IC's first turn accepted all five briefing items,
+the first briefing any run has kept whole. Period 1 ran the reproduce alone and its unit
+reported; the code unit, planned in the same period, never started (below). Period 2 ran
+the code unit's three greps and its investigate, then an instrumented reproduce in a new
+unit, one after the other; period 3 ran the reconciliation interpret and a
+name-correspondence check under the code unit; the fourth command turn crossed the handoff
+threshold at 128,967 tokens of context, the outgoing IC wrote its handoff document, and a
+fresh session reviewed period 4's draft and ran it: a capture-phase focus reproduction, a
+sourcemap probe, two greps and the final statement. The successor's one command turn
+accepted that unit's report and set `satisfied`, 55.0 minutes after the first command turn
+was recorded (57.9 from `create`), at $9.52.
+
+### The answer, and how it was reached
+
+The same code path as runs 001 to 004: `deleteComment` at `PageCard.tsx:1863-1910`, the
+bare `.focus()` at line 1884 chained before `removeCommentIds` where the file's other focus
+calls pass `{ scrollIntoView: false }` (`001-c013`, observed), TipTap's `focus` command
+taking its `delayedFocus` branch when the view does not already have focus (`001-c014`,
+`001-c015`, from the installed `focus.ts`), the animation frame that calls `view.focus()` and
+`editor.commands.scrollIntoView()`, ProseMirror's `scrollToSelection` writing `scrollTop`
+5481 on the one container the rail and the editor share (`001-c026`, the stack captured
+live: `Object.scrollIntoView`, `n4.dispatch`, `Uie.dispatchTransaction`, `n4.updateState`,
+`n4.updateStateInner`, `n4.scrollToSelection`, `oD`, the setter), and the selection sitting
+near the document end before and after every deletion, so the destination is the same
+whichever comment is deleted (`001-c076`, `001-c088`: the anchor's offset 354 and its
+absolute position unchanged by the deletion; 5481 for c2, c3, c4 and c1 across three
+reproductions).
+
+Two things are new. The first reproduce (`001-t01`) read `document.activeElement` before and
+after the click and found the editor both times (`001-c006`, `001-c007`), which the IC's
+period 2 turn marked against the focus story; the instrumented reproduce (`001-t07`)
+caught a focus hop to the Delete button and back within about 21 milliseconds
+(`001-c025`), and the IC's period 3 turn reclassified `001-c007` from against to for,
+naming the first reading a resolution gap. Period 4's capture-phase reproduce (`001-t11`)
+then observed the precondition `delayedFocus` needs: at the capture-phase click, before
+React's handler runs, `activeElement` is the Delete button and the ProseMirror view reports
+`hasFocus()` false (`001-c071`, `001-c072`), and the `scrollTop` write lands inside a
+`requestAnimationFrame` callback about 20 milliseconds after the click, with both the
+write-time stack and the frame's scheduling stack captured verbatim (`001-c074`). Run 002
+had observed the same (`hasFocus()` false at the capture-phase click, its cycle 6); runs
+003 and 004 did not, and this run observed it with the write's timing beside it.
+
+The second is how the origin link was graded. Run 004's trace task (`001-t09` there)
+compared the minified callback at bundle offset `770:2220` with `PageCard.tsx:1882-1891`
+token for token and raised the link from the bundle to `deleteComment` to observed at 0.95.
+Run 005's IC set a period 4 priority not to call a mangled or anonymous frame observed on
+name similarity or calling position; the sourcemap probe (`001-t12`) found none by three
+routes (no `sourceMappingURL` in the 1,870,223-character bundle, the `.map` URL answered
+with the SPA's `index.html` exactly as a fabricated path was, no map or build directive in
+the repository, `001-c063` to `001-c068`); and the final statement (`001-t15`, Opus)
+graded the origin link inferred at 0.7 (`001-c083`), the IC accepted at 0.7 to 0.8 and
+deferred the open item as the production build's limit. The two runs settled the same
+link differently. Run 004's reading is the more defensible on this link: a token-for-token
+match of a minified body against its source is a content comparison, not a name
+resemblance, and nothing in run 005 did it. Run 005's discipline is the sounder rule and
+was applied to the wrong gap, and the run held the observation that would have closed the
+link and did not deliver it: `001-t11`'s scheduling stack reads `window.requestAnimationFrame`
+from `Object.focus (289:55242)` from `770:2220` from `onClick (738:12806)` through React's
+dispatch, the same `770:2220` run 004 matched to `deleteComment`, and `001-c075` says so at
+0.8; the final statement wrote that the scheduling stack "is not quoted in the attached
+result" (`001-c083`, `001-c095`, `001-c096`), because the brief renderer attached
+`001-t11`'s observations and not its claims, where the session had put the stack text
+(the finding below). The write side is observed to a three-frame segment matched by
+literal method name and call order against the bundled `prosemirror-view`
+(`001-c048` to `001-c052`, from the grep `001-t09`), and two alternatives the code trace
+raised, a `scrollTop` clamp from the container shrinking and a remounted container, are
+ruled out on runtime evidence (`001-c031`, `001-c032`, `001-c092`, `001-c093`).
+
+### Measures beside runs 001 to 004
+
+| Measure | Run 001 | Run 002 | Run 003 (incident 002) | Run 004 | Run 005 |
+|---|---|---|---|---|---|
+| Cycles | 12 plans, 10 applied, 2 rejected | 8 plans, 7 applied, 1 rejected | 3 command turns, 2 plans drafted, 1 applied, 1 rejected on 5 rule lines | 4 command turns, 1 rejected on 4 rule lines; 3 plans drafted (one a redraft), 2 applied, 0 rejected | 5 command turns, 0 rejected; 4 plans drafted, 4 applied, 0 rejected, 0 redrafts |
+| Wall time | 54 min | 63 min | 29 min, plus the 40 min incident 001 spent refused and the two fixes | 32 min from the first command turn to `satisfied`, 35 min from `create`; the size-up's questions held it for 19 seconds | 55.0 min from the first command turn to `satisfied`, 57.9 min from `create`; nothing waited on an operator |
+| Events | 632 | 367 | 138 | 422 | 365 |
+| Planner | 12 calls, 1.09M input, 74k output, $2.40 to $12.72 | 8 calls, 265k input, 84k output, $4.76 | 2 calls, 17k input, 15k output, $0.50 | 3 calls, 115k input, 27k output, $1.79 | 4 calls on Opus 5, 115k input, 37k output, 470 s, $1.80 |
+| IC | none | none | 5 calls on Sonnet 5, 277k input (all cache writes), 32k output, $1.28; the last turn's context was 134k, above the 120k handoff threshold, so one more turn would have handed off | 8 calls: 3 on Opus 5 (82k input, 9k output, $0.89, the third refused) and 5 on Opus 4.8 (482k input, 42k output, $4.94); the last turn's context was 170k, above the 120k handoff threshold, so one more turn would have handed off | 10 calls on Sonnet 5, none refused: 5 command turns, 4 reviews, 1 handoff; 802k input, 80k output, 869 s, $2.94; the fourth command turn's context was 128,967, so command was handed off mid cycle 4 |
+| Initial IC | none | none | 1 Haiku call, 608k input (mostly cache reads), 68 s, $0.15, 21 tool calls | 1 Haiku call, 825k input (mostly cache reads), 95 s, $0.20, 28 tool calls | 1 Haiku call, 688k input (mostly cache reads), 61 s, $0.19, 21 tool calls, 0 questions |
+| Sessions | 7, $3.96 to $27.44 | 11, $11.44 | 3 (one reproduce, one investigate, one interpret), $1.99; plus 5 leader turns on the root, $0.94 | 5 (one reproduce, three investigate, one interpret), all Opus 5, $5.75; plus 6 leader turns on the two units, $2.37 | 8 (four reproduce and one investigate on Sonnet 5, $2.54; three interpret, two on Opus 5 and one on Sonnet 5, $1.47), $4.01; plus 5 leader turns on the four units, $0.59 |
+| Leader turns beside endings that needed no turn | none | none | 5 turns on the root, one per ending | 6 turns: 1 on the reproduce unit, 5 on the code unit (4 continues, 1 report); every session ending called its leader | 5 turns for 4 reports (1 each on `001-u02`, `001-u04`, `001-u05`; 2 on `001-u03`, one a continue with nothing ready); 14 endings needed no turn |
+| Deterministic tasks | 22 | 7 | 2 | 5, one failed | 6, none failed |
+| Claims | 404 verified, 67 asserted | 162 verified, 86 asserted | 11 verified, 13 asserted | 162 verified, 54 asserted (10 of them inferred) | 96 asserted, all from sessions: 52 observed, 44 inferred; 0 verified (R5-1) |
+| Evidence beside claims | not counted | not counted | not counted | 4 deterministic results under the new rendering (R5-1's replay), beside 162 grep-promoted claims in the run itself | 6 deterministic results (`001-t02` 17 matches in 5 files, `001-t04` 87 in 16, `001-t03` 26 in 6, `001-t09` 26 in 1, `001-t14` 1 in 1, `001-t13` none), beside 96 claims |
+| Human channel | 1 question about the bug | 2 questions and 1 capability request about the fixture | 2 questions from the size-up about intended behavior, answered as out of scope by the operator; none from the IC | 2 questions from the size-up about intended behavior, answered as out of scope by the operator; none from the IC or the planner | none: the size-up proposed no question, and the IC, the planner and the units raised none |
+| Total cost at list rates | $6.37 to $40.15 | $16.20 | $4.86, or $5.97 with incident 001 | $15.96 | $9.52 |
+
+The acceptance asked for cost at or below run 003's $4.86 and wall time below 29 minutes
+with run 004's evidence. The run cost $9.52, $4.66 over, and took 55 minutes, 26 over, with
+evidence better than run 004's on the reproduce side (the instrumented stack, the
+capture-phase focus reading, the sourcemap probe) and weaker on the origin link's grading.
+Where the money went, from the three reviews' per-role tables:
+
+| Seat | Run 003 | Run 004 | Run 005 |
+|---|---|---|---|
+| The IC | Five calls on Sonnet 5 cost $1.28. | Eight calls cost $5.83, three on Opus 5 and five on Opus 4.8. | Ten calls on Sonnet 5 cost $2.94: five command turns $1.53, four reviews $0.81, the handoff turn $0.60. Run 005 made two more command turns and two more reviews than run 003, and the handoff. |
+| Task sessions | Three sessions cost $1.99. | Five sessions, all Opus 5, cost $5.75. | Eight sessions cost $4.01: four reproduces on Sonnet 5 $1.63 (`001-t01` $0.78, `001-t07` $0.34, `001-t12` $0.09, `001-t11` $0.42), one investigate on Sonnet 5 $0.91, three interprets $1.47 (`001-t08` $0.63 and `001-t15` $0.64 on Opus 5, `001-t10` $0.20 on Sonnet 5). Run 004's one Opus reproduce cost $1.85; run 005's four on Sonnet cost $1.63 together. |
+| Leader turns | Five turns on the root cost $0.94. | Six turns on Opus 5 cost $2.37. | Five turns on Sonnet 5 cost $0.59, on inputs of 20k to 30k tokens (contexts of 11k to 21k). |
+| The planner | Two calls cost $0.50. | Three calls cost $1.79. | Four calls on Opus 5 cost $1.80 ($0.29, $0.47, $0.37, $0.68), a fifth of the run; the planner's own seat is the one model choice round 5 did not touch. |
+| The size-up | One Haiku call cost $0.15. | One Haiku call cost $0.20. | One Haiku call cost $0.19. |
+
+Against run 003, the difference is two more command turns and two more planner calls (the
+IC $1.66 more, the planner $1.30 more) and five more sessions ($2.02 more), and the
+leaders cost $0.35 less. Against run 004, the IC cost $2.89 less, the sessions $1.74 less
+and the leaders $1.78 less, for two more IC calls and three more sessions.
+
+### The IC's verdicts, and what each cost
+
+Every report was accepted and every draft approved, so no revise, reassign, correct or
+amend occurred and R4-3, R4-4 and R5-3's patch path had no occasion. Each verdict on a
+report is part of the command turn that set the next period; each approve is a review
+turn on the same session, resumed with the draft alone.
+
+| Call | Context, cache write, cache read | Output, seconds, cost | What it decided |
+|---|---|---|---|
+| Command turn 1 (fresh session) | 15,800 written, 0 read. | 9,109 output, 101 s, $0.16. | It accepted the briefing's five items, set three period objectives and three priorities, seeded two open items from the briefing, and assessed `on_track`. |
+| Review 1 | 32,692 context; 32,690 written, 0 read. | 3,650 output, 41 s, $0.17. | Approve: the draft ran the reproduce unit and the code unit's greps together, held the models to the rule, and worked both open items. |
+| Command turn 2 | 51,406 context; 51,404 written, 45,635 read (the call summed 97,043 input over its API turns). | 8,341 output, 83 s, $0.30. | Accepted `001-u02`'s report on its eleven observed claims by id, closed the unit, marked `001-c007` against the picture, settled `001-o02`, assessed `priors_updated`. |
+| Review 2 | 60,438 context; 27,746 written, 32,690 read. | 3,117 output, 37 s, $0.15. | Approve: the instrumented reproduce in a new unit, the stale interpret cancelled and re-cut, Opus on the reconcile with its why. |
+| Command turn 3 | 81,907 context; 30,501 written, 51,404 read. | 15,030 output, 163 s, $0.28. | Accepted `001-u04`'s report on ten observed claims, closed it, folded 21 claims into the picture, reclassified `001-c007` to for and marked `001-c019` against, narrowed `001-o01`, assessed `priors_updated`. |
+| Review 3 | 100,621 context; 40,183 written, 60,436 read. | 3,316 output, 39 s, $0.21. | Approve: one grep and a Sonnet interpret to test the stack's names against the bundled source frame by frame. |
+| Command turn 4 | 128,967 context; 47,060 written, 81,905 read. | 14,062 output, 158 s, $0.35. | Accepted `001-u03`'s report, crediting its self-correction of `001-t08`'s overstatement, closed it, marked nine claims against the stronger picture, deferred `001-c047`'s side finding, set the focus-timing and sourcemap objectives, assessed `priors_updated`. |
+| Handoff | 139,497 context; 139,495 written, 0 read. | 4,171 output, 49 s, $0.60. | It wrote an 11,695-character document: the period, every unit's state, the hypothesis, two set-asides and two next moves. |
+| Review 4 (fresh successor) | 56,580 context; 46,418 written, 10,160 read. | 6,666 output, 72 s, $0.29. | It evaluated the handoff (13 of 13 items accepted) and approved period 4's draft, naming the two independent reproduces and the reasoned Opus on the final statement. |
+| Command turn 5 | 88,136 context; 78,597 written, 9,537 read. | 12,937 output, 126 s, $0.45. | Accepted `001-u05`'s report, folded in `001-c063` to `001-c096`, deferred `001-o01` at the production build's limit, assessed `priors_updated`, set `satisfied`. |
+
+The handoff cost $0.89 of IC calls where a resumed review cost $0.15 to $0.21 ($0.60 for
+the document and $0.29 for the fresh session's review), and the successor's command turn,
+resumed on that review, read 88k. Cache reads: five of the eight resumed calls read the previous
+call's context; the first review, the handoff turn and the successor's command turn did
+not read the previous call's context (the first two wrote their whole context, the third
+78,597 of its 88,136), the intermittent miss the Reference table records.
+
+### Wall time per cycle beside the tasks' seconds
+
+| Step | Command turn | Cycle wall time after it | Dispatch span | Tasks' seconds summed | Parallel factor | Critical path and possible factor |
+|---|---|---|---|---|---|---|
+| 1, period 1 | 101 s | 505 s: the planner 90 s, the review 41 s, the dispatch. | 371 s: the reproduce `001-t01` 323 s, then its unit's report turn 46 s. | One task, 323 s. The code unit's three greps and investigate were ready and never started. | 0.87x. | 323 s (`001-t01`), 1.00x possible: the interpret `001-t06` depended on `001-t01`, which related the two units and held the code unit's pass behind the reproduce unit's. |
+| 2, period 2 | 83 s | 833 s: the planner 153 s, the review 37 s, the dispatch. | 642 s: three greps in 0.1 s, `001-t05` 350 s, the code unit's continue turn 81 s, then `001-t07` 138 s and its unit's report turn 69 s. | Five tasks, 488 s. | 0.76x. | 350 s (`001-t03` then `001-t05`), 1.40x possible: `001-t07` had no dependency and ran after `001-t05` because `001-t08` depended on both, relating the units again. |
+| 3, period 3 | 163 s | 552 s: the planner 57 s, the review 39 s, the dispatch. | 455 s: the grep in 0.0 s, `001-t08` 213 s, `001-t10` 149 s, the report turn 91 s. | Three tasks, 362 s. | 0.80x. | 362 s (`001-t08` then `001-t10`), 1.00x possible: the plan was a chain. |
+| 4, period 4 | 158 s, then the handoff 49 s | 753 s: the planner 170 s, the handoff, the successor's review 72 s, the dispatch. | 458 s: two greps and `001-t12` (58 s) beside `001-t11` (203 s), then `001-t15` 185 s, the report turn 68 s. | Five tasks, 445 s. | 0.97x. | 388 s (`001-t11` then `001-t15`), 1.15x possible. The two reproduces ran together as the priority asked. |
+| 5, the closing turn | 126 s | No plan and no dispatch. | none | none | none | none |
+
+The run was a chain. Its seats' seconds sum to 3,371 (the IC 869, the planner 470, the
+sessions 1,619, the leaders 354, the size-up 61), against 3,474 seconds from `create` to
+`satisfied`, so almost nothing overlapped anything: the only work that ran beside other
+work was the greps, and `001-t12` beside `001-t11`. Two things made it so. The dispatcher's
+`relatedUnits` (`src/dispatcher.ts:407-427`) serializes two whole units when any unended
+task of one depends on any unended task of the other, so the code unit waited behind the
+reproduce unit in period 1 and the instrumented reproduce behind the code unit's
+investigate in period 2, though neither dependent task could have started before its
+dependency in any case. And every one of the four reports said the picture changed, which
+halts the pass: in period 1 the halt cancelled the code unit's pass that the serialization
+had delayed, so it ran nothing; in period 2 `001-t08` had become ready when `001-t07`
+landed and waited for period 3; in periods 3 and 4 nothing else was runnable. Each period
+then costs a command turn, a planner call and a review before the next wave: $0.62 of
+seats in cycle 1, $0.92 in cycle 2, $0.86 in cycle 3, $1.92 in cycle 4 with the handoff,
+$0.45 for the closing turn, and 4 to 8 minutes of wall time each. Run 003 reached the
+answer in one dispatch because its plan put the reproduce, the investigate and the
+interpret under command in one period.
+
+### The models the planner chose
+
+Every model the planner named, with the `modelWhy` the plan carried, read from the
+`plan.proposed` events (`incident review` does not list them yet, R5-6's record).
+
+| Period | Seat | Model | `modelWhy` |
+|---|---|---|---|
+| 1 | Leaders of `001-u02` and `001-u03` | Sonnet 5 | none, none needed |
+| 1 | `001-t01` reproduce, `001-t05` investigate | Sonnet 5 | none, none needed |
+| 1 | `001-t06` interpret (cancelled in period 2) | Opus 5 | "This task decides the incident's conclusion: it must weigh several competing mechanisms against numeric runtime measurements and code citations, distinguish what is directly observed from what is only consistent, and refuse an attractive but unproven lead; that judgement is the one step here that is weighing evidence to a conclusion rather than recording or reading." |
+| 2 | Leader of `001-u04`; `001-t07` reproduce | Sonnet 5 | none, none needed |
+| 2 | `001-t08` interpret | Opus 5 | "This task weighs three independent bodies of evidence (a multi-file code trace, eleven runtime claims and a raw call-stack log) against each other to reach a single attribution and to mark the boundary between observed and inferred; it is conclusion-drawing over conflicting evidence, not recording or reading, and the period objective turns on getting that boundary right." |
+| 3 | `001-t10` interpret | Sonnet 5 | none; the rationale said the weighing to a conclusion was already `001-t08`'s on Opus, and the IC's review agreed that a name-and-order check is Sonnet's |
+| 4 | Leader of `001-u05`; `001-t11` and `001-t12` reproduce | Sonnet 5 | none, none needed |
+| 4 | `001-t15` interpret | Opus 5 | "This task weighs some sixty claims and four new bodies of evidence, several of them in tension (a prior reconciliation found to overstate, a graded correspondence table, and new runtime and sourcemap findings), into a single per-link verdict with confidences that will close the incident; that is weighing evidence to a conclusion, not recording or reading, and the cost of a wrongly-marked observed link here is the incident's answer being wrong." |
+
+No `plan.warned` was recorded: every Opus task carried a why, and every `dependsOn` was
+also in `evidenceFrom.tasks`. The IC's four reviews each named the models and held the
+draft to the rule in their rationale.
+
+### The round-5 changes, cycle by cycle
+
+| Step | What happened | Round 5 under test |
+|---|---|---|
+| Size-up | Haiku classified the incident ("diagnosis: comment deletion scroll behavior"), found `deleteComment` at lines 1863 to 1910 in 21 tool calls, checked four needs, sketched a reproduce unit and an investigation unit on Haiku, listed four hazards, recommended Haiku as commander, and proposed no question. Command went to Sonnet 5 by the default, the recommendation recorded on the transfer. | R5-6's default put the IC on Sonnet 5 and recorded rather than followed the recommendation. R5-8 had nothing to gate: for the first time the size-up asked no intended-behavior question, so the incident was never blocked and `create` returned in 61 seconds; whether R4-8's clause held by chance or by the role text cannot be told from one run. |
+| 1, the first turn, the draft, the pass | Sonnet accepted all five briefing items, kept the size-up's `.focus()` finding as an open item rather than a fact, and assessed `on_track`. The planner drafted two units, Sonnet leaders, the reproduce, three greps feeding a Sonnet investigate, an Opus interpret with a why depending on the trace and the reproduce. The validator passed the draft and the IC approved it in one review. The reproduce ran alone (41 tool calls, 323 s, $0.78) and its unit's leader, called once at close, reported met, picture changed; the pass halted and the code unit never started. | R5-2 seeded the first picture from the briefing and the IC edited it, with two runtime-numbered open items (`001-o01`, `001-o02`) both worked by the plan's `settles`. R5-3 validated before the review: 0 rule lines, 1 IC read. R5-6 held: Sonnet everywhere, Opus on the interpret with its why, and the review said so. R5-7's rule shaped the draft (the planner wrote that only the interpret waits on the reproduce) and could not see what the dispatcher did with it: `relatedUnits` held the code unit behind the reproduce unit, and the halt on the report cancelled it, so the period's critical path line reads 1.00x possible for a plan that allowed two. R5-5: the ending called nobody (`unit.continued` by the runtime) and the leader took one turn, the report. |
+| 2, the verdict, the re-cut, the two passes | The IC accepted the report citing eleven claims by id, closed the unit, marked `001-c007` against the picture and assessed `priors_updated`. The planner added an instrumented reproduce under a new unit, cancelled the stale interpret and re-cut it under the code unit reading all three evidence bodies; approved as drafted. The code unit's pass ran the three greps in 0.1 s and the investigate (38 tool calls, 350 s, 1.41M input tokens, 1.33M of them cache reads, $0.91); with `001-t08` still waiting on `001-t07`, its leader was called at close, tried to assign a reconcile investigate of its own, and was refused on four rule lines for the one assignment (no `question` input, no model, 150,000 tokens with 0 of 56,000 left, 900 seconds with 250 left), then continued to nothing ($0.12, 81 s). The instrumented reproduce then ran (19 tool calls, 138 s, $0.34) and its leader reported met, picture changed. | R5-4 ran the investigate and both reproduces in sessions of their own with the leaders' contexts at 11k to 21k, but `001-t05` and `001-t07` ran one after the other, not together: `001-t08` depended on both, which related their units. R5-1: the greps landed as three evidence lines and no claim; the investigate's eleven claims cite no grep, so their basis is the session's own. R5-5's call at close with nothing ready produced the run's one turn with no decision behind it. R5-10 had no failure to settle and "Paths exist" refused nothing, since every grep root existed. |
+| 3, the correspondence check | The IC accepted the instrumented report on ten observed claims, folded 21 claims into the picture, reclassified `001-c007` to for, marked the clamp alternative `001-c019` against, and narrowed `001-o01` to whether the stack's names correspond to the source. The planner added one grep and a Sonnet interpret beside the running `001-t08`; approved. `001-t08` (Opus, 213 s, $0.63) reconciled and claimed a one-to-one stack-to-source match; `001-t10` (Sonnet, 149 s, $0.20) confirmed three frames by literal name and call order and found `001-t08`'s claim overstated (`001-c062`); the leader reported met, picture changed, with the self-correction in its changes. | R5-2's living picture did what the row says: an assessment per turn (`on_track`, then `priors_updated` four times), a stance reversed on finer evidence, the unit's slice folded in. R5-11 briefed the resumed turn with the changed sections; by the session's context the third command turn added about 21k tokens over the second review where the second had added about 18k over the first, so the briefing did not shrink (below). |
+| 4, the handoff, the settling period | The IC accepted the code unit's report, marked nine claims against the stronger picture, set two independent settling objectives and a stopping rule, and its context reached 128,967 tokens; it wrote the handoff document ($0.60) and was released. The planner drafted one Sonnet-led unit with two independent reproduces, two greps and an Opus final statement with its why. The fresh session evaluated the handoff (13 of 13 accepted) and approved the draft. The two greps and the sourcemap probe ran beside the focus-timing reproduce, the final statement followed, and the leader reported met, picture changed. | The handoff ran live for the first time (R3-9, R5-11): the threshold was crossed on the fourth command turn under the changed-section briefing, which R5-11's row was written to prevent. R5-7 held inside the unit: 0.97x measured against 1.15x possible, the closest of the run. R5-6: Sonnet on both reproduces and the leader, Opus on the final statement with its why, which the successor's review named. R5-1's basis rule entered all seventeen of the final statement's claims `inferred`, since each cites a session task beside the greps. |
+| 5, the closing turn | The successor accepted the report, folded in 34 claims, deferred `001-o01` under period 4's stopping rule and set `satisfied` at inferred 0.7 to 0.8 on the origin link. | R5-2's deferral with a why is what let the incident close with an open item on the record rather than a fifth period. R5-6: ten Sonnet 5 IC calls, review turns among them, none refused, where Opus 5 refused the review in runs 003 and 004. |
+
+Which of the eleven rows earned its keep, in the acceptance's words. R5-6 did: Sonnet on
+every reproduce, investigate and leader, Opus on three interprets each with a why, the IC
+on Sonnet 5 through ten calls with no refusal, and four reproduces for $1.63 against run
+004's one for $1.85. R5-4 and R5-5 did: eight sessions of their own, leaders' contexts of
+11k to 21k where run 004's code leader grew to 124k, fourteen endings that called nobody,
+five leader turns for $0.59 against six for $2.37. R5-1 did: six evidence lines and 96
+claims where run 004's file carried 162 grep-promoted claims, and the planner's largest
+input 38k against run 004's 56k. R5-2 did: the assessments, the reversed stance and the
+deferral are the story of the run and are in the record. R5-7 did its half and the
+dispatcher undid it: both plans that allowed parallel work were serialized by
+`relatedUnits`, and the critical path line is what shows it. R5-3, R5-8 and R5-10 had no
+occasion: no draft broke a rule, no question was proposed, no task failed; each cost
+nothing and proved nothing this run. R5-11 did not: the changed sections were most of the
+file every period, the context grew 30k to 47k per period across the command turn and the
+review, and the handoff came on the fourth command turn at 129k, against run 004's 170k on
+its fourth under whole-file briefings, past the threshold either way.
+
+### What the run found in the runtime
+
+Each is a candidate for round 6, with its evidence.
+
+- **`relatedUnits` serializes units, and should hold tasks.** `src/dispatcher.ts:407-427`
+  relates two units when any unended task of one depends on any unended task of the other,
+  and a related unit's pass waits for the other's to end. In period 1 `001-t06` depended on
+  `001-t01`, so the code unit's three greps and its investigate, which needed nothing from
+  the browser, waited behind the reproduce (events 38 to 91 are `001-t01` alone) and never
+  started, since the halt ended the pass; in period 2 `001-t08` depended on `001-t07`, so the instrumented
+  reproduce started at 07:23:16, after `001-t05` had landed at 07:21:53 and the leader had
+  turned, though nothing of its own waited. The critical path line reads 1.00x and 1.40x
+  possible against 0.87x and 0.76x measured. R5-7's warning could not fire: every
+  `dependsOn` was a real `evidenceFrom` one. The fix candidate is to hold the dependent
+  task rather than the dependent unit: a pending task whose dependency is in another unit
+  waits as it does within one, and the units' passes run at once.
+- **A met report always changes the picture, and the halt costs a period.** The leader's
+  `pictureChanged` (`src/models.ts:672`, "whether what the unit found changes the picture
+  the incident is working from, so the IC should act before anything new starts") was
+  true on all four reports, and each halted the pass (`src/dispatcher.ts:587`). A unit
+  whose objective is met has by construction changed the picture. In period 1 the halt
+  cancelled the code unit's pass; in period 2 it left `001-t08`, ready, for the next period.
+  A period costs its command turn, planner call and review before the next wave, $0.86
+  to $0.92 of seats in cycles 2 and 3, where the period took 12 to 15 minutes, 4 to 5 of
+  them the command turn, the planner and the review, which is why a run whose session work
+  sums to 27 minutes took 55. Candidates: the halt holds only tasks that depend on the
+  reporting unit's output, or the report says which other units the change concerns; or
+  the IC's verdict runs while unrelated ready work continues.
+- **A unit's share counts cache reads as spend, so one session exhausts it.** The
+  investigate `001-t05` read 1,410,251 input tokens, 1,329,151 of them cache reads across
+  38 tool calls; `unitShare` (`src/units/base.ts:213-256`) charges `inputTokens +
+  outputTokens` of every `task.usage` against the plans' allotment (56,000 here: `001-t05`'s
+  40,000 and `001-t08`'s 16,000), so the code unit's leader was told it had 0 of 56,000 left
+  with 1,457,269 spent or bound, and its one assignment was refused under "Budget within
+  share" (event 176). A plan's token budget is written as if it were new tokens; the
+  runtime charges the billed input, which for a session that reads files is mostly the
+  same context re-read per tool call. Either the share is charged at what the tokens cost
+  (cache reads at a tenth) or in uncached and cache-write tokens, or the plan's budget
+  field is defined as billed input and the planner told what a session bills. The same
+  turn was refused on `question` missing and no model named, so the leader's assignment
+  schema was also unclear to it; that turn ($0.12, 81 s) then continued to nothing.
+- **A leader called at close with nothing ready is a call for process.** R5-5 calls the
+  leader "when nothing is ready and the unit owes a report". In period 2 the code unit
+  owed nothing it could report (`001-t08` waited on another unit) and the leader answered
+  continue after trying to assign. A unit whose remaining task waits on another unit's
+  task has no decision to make; the call could be skipped when every pending task of the
+  unit waits on a task outside it.
+- **R5-11 did not stop the handoff.** The IC's context on its command turns was 15,800,
+  51,406, 81,907 and 128,967 tokens (`contextTokens`, the figure the threshold reads); the
+  review turns between them sat at 32,692, 60,438 and 100,621. By those figures and the
+  retained answers (7k to 12k characters of turn JSON, about 2k to 3k tokens; the billed
+  output of 8k to 15k is mostly reasoning the session does not keep), the resumed
+  briefings were about 18k, 21k and 28k tokens and the review prompts about 15k, 7k and
+  16k, so the session grew 30k to 47k per period (35.6k, 30.5k and 47.1k between command
+  turns). The whole file at the same moments is
+  bounded by the planner's context, 20k, 30k and 38k including the planner's own preamble
+  and rule texts, so the changed-section briefing was within a few thousand tokens of the
+  whole file: every period changed the command picture, the claims, the tasks, the units,
+  the reports and the situation. The exact saving cannot be derived, since the briefing
+  text is not in the log; the bound says it was small. By summed input the third turn
+  (81,907) read less than the second (97,043), which is the measure R5-11's acceptance
+  test uses; the second turn's call spanned two API messages (45,635 read and 51,404
+  written), and by context, which is what the threshold reads, every turn grew. Candidates: the
+  review turn on its own short-lived session rather than the IC's, since it carries the
+  draft alone and adds 7k to 16k to the IC's context each period; the change report not
+  restating the claims section 2 already carries; a higher threshold for Sonnet 5, whose
+  window is not the constraint at 129k.
+- **The planner's seat is on Opus 5 and nothing weighed it.** Four calls cost $1.80, the
+  same as run 004's three, a fifth of the run and more than the IC's five command turns.
+  R5-6 governs the models the planner names, not its own; the Model choices row says
+  "Opus 5 is the default for anything nontrivial" from 2026-09-12. A run with the planner
+  on Sonnet 5 would show whether the drafts hold up; this run's drafts were approved four
+  times without a correction.
+- **A result attached by reference loses its claims, and the run lost its best
+  observation to it.** `renderTaskResult` (`src/capabilities/session.ts:66-83`) renders an
+  attached session result's `summary`, `conclusion`, `reasoning` and `observations` and
+  not its `claims`. `001-t11`'s observation for its last step says "rafSchedStack
+  captured" and puts the stack's text in a claim's object (`001-c074`); the final
+  statement (`001-t15`), briefed with `001-t11` in `evidenceFrom.tasks` and with claims
+  `001-c001` to `001-c062` (the ones that existed when the plan was drafted; `001-t11`'s
+  did not yet), wrote three claims that the stack was not attached (`001-c083`,
+  `001-c095`, `001-c096`) and graded the origin link 0.7. The stack names
+  `Object.focus (289:55242)` called from `770:2220` from `onClick`, the offset run 004
+  matched to `deleteComment` token for token; the incident closed without it. Candidates:
+  the attached result renders its claims with their objects; or a task that depends on
+  another in the same plan is briefed with that task's claims when they land, not only
+  with the ones the plan could name.
+- **An interpret's claims are `inferred` by rule, so the observed count reads low.**
+  R5-1's verifier keeps a claim's basis only when every task it cites is a completed
+  deterministic task in the brief's `evidenceFrom`; `001-t08` and `001-t15` cite the
+  session tasks they weigh (`001-t07`, `001-t05`, `001-t11`, `001-t12`), so all 32 of their
+  claims entered `inferred`, including "no sourcemap exists" at 0.95 (`001-c090`), which
+  restates six observed claims of `001-t12`. The three interprets produced 47 of the 96
+  claims (15, 15 and 17), 38 of them inferred; the observed 52 are the four reproduces' 37,
+  the investigate's 6 and the correspondence check's 9 (the last citing nothing, so its
+  own labelling stands). Run 004 had 54 asserted with 10 inferred beside 162 grep-promoted
+  verified ones. The rule is right that an interpret observes nothing itself; the count
+  then needs the reader to look through to what it rests on, which `review` could print as
+  claims by the capability that made them.
+- **The two runs graded one link differently, and neither compared bodies this time.** Run
+  004's trace raised the bundle-to-source link to 0.95 by a token-for-token comparison;
+  run 005 forbade name similarity, found no sourcemap, and graded it 0.7 while holding the
+  scheduling stack above. A body comparison is an observation a `reproduce` or an
+  `investigate` can make in one task; nothing carries run 004's from one incident to the
+  next, which is the open question on memory across incidents.
+- **Two notes from Mauria for round 6**, made 2026-09-16 00:54 to 00:56 CDT while the round
+  was merging (relayed by the orchestrating session; not in the run's record): a deployable
+  rebase unit per incident, so that units' branches integrate without waiting on each
+  other's merges; and two-wave parallel builds for the orchestrator, the rows that rewrite
+  shared files first and the rule and text rows after, since this round's rows conflicted
+  on `DESIGN.md`, `docs/architecture.html` and the build record when rebased (R5-8's
+  record).
