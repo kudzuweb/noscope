@@ -477,6 +477,15 @@ describe("a refusal replaces the session", () => {
       resume: "stub-session-3",
     });
     expect(modelOf(h.calls()[5] as Call)).toBe("claude-opus-4-8");
+    // The fallback's fresh session read the whole file before the draft; the command turn
+    // resumed on it reads the sections that changed since that review (R5-11).
+    expect(h.calls()[3]?.prompt).toContain(
+      "\n# Incident file\n\n## 1. Command picture\n",
+    );
+    expect(h.calls()[5]?.prompt).toContain(
+      "\n# Incident file: the sections that changed since your review of period 1's draft, and the situation\n",
+    );
+    expect(h.calls()[5]?.prompt).not.toContain("## 1. Command picture");
   });
 
   it("refused on the fallback too, the incident blocks on a question naming both refusals, and an answer naming a model resumes the IC on it", {

@@ -1,11 +1,12 @@
 import { z } from "zod";
 import { recordActivity } from "./activity.js";
-import { isSessionClaim, measureEvidence } from "./evidence.js";
+import { isEvidence, isSessionClaim, measureEvidence } from "./evidence.js";
 import {
   describeRefusedCall,
   eventsSinceLastCommand,
   fallbackModel,
   IC_ACTOR,
+  LEADER_ACTOR,
   latestReports,
   openRequests,
   type RefusedCall,
@@ -31,7 +32,12 @@ import {
   UnitSituation,
   type Usage,
 } from "./models.js";
-import { renderPlannerInput } from "./planner.js";
+import {
+  type FileSection,
+  incidentFileSections,
+  renderFile,
+  renderPlannerInput,
+} from "./planner.js";
 import {
   getProvider,
   type Provider,
@@ -43,10 +49,11 @@ import { fallbackTransferred, newQuestions } from "./runtime.js";
 import { cycleOf, type Store } from "./store.js";
 import { commandUnitOf, leaderRequest } from "./units/index.js";
 
-// The Incident Commander is the root unit's leader: one persistent session, briefed with
-// the full incident file at the top of every cycle, that sets the operational period and
-// reviews the planner's draft once, after the validator has passed it (DESIGN.md Step 4;
-// R5-3). The runtime is the Planning
+// The Incident Commander is the root unit's leader: one persistent session, briefed at
+// the top of every cycle with the change report and the incident file (whole on the
+// session's first call, its changed sections after; R5-11), that sets the operational
+// period and reviews the planner's draft once, after the validator has passed it
+// (DESIGN.md Step 4; R5-3). The runtime is the Planning
 // Section's bookkeeping around it: it renders the briefing, records every turn, and never
 // consults the IC per task. The session is never compacted (every session runs with
 // `DISABLE_COMPACT=1`), so when its context reaches the handoff threshold the runtime
@@ -870,45 +877,284 @@ function transferToEvaluate(
   return handoff === null ? null : { ...handoff };
 }
 
-/** The change report, then, after a transfer, the document handed over, then the incident file as the planner reads it (the same ten sections): what the IC reads before any ask. */
+/**
+ * The IC's last call on a session that carried the file, the point its copy of the file
+ * is dated from: the last `command.turned` (rejected or not) that ran on it, or a failed
+ * command turn on it that carries `usage` (the model read the briefing and answered
+ * outside its schema), or the session's first call when that was a review, a
+ * `plan.reviewed` or a failed review turn with usage, since a review on a fresh session
+ * is briefed with the file and a review on a resumed one carries the draft alone. A
+ * review that was not the session's first call dates nothing: after an accepted command
+ * turn the review is the session's last call, and dating from it would leave everything
+ * the turn itself wrote (its period, its verdicts, the units it closed, its questions)
+ * before the window, told to the IC as read (PR 59's review). A failure with no usage
+ * (the call died before the model read anything) dates nothing either, though it counts
+ * as a call, so a review after it is not the session's first. Null when the session has
+ * taken no call that carried the file, so it is briefed whole.
+ */
+function lastCallOn(events: readonly Event[], sessionId: string): Event | null {
+  let last: Event | null = null;
+  let first = true;
+  for (const e of events) {
+    if (e.payload.sessionId !== sessionId) continue;
+    if (
+      e.type !== "command.turned" &&
+      e.type !== "plan.reviewed" &&
+      e.type !== "command.failed"
+    )
+      continue;
+    const answered =
+      e.type !== "command.failed" ||
+      (e.payload.usage !== undefined && e.payload.usage !== null);
+    const commandTurn =
+      e.type === "command.turned" ||
+      (e.type === "command.failed" && e.payload.turn === "command");
+    if (answered && (commandTurn || first)) last = e;
+    first = false;
+  }
+  return last;
+}
+
+/** A call named for the file's reader: "your command turn for period 2", "your review of period 2's draft", "your failed command turn". */
+function describeCall(e: Event): string {
+  const period = String(e.payload.cycle);
+  if (e.type === "command.turned")
+    return `your command turn for period ${period}`;
+  if (e.type === "plan.reviewed")
+    return `your review of period ${period}'s draft`;
+  return `your failed ${str(e.payload.turn)} turn`;
+}
+
+/**
+ * Which of the file's sections an event after the IC's last call changed (R5-11). Section
+ * 8 (capabilities, models and saved configs) is fixed for a run, and a config saved by
+ * `config save` is a system event outside the incident's log, so it is never listed as
+ * changed and reaches the IC whole on its next fresh session; the planner reads the whole
+ * file every cycle regardless. Section 9's rule texts are fixed; what changes is what was
+ * rejected and warned, which is the planner's, never a leader's. A session starting or
+ * being released changes no line of the tree, which names leaders by model; a leader's
+ * fallback (`leader.failed`) and a transfer of command do. Section 1's period lines are
+ * set by an accepted command turn, and its budget line changes with every usage any seat
+ * records, which matters only when the incident bounds its budget (`budgeted`); an
+ * unlimited budget's line reads the same whatever was spent.
+ * Section 2 carries evidence beside claims (R5-1), so a deterministic task completing
+ * (`evidence`, the ids of the tasks whose results are evidence) changes it as a claim
+ * landing does. Section 10 is not listed here: it is rendered on every resumed turn,
+ * since the runtime's open-item ids and worked-by statuses in it move with every plan
+ * applied and every task event (R5-2), and the section is short.
+ */
+function sectionsChangedBy(
+  e: Event,
+  budgeted: boolean,
+  evidence: ReadonlySet<string>,
+): number[] {
+  const changed: number[] = [];
+  const t = e.type;
+  const taskId = (e.payload.mutation as { taskId?: unknown } | undefined)
+    ?.taskId;
+  const spent = typeof e.payload.usage === "object" && e.payload.usage !== null;
+  // An accepted command turn sets the period section 1 shows, after the briefing the
+  // turn answered was rendered.
+  const commanded = t === "command.turned" && e.payload.rejected !== true;
+  if (
+    commanded ||
+    (budgeted && spent) ||
+    t === "incident.blocked" ||
+    t === "incident.closed" ||
+    t === "question.asked" ||
+    t === "question.answered" ||
+    t === "grant.requested" ||
+    t === "grant.given" ||
+    t === "capability.requested" ||
+    t === "capability.answered" ||
+    t === "budget.exceeded"
+  )
+    changed.push(1);
+  if (
+    t === "claim.asserted" ||
+    t === "claim.verified" ||
+    t === "claim.rejected" ||
+    (t === "task.completed" &&
+      typeof taskId === "string" &&
+      evidence.has(taskId))
+  )
+    changed.push(2);
+  if (
+    t === "unit.created" ||
+    t === "unit.closed" ||
+    t === "unit.waiting" ||
+    t === "unit.resumed" ||
+    t === "unit.reported" ||
+    t === "report.reviewed" ||
+    t === "leader.failed" ||
+    t === "command.transferred" ||
+    t === "unit.reassigned" ||
+    t === "reassignment.taken" ||
+    // A waiting unit's "waiting on" line reads its open requests, so a partial answer
+    // changes it before the unit resumes.
+    t === "question.answered" ||
+    t === "grant.given" ||
+    t === "capability.answered"
+  )
+    changed.push(3);
+  // Sections 4 to 6 and section 9's rejected and warned lines are windowed on the last
+  // plan applied by the planner, so a plan applied empties them whatever ran after it.
+  const applied =
+    t === "plan.applied" && e.actor !== LEADER_ACTOR && e.actor !== IC_ACTOR;
+  if (t === "task.completed" || applied) changed.push(4);
+  if (t === "task.insufficient" || applied) changed.push(5);
+  if (t === "unit.reported" || applied) changed.push(6);
+  if (
+    t === "task.created" ||
+    t === "task.ready" ||
+    t === "task.started" ||
+    t === "task.completed" ||
+    t === "task.failed" ||
+    t === "task.cancelled" ||
+    t === "task.insufficient"
+  )
+    changed.push(7);
+  if (
+    ((t === "plan.rejected" || t === "plan.warned") &&
+      e.actor !== LEADER_ACTOR) ||
+    applied
+  )
+    changed.push(9);
+  return changed;
+}
+
+/**
+ * The incident file for a session that holds it already (R5-11): the sections that
+ * changed since the IC's last call on the session that carried the file (`lastCallOn`),
+ * that call's own effects included, each whole (section 2 only the claims
+ * created and the evidence completed since, section 9 without its fixed rule texts, and
+ * section 10, the situation, always), under a heading that names the call and lists the
+ * sections left out as unchanged. Run 004's IC read the whole file on every turn and
+ * reached a 170k context in three periods; the session holds what it read, so a resumed
+ * call carries what changed and nothing else.
+ */
+function renderChangedFile(
+  store: Store,
+  incident: Incident,
+  providers: readonly Provider[],
+  since: Event,
+): string {
+  const events = store.listEvents(incident.id);
+  const budgeted =
+    incident.budget.tokens !== undefined ||
+    incident.budget.seconds !== undefined;
+  const evidence = new Set(
+    store
+      .listTasks(incident.id)
+      .filter(isEvidence)
+      .map((t) => t.id),
+  );
+  // The call the window is dated from is scanned too: its briefing was rendered before
+  // the call was recorded, so the period an accepted turn set and the spend the call
+  // recorded are after what the session read.
+  const changed = new Set([
+    10,
+    ...events
+      .filter((e) => e.sequence >= since.sequence)
+      .flatMap((e) => sectionsChangedBy(e, budgeted, evidence)),
+  ]);
+  const call = describeCall(since);
+  const sections = incidentFileSections(store, incident, providers, {
+    claimsSince: since.sequence,
+    rulesOmitted: true,
+  });
+  const shown: FileSection[] = sections
+    .filter((s) => changed.has(s.number))
+    .map((s) =>
+      s.number === 2
+        ? {
+            ...s,
+            lines: [
+              `  (the claims created and the evidence completed since ${call}; the rest as you read them)`,
+              ...s.lines,
+            ],
+          }
+        : s,
+    );
+  const unchanged = sections
+    .filter((s) => !changed.has(s.number))
+    .map((s) => `${s.number}. ${s.title}`)
+    .join("; ");
+  return renderFile(
+    [
+      `# Incident file: the sections that changed since ${call}, and the situation`,
+      `The sections not shown are as you read them: ${unchanged}.`,
+    ].join("\n"),
+    shown,
+  );
+}
+
+/** What the briefing's file rendering and its ask read: the handoff in flight and the session the call resumes, if any. */
+export type BriefingOptions = {
+  /** A handoff in flight, whose transfer is rendered for the successor. */
+  handoff?: Handoff | null;
+  env?: NodeJS.ProcessEnv;
+  /** The session this call resumes, which holds the file from its last call; null or absent on a fresh session, which reads the file whole. */
+  resumed?: string | null;
+};
+
+/**
+ * The change report, then, after a transfer, the document handed over, then the incident
+ * file: whole as the planner reads it (the same ten sections) on a fresh session, and on a
+ * resumed one the sections that changed since the session's last call that carried the
+ * file (R5-11). What the IC reads before any ask.
+ */
 function renderBriefingBody(
   store: Store,
   incident: Incident,
   providers: readonly Provider[],
   transfer: TransferPayload | null = null,
   env: NodeJS.ProcessEnv = {},
+  resumed: string | null = null,
 ): string[] {
+  const events = store.listEvents(incident.id);
+  const since = resumed === null ? null : lastCallOn(events, resumed);
   return [
     ...renderChangeReport(
-      store.listEvents(incident.id),
+      events,
       incident,
       store.listUnits(incident.id),
       reportWorkChars(env),
     ),
     "",
     ...(transfer === null ? [] : [...renderTransfer(transfer), ""]),
-    renderPlannerInput(store, incident, providers),
+    since === null
+      ? renderPlannerInput(store, incident, providers)
+      : renderChangedFile(store, incident, providers, since),
   ];
 }
 
 /**
- * The IC's briefing for a cycle: the change report, then the incident file as the planner
- * reads it (the same ten sections), then the ask. The user message of every command turn;
- * the role text is fixed at the session's first call. After a transfer of command (the
- * initial IC's briefing, or a handoff in flight or pending in the log) the document handed
- * over comes between the change report and the file, and the ask opens with its evaluation.
+ * The IC's briefing for a cycle: the change report, then the incident file (whole on a
+ * fresh session; its changed sections on a resumed one, R5-11), then the ask. The user
+ * message of every command turn; the role text is fixed at the session's first call.
+ * After a transfer of command (the initial IC's briefing, or a handoff in flight or
+ * pending in the log) the document handed over comes between the change report and the
+ * file, and the ask opens with its evaluation.
  */
 export function renderCommandBriefing(
   store: Store,
   incident: Incident,
   providers: readonly Provider[],
-  handoff: Handoff | null = null,
-  env: NodeJS.ProcessEnv = {},
+  options: BriefingOptions = {},
 ): string {
   const events = store.listEvents(incident.id);
+  const handoff = options.handoff ?? null;
   const transfer = transferToEvaluate(events, handoff);
   return [
-    ...renderBriefingBody(store, incident, providers, transfer, env),
+    ...renderBriefingBody(
+      store,
+      incident,
+      providers,
+      transfer,
+      options.env ?? {},
+      options.resumed ?? null,
+    ),
     "",
     `# Your command turn for operational period ${cycleOf(events) + 1}`,
     `${transfer === null ? "S" : `${evaluateAsk(transfer)}s`}et the period's objectives and priorities, answer each unit's last report the change report lists with a verdict (accepted, revise or reassign; instructions say what is missing or what was found and not found, never what you think the answer is), edit the situation from section 10 (the picture, folding each unit's slice into it; the claims for and against it by id; the open items, each carried by its id or new without one, worked by the plan or deferred with why; your assessment, on_track, priors_updated or tactics_change, with why; and what this turn changed), close what is done, answer the resource requests you can, raise for Mauria what only she can supply, and say whether the incident continues.`,
@@ -1359,14 +1605,14 @@ export function commandTurn(
     incident,
     "command",
     cycleOf(events) + 1,
+    // A fresh session reads the file whole, with the transfer when one is in flight; a
+    // resumed one reads what changed since its last call that carried the file (R5-11).
     (unit) =>
-      renderCommandBriefing(
-        store,
-        incident,
-        providers,
-        unit.sessionId === null ? handoff : null,
-        options.env,
-      ),
+      renderCommandBriefing(store, incident, providers, {
+        handoff: unit.sessionId === null ? handoff : null,
+        ...(options.env === undefined ? {} : { env: options.env }),
+        resumed: unit.sessionId,
+      }),
     evaluates ? FIRST_COMMAND_TURN_SCHEMA : COMMAND_TURN_SCHEMA,
     (o): CommandTurn =>
       evaluates ? FirstCommandTurn.parse(o) : CommandTurn.parse(o),

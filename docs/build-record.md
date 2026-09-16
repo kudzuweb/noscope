@@ -4938,3 +4938,129 @@ Not exactly to spec, with reasons:
   assignment and a list on the turn: the leader names a task the same way whether it
   assigned it this turn or saw it earlier, and the resolved ids land on the record that
   creates the task.
+
+## R5-11: The IC's briefing carries the change (#59, merged 2026-09-16)
+
+R5-11 of the round 5 plan, rescoped by Mauria after a check on 2026-09-15 23:05: the
+earlier block, "Turns say less", bounded the turns' prose fields, but run 004's largest
+command turn is 8.9k characters (about 2.2k tokens) of decisions against 16.9k output
+tokens billed, and the IC made no tool calls, so the rest is the model's reasoning before
+it answers and bounding the fields would save nothing; those edits were discarded before
+this PR. What stands is the IC's context: a resumed session keeps every past briefing,
+every briefing through round 4 carried the whole incident file, and run 004's last turn
+read 170k, one turn short of the handoff, in an incident of three periods.
+
+Built (`src/ic.ts`, `src/planner.ts`): `renderPlannerInput` is split into
+`incidentFileSections` (the ten sections as `FileSection`, number, title and lines, with
+a `FileView` that narrows section 2 to the claims created and the evidence completed
+after a sequence and drops section 9's fixed rule texts) and `renderFile`, which joins
+them under a heading; `renderPlannerInput` joins all ten under "# Incident file" and the
+planner snapshot is unchanged. `renderCommandBriefing` takes an options object,
+`{ handoff, env, resumed }`, where `resumed` is the session the call resumes;
+`commandTurn` passes the unit's session as the prompt function sees it, so a fallback's
+fresh session, a replaced session and a handoff's successor pass null and read the file
+whole, as does the first turn. On a resumed session `lastCallOn` finds the session's
+last call that carried the file: its last `command.turned` (rejected or not), a failed
+command turn on it with usage, or the session's first call when that was a review (a
+`plan.reviewed` or a failed review with usage), since a review on a fresh session is
+briefed with the file and a review on a resumed one carries the draft alone; a failed
+call with no usage dates nothing but counts as a call. `renderChangedFile` renders the
+sections that the events from that call on changed, the call's own included, told by
+sequence number (`sectionsChangedBy`: the command picture on an accepted command turn,
+which set the period it shows, on a question, capability request, grant, budget stop or
+incident status change, and on any usage recorded when the incident bounds its budget;
+claims and evidence on a claim landing or a `task.completed` whose task is evidence,
+and then only the claims created and the evidence completed since, marked so at the top
+of the section; the unit tree on a unit created, closed, waiting, resumed, reporting,
+judged, reassigned or taking a reassignment, a leader's fallback, a transfer of command
+or an answer to a request, never a session starting or released, since the tree names
+leaders by model; sections 4 to 6 on the task and report events each lists and on every
+plan the planner had applied; section 7 on any task event; section 9 on a plan rejected
+or warned by the planner, or applied, without the rule texts), and section 10, the
+situation, on every resumed turn, under "# Incident file: the sections that changed
+since your command turn for period 1, and the situation" and a line naming the sections
+left out as unchanged; a turn after which nothing else changed names every other
+section as read and carries the situation alone. A review on a resumed session carries
+the draft alone, as before; a review on a fresh session carries the whole file, as
+before. The stub gains `NOSCOPE_STUB_INPUT_FROM_PROMPT`, under which an IC call's input
+tokens are its prompt's length over four, so a run test can compare what two briefings
+cost to read. DESIGN.md's Cycle row, Step 4 (the briefing on a resumed call, section by
+section), the Speed section (the IC's context as the clock, and the check that the turns
+are not padded) and the Reference row on the IC's context follow; the architecture
+page's IC node and cycle step 1 follow.
+
+Tests: `test/handoff.test.ts` runs three cycles on the stub and pins the first command
+turn's whole file, the resumed one's heading (dated from the first command turn), its
+unchanged list (8. Capabilities and models), the period the turn set in section 1,
+section 2's narrowing line and evidence, sections 3, 4, 5, 6, 7, 9 and 10 present,
+section 8 and the rule texts absent, and the handoff successor's whole file with the
+transfer and sections 1, 9 and 10; `test/refusal.test.ts` pins the fallback's fresh
+review reading the whole file and the command turn resumed on it reading the sections
+that changed since that review; `test/ic.test.ts` pins, in the rejected-turn test, that
+the retry's briefing names every section as read and carries the situation alone, a
+unit test of the window's dating (a rejected turn, spend under an unbounded and a
+bounded budget, a failed call with and without usage, an accepted turn marking section
+1 and its verdict's `report.reviewed` and `unit.closed` marking section 3 with a review
+after them not moving the window, a review as a session's first call dating it and a
+later review not, a failed first call with no usage counting as a call so the review
+after it leaves the session briefed whole, an unknown session briefed whole), and a run
+where the second turn reads the changed sections, the third (after a verdict closed the
+unit and an empty plan) sections 1, 3, 4, 5, 6, 9 and 10 with 2, 7 and 8 named as read,
+and the recorded input tokens fall from the first turn to the second to the third.
+
+Not exactly to spec, with reasons:
+
+- The window a resumed briefing is dated from is the session's last call that carried
+  the file, a rejected command turn and a failed command turn the model answered
+  included, not the IC's last accepted turn: the session read the file on that call and
+  holds it, and dating from the last accepted turn would send a retry after a rejection
+  the whole previous period's changes again. A `command.failed` with no usage (the call
+  died before the model read anything) dates nothing and the call before it does (PR
+  59's review). A refused fresh session, or a failed call that got no session id, is
+  not put on the unit, so the next call is fresh and reads the file whole.
+- From PR 59's review, applied before merge: section 1 is marked changed on any usage
+  recorded when the incident bounds its budget, since its budget line reads the spend
+  (an unlimited budget's line reads the same whatever was spent); sections 4 to 6 and
+  9 are marked on every plan the planner had applied, since their windows open at that
+  plan and empty with it, so a plan that ran nothing no longer leaves the IC told those
+  lists are as it read them; the unit tree is marked on an answer to a request, since a
+  waiting unit's line names what it still waits on; the IC role text says the file
+  comes as its changed sections after the session's first turn; `describeCall` no longer
+  reads a `redraft` flag `plan.reviewed` stopped carrying at R5-3.
+- Section 8 is never listed as changed: capabilities and models are fixed for a run, and
+  a config saved by `config save` is a system event outside the incident's log (verified
+  in `src/store.ts`), so a resumed IC does not see a config saved mid-incident until its
+  next fresh session; the planner reads the whole file every cycle and sees it at once.
+- At the final rebase, onto round-5 with every other row merged (0907d51): section 2 is
+  R5-1's "Claims and evidence", marked changed on a claim landing or on a `task.completed`
+  whose task is evidence (`isEvidence`), and narrowed to the claims created and the
+  evidence completed since the window (`landedAfter`, over R5-1's `isSessionClaim` and
+  `isEvidence` filters, replacing the `createdAfter` helper that R5-1 deleted the collapse
+  block around); section 10 is rendered on every resumed turn rather than on its own
+  events, since R5-2's runtime-assigned open-item ids and worked-by statuses move with
+  every plan applied and every task event and the section is short, so the heading reads
+  "the sections that changed since <call>, and the situation" and the "nothing changed"
+  one-liner is gone: a turn after which nothing else changed names every other section
+  as read and carries the situation alone. R5-10's failed-or-cancelled sub-block rides in
+  section 4; R5-8's `evaluateAsk` and R5-3's `reviewTurn` briefing call are the base's,
+  untouched.
+- Review of PR 59 (review59-rebase, 2026-09-16), applied before merge: the window had
+  been dated from the session's last call of any kind, and after every accepted command
+  turn that call is the resumed review, which carried the draft alone, so everything the
+  turn itself wrote through `applyCommand` (its period, its `report.reviewed` verdicts,
+  the units they closed, its reassignments and questions) fell before the window and the
+  heading told the IC the command picture and the unit tree were as it read them, when
+  the tree it read showed the unit active with no verdict. `lastCallOn` now anchors at
+  the last call that carried the file (above), the scan includes that call's own event,
+  since its briefing was rendered before it was recorded, and an accepted
+  `command.turned` marks section 1 changed for the period it set; the third turn of the
+  run test now carries sections 1 and 3 after the verdict, and the unit test pins the
+  review after an accepted turn leaving the window at the turn.
+- The input-token acceptance is met on the stub by a knob rather than by the stub's
+  fixed usage figures, which every other usage pin relies on: `NOSCOPE_STUB_INPUT_FROM_PROMPT`
+  is set by the one test that compares briefings.
+- Files rewritten, for the merge order: `src/planner.ts` (`renderPlannerInput` split into
+  `incidentFileSections` and `renderFile`, the section bodies unchanged), `src/ic.ts`
+  (`renderBriefingBody`, `renderCommandBriefing` and `commandTurn`'s prompt; new
+  `lastCallOn`, `describeCall`, `sectionsChangedBy`, `renderChangedFile`,
+  `BriefingOptions`), `test/stub-claude` (one knob).
