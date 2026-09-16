@@ -1,6 +1,6 @@
 # Handoff: noscope round 4, the build in progress
 
-Refreshed 2026-09-15 23:12 CDT by session noscope-round4 [f7cb98]; round 5 building
+Refreshed 2026-09-15 23:08 CDT by session noscope-round4 [f7cb98]; round 5 building
 overnight on the `round-5` branch, main untouched. Written by the successor session; the relay session mauriaparker-91 has stopped.
 
 **First actions, in order:** (1) `/warp-pin title noscope-round4-<n>`. (2) Read this file,
@@ -23,20 +23,30 @@ scoped to the incident kind; parallel dispatch; then the fourth live run and its
 
 ## 2. HOW IT GOT THIS SHAPE
 
-Round 3 (eleven PRs plus two run-forced fixes, PRs 28 to 39) was built overnight by this
-session and run as run 003 ($4.86, three IC turns, same code path as runs 001 and 002);
-write-ups in `docs/first-incident.md` "## Third run" and `docs/instructions-only-run.md`. Round
-4 came from Mauria's morning rulings on 2026-09-15 (08:22 to 11:09 CDT), recorded in the quipu
-thread `~/Documents/Projects/my-quipu/ics-runtime.md` and reviewed into the plan in Roughdraft:
+Round 4 (thirteen PRs, #40 to #52) was built and run on 2026-09-15 by the relay session
+(morning) and this one (12:21 on); its write-up is `docs/first-incident.md` "## Fourth
+run". Round 5 came from Mauria's evening rulings (20:27 to 23:07 CDT), which a successor
+must carry exactly, in her words where they matter; the plan text carries them too:
 
 | Ruling, her words where they matter | Where it lands |
 |---|---|
-| "the IC should definitely be reviewing a unit's work when it comes in! it needs to assess whether that unit is done, whether to send it back to that unit for revision, or whether a different unit would do a better job with instructions based on what the first unit found/didn't find" | R4-1 (the work behind the report), R4-2 (verdicts), R4-3 (revise), R4-4 (reassign) |
-| "i want the IC to own it once it starts making the updates to it" (the situation) | R4-5 |
-| "it should fallback to opus 4.8 actually"; "the retry for the fallback should be deterministic but if that also fails refusal should go back to the IC for it to apply judgment on how to proceed" | R4-7 |
-| The planner after round 4 drafts only the tactics, as a suggestion for the IC ("so now the planner just makes plans to suggest to the IC right?", yes) | R4-5's role text |
-| Deterministic tasks belong to whichever leader assigns them, command included (2026-09-14) | R4-6 keeps the IC's deterministic assignments, moved onto the command turn |
-| The repository is public since 08:33 (for her use at work); `CLAUDE.md` at the root orients any Claude | Nothing personal in fixtures or docs |
+| "code is cheap, bad logic is expensive. i want to have this system work as well as possible, not prevent rewrites" | The round's opening paragraph; the builder brief's rule is now "choose the reading that makes the system work best", never "changes the least" |
+| "model calls should be because a model is needed", never "for the sake of process" | R5-5 (a leader called only on a decision), R5-3 (validate before review), R5-11 |
+| The leader "shouldn't do anything that will take awhile because that interferes with the system, so maybe 'never does' is really the better rule"; a deterministic task it assigns is run by the runtime, so "never does" has no exception | R5-4 (the leader directs and never does), R5-5 |
+| "i like sonnet for the IC with smallest model that fits for the planner rule" | R5-6 |
+| The situation is "an ongoing view of where we're at ... the IC remain aware of and responsive to for the whole incident, and the unit leaders have a version for their unit that they report up to the IC via the runtime" (Roughdraft comment, 22:41) | R5-2 (the situation is a living picture: picture, evidence, open items, assessment, changed; a slice picture on every report) |
+| Unit leaders should not read the IC's situation: "maintain their 'closer to the metal' perspective so that misconceptions don't propagate" (22:53) | R5-2: observations flow up, only objectives and evidence flow down; a task brief carries only its brief and named evidence |
+| "do we even need all of them? we got to the same answer faster without them!" (claims) | R5-1 (evidence is not a claim): 154 of run 004's 216 claims were grep matches |
+| "i don't want turns to say less NECESSARILY unless they were wasting words? did we check" (23:05); the check found the turns are decisions at their needed length (8.9k chars against 16.9k output tokens billed, the rest reasoning, no tool calls) | R5-11 rescoped to the IC's briefing carrying the change since its last turn; the bounds dropped |
+| Memory across runs is "out of scope until we get it working right" | An open question marked not this round; build nothing for it |
+| The quipu is not a walkie-talkie: "just give summarized updates if a stretch passes without any updates" (22:57) | One keeper message per stretch or real state change; the keeper `quipu` in this session is idle and belongs to it |
+| Build on a branch, not main: "we could merge them all if we like it, but if not we can be a bit more strategic or trash it entirely w/o an actual rewrite"; push permission granted, no merges to main (23:01) | Everything in section 3: PRs target `round-5`; a successor merges into `round-5` only |
+| Not planned: a control run with a Sonnet IC on round 4's code was offered at 20:27 and not taken up; run 005 on round 5 is the measure | R5-12 |
+
+Round 4's own rulings (the IC as a unit type, type plus config, saved configs, the runtime
+tag, command files no report) are in the round 4 section of `BUILD-PLAN.md` and the quipu
+thread `~/Documents/Projects/my-quipu/ics-runtime.md`, whose Head carries every decision of
+2026-09-15 with times.
 
 ## 3. STATE (as of this refresh)
 
