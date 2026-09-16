@@ -341,20 +341,28 @@ describe("the IC handoff at the context threshold", () => {
     expect(first).toContain(
       "\n## 9. Rules the validator applies\n  - Capabilities exist:",
     );
-    // Cycle 2's, resumed on the same session, reads what changed since its review: the
-    // claim the grep produced, the unit created and reporting, the task completed and
-    // the report, the open tasks; the command picture, the rules and its own situation
-    // are as it read them.
+    // Cycle 2's, resumed on the same session, reads what changed since its command turn,
+    // the last call that carried the file (its review carried the draft alone): the
+    // period the turn set, the evidence the grep produced, the unit created and
+    // reporting, the task completed and the report, the open tasks; the capabilities are
+    // as it read them.
     const second = calls.find(
       (c) => c.kind === "command" && c.resume === "stub-session-1",
     );
     expect(second?.prompt).toContain(
       [
-        "# Incident file: the sections that changed since your review of period 1's draft, and the situation",
-        "The sections not shown are as you read them: 1. Command picture; 8. Capabilities and models.",
+        "# Incident file: the sections that changed since your command turn for period 1, and the situation",
+        "The sections not shown are as you read them: 8. Capabilities and models.",
         "",
+        "## 1. Command picture",
+        "incident 001 [open]",
+      ].join("\n"),
+    );
+    expect(second?.prompt).toContain("\noperational period: 1\n");
+    expect(second?.prompt).toContain(
+      [
         "## 2. Claims and evidence",
-        "  (the claims created and the evidence completed since your review of period 1's draft; the rest as you read them)",
+        "  (the claims created and the evidence completed since your command turn for period 1; the rest as you read them)",
         "claims:",
         "  (none)",
         "evidence, each attached whole to a task that names its id in evidenceFrom.tasks:",
@@ -373,11 +381,7 @@ describe("the IC handoff at the context threshold", () => {
       "## 10. The IC's situation",
     ])
       expect(second?.prompt).toContain(`\n${heading}\n`);
-    for (const gone of [
-      "## 1. Command picture",
-      "## 8. Capabilities and models",
-      "Capabilities exist:",
-    ])
+    for (const gone of ["## 8. Capabilities and models", "Capabilities exist:"])
       expect(second?.prompt).not.toContain(gone);
     expect(second?.prompt).toContain(
       "# Your command turn for operational period 2",

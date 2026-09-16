@@ -472,14 +472,23 @@ fixed at its first call, so everything that changes goes in the user message. It
 `src/units/ic.ts`. The briefing
 is the change report since the IC last acted, then the incident file, then the ask. On a
 session's first call the file comes whole, rendered as the planner reads it; on a resumed
-call it comes as the sections that changed since the session's last call (R5-11: the
-last `command.turned`, rejected or not, or `plan.reviewed` on that session, or a
-`command.failed` on it that carries usage, since then the model read the briefing and
-answered outside its schema; a failure with no usage dates nothing), under a heading
-that names the call and lists the sections left out as unchanged, since the session
-holds what it read and run 004's IC reached a 170k context in three periods reading the
-whole file every turn. Which sections changed is read from the events after that call:
-the command picture on a question, capability request, grant, budget stop or status
+call it comes as the sections that changed since the session's last call that carried
+the file (R5-11: the last `command.turned` on that session, rejected or not, or a
+failed command turn on it that carries usage, since then the model read the briefing
+and answered outside its schema, or the session's first call when that was a review, a
+`plan.reviewed` or a failed review with usage, since a review on a fresh session is
+briefed with the file and a review on a resumed one carries the draft alone; a review
+after a command turn dates nothing, since after an accepted turn the review is the
+session's last call and dating from it would put everything the turn itself wrote, its
+period, its verdicts, the units it closed and its questions, before the window and tell
+the IC those sections are as it read them, PR 59's review; a failure with no usage
+dates nothing, though it counts as a call, so a review after it is not the session's
+first), under a heading that names the call and lists the sections left out as
+unchanged, since the session holds what it read and run 004's IC reached a 170k context
+in three periods reading the whole file every turn. Which sections changed is read from
+the events from that call on, the call's own included, since its briefing was rendered
+before it was recorded: the command picture on an accepted command turn, which set the
+period it shows, on a question, capability request, grant, budget stop or status
 change, and on any usage recorded when the incident bounds its budget, since the budget
 line reads the spend; claims and evidence on a claim landing or a deterministic task
 completing (R5-1), and then only the claims created and the evidence completed since;
