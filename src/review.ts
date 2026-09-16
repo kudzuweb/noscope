@@ -784,7 +784,7 @@ function briefingKept(events: readonly Event[]): string {
   return `briefing kept: ${count("accepted")} of ${verdicts.length} item(s) accepted, ${count("rewritten")} rewritten, ${count("discarded")} discarded`;
 }
 
-/** What the IC made of the briefing's questions (R5-8): how many it accepted, discarded and answered, or that none was proposed or none ruled on yet. */
+/** What the IC made of the briefing's questions (R5-8): how many it accepted, discarded and answered, how many a log from before R5-8 asked at create, or that none was proposed or none ruled on yet. */
 function briefingQuestionsKept(events: readonly Event[]): string {
   const outcomes = briefingQuestionOutcomes(events);
   if (outcomes.length === 0) return "briefing questions: none proposed";
@@ -792,7 +792,8 @@ function briefingQuestionsKept(events: readonly Event[]): string {
     return `briefing questions: ${outcomes.length} proposed, not ruled on yet`;
   const count = (verdict: string) =>
     outcomes.filter((o) => o.ruling?.verdict === verdict).length;
-  return `briefing questions: ${outcomes.length} proposed, ${count("accept")} accepted and asked, ${count("discard")} discarded, ${count("answer")} answered by the IC`;
+  const early = count("asked_at_create");
+  return `briefing questions: ${outcomes.length} proposed, ${count("accept")} accepted and asked, ${count("discard")} discarded, ${count("answer")} answered by the IC${early === 0 ? "" : `, ${early} asked at create by the initial IC (before R5-8)`}`;
 }
 
 /**

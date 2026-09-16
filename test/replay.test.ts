@@ -74,4 +74,46 @@ describe("replay of run 004's record (R5-1)", () => {
       ).toHaveLength(4);
     },
   );
+
+  // Run 004's size-up asked its two questions at `create` (seat initial_ic), before
+  // R5-8 made them proposals; the file and the review say so rather than "not yet
+  // ruled on".
+  it.skipIf(source === undefined)(
+    "show and review say the briefing's questions were asked at create by the initial IC, before R5-8",
+    async () => {
+      if (source === undefined) throw new Error("NOSCOPE_REPLAY_DB is set");
+      const dir = mkdtempSync(join(tmpdir(), "noscope-replay-"));
+      const db = join(dir, "replay.sqlite");
+      copyFileSync(source, db);
+      const out: string[] = [];
+      const ctx = {
+        io: { out: (l: string) => out.push(l), err: () => {} },
+        cwd: dir,
+        env: { NOSCOPE_DB: db },
+      };
+      expect(await run(["incident", "show", "001"], ctx)).toBe(EXIT.ok);
+      const proposed = out.indexOf(
+        "questions the briefing proposed for Mauria, as the IC ruled:",
+      );
+      expect(proposed).toBeGreaterThan(-1);
+      expect(out[proposed + 1]).toMatch(
+        /^ {2}- 1\. .*\?: asked at create by the initial IC, before R5-8, as 001-q01$/,
+      );
+      expect(out[proposed + 2]).toMatch(
+        /^ {2}- 2\. .*\?: asked at create by the initial IC, before R5-8, as 001-q02$/,
+      );
+      out.length = 0;
+      expect(await run(["incident", "review", "001"], ctx)).toBe(EXIT.ok);
+      expect(
+        out.filter((l) =>
+          /^ {2}question proposed \d: .*: asked at create by the initial IC, before R5-8, as 001-q0\d$/.test(
+            l,
+          ),
+        ),
+      ).toHaveLength(2);
+      expect(out).toContain(
+        "briefing questions: 2 proposed, 0 accepted and asked, 0 discarded, 0 answered by the IC, 2 asked at create by the initial IC (before R5-8)",
+      );
+    },
+  );
 });

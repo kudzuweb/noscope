@@ -4610,7 +4610,7 @@ Not exactly to spec, with reasons:
   from before R5-1 parses and replays; nothing writes either now, `createClaim` refuses
   them, and no renderer lists a verified claim.
 
-## R5-8: The IC gates the briefing's questions (#PR, merged 2026-09-16)
+## R5-8: The IC gates the briefing's questions (#61, merged 2026-09-16)
 
 R5-8 of the round 5 plan. Forced by runs 003 and 004 (`docs/first-incident.md`, "R4-8
 stopped the fix and not the questions"): both size-ups asked two intended-behavior
@@ -4654,7 +4654,8 @@ while no accepted `command.turned` follows `incident.briefed` (a rejected first 
 leaves them proposed for the retry, as `pendingTransfer` leaves the briefing pending);
 `briefingQuestionOutcomes(events)` pairs each proposal with the ruling on the first
 accepted turn that carries `briefingQuestions` and the question id from the
-`question.asked` that recorded it; `describeProposal` renders one outcome ("accepted by
+`question.asked` that recorded it, or, in a log from before R5-8, with the id the
+`question.asked` of seat `initial_ic` gave it (`asked_at_create`); `describeProposal` renders one outcome ("accepted by
 the IC, asked as 001-q02: <why>", "discarded by the IC: <why>", "answered by the IC as
 001-q01: <answer> (<why>)", or "not yet ruled on; the IC's first turn does").
 
@@ -4681,8 +4682,10 @@ per ruling and marks an IC-answered question `(answered by the IC: …)` in its 
 lines; `show` prints "questions the briefing proposed for Mauria, as the IC ruled:" with
 one line per proposal, before the questions waiting on a human, only when the briefing
 proposed any; `review` lists each proposal with its outcome under the size-up (in place
-of the `seat: initial_ic` question lines, which no event carries now), says "N
-question(s) proposed" on the briefed line, marks an IC answer "answered by the IC" in its
+of the `seat: initial_ic` question lines, which nothing writes now; a log from before
+R5-8 carries them, and each of its questions reads as `asked at create by the initial IC,
+before R5-8, as 001-q01`, in `show`, `review` and the "briefing questions:" count, which
+is what run 004's record prints), says "N question(s) proposed" on the briefed line, marks an IC answer "answered by the IC" in its
 cycle, and adds a "briefing questions:" line after "briefing kept:" (none proposed; N
 proposed, not ruled on yet; or the counts accepted and asked, discarded, answered by the
 IC). The change report marks an IC-answered question "(your own answer, on taking
@@ -4729,7 +4732,9 @@ the next change report carries both answers with the IC's marked as its own; a f
 turn that rules on none is rejected under "Proposals ruled", one that rules on a number
 the briefing lacks is rejected, and the retry that rules on the one question passes. The
 transfer and ask snapshots, the review's "question(s) proposed" line, the role and schema
-pins follow. `pnpm check` exits 0.
+pins follow; a replay test on run 004's record (`test/replay.test.ts`, behind
+`NOSCOPE_REPLAY_DB` beside R5-1's) asserts `show` and `review` say both questions were
+asked at create by the initial IC. `pnpm check` exits 0.
 
 Not exactly to spec, with reasons:
 
@@ -4750,3 +4755,9 @@ Not exactly to spec, with reasons:
 - The rule is the validator's ("Proposals ruled"), not the schema's: the schema cannot
   know how many questions the briefing proposed, and a rejected turn with the reason is
   the house form for a turn that does not fit the file.
+- Review of PR 61 (review61, 2026-09-16), applied before merge: `show` and `review` on a
+  log from before R5-8 (run 004's) printed "not yet ruled on; the IC's first turn does"
+  for questions that `create` had asked and the operator had answered; a fourth outcome,
+  `asked_at_create`, reads the `question.asked` of seat `initial_ic` after the briefing
+  and renders each with its id, counted on the "briefing questions:" line, with the
+  replay assertion above.

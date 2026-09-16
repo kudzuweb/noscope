@@ -456,7 +456,12 @@ export function proposedQuestions(events: readonly Event[]): string[] {
     : briefed.briefing.questionsForHuman;
 }
 
-/** What became of one question the briefing proposed (R5-8): the IC's ruling and, for an accepted or answered one, the question's id, or null before the IC's first accepted turn. */
+/**
+ * What became of one question the briefing proposed (R5-8): the IC's ruling and, for an
+ * accepted or answered one, the question's id; `asked_at_create` for a log from before
+ * R5-8, where `create` asked it as the initial IC's (runs 003 and 004); null before the
+ * IC's first accepted turn.
+ */
 export type ProposalOutcome = {
   proposal: number;
   text: string;
@@ -464,6 +469,7 @@ export type ProposalOutcome = {
     | (BriefingQuestionVerdict & {
         questionId: string | null;
       })
+    | { verdict: "asked_at_create"; questionId: string }
     | null;
 };
 
@@ -471,8 +477,10 @@ export type ProposalOutcome = {
  * Every question the briefing proposed with what the IC made of it (R5-8): the ruling on
  * the first accepted `command.turned` after the briefing that carries `briefingQuestions`,
  * and the question id the runtime gave an accepted or answered one, from the
- * `question.asked` that recorded the turn's questions with `proposals`. An empty list
- * without a briefing or when it proposed none.
+ * `question.asked` that recorded the turn's questions with `proposals`. In a log from
+ * before R5-8 the questions were asked at `create` by the initial IC (`question.asked`
+ * with `seat: initial_ic`, after the briefing), and each is `asked_at_create` with the id
+ * that event gave it. An empty list without a briefing or when it proposed none.
  */
 export function briefingQuestionOutcomes(
   events: readonly Event[],
@@ -493,6 +501,15 @@ export function briefingQuestionOutcomes(
     (ruled?.payload.turn as { briefingQuestions?: unknown } | undefined)
       ?.briefingQuestions,
   );
+  const atCreate = events.find(
+    (e) =>
+      e.type === "question.asked" &&
+      e.sequence > briefed.event.sequence &&
+      e.payload.seat === "initial_ic",
+  );
+  const askedAtCreate = (
+    (atCreate?.payload.questions ?? []) as { id?: unknown }[]
+  ).map((q) => (typeof q.id === "string" ? q.id : null));
   const ids = new Map<number, string>();
   for (const e of events)
     if (e.type === "question.asked" && Array.isArray(e.payload.proposals))
@@ -504,6 +521,13 @@ export function briefingQuestionOutcomes(
           ids.set(p.proposal, p.questionId);
   return briefed.briefing.questionsForHuman.map((text, i) => {
     const proposal = i + 1;
+    const early = askedAtCreate[i];
+    if (early !== undefined && early !== null)
+      return {
+        proposal,
+        text,
+        ruling: { verdict: "asked_at_create", questionId: early },
+      };
     const verdict = rulings.success
       ? rulings.data.find((r) => r.proposal === proposal)
       : undefined;
@@ -528,6 +552,8 @@ export function describeProposal(o: ProposalOutcome): string {
       return `discarded by the IC: ${o.ruling.why}`;
     case "answer":
       return `answered by the IC${o.ruling.questionId === null ? "" : ` as ${o.ruling.questionId}`}: ${o.ruling.answer ?? ""} (${o.ruling.why})`;
+    case "asked_at_create":
+      return `asked at create by the initial IC, before R5-8, as ${o.ruling.questionId}`;
   }
 }
 
