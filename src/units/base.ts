@@ -845,7 +845,7 @@ function reportRefusals(
   return { report, revision };
 }
 
-/** The reasons the validator refused this unit's leader's last assignment, since the leader's last turn, for its next prompt; a report the runtime wrote after two refusals is not a turn of the leader's. */
+/** What was refused on this unit's leader's last turn, for its next prompt: the reasons the validator refused its assignment, and the `consult` names that matched no task of the unit and no ref of that turn's assignments (R5-5, `consultUnknown` on the turn's record); a record the runtime wrote is not a turn of the leader's. */
 function refusedSinceLastTurn(
   events: readonly Event[],
   unitId: string,
@@ -856,8 +856,14 @@ function refusedSinceLastTurn(
     if (
       (e.type === "unit.continued" || e.type === "unit.reported") &&
       e.payload.writtenBy !== "runtime"
-    )
+    ) {
       reasons.length = 0;
+      for (const name of (e.payload.consultUnknown as unknown[] | undefined) ??
+        [])
+        reasons.push(
+          `consult: ${String(name)} is neither a task of unit ${unitId} nor the ref of a task assigned on that turn, so nothing is flagged`,
+        );
+    }
     if (e.type === "plan.rejected" && e.actor === LEADER_ACTOR)
       reasons.push(`${String(e.payload.rule)}: ${String(e.payload.reason)}`);
   }
@@ -1044,17 +1050,30 @@ async function leaderTurn(
   const current = { ...unit, sessionId };
   let assigned = 0;
   // What the leader asked to be consulted on (R5-5): the unit's task ids go on the turn's
-  // record, and the rest are refs of this turn's assignments, resolved when they are
-  // applied and recorded on the `plan.applied`.
+  // record, refs of this turn's assignments are resolved when they are applied and
+  // recorded on the `plan.applied`, and a name that is neither is recorded on the turn as
+  // `consultUnknown` and read back into the next prompt's refusals, so nothing the leader
+  // asked for vanishes unseen.
   const ownTasks = new Set(
     store
       .listTasks(incident.id)
       .filter((t) => t.unitId === unit.id)
       .map((t) => t.id),
   );
+  const refs = new Set(
+    (turn.assignTasks ?? []).flatMap((t) =>
+      t.ref === undefined ? [] : [t.ref],
+    ),
+  );
   const consultIds = (turn.consult ?? []).filter((id) => ownTasks.has(id));
-  const consultRefs = (turn.consult ?? []).filter((id) => !ownTasks.has(id));
-  const consult = consultIds.length === 0 ? {} : { consult: consultIds };
+  const consultRefs = (turn.consult ?? []).filter((id) => refs.has(id));
+  const consultUnknown = (turn.consult ?? []).filter(
+    (id) => !ownTasks.has(id) && !refs.has(id),
+  );
+  const consult = {
+    ...(consultIds.length === 0 ? {} : { consult: consultIds }),
+    ...(consultUnknown.length === 0 ? {} : { consultUnknown }),
+  };
   // The endings this turn put to the leader: its cause when that is an ending, and the
   // unheard ones rendered beside it.
   const heard = [
@@ -1174,22 +1193,22 @@ async function settle(
 
 /**
  * The runtime's record of an ending that needed no turn (R5-5): `unit.continued` with
- * `writtenBy: "runtime"`, the task that ended and how many ready tasks start, so the log
- * shows the unit's progress; not a turn of the leader's, so the ending still rides on its
- * next one.
+ * `writtenBy: "runtime"`, the task that ended and how many ready tasks start (none once
+ * the pass has halted, whatever is ready), so the log shows the unit's progress; not a
+ * turn of the leader's, so the ending still rides on its next one.
  */
 function continueWithoutTurn(
   ctx: PassContext,
   unit: Unit,
   ending: TaskEnding,
-  remaining: number,
+  view: PassView,
 ): Turned {
   ctx.store.record(ctx.incident.id, "unit.continued", ctx.actor, {
     unitId: unit.id,
     sessionId: unit.sessionId,
     ...unit.leader,
     taskId: ending.task.id,
-    remaining,
+    remaining: view.halted() ? 0 : view.remaining().length,
     writtenBy: "runtime",
   });
   return { unit, report: null, done: false, stop: false };
@@ -1267,9 +1286,11 @@ export const baseUnitType = defineUnitType({
     // the leader has reported this pass. A unit that reported already this pass hears the
     // ending on its next turn. A failed or insufficient ending, and a completed one the
     // leader asked to be consulted on, call the leader, unless a turn already put it to
-    // the leader. A completed ending otherwise needs no decision: the runtime records the
-    // unit's progress and the ready tasks start, and the ending rides on the leader's
-    // next turn.
+    // the leader; a halt (a picture change elsewhere, a budget stop) does not stop that
+    // call, since a failure is a decision whatever the pass is doing, though nothing the
+    // leader continues to starts. A completed ending otherwise needs no decision: the
+    // runtime records the unit's progress and the ready tasks start, and the ending rides
+    // on the leader's next turn.
     ending: async (ctx, unit, ending, view) => {
       if (ending.refusals !== undefined) {
         const { report, revision } = reportRefusals(
@@ -1299,7 +1320,7 @@ export const baseUnitType = defineUnitType({
       // that turn was for, and rode on it as unheard) needs no turn of its own.
       const heard = heardEndings(events, unit.id).has(ending.task.id);
       if (needsDecision && !heard) return settle(ctx, unit, ending, view);
-      return continueWithoutTurn(ctx, unit, ending, view.remaining().length);
+      return continueWithoutTurn(ctx, unit, ending, view);
     },
     // Once nothing is ready and nothing runs, a unit that owes a report (a task ended
     // after its last one, this pass or an earlier one) is asked for it, unless the pass

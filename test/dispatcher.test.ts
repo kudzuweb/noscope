@@ -1869,7 +1869,7 @@ describe("dispatcher, lacks at the leader", () => {
     ...env,
   });
 
-  it("a retrievable_fact insufficiency reaches the leader, which assigns a grep it asks to be consulted on by ref, then on the grep's ending an investigate in a session of its own with the grep attached, and reports once that ending rides on the report turn, all in one pass (R5-5)", async () => {
+  it("a retrievable_fact insufficiency reaches the leader, which assigns a grep it asks to be consulted on by ref (and names one unknown task, refused into its next prompt), then on the grep's ending an investigate in a session of its own with the grep attached, and reports once that ending rides on the report turn, all in one pass (R5-5)", async () => {
     const store = new Store(":memory:");
     const { incident, led, task } = scriptedIncident(store);
     const unit = led();
@@ -1906,7 +1906,9 @@ describe("dispatcher, lacks at the leader", () => {
           kind: "continue",
           report: null,
           assignTasks: [grepProposal({ ref: "g" })],
-          consult: ["g"],
+          // "g" is this turn's ref; "t-nope" is nothing of the unit's and is refused
+          // into the next prompt rather than dropped.
+          consult: ["g", "t-nope"],
         },
         {
           kind: "continue",
@@ -1962,6 +1964,10 @@ describe("dispatcher, lacks at the leader", () => {
     expect(calls[2]?.prompt).toContain(
       "Task i1-t02 (grep) completed; its evidence, 1 match in 1 file, is recorded under its id for a task naming it in evidenceFrom.tasks.",
     );
+    expect(calls[2]?.prompt).toContain(
+      "Refused on your last turn, and nothing from it was created or raised:\n  - consult: t-nope is neither a task of unit u-led nor the ref of a task assigned on that turn, so nothing is flagged",
+    );
+    expect(calls[4]?.prompt).not.toContain("Refused on your last turn");
     // The second investigate ran in a session of its own with the grep's result attached
     // in full, which the leader's own session never held.
     expect(calls[3]?.prompt).not.toContain("Your next task follows");
@@ -1990,11 +1996,17 @@ describe("dispatcher, lacks at the leader", () => {
     expect(
       events
         .filter((e) => e.type === "unit.continued")
-        .map((e) => [e.payload.writtenBy, e.payload.taskId, e.payload.heard]),
+        .map((e) => [
+          e.payload.writtenBy,
+          e.payload.taskId,
+          e.payload.heard,
+          e.payload.consult,
+          e.payload.consultUnknown,
+        ]),
     ).toEqual([
-      [undefined, undefined, ["t-inv"]],
-      [undefined, undefined, ["i1-t02"]],
-      ["runtime", "i1-t03", undefined],
+      [undefined, undefined, ["t-inv"], undefined, ["t-nope"]],
+      [undefined, undefined, ["i1-t02"], undefined, undefined],
+      ["runtime", "i1-t03", undefined, undefined, undefined],
     ]);
     expect(
       events.filter((e) => e.type === "task.created").map((e) => e.actor),
@@ -2787,10 +2799,12 @@ describe("dispatcher, parallel dispatch", () => {
     expect(calls.filter((c) => c.kind === "task")).toHaveLength(1);
     expect(calls.filter((c) => c.kind === "leader")).toHaveLength(1);
     expect(events.at(-1)?.type).toBe("unit.continued");
+    // Nothing starts after the halt, so the record says no ready task starts even though
+    // t-b2 is runnable.
     expect(events.at(-1)?.payload).toMatchObject({
       unitId: "u-b",
       taskId: "t-b",
-      remaining: 1,
+      remaining: 0,
       writtenBy: "runtime",
     });
     expect(
@@ -2803,6 +2817,83 @@ describe("dispatcher, parallel dispatch", () => {
         events,
       ).map((e) => e.task.id),
     ).toEqual(["t-b"]);
+    store.close();
+  }, 20_000);
+
+  it("a failed landing after a halt still calls the leader (a failure is a decision, R5-5), and what it continues to does not start", async () => {
+    const store = new Store(":memory:");
+    const { incident, task, addUnit } = scriptedIncident(store);
+    addUnit({ id: "u-a", objective: "the first half" });
+    addUnit({ id: "u-b", objective: "the second half" });
+    task({
+      id: "t-a",
+      capability: "grep",
+      unitId: "u-a",
+      inputs: { root: ".", pattern: "delete" },
+      status: "ready",
+    });
+    task(investigate("t-b", "u-b", { objective: "slow: run investigate" }));
+    task(investigate("t-b2", "u-b", { dependsOn: ["t-b"], status: "pending" }));
+    const dir = scratch();
+    const dispatched = await dispatch(store, incident, {
+      cwd: tree,
+      env: stubEnv(dir, {
+        // The one task session fails, after 1.5 s, past u-a's picture-changing report.
+        NOSCOPE_STUB_FAIL: "1",
+        NOSCOPE_STUB_SLEEP_MS: "1500",
+        NOSCOPE_STUB_SLEEP_IF: "slow:",
+        NOSCOPE_STUB_TURNS: JSON.stringify([
+          // u-a's report at close, picture-changing: the halt.
+          {
+            kind: "report",
+            report: {
+              outcome: "not_met",
+              changed: [{ what: "the handler is elsewhere", claims: [] }],
+              pictureChanged: true,
+              why: "the grep hit nothing relevant",
+              suggestion: "look in the view layer",
+            },
+          },
+          // u-b's leader on t-b's failure, after the halt.
+          { kind: "continue", report: null },
+        ]),
+      }),
+    });
+    expect(dispatched.pictureChanged).toBe("u-a");
+    expect(dispatched.ran.map((r) => [r.taskId, r.status])).toEqual([
+      ["t-a", "completed"],
+      ["t-b", "failed"],
+    ]);
+    const events = store.listEvents("i1");
+    const reported = events.find((e) => e.type === "unit.reported");
+    expect(reported?.payload.unitId).toBe("u-a");
+    expect(sequenceOf(events, "task.failed", "t-b")).toBeGreaterThan(
+      reported?.sequence ?? Number.POSITIVE_INFINITY,
+    );
+    // u-b's leader was created and called on the failure, after the halt; its continue
+    // started nothing (t-b2 was cancelled with t-b, R5-10), and no runtime record was
+    // written for the ending, since a turn heard it.
+    const turns = events.filter(
+      (e) => e.type === "unit.continued" && e.payload.unitId === "u-b",
+    );
+    expect(turns.map((e) => [e.payload.heard, e.payload.writtenBy])).toEqual([
+      [["t-b"], undefined],
+    ]);
+    expect(turns[0]?.sequence).toBeGreaterThan(reported?.sequence ?? -1);
+    expect(
+      events.find(
+        (e) => e.type === "leader.started" && e.payload.unitId === "u-b",
+      )?.sequence,
+    ).toBeGreaterThan(reported?.sequence ?? -1);
+    expect(store.listTasks("i1").find((t) => t.id === "t-b2")?.status).toBe(
+      "cancelled",
+    );
+    const calls = readCalls(join(dir, "calls"));
+    expect(calls.filter((c) => c.kind === "leader")).toHaveLength(2);
+    expect(calls.filter((c) => c.kind === "task")).toHaveLength(1);
+    expect(calls.filter((c) => c.kind === "leader").at(-1)?.prompt).toMatch(
+      /Task t-b \(investigate\) failed: /,
+    );
     store.close();
   }, 20_000);
 

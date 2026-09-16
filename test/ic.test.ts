@@ -440,6 +440,14 @@ describe("the IC above the planner", () => {
     expect(calls.filter((c) => c.kind !== "leader").map((c) => c.kind)).toEqual(
       ["command", "planner", "planner", "review"],
     );
+    // The IC's session holds no tools (R5-5): `--tools ""` and no allowlist on its
+    // command turn and its review alike.
+    for (const c of calls.filter(
+      (c) => c.kind === "command" || c.kind === "review",
+    )) {
+      expect(c.args[c.args.indexOf("--tools") + 1]).toBe("");
+      expect(c.args).not.toContain("--allowedTools");
+    }
     const redraft = calls[2]?.prompt ?? "";
     expect(redraft).toContain(
       "# The validator rejected your draft\nYour draft for this period was:\n",

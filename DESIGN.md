@@ -177,7 +177,8 @@ recorded on the unit, the mutation `unit.session`), `unit.continued` and `unit.r
 (one per leader turn, with the call's usage, the task ids of the endings the turn put to
 the leader under `heard` and those the leader named in `consult`, R5-5; `unit.continued`
 is also the runtime's record of an ending that needed no turn, `writtenBy: "runtime"`
-with the task and how many ready tasks start, R5-5), `picture.discrepancy` (a seat saying the
+with the task and how many ready tasks start, zero once the pass has halted, R5-5; a
+leader turn also carries `consultUnknown`, the `consult` names that matched nothing), `picture.discrepancy` (a seat saying the
 update it received describes a different problem), `strike_team.defined` (a strike team declared on a task by the plan, or by the leader that
 assigned the task, R5-4) and `strike_team.rejected` (a leader's request refused with its
 reasons; nothing writes it since R5-4, and a log from before it still reads), `command.turned` (the IC's command turn, its situation on it
@@ -710,8 +711,9 @@ rest of the assignment (Step 5) and written as `strike_team.defined` by `leader`
 assignment is applied. Either move may carry `consult` (R5-5): task ids of the unit, or
 refs of tasks in `assignTasks` on the same turn, whose ending the leader wants to be
 called on however it ends; the ids are recorded on the turn's event and the refs,
-resolved, on the `plan.applied` that creates the tasks, and the flag holds until the task
-ends.
+resolved, on the `plan.applied` that creates the tasks, a name that is neither is
+recorded on the turn's event as `consultUnknown` and read back into the leader's next
+prompt beside the validator's refusals, and the flag holds until the task ends.
 
 The planner proposes structure: the tactics for the period, drafted as a suggestion for
 the IC against the situation the IC holds (R4-5; until then the planner wrote the situation
@@ -945,14 +947,18 @@ its next turn; a `failed` ending, an `insufficient` one (a session that said it 
 something: the task is completed in the store with the lacks as its result and no
 claims, and the ending carries what it needed) and a `completed` one the leader flagged
 `consult` (on the turn that assigned the task, by ref, or on any turn that saw it, by
-id) call the leader at once, unless a turn already put that ending to the leader; every
+id) call the leader at once, unless a turn already put that ending to the leader, and
+whether or not the pass has halted (a failure is a decision whatever else is happening;
+after a halt the leader's continue starts nothing); every
 other completed ending calls nobody: the runtime records `unit.continued` with
-`writtenBy: "runtime"`, the task that ended and how many ready tasks start, so the log
-shows the unit's progress, and the tasks the ending made runnable start. The leader is
+`writtenBy: "runtime"`, the task that ended and how many ready tasks start (zero after a
+halt, whatever is ready), so the log shows the unit's progress, and the tasks the ending
+made runnable start. The leader is
 also called on the IC's revision brief (below), on the answers to its requests, and at
 `close`, once nothing is ready and nothing runs, when the unit owes a report (a task
 ended, or was cancelled because a task it waited on failed (R5-10), after its last
-report, this pass or an earlier one), unless the pass has halted.
+report, this pass or an earlier one), unless the pass has halted, so a completed landing
+after a halt calls nobody and the unit owes its report to the next pass.
 Every turn is one call on the session under `LeaderTurn`, and carries first the endings
 the leader has not heard (`unheardEndings`: those no turn of its own put to it, whether
 they needed no turn, landed after it reported, or landed while a turn was in progress

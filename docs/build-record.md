@@ -4762,7 +4762,7 @@ Not exactly to spec, with reasons:
   and renders each with its id, counted on the "briefing questions:" line, with the
   replay assertion above.
 
-## R5-5: A leader is called only on a decision (#PR, merged 2026-09-16)
+## R5-5: A leader is called only on a decision (#62, merged 2026-09-16)
 
 R5-5 of the round 5 plan, Mauria's ruling of 2026-09-15: "we don't want any model calls
 happening just for the sake of process. model calls should be because a model is needed".
@@ -4823,8 +4823,12 @@ called on however it ends. `leaderTurn` splits the list: ids of the unit's tasks
 the turn's event as `consult`, the rest are refs and go to `applyAssignments`
 (`bookkeeping`, third argument), and `applyLeaderTasks` (`src/runtime.ts`) resolves them
 by proposal order and records `consult` on the `plan.applied`; `consultFlagged` reads both.
-A flag holds until the task ends; a ref whose assignment the validator refused flags
-nothing. `LEADER_ROLE` says when the leader is called and what `consult` is for.
+A name that is neither a task of the unit nor a ref of that turn's `assignTasks` is
+recorded on the turn's event as `consultUnknown` and `refusedSinceLastTurn` reads it into
+the next prompt's "Refused on your last turn" block (PR 62's review: nothing the leader
+asked for vanishes unseen). A flag holds until the task ends; a ref whose assignment the
+validator refused flags nothing, and that refusal is in the same block. `LEADER_ROLE` says
+when the leader is called and what `consult` is for.
 
 The IC's session holds no tools, ruled by the orchestrator at R5-4's review (#57) and
 recorded there: the IC's deterministic tasks run in process, so `Read`, `Grep`, `Glob`
@@ -4869,7 +4873,12 @@ hearing by id: both slow tasks are recorded before the first turn's event and ne
 in its `heard`. `test/units.test.ts` pins `unheardEndings` (insufficient with its lacks,
 failed with its reason, the runtime's records moving nothing); `test/models.test.ts`
 pins `consult` on `LeaderTurn` and its schema; `test/review.test.ts` pins the runtime
-line and the count; `test/providers.test.ts` the IC's tools sentence. The stub
+line and the count; `test/providers.test.ts` the IC's tools sentence; a run test in
+`test/ic.test.ts` pins `--tools ""` and no `--allowedTools` on the IC's command and
+review calls. From PR 62's review: a parallel test where a failing session lands after a
+picture-changing report elsewhere and its unit's leader is still created and called on
+the failure, after the halt, and the lacks test names an unknown task in `consult` and
+reads the refusal on its next prompt. The stub
 (`test/stub-claude`) bumps every counter file under a directory lock (`bump`, `mkdirSync`
 as the mutex, a millisecond's `Atomics.wait` between tries): two stub processes starting
 within a millisecond (a task session and a turn, or two sessions) read the same count
@@ -4917,10 +4926,14 @@ Not exactly to spec, with reasons:
   this pass (two failures land together: the first's turn carries the second as unheard)
   gets no second call. The block does not say; a second call for something the leader
   has read and could act on is a call for process.
-- After a halt (a picture-changing report elsewhere, or `budget.exceeded`) a landing calls
-  nobody and `close` takes no turn, so a unit whose task lands after the halt owes its
-  report to the next pass; before, the ending's turn ran after the halt. Nothing new
-  starts after a halt, and a leader turn is a call.
+- After a halt (a picture-changing report elsewhere, or `budget.exceeded`) a completed
+  landing calls nobody and `close` takes no turn, so a unit whose task lands after the
+  halt owes its report to the next pass; before, the ending's turn ran after the halt.
+  Nothing new starts after a halt, and a leader turn is a call. A failed, insufficient or
+  consulted landing after a halt still calls the leader (PR 62's review: a failure is a
+  decision whatever the pass is doing), though what it continues to does not start, and
+  the runtime's `unit.continued` says zero ready tasks start after a halt whatever is
+  runnable.
 - `consult` is one field on the turn taking ids or refs, rather than a flag on the
   assignment and a list on the turn: the leader names a task the same way whether it
   assigned it this turn or saw it earlier, and the resolved ids land on the record that
