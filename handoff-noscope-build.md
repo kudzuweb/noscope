@@ -1,7 +1,7 @@
 # Handoff: noscope round 4, the build in progress
 
-Refreshed 2026-09-15 17:02 CDT by session noscope-round4 [f7cb98]; every code row merged,
-the fourth run pending. Written by the successor session; the relay session mauriaparker-91 has stopped.
+Refreshed 2026-09-15 19:02 CDT by session noscope-round4 [f7cb98]; round 4 complete, the
+fourth run written up. Kept as the recovery document for the next round's session. Written by the successor session; the relay session mauriaparker-91 has stopped.
 
 **First actions, in order:** (1) `/warp-pin title noscope-round4-<n>`. (2) Read this file,
 then `BUILD-PLAN.md` "## Round 4" in full (rows R4-10 to R4-12 are new; the fourth run is now R4-13), then the round 4
@@ -40,12 +40,16 @@ thread `~/Documents/Projects/my-quipu/ics-runtime.md` and reviewed into the plan
 
 ## 3. STATE (as of this refresh)
 
-Origin main is `3b2cd7a` (R4-11, #51), pushed; local main equals it; `dist/` built from it
-(runtime tag `3b2cd7a…`). Every code row of round 4 is merged, in order: R4-8 (#40), R4-1
-(#41), R4-6 (#42), R4-7 (#43), R4-9 (#44), R4-2 (#45), R4-3 (#46), R4-4 (#47), R4-5 (#48),
-R4-10 (#49), R4-12 (#50), R4-11 (#51, 17:01). Twelve of thirteen. Open: nothing. Remaining:
-R4-13, the fourth run, which spends money and waits on Mauria's go (the plan was restated to
-her at 17:02). Store schema is 9; `NOSCOPE_DB` files from earlier runs migrate on open.
+Round 4 is complete. Origin main is `20e0fd0` (R4-13, #52), pushed; local main equals it;
+`dist/` built from it. Thirteen PRs merged today, #40 to #52, in order: R4-8, R4-1, R4-6,
+R4-7, R4-9, R4-2, R4-3, R4-4, R4-5, R4-10, R4-12, R4-11, R4-13. The fourth run (2026-09-15
+18:00 to 18:35 CDT, `~/.noscope/fourth-run.sqlite`, logs under `~/.noscope/fourth-run/`)
+reached `satisfied` in three periods over four steps at $15.96, naming the same code path as
+runs 001 to 003; its write-up is "## Fourth run" in `docs/first-incident.md`, and its
+"What the run found in the runtime" subsection is the candidate list for round 5. Store
+schema is 9. No worktree, no open PR, no agent running. The next build session starts with
+round 5's plan, which does not exist yet: it is drafted from that subsection and reviewed
+with Mauria in Roughdraft before any row is built.
 
 Rulings by the orchestrator in review, shown to Mauria and not reversed: a plan cannot close
 a unit whose revise is undelivered (R4-3); the IC can drop a reassignment on a later turn
@@ -67,23 +71,24 @@ session: builders `build-r4-6`, `build-r4-7`, `build-r4-9`, `build-r4-2`, `build
 `build-r4-4` and reviewers `review43-rebase`, `review44-rebase`, `review45-rebase`,
 `review46-correctness`, `review47-correctness`, `review48-correctness`, builders `build-r4-5`,
 `build-r4-10`, `build-r4-12`, reviewers `review49-design`, `review49-correctness` (idle, hold
-context), `build-r4-11`, `review50-correctness`, `review51-correctness` (idle), `quipu` (the keeper;
-last write 18e3032, which opened the thread noscope-as-a-service.md). Heartbeat cron `53cbb702` hourly at :23.
+context), `build-r4-11`, `build-r4-13`, `review50-correctness`, `review51-correctness`,
+`review52-writeup` (idle), `quipu` (the keeper; it also opened the thread
+noscope-as-a-service.md at 16:40). They die with this session. Heartbeat cron `53cbb702` hourly at :23.
 
-Not started: the run (R4-13) only; R4-13 (the fourth run) last. The one worktree lives under
+Not started: nothing in round 4; R4-13 (the fourth run) last. The one worktree lives under
 this session's scratchpad `/private/tmp/claude-501/-Users-mauriaparker-Documents-Projects-noscope/5c3f3ef0-a43b-4a43-b0d5-afcbc0e7673c/scratchpad/`;
 a successor recreates any it needs with `git worktree add -b <branch> <path> origin/<branch>`
 and `pnpm install --frozen-lockfile`.
 
 ## 4. NEXT STEPS, IN ORDER
 
-1. (done) Every code row merged.
+1. (done) Every row of round 4 merged, the run written up (#52).
 2. (done; kept as the pattern) Spawn builders one at a time, each on a
    fresh worktree from main (`git worktree add -b <branch> <path> origin/main`), briefed with
    the builder brief plus its plan block; review each by a subagent; merge. Before R4-5's
    brief, confirm the brief's situation sentence (already updated). R4-10 and R4-11 get two
    reviewers each (a rewrite).
-3. R4-13: restore `~/.noscope/second-run/document.md` from `document.pristine.md`; from
+3. (done, 2026-09-15 18:00) R4-13: restore `~/.noscope/second-run/document.md` from `document.pristine.md`; from
    `~/Documents/Projects/roughdraftplus` (at `6a996e8`) with `NOSCOPE_DB=~/.noscope/fourth-run.sqlite`,
    `incident create` with run 003's objective, constraints and priority, the IC on Opus 5
    with the R4-7 fallback; step by hand, detached, one cycle at a time (the runner pattern is
