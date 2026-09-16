@@ -6,7 +6,6 @@ import {
   type Claim,
   jsonSchemaFor,
   type Period,
-  type Situation,
   type Task,
   type Unit,
   type Usage,
@@ -24,12 +23,16 @@ import type { SessionCapability } from "./registry.js";
 
 const DEFAULT_SESSION_SECONDS = 600;
 
-/** What the runtime attaches to a brief beyond the task: the incident's objective and current situation, the units around the task's, and what the task reads by reference. */
+/**
+ * What the runtime attaches to a brief beyond the task: the incident's objective and
+ * period, the units around the task's, and what the task reads by reference. Never the
+ * IC's situation (R5-2): only objectives and evidence flow down, so a session tests the
+ * evidence it is given and not a picture held above it.
+ */
 export type BriefContext = {
   objective: string;
   /** The current operational period, when the incident has one; rendered after the objective. */
   period?: Period;
-  situation: Situation | null;
   /** Every unit in the incident, from which the hierarchy around the task's unit is rendered; empty renders none. */
   units: readonly Unit[];
   claims: readonly Claim[];
@@ -38,7 +41,6 @@ export type BriefContext = {
 
 const NO_CONTEXT: BriefContext = {
   objective: "",
-  situation: null,
   units: [],
   claims: [],
   results: [],
@@ -80,7 +82,7 @@ function renderTaskResult(t: Task): string {
   return JSON.stringify(t.result);
 }
 
-/** The user message: the incident's objective and situation, the hierarchy around the task's unit, the task's contract, the strike team it declares, what it reads by reference, then one line on what the owning unit is trying to establish. */
+/** The user message: the incident's objective and period, the hierarchy around the task's unit, the task's contract, the strike team it declares, what it reads by reference, then one line on what the owning unit is trying to establish. */
 export function renderTaskBrief(
   task: Task,
   unit: Unit,
@@ -94,13 +96,6 @@ export function renderTaskBrief(
       : [
           `Incident objective: ${context.objective}`,
           ...renderPeriod(context.period),
-          `Current hypothesis: ${context.situation?.hypothesis ?? "(none yet)"}`,
-          "Established so far:",
-          list(
-            (context.situation?.proven ?? []).map(
-              (p) => `${p.claimId}: ${p.line}`,
-            ),
-          ),
           ...(context.units.length === 0
             ? []
             : ["", ...renderHierarchy(unit, context.units)]),

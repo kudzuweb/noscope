@@ -20,7 +20,7 @@ import {
   Timestamp,
   Usage,
 } from "../src/models.js";
-import { unitProposal } from "./fixtures/models.js";
+import { situation, unitProposal } from "./fixtures/models.js";
 
 const plan = {
   createUnits: [unitProposal("u1", "delete-handler investigation", "command")],
@@ -293,13 +293,7 @@ describe("contracts", () => {
       periodObjectives: ["find the handler"],
       priorities: [],
       reportVerdicts: [],
-      situation: {
-        changed: "test",
-        hypothesis: "test",
-        proven: [],
-        inferred: [],
-        keep: [],
-      },
+      situation: situation(),
       closeUnits: [],
       questionsForHuman: [],
       capabilityRequests: [],
@@ -348,13 +342,7 @@ describe("contracts", () => {
       periodObjectives: ["find the handler"],
       priorities: [],
       reportVerdicts: [],
-      situation: {
-        changed: "test",
-        hypothesis: "test",
-        proven: [],
-        inferred: [],
-        keep: [],
-      },
+      situation: situation(),
       closeUnits: [],
       questionsForHuman: [],
       capabilityRequests: [],
@@ -442,7 +430,7 @@ describe("contracts", () => {
     ]);
   });
 
-  it("the situation is the IC's: required on a command turn, refused on a plan, and an inferred link is settled by a task or deferred with a why (R4-5)", () => {
+  it("the situation is the IC's living picture: required on a command turn, refused on a plan; evidence is for or against by claim id, an open item carries an id only when carried forward and may be deferred with a why, and the assessment is one of three kinds (R5-2)", () => {
     const turn = {
       periodObjectives: ["find the handler"],
       priorities: [],
@@ -455,43 +443,95 @@ describe("contracts", () => {
       rationale: "first period",
     };
     expect(CommandTurn.safeParse(turn).success).toBe(false);
-    const situation = {
-      changed: "the grep landed",
-      hypothesis: "a.ts handles deletion",
-      proven: [{ claimId: "c1", line: "a.ts exists" }],
-      inferred: [
-        { claimId: "c2", settledBy: { task: "probe" } },
-        { claimId: "c3", settledBy: { reproduce: "browser" } },
-        { claimId: "c4", settledBy: { deferred: "no browser this period" } },
+    const picture = situation({
+      picture: "a.ts handles deletion and resets the view",
+      evidence: [
+        { claimId: "c1", stance: "for" },
+        { claimId: "c2", stance: "against" },
       ],
-      keep: ["c1"],
+      open: [
+        {
+          id: "i1-o01",
+          what: "whether focus() scrolls",
+          settledBy: "a reproduce",
+        },
+        { what: "where the selection rests", settledBy: "a read of the mount" },
+        {
+          what: "the bundle's mapping",
+          settledBy: "a trace",
+          deferred: "no source map this period",
+        },
+      ],
+      assessment: { kind: "priors_updated", why: "the reproduce landed" },
+      changed: "the reproduce's claims folded in",
+    });
+    const parsed = CommandTurn.parse({ ...turn, situation: picture }).situation;
+    expect(parsed.open).toHaveLength(3);
+    expect(parsed.open[0]?.id).toBe("i1-o01");
+    expect(parsed.open[1]?.id).toBeUndefined();
+    expect(parsed.open[2]?.deferred).toBe("no source map this period");
+    expect(parsed.assessment.kind).toBe("priors_updated");
+    for (const bad of [
+      { evidence: [{ claimId: "c1", stance: "maybe" }] },
+      { open: [{ what: "x", settledBy: "y", deferred: "" }] },
+      { open: [{ what: "x" }] },
+      { assessment: { kind: "unsure", why: "y" } },
+      { assessment: { kind: "on_track", why: "" } },
+      { picture: "" },
+    ])
+      expect(
+        CommandTurn.safeParse({ ...turn, situation: { ...picture, ...bad } })
+          .success,
+      ).toBe(false);
+    // The old shape (R4-5's hypothesis, proven, inferred, keep) no longer parses.
+    expect(
+      CommandTurn.safeParse({
+        ...turn,
+        situation: {
+          changed: "x",
+          hypothesis: "y",
+          proven: [],
+          inferred: [],
+          keep: [],
+        },
+      }).success,
+    ).toBe(false);
+    expect(() => ActionPlan.parse({ ...plan, situation: picture })).toThrow(
+      /situation/,
+    );
+    const schema = jsonSchemaFor(CommandTurn) as {
+      required: string[];
+      properties: {
+        situation: {
+          required: string[];
+          properties: {
+            assessment: { properties: { kind: { enum: string[] } } };
+          };
+        };
+      };
     };
-    expect(
-      CommandTurn.parse({ ...turn, situation }).situation.inferred,
-    ).toHaveLength(3);
-    expect(
-      CommandTurn.safeParse({
-        ...turn,
-        situation: {
-          ...situation,
-          inferred: [{ claimId: "c3", settledBy: { question: 1 } }],
-        },
-      }).success,
-    ).toBe(false);
-    expect(
-      CommandTurn.safeParse({
-        ...turn,
-        situation: {
-          ...situation,
-          inferred: [{ claimId: "c4", settledBy: { deferred: "" } }],
-        },
-      }).success,
-    ).toBe(false);
-    expect(() => ActionPlan.parse({ ...plan, situation })).toThrow(/situation/);
-    const schema = jsonSchemaFor(CommandTurn) as { required: string[] };
     expect(schema.required).toContain("situation");
+    expect(schema.properties.situation.required).toEqual([
+      "picture",
+      "evidence",
+      "open",
+      "assessment",
+      "changed",
+    ]);
+    expect(
+      schema.properties.situation.properties.assessment.properties.kind.enum,
+    ).toEqual(["on_track", "priors_updated", "tactics_change"]);
     const planSchema = jsonSchemaFor(ActionPlan) as { required: string[] };
     expect(planSchema.required).not.toContain("situation");
+    // A plan's task may name the open items it settles (R5-2).
+    const settling = TaskProposal.parse({
+      ...plan.createTasks[0],
+      settles: ["i1-o01"],
+    });
+    expect(settling.settles).toEqual(["i1-o01"]);
+    expect(
+      TaskProposal.parse(plan.createTasks[0] ?? {}).settles,
+    ).toBeUndefined();
   });
 
   it("a leader's turn is a report or a continue; a not_met report says why and what to do, and a discrepancy rides on either", () => {
@@ -519,12 +559,19 @@ describe("contracts", () => {
       unit: "i1-u02",
       evidenceFrom: { claims: [], tasks: [] },
     });
+    const slice = {
+      picture: "the handler is in a.ts",
+      evidence: [{ claimId: "i1-c001", stance: "for" }],
+      open: [{ what: "whether it scrolls", settledBy: "a reproduce" }],
+      changed: "first report",
+    };
     const waiting = LeaderTurn.parse({
       kind: "report",
       report: {
         outcome: "progress",
         changed: [],
         pictureChanged: false,
+        situation: slice,
         resourceRequests: [
           { kind: "human_knowledge", what: "which file", why: "two match" },
         ],
@@ -538,16 +585,58 @@ describe("contracts", () => {
           outcome: "progress",
           changed: [],
           pictureChanged: false,
+          situation: slice,
           resourceRequests: [
             { kind: "retrievable_fact", what: "a line", why: "to read" },
           ],
         },
       }),
     ).toThrow(/kind/);
+    // A report carries the unit's picture of its slice (R5-2), and a unit's open item
+    // takes no id and no deferral: those are the IC's.
+    expect(() =>
+      LeaderTurn.parse({
+        kind: "report",
+        report: { outcome: "progress", changed: [], pictureChanged: false },
+      }),
+    ).toThrow(/situation/);
+    expect(
+      LeaderTurn.safeParse({
+        kind: "report",
+        report: {
+          outcome: "progress",
+          changed: [],
+          pictureChanged: false,
+          situation: {
+            ...slice,
+            open: [{ id: "i1-o01", what: "x", settledBy: "y" }],
+          },
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      LeaderTurn.parse({
+        kind: "report",
+        report: {
+          outcome: "progress",
+          changed: [],
+          pictureChanged: false,
+          situation: {
+            ...slice,
+            open: [{ id: "i1-o01", what: "x", settledBy: "y" }],
+          },
+        },
+      }).report?.situation.open[0],
+    ).toEqual({ what: "x", settledBy: "y" });
     expect(() =>
       LeaderTurn.parse({
         kind: "continue",
-        report: { outcome: "progress", changed: [], pictureChanged: false },
+        report: {
+          outcome: "progress",
+          changed: [],
+          pictureChanged: false,
+          situation: slice,
+        },
       }),
     ).toThrow(/a continue turn carries no report/);
     expect(LeaderTurn.parse({ kind: "continue", report: null })).toEqual({
@@ -583,13 +672,19 @@ describe("contracts", () => {
         outcome: "met",
         changed: [{ what: "the handler is known", claims: ["i1-c001"] }],
         pictureChanged: false,
+        situation: slice,
       },
     };
     expect(LeaderTurn.parse(met).report?.outcome).toBe("met");
     expect(() =>
       LeaderTurn.parse({
         kind: "report",
-        report: { outcome: "not_met", changed: [], pictureChanged: true },
+        report: {
+          outcome: "not_met",
+          changed: [],
+          pictureChanged: true,
+          situation: slice,
+        },
       }),
     ).toThrow(/says why/);
     expect(
@@ -599,6 +694,7 @@ describe("contracts", () => {
           outcome: "not_met",
           changed: [],
           pictureChanged: true,
+          situation: slice,
           why: "nothing matched",
           suggestion: "widen the search",
         },

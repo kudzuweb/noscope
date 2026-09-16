@@ -42,7 +42,9 @@ import {
   fakeProvider,
   reportedUnit,
   scriptedIncident,
+  situation,
   unitProposal,
+  unitSituation,
 } from "./fixtures/models.js";
 
 const tree = resolve("test/fixtures/tree");
@@ -96,13 +98,7 @@ const findIt: ActionPlan = {
 const command = (over: Partial<CommandTurn> = {}): CommandTurn => ({
   periodObjectives: ["find the handler"],
   reportVerdicts: [],
-  situation: {
-    changed: "test",
-    hypothesis: "test",
-    proven: [],
-    inferred: [],
-    keep: [],
-  },
+  situation: situation(),
   priorities: ["observation over reading"],
   closeUnits: [],
   answers: [],
@@ -187,7 +183,8 @@ describe("the IC above the planner", () => {
       "  objective: find the handler",
       "  priority: observation over reading",
       "  situation changed: test",
-      "  hypothesis: test",
+      "  picture: test picture",
+      "  assessment: on_track: test",
       "  status: continue",
       "plan drafted (session stub-session): grep for the handler",
       "  create unit find under 001-command (leader claude-code/claude-haiku-4-5): locate the delete handler",
@@ -365,7 +362,7 @@ describe("the IC above the planner", () => {
     expect(h.err).toEqual([]);
     const reason =
       'Dependencies resolve: task "find remove" reads the result of task first, which is neither completed nor in its dependsOn';
-    expect(h.out.slice(7, 20)).toEqual([
+    expect(h.out.slice(8, 21)).toEqual([
       "plan drafted (session stub-session): two greps, the second reading the first",
       "  create unit find under 001-command (leader claude-code/claude-haiku-4-5): locate the delete handler",
       "  create task under find: grep: find delete",
@@ -504,7 +501,7 @@ describe("the IC above the planner", () => {
     );
     expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
     expect(h.err).toEqual([]);
-    expect(h.out.slice(12, 22)).toEqual([
+    expect(h.out.slice(13, 23)).toEqual([
       "IC review: correct: in order, not at once",
       '  patch: set #2.dependsOn to ["first"]: the second grep reads what the first found',
       '  patch: set #2.evidenceFrom to {"claims":[],"tasks":["first"]}: and takes its result',
@@ -859,6 +856,11 @@ describe("the IC above the planner", () => {
           "  - leader of 001-u02: this tree is not the application",
           "unit reports:",
           `  - 001-u02, report ${reported?.id}: not_met, picture changed; changed: the handler is not in a.txt (claims none); why: the tree has no handler; suggestion: look elsewhere`,
+          "    its picture of its slice: stub slice picture",
+          "      evidence: none",
+          "      open:",
+          "        (none)",
+          "      changed: stub: nothing yet",
           "    work since its previous report:",
           "      task 001-t01 (grep): find delete",
           `        claims: 001-c001: ${join(tree, "a.txt")}:2 matches (observed, confidence 1.00)`,
@@ -1362,9 +1364,15 @@ describe("the IC above the planner", () => {
       s.incident,
       store.listUnits("i1"),
     );
+    // The unit's picture of its slice renders under the report (R5-2), before the work.
     expect(between(lines)).toEqual([
       "unit reports:",
       `  - u-a, report ${first.id}: met; changed: the handler is found (claims u-a-c-grep, u-a-c-inv)`,
+      "    its picture of its slice: the handler resets the scroll; the handler at a.ts:2 resets the view",
+      "      evidence: u-a-c-grep for, u-a-c-inv for",
+      "      open:",
+      "        (none)",
+      "      changed: test",
       "    work since its previous report:",
       "      task u-a-grep (grep): find the delete handler",
       "        claims: u-a-c-grep: /r/a.ts:2 matches (observed, confidence 1.00)",
@@ -2445,14 +2453,13 @@ describe("the IC above the planner", () => {
             },
           ],
           // The reassignment is written into the slice it concerns (R4-5), not listed apart.
-          situation: {
+          situation: situation({
             changed:
               "the grep found the handler at a.txt:2 but not its caller; that slice is reassigned (001-r01) to a unit that reads the file",
-            hypothesis: "the handler is at a.txt:2",
-            proven: [],
-            inferred: [],
-            keep: ["001-c001"],
-          },
+            picture: "the handler is at a.txt:2",
+            evidence: [{ claimId: "001-c001", stance: "for" }],
+            assessment: { kind: "tactics_change", why: "a reader, not a grep" },
+          }),
           rationale: "reassign",
         }),
       ],
@@ -2511,13 +2518,13 @@ describe("the IC above the planner", () => {
     expect(planners[1]?.prompt).toContain(
       [
         "## 10. The IC's situation",
+        "picture: the handler is at a.txt:2",
+        "assessment: tactics_change: a reader, not a grep",
         "changed: the grep found the handler at a.txt:2 but not its caller; that slice is reassigned (001-r01) to a unit that reads the file",
-        "hypothesis: the handler is at a.txt:2",
-        "proven:",
+        "evidence (only a claim for, observed, proves a part of the picture):",
+        "  - 001-c001: for, observed",
+        "open items, each worked by a task in this plan naming its id in settles, or deferred by the IC:",
         "  (none)",
-        "inferred:",
-        "  (none)",
-        "keep: 001-c001",
         openLine("001-r01 from unit 001-u02"),
       ].join("\n"),
     );
@@ -2627,27 +2634,29 @@ describe("the IC above the planner", () => {
     );
   });
 
-  it("a run on the stub: the IC's situation carries one inferred link settled by a ref, the planner's draft without that ref is rejected, the next settles it and is applied, and show prints the situation under the period (R4-5)", {
+  it("a run on the stub: a unit reports a slice picture with one open item, the IC folds it in with priors_updated and the runtime numbers the item, the planner's draft leaving it unworked is rejected before the IC sees it, the redraft names it in settles and is applied, show prints the picture, the assessment and the item's state, review prints the assessment, and no leader or task session reads a line of the IC's picture (R5-2)", {
     timeout: 60_000,
   }, async () => {
-    const situation = {
+    const folded = situation({
       changed:
-        "the grep found a.txt:2; whether it is the only handler is not seen",
-      hypothesis: "a.txt:2 is the handler",
-      proven: [{ claimId: "001-c001", line: "a.txt:2 matches delete" }],
-      inferred: [
-        { claimId: "001-c001", settledBy: { task: "probe" } },
+        "the unit's slice folded in: a.txt:2 is a handler; whether it is the only one is open",
+      picture: "THE-IC-PICTURE: a.txt:2 is the delete handler",
+      evidence: [{ claimId: "001-c001", stance: "for" }],
+      open: [
         {
-          claimId: "001-c001",
-          settledBy: { deferred: "the caller is next period's question" },
+          what: "whether a.txt:2 is the only handler",
+          settledBy: "a grep for every handler",
         },
       ],
-      keep: [],
-    };
+      assessment: {
+        kind: "priors_updated",
+        why: "THE-IC-ASSESSMENT: the grep narrowed the picture",
+      },
+    });
     const h = harness(
       [
         findIt,
-        { ...empty, rationale: "nothing settles the link" },
+        { ...empty, rationale: "nothing works the open item" },
         {
           ...empty,
           createTasks: [
@@ -2657,91 +2666,141 @@ describe("the IC above the planner", () => {
               unit: "001-u02",
               objective: "find every handler",
               inputs: { root: ".", pattern: "handler" },
+              settles: ["001-o01"],
             },
           ],
-          rationale: "probe settles the link the IC named",
+          rationale: "probe works the open item",
         },
       ],
       [
-        command(),
+        command({
+          situation: situation({
+            picture: "THE-IC-PICTURE: the seed",
+            assessment: { kind: "on_track", why: "THE-IC-ASSESSMENT: seeded" },
+          }),
+        }),
         command({
           reportVerdicts: [
             {
               reportId: "",
               unitId: "001-u02",
               verdict: "revise",
-              instructions: "run the probe the plan gives you",
+              instructions: "what is missing: whether other handlers exist",
               why: "one match is not the whole picture",
             },
           ],
-          situation,
+          situation: folded,
           rationale: "second period",
         }),
       ],
       [],
     );
+    // The unit's leader reports its own slice picture with one open item.
+    h.ctx.env.NOSCOPE_STUB_TURN = JSON.stringify({
+      kind: "report",
+      report: {
+        outcome: "progress",
+        changed: [{ what: "a.txt:2 is a handler", claims: ["001-c001"] }],
+        pictureChanged: false,
+        situation: unitSituation({
+          picture: "THE-UNIT-PICTURE: a.txt:2 handles delete",
+          evidence: [{ claimId: "001-c001", stance: "for" }],
+          open: [
+            {
+              what: "whether other handlers exist",
+              settledBy: "a wider grep",
+            },
+          ],
+          changed: "first report",
+        }),
+      },
+    });
     await run(
       ["incident", "create", "--no-size-up", "where is the delete handler"],
       h.ctx,
     );
     expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
-    // Cycle 2: the IC writes the link; the draft leaves it unworked and is rejected
-    // before the IC sees it, and the redraft gives the task the ref the IC named and is
-    // applied in the same cycle (R5-3).
+    expect(h.err).toEqual([]);
+    // Cycle 2: the change report carries the unit's slice; the IC folds it in and the
+    // runtime numbers the new open item; the draft leaves it unworked and is rejected
+    // before the IC sees it, and the redraft names the item in settles and is applied
+    // in the same cycle (R5-3), with the settlement recorded.
     h.out.length = 0;
     expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
     expect(h.err).toEqual([]);
+    const commands = h.calls().filter((c) => c.kind === "command");
+    expect(commands[1]?.prompt).toContain(
+      [
+        "    its picture of its slice: THE-UNIT-PICTURE: a.txt:2 handles delete",
+        "      evidence: 001-c001 for",
+        "      open:",
+        "        - whether other handlers exist; settled by: a wider grep",
+        "      changed: first report",
+      ].join("\n"),
+    );
     expect(h.out).toContain(
-      "  situation changed: the grep found a.txt:2; whether it is the only handler is not seen",
+      "  situation changed: the unit's slice folded in: a.txt:2 is a handler; whether it is the only one is open",
+    );
+    expect(h.out).toContain(
+      "  assessment: priors_updated: THE-IC-ASSESSMENT: the grep narrowed the picture",
     );
     expect(h.out).toContain("plan rejected:");
     expect(h.out).toContain(
-      "  - Inferred links are worked: the IC's situation has inferred claim 001-c001 settled by task probe, which is neither a ref in this plan nor an open task",
+      "  - Open items are worked: the IC's open item 001-o01 (whether a.txt:2 is the only handler) is worked by no task in this plan and by no open task, and the IC did not defer it",
     );
     const planners = h.calls().filter((c) => c.kind === "planner");
     expect(planners[1]?.prompt).toContain(
       [
         "## 10. The IC's situation",
-        "changed: the grep found a.txt:2; whether it is the only handler is not seen",
-        "hypothesis: a.txt:2 is the handler",
-        "proven:",
-        "  - 001-c001: a.txt:2 matches delete",
-        "inferred:",
-        "  - 001-c001, settled by task probe",
-        "  - 001-c001, deferred: the caller is next period's question",
-        "keep: (none)",
+        "picture: THE-IC-PICTURE: a.txt:2 is the delete handler",
+        "assessment: priors_updated: THE-IC-ASSESSMENT: the grep narrowed the picture",
+        "changed: the unit's slice folded in: a.txt:2 is a handler; whether it is the only one is open",
+        "evidence (only a claim for, observed, proves a part of the picture):",
+        "  - 001-c001: for, observed",
+        "open items, each worked by a task in this plan naming its id in settles, or deferred by the IC:",
+        "  - 001-o01: whether a.txt:2 is the only handler; settled by: a grep for every handler; unworked",
       ].join("\n"),
     );
     expect(h.out).toContain(
-      "plan redrafted after a rule (session stub-session): probe settles the link the IC named",
+      "plan redrafted after a rule (session stub-session): probe works the open item",
     );
     expect(h.out).toContain("plan approved");
     expect(h.out).toContain(
       "  task 001-t02 [ready] under 001-u02: grep: find every handler",
     );
     const store = h.store();
-    const turned = store
-      .listEvents("001")
-      .filter(
-        (e) => e.type === "command.turned" && e.payload.rejected !== true,
-      );
+    const events = store.listEvents("001");
+    const turned = events.filter(
+      (e) => e.type === "command.turned" && e.payload.rejected !== true,
+    );
     expect(
-      turned.map((e) => (e.payload.turn as { situation?: unknown }).situation),
-    ).toEqual([
-      {
-        changed: "test",
-        hypothesis: "test",
-        proven: [],
-        inferred: [],
-        keep: [],
-      },
-      situation,
+      turned.map(
+        (e) =>
+          (e.payload.turn as { situation: { open: unknown } }).situation.open,
+      ),
+    ).toEqual([[], [{ ...folded.open[0], id: "001-o01" }]]);
+    const applied = events.filter(
+      (e) => e.type === "plan.applied" && e.actor === "runtime",
+    );
+    expect(applied.map((e) => e.payload.settles)).toEqual([
+      [],
+      [{ taskId: "001-t02", openItemId: "001-o01" }],
     ]);
-    const applied = store
-      .listEvents("001")
-      .filter((e) => e.type === "plan.applied" && e.actor === "runtime");
-    expect(applied.every((e) => e.payload.situation === undefined)).toBe(true);
     store.close();
+    // No leader turn and no task session read a line of the IC's picture, hypothesis
+    // or assessment; the leader's orientation carries its own unit's objective.
+    const below = h
+      .calls()
+      .filter((c) => c.kind === "leader" || c.kind === "task");
+    expect(below.length).toBeGreaterThan(1);
+    for (const c of below) {
+      expect(c.prompt).not.toContain("THE-IC-PICTURE");
+      expect(c.prompt).not.toContain("THE-IC-ASSESSMENT");
+      expect(c.prompt).not.toMatch(/hypothesis|assessment/i);
+    }
+    expect(below.find((c) => c.kind === "leader")?.prompt).toContain(
+      "You lead unit 001-u02. Your unit's objective: locate the delete handler",
+    );
     h.out.length = 0;
     expect(await run(["incident", "show", "001"], h.ctx)).toBe(EXIT.ok);
     expect(h.out.join("\n")).toContain(
@@ -2749,17 +2808,23 @@ describe("the IC above the planner", () => {
         "period priorities:",
         "  - observation over reading",
         "situation, the IC's:",
-        "  changed: the grep found a.txt:2; whether it is the only handler is not seen",
-        "  hypothesis: a.txt:2 is the handler",
-        "  proven:",
-        "    - 001-c001: a.txt:2 matches delete",
-        "  inferred:",
-        "    - 001-c001, settled by task probe",
-        "    - 001-c001, deferred: the caller is next period's question",
-        "  keep: (none)",
+        "  picture: THE-IC-PICTURE: a.txt:2 is the delete handler",
+        "  assessment: priors_updated: THE-IC-ASSESSMENT: the grep narrowed the picture",
+        "  changed: the unit's slice folded in: a.txt:2 is a handler; whether it is the only one is open",
+        "  evidence (only a claim for, observed, proves a part of the picture):",
+        "    - 001-c001: for, observed",
+        "  open items, each worked by a task in the next plan naming its id in settles, or deferred by the IC:",
+        "    - 001-o01: whether a.txt:2 is the only handler; settled by: a grep for every handler; worked by task 001-t02 (ready)",
         "  reassignments open, each taken by a new unit in the next plan naming its id in takes: (none)",
       ].join("\n"),
     );
+    h.out.length = 0;
+    expect(await run(["incident", "review", "001"], h.ctx)).toBe(EXIT.ok);
+    const assessments = h.out.filter((l) => l.startsWith("  assessment: "));
+    expect(assessments).toEqual([
+      "  assessment: on_track: THE-IC-ASSESSMENT: seeded",
+      "  assessment: priors_updated: THE-IC-ASSESSMENT: the grep narrowed the picture",
+    ]);
   });
 
   it("a reassign verdict's cancels settle the tasks of other units that waited on them, in the turn's transaction, and the change report lists them with the cause since no failure carries them (R5-10)", () => {

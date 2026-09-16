@@ -492,11 +492,22 @@ function icLines(
     lines.push(
       `  ic ${model ?? "(no model)"}: ${describeUsage(usage, turnCost)}  ${move}${session(str(e.payload.sessionId))}`,
     );
-    // The verdicts a command turn recorded, listed under it (R4-2).
-    if (e.type === "command.turned")
+    // The turn's assessment of the situation (R5-2), so a run reads as a story of priors
+    // held, updated or overturned, then the verdicts it recorded (R4-2).
+    if (e.type === "command.turned" && e.payload.rejected !== true) {
+      const assessment = (
+        e.payload.turn as
+          | { situation?: { assessment?: { kind?: unknown; why?: unknown } } }
+          | undefined
+      )?.situation?.assessment;
+      if (assessment !== undefined)
+        lines.push(
+          `  assessment: ${str(assessment.kind)}: ${clip(str(assessment.why))}`,
+        );
       for (const v of cycle.events)
         if (v.type === "report.reviewed")
           lines.push(`  ${describeReportVerdict(v)}`);
+    }
   }
   for (const e of cycle.events)
     if (e.type === "command.rejected")

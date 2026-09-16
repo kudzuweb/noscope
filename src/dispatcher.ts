@@ -9,7 +9,6 @@ import {
 import {
   describeRefusedCall,
   fallbackModel,
-  icSituation,
   type RefusedCall,
   type Settled,
 } from "./leader.js";
@@ -235,7 +234,7 @@ const NO_USAGE: Usage = {
   seconds: 0,
 };
 
-/** What a session reads beyond its task: the objective, the IC's situation (R4-5), the hierarchy, and the claims and results the task names in evidenceFrom. */
+/** What a session reads beyond its task: the objective and period, the hierarchy, and the claims and results the task names in evidenceFrom; never the IC's situation (R5-2). */
 function briefContext(
   store: Store,
   incident: Incident,
@@ -247,7 +246,6 @@ function briefContext(
   return {
     objective: incident.objective,
     ...(incident.period === undefined ? {} : { period: incident.period }),
-    situation: icSituation(store.listEvents(incident.id)),
     units,
     claims: store.listClaims(incident.id).filter((c) => claims.has(c.id)),
     results: store.listTasks(incident.id).filter((t) => tasks.has(t.id)),

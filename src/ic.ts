@@ -26,6 +26,7 @@ import {
   ReviewTurn,
   Task,
   type Unit,
+  UnitSituation,
   type Usage,
 } from "./models.js";
 import { renderPlannerInput } from "./planner.js";
@@ -485,11 +486,34 @@ function renderReportWork(
 }
 
 /**
+ * The unit's own picture of its slice under its report (R5-2): the picture, its evidence
+ * by id and stance, its open items with what would settle each, and what changed; the IC
+ * folds it into the incident's picture on its verdict. Nothing when the report carries
+ * none (one written before R5-2).
+ */
+function renderReportSituation(report: Event): string[] {
+  const parsed = UnitSituation.safeParse(
+    (report.payload.report as { situation?: unknown } | undefined)?.situation,
+  );
+  if (!parsed.success) return [];
+  const s = parsed.data;
+  return [
+    `    its picture of its slice: ${s.picture}`,
+    `      evidence: ${s.evidence.map((e) => `${e.claimId} ${e.stance}`).join(", ") || "none"}`,
+    "      open:",
+    ...(s.open.length === 0
+      ? ["        (none)"]
+      : s.open.map((o) => `        - ${o.what}; settled by: ${o.settledBy}`)),
+    `      changed: ${s.changed}`,
+  ];
+}
+
+/**
  * A unit's report as the IC reads it: one line headed by the unit id and the report's
  * event id (the id a verdict answers it by), with the outcome, the revision number when
  * the report answers a revise verdict (R4-3), whether the picture changed, what changed on
- * which claims, and for `not_met` the why and suggestion; then the work behind it
- * (`renderReportWork`).
+ * which claims, and for `not_met` the why and suggestion; then the unit's picture of its
+ * slice (R5-2) and the work behind it (`renderReportWork`).
  */
 export function renderReport(
   events: readonly Event[],
@@ -513,6 +537,7 @@ export function renderReport(
     .join("; ");
   return [
     `  - ${str(report.payload.unitId)}, report ${report.id}: ${str(r?.outcome)}${typeof report.payload.revision === "number" ? ` (revision ${report.payload.revision})` : ""}${r?.pictureChanged === true ? ", picture changed" : ""}; changed: ${changed || "nothing"}${typeof r?.why === "string" ? `; why: ${r.why}` : ""}${typeof r?.suggestion === "string" ? `; suggestion: ${r.suggestion}` : ""}`,
+    ...renderReportSituation(report),
     ...renderReportWork(events, report, cap),
   ];
 }
@@ -636,19 +661,6 @@ export function renderChangeReport(
       : ["your last command turn was rejected on:", ...bullets(rejected)]),
     `spend since then: tokens ${spend.inputTokens + spend.outputTokens}, seconds ${spend.seconds.toFixed(1)}${spend.costUsd === undefined ? "" : `, cost $${spend.costUsd.toFixed(2)} at list price`}`,
   ];
-}
-
-/** The incident briefing the initial IC wrote (R3-8), with the call that wrote it, or null for an incident created without a size-up. */
-export function briefingOf(
-  events: readonly Event[],
-): { briefing: IncidentBriefing; event: Event } | null {
-  for (let i = events.length - 1; i >= 0; i--) {
-    const e = events[i];
-    if (e === undefined || e.type !== "incident.briefed") continue;
-    const parsed = IncidentBriefing.safeParse(e.payload.briefing);
-    return parsed.success ? { briefing: parsed.data, event: e } : null;
-  }
-  return null;
 }
 
 /** The fields every transfer of command carries, whichever kind: who hands over, who takes over, and the document that passes between them. */
@@ -898,7 +910,7 @@ export function renderCommandBriefing(
     ...renderBriefingBody(store, incident, providers, transfer, env),
     "",
     `# Your command turn for operational period ${cycleOf(events) + 1}`,
-    `${transfer === null ? "S" : `${evaluateAsk(transfer)}s`}et the period's objectives and priorities, answer each unit's last report the change report lists with a verdict (accepted, revise or reassign), write the situation every seat works from this period (what changed, the hypothesis, the observed claims it rests on, every inferred link settled by a task or deferred with why, the claims to keep in view; a reassignment written into the slice it concerns), close what is done, answer the resource requests you can, raise for Mauria what only she can supply, and say whether the incident continues.`,
+    `${transfer === null ? "S" : `${evaluateAsk(transfer)}s`}et the period's objectives and priorities, answer each unit's last report the change report lists with a verdict (accepted, revise or reassign; instructions say what is missing or what was found and not found, never what you think the answer is), edit the situation from section 10 (the picture, folding each unit's slice into it; the claims for and against it by id; the open items, each carried by its id or new without one, worked by the plan or deferred with why; your assessment, on_track, priors_updated or tactics_change, with why; and what this turn changed), close what is done, answer the resource requests you can, raise for Mauria what only she can supply, and say whether the incident continues.`,
   ].join("\n");
 }
 

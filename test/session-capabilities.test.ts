@@ -137,26 +137,28 @@ describe("session capabilities", () => {
         },
       },
     );
+    // The brief carries the objective, the period and the evidence the task names, and
+    // nothing of the IC's picture (R5-2): only objectives and evidence flow down.
     const withContext = renderTaskBrief(t, unit, {
       objective: "why does Roughdraft scroll after a delete",
-      situation: {
-        changed: "greps landed",
-        hypothesis: "focus() scrolls the resting selection",
-        proven: [{ claimId: claim.id, line: "the handler is at a.ts:1" }],
-        inferred: [],
-        keep: [],
+      period: {
+        number: 1,
+        objectives: ["find the scroll"],
+        priorities: [],
       },
       units: [],
       claims: [claim],
       results: [store.listTasks("i1").find((x) => x.id === done.id) as Task],
     });
-    expect(withContext.split("\n").slice(0, 5)).toEqual([
+    expect(withContext.split("\n").slice(0, 6)).toEqual([
       "Incident objective: why does Roughdraft scroll after a delete",
-      "Current hypothesis: focus() scrolls the resting selection",
-      "Established so far:",
-      `  - ${claim.id}: the handler is at a.ts:1`,
+      "Operational period 1 objectives:",
+      "  - find the scroll",
+      "Priorities this period:",
+      "  (none)",
       "",
     ]);
+    expect(withContext).not.toMatch(/hypothesis|picture|assessment/i);
     expect(withContext).toContain(
       `Evidence attached by reference:\nclaims:\n  - ${claim.id}: ${claim.subject} ${claim.predicate} ${JSON.stringify(claim.object)} (${claim.status}, ${claim.basis}; confidence ${claim.confidence}; evidence ${claim.evidence.join(", ") || "none"})\nresults:\n  - task t-done (investigate): summary: it focuses the editor\n      /a.ts:1: calls focus()\n\nThe unit that owns this task`,
     );

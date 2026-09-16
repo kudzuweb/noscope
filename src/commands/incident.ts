@@ -13,7 +13,6 @@ import {
 import { type Context, EXIT, type Handler } from "../context.js";
 import { dispatch } from "../dispatcher.js";
 import {
-  briefingOf,
   commandTurn,
   type Handoff,
   type HandoffOutcome,
@@ -26,10 +25,12 @@ import {
   reviewTurn,
 } from "../ic.js";
 import {
+  briefingOf,
   describeRefusedCall,
   IC_MODEL,
   IC_PROVIDER,
   icSituation,
+  openItemsWorked,
   openReassignments,
   openRequestsByUnit,
   type RefusedCall,
@@ -423,8 +424,9 @@ function renderIncidentFile(
     for (const p of incident.period.priorities) lines.push(`  - ${p}`);
     if (incident.period.priorities.length === 0) lines.push("  (none)");
   }
-  // The IC's situation from its last accepted command turn (R4-5), the picture every seat
-  // works from this period, with the reassignments still open under it.
+  // The IC's situation (R5-2): the picture, the assessment, the evidence and the open
+  // items with their state, from its last accepted command turn or seeded from the
+  // briefing, with the reassignments still open under it.
   lines.push("situation, the IC's:");
   const situation = icSituation(events);
   if (situation === null) lines.push("  (none)");
@@ -432,6 +434,9 @@ function renderIncidentFile(
     situation,
     openReassignments(events),
     "in the next plan",
+    claims,
+    openItemsWorked(events),
+    tasks,
   ))
     lines.push(`  ${line}`);
   const briefed = briefingOf(events);
@@ -989,7 +994,10 @@ async function cycle(
   for (const o of turn.periodObjectives) ctx.io.out(`  objective: ${o}`);
   for (const p of turn.priorities) ctx.io.out(`  priority: ${p}`);
   ctx.io.out(`  situation changed: ${turn.situation.changed}`);
-  ctx.io.out(`  hypothesis: ${turn.situation.hypothesis}`);
+  ctx.io.out(`  picture: ${turn.situation.picture}`);
+  ctx.io.out(
+    `  assessment: ${turn.situation.assessment.kind}: ${turn.situation.assessment.why}`,
+  );
   for (const v of turn.reportVerdicts)
     ctx.io.out(
       `  verdict on ${v.unitId}'s report ${v.reportId}: ${v.verdict}: ${v.why}${v.instructions === "" ? "" : `; instructions: ${v.instructions}`}`,

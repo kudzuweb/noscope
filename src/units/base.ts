@@ -9,13 +9,13 @@ import {
   answeredRequestsOf,
   describeRefusedCall,
   fallbackModel,
-  icSituation,
   LEADER_ACTOR,
   type Reassignment,
   type RefusedCall,
   reassignmentTakenBy,
   revisionOf,
   settledBy,
+  unitSituation,
 } from "../leader.js";
 import {
   BaseUnitForm,
@@ -27,9 +27,9 @@ import {
   type LeaderReport,
   LeaderTurn,
   type Period,
-  type Situation,
   type Task,
   type Unit,
+  type UnitSituation,
   type Usage,
 } from "../models.js";
 import { getProvider, type Refusal, SessionError } from "../providers/index.js";
@@ -122,6 +122,8 @@ export const LEADER_RULES = BASE_RULES.map((r) => r.text);
 export const LEADER_ROLE = `Your role: unit leader. You own your unit's objective and direct its tasks until you can report against it. You direct and never do: no task runs in this session and you hold no tools, since a leader busy on a task cannot answer for its unit. Every session task runs in a session of its own and every deterministic task in process; tasks start at once when nothing they depend on is still open, dependsOn is what serializes them, a task with none waits for nothing, and each reaches you as a line when it ends, with the claims it produced by id. A task that fails settles what waited on it: the runtime cancels every task that depended on it, names them to you with the failure, and nothing of yours waits on a task that will never complete; assign the work again in a form that can run, or report.
 
 Report what changed, not what you did: each item in changed is something now true that was not, naming the claim ids it rests on; a change with no claims behind it is a claim of its own and counts for less. Outcome met means the unit's objective is established by observed claims; not_met means it cannot be met as set, and then why and suggestion are required, because the IC, who has more perspective, decides what happens next; progress means the unit has more to run or more to say. Set pictureChanged, and report rather than continue, the moment an outcome changes the picture the incident is working from: the IC acts on it before anything new starts.
+
+Your report carries your unit's situation: the picture of your slice of the problem as your unit now holds it, the claims for and against that picture by id, what your unit does not yet know with what would settle each item, and what changed since your last report. Observations flow up and only objectives and evidence flow down: you never read the IC's picture of the whole incident, so what you believe rests on what your tasks saw and the evidence attached to them, and the IC folds your picture into its own on its verdict. Your first orientation, and a fresh session's, carries your unit's own last picture when it has reported before.
 
 A lack is resolved by the nearest seat that can. A retrievable fact is yours to get: assign a task for it in assignTasks, under your own unit, to a capability your unit holds, inside your unit's budget, and it runs in this pass; a task of yours that came back insufficient for a retrievable fact is yours to resolve the same way. Permission, missing means and something only a human knows go up as resourceRequests on your report, each with what and why: your unit then waits until Mauria answers, its pending tasks stay pending, the other units keep running, and the report counts as picture-changing so the IC sees it at once. Assignments are checked by the validator's rules on tasks and by these:
 ${LEADER_RULES.map((r) => `- ${r}`).join("\n")}
@@ -408,31 +410,44 @@ function renderTakenReassignment(taken: TakenReassignment): string[] {
   ];
 }
 
+/** A unit's own last picture (R5-2), as its orientation carries it: the picture, its evidence by id and stance, its open items, and what last changed. */
+function renderUnitSituation(s: UnitSituation): string[] {
+  const list = (items: readonly string[]) =>
+    items.length === 0 ? ["  (none)"] : items.map((i) => `  - ${i}`);
+  return [
+    `Your unit's last picture of its slice: ${s.picture}`,
+    "Its evidence:",
+    ...list(s.evidence.map((e) => `${e.claimId}: ${e.stance}`)),
+    "Its open items:",
+    ...list(s.open.map((o) => `${o.what}; settled by: ${o.settledBy}`)),
+    `It last changed: ${s.changed}`,
+  ];
+}
+
 /**
- * What a leader reads on its first call, before the first ending: the incident, the
- * situation, the hierarchy, and its own unit, with the equipment its tasks may use and the
- * reassignment the unit took when it took one (R4-4).
+ * What a leader reads on its first call, before the first ending: the incident's
+ * objective and period, the hierarchy, and its own unit, with the equipment its tasks may
+ * use, the reassignment the unit took when it took one (R4-4) and its own unit's last
+ * picture when it has reported before (R5-2). Never the IC's picture, hypothesis or
+ * assessment: observations flow up and only objectives and evidence flow down, so a
+ * misconception at the top cannot reach a unit.
  */
 export function renderLeaderOrientation(
   incident: Incident,
-  situation: Situation | null,
   unit: Unit,
   units: readonly Unit[],
   taken: TakenReassignment | null = null,
+  last: UnitSituation | null = null,
 ): string[] {
-  const list = (items: readonly string[]) =>
-    items.length === 0 ? "  (none)" : items.map((i) => `  - ${i}`).join("\n");
   return [
     `Incident objective: ${incident.objective}`,
     ...renderPeriod(incident.period),
-    `Current hypothesis: ${situation?.hypothesis ?? "(none yet)"}`,
-    "Established so far:",
-    list((situation?.proven ?? []).map((p) => `${p.claimId}: ${p.line}`)),
     "",
     ...renderHierarchy(unit, units),
     `You lead unit ${unit.id}. Your unit's objective: ${unit.objective}`,
     `Equipment your unit's tasks may use: ${unit.equipment.join(", ") || "none"}; Bash allowlist: ${unit.bashAllowlist.join(", ") || "none"}`,
     ...(taken === null ? [] : renderTakenReassignment(taken)),
+    ...(last === null ? [] : renderUnitSituation(last)),
   ];
 }
 
@@ -725,7 +740,7 @@ export function renderTurnPrompt(
   ].join("\n");
 }
 
-/** The leader's orientation, sent once at the top of its first call, before the first ending; a unit that took a reassignment (R4-4) reads its instructions and the predecessor's claims here. */
+/** The leader's orientation, sent once at the top of its first call, before the first ending; a unit that took a reassignment (R4-4) reads its instructions and the predecessor's claims here, and a unit that reported before reads its own last picture (R5-2). */
 function orientation(ctx: PassContext, unit: Unit): string[] {
   if (unit.sessionId !== null) return [];
   const events = ctx.store.listEvents(ctx.incident.id);
@@ -742,10 +757,10 @@ function orientation(ctx: PassContext, unit: Unit): string[] {
   return [
     ...renderLeaderOrientation(
       ctx.incident,
-      icSituation(events),
       unit,
       ctx.units,
       taken,
+      unitSituation(events, unit.id),
     ),
     "",
   ];
@@ -780,6 +795,12 @@ function reportRefusals(
     outcome: "not_met",
     changed: [],
     pictureChanged: true,
+    situation: {
+      picture: `nothing established: ${who} was refused on both models`,
+      evidence: [],
+      open: [],
+      changed: "the runtime wrote this report; the unit's picture is unchanged",
+    },
     why: `${who} was refused by the API on ${refusals.map(describeRefusedCall).join(" and then on the fallback ")}${refusals.at(-1)?.refused.explanation ? `: ${refusals.at(-1)?.refused.explanation}` : ""}; no seat retries beyond the one fallback`,
     suggestion:
       "the IC decides: another model for the seat, a different unit for the slice, or drop the slice",

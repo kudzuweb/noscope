@@ -17,6 +17,8 @@ import {
   icSituation,
   LEADER_ACTOR,
   latestReports,
+  openItemIds,
+  openItemsWorked,
   openReassignments,
   openRequests,
   type Reassignment,
@@ -75,8 +77,10 @@ export type ValidationContext = {
   revised: ReadonlySet<string>;
   /** The reassignments open (R4-4): recorded, not dropped, taken by no unit; a plan gives each to a new unit that names it in `takes`. */
   reassignments: readonly Reassignment[];
-  /** The IC's situation (R4-5), from its last accepted command turn; a plan settles every inferred link in it. Null before the IC's first turn. */
+  /** The IC's situation (R5-2), from its last accepted command turn or seeded from the briefing; a plan works every open item in it. Null with neither. */
   situation: Situation | null;
+  /** Which tasks work each open item (R5-2), from every `plan.applied` that recorded `settles`; an open one counts as working the item. */
+  worked: ReadonlyMap<string, readonly string[]>;
   /** The incident's log, from which a unit's share of the budget is computed. */
   events: readonly Event[];
   /** The saved unit configs (R4-11), which a new unit may name in `config`. */
@@ -524,19 +528,29 @@ const CHECKS: Record<RuleName, Rule> = {
     });
   },
 
-  "Inferred links are worked": (plan, ctx) => {
-    const refs = taskRefs(plan);
+  "Open items are worked": (plan, ctx) => {
     const openTasks = new Set(ctx.tasks.filter(isOpen).map((t) => t.id));
     const cancelling = new Set(plan.cancelTasks);
+    const items = openItemIds(ctx.situation);
     const reasons: string[] = [];
-    for (const link of ctx.situation?.inferred ?? []) {
-      const by = link.settledBy;
-      if ("deferred" in by) continue;
-      const task = "task" in by ? by.task : by.reproduce;
-      if (refs.has(task) || (openTasks.has(task) && !cancelling.has(task)))
-        continue;
+    const settledHere = new Set(
+      plan.createTasks.flatMap((t) => t.settles ?? []),
+    );
+    for (const t of plan.createTasks)
+      for (const id of t.settles ?? [])
+        if (!items.has(id))
+          reasons.push(
+            `${label(t)} settles ${id}, which is not an open item of the IC's situation`,
+          );
+    for (const item of ctx.situation?.open ?? []) {
+      if (item.id === undefined || item.deferred !== undefined) continue;
+      if (settledHere.has(item.id)) continue;
+      const working = (ctx.worked.get(item.id) ?? []).some(
+        (taskId) => openTasks.has(taskId) && !cancelling.has(taskId),
+      );
+      if (working) continue;
       reasons.push(
-        `the IC's situation has inferred claim ${link.claimId} settled by ${"task" in by ? "task" : "reproduce task"} ${task}, which is neither a ref in this plan nor an open task`,
+        `the IC's open item ${item.id} (${item.what}) is worked by no task in this plan and by no open task, and the IC did not defer it`,
       );
     }
     return reasons;
@@ -968,6 +982,7 @@ export function validationContext(
     revised: new Set(revisedUnits(units, events).keys()),
     reassignments: openReassignments(events),
     situation: icSituation(events),
+    worked: openItemsWorked(events),
     events,
     configs: store.listUnitConfigs(),
     cwd,
@@ -981,7 +996,7 @@ const COMMAND_RULES: readonly RuleName[] = [
   "Status is earned",
 ];
 
-/** The IC's own rules: an answer names a request a waiting unit raised; every report in the change report has one verdict; an assignment under command is deterministic; a drop names an open reassignment (R4-4); the situation names claims the incident has and calls proven only what was observed (R4-5). */
+/** The IC's own rules: an answer names a request a waiting unit raised; every report in the change report has one verdict; an assignment under command is deterministic; a drop names an open reassignment (R4-4); the situation's evidence names claims the incident has and a carried open item names one of the last picture's (R5-2). */
 type CommandRuleName =
   | "Answers match"
   | "Reports answered"
@@ -990,38 +1005,37 @@ type CommandRuleName =
   | "Situation grounded";
 
 /**
- * The IC's situation rests on the incident's claims (R4-5, the checks the plan's
- * situation passed under Dependencies resolve until then): every claim id in `proven`,
- * `inferred` and `keep` names a claim in the incident, and every `proven` claim has basis
- * `observed`, whichever task observed it. What settles each inferred link is the plan's
- * to answer (Inferred links are worked), not the turn's.
+ * The IC's situation rests on the incident's claims (R5-2; R4-5's checks on `proven`
+ * until then): every claim id in `evidence` names a claim in the incident, and every open
+ * item that carries an id names an item of the picture the IC was shown, once. A claim
+ * marked `for` with basis `observed` is the only thing that proves a part of the picture,
+ * which the file's rendering says beside each; an inferred claim may stand as evidence,
+ * marked as such. What works each open item is the plan's to answer (Open items are
+ * worked), not the turn's.
  */
 function situationGrounded(
   situation: Situation,
   claims: readonly Claim[],
+  last: Situation | null,
 ): string[] {
   const allClaims = new Set(claims.map((c) => c.id));
-  const observed = new Set(
-    claims.filter((c) => c.basis === "observed").map((c) => c.id),
-  );
-  const named = [
-    ...new Set([
-      ...situation.proven.map((p) => p.claimId),
-      ...situation.inferred.map((i) => i.claimId),
-      ...situation.keep,
-    ]),
-  ];
+  const known = openItemIds(last);
+  const carried = situation.open
+    .map((item) => item.id)
+    .filter((id): id is string => id !== undefined);
   return [
-    ...named
+    ...[...new Set(situation.evidence.map((e) => e.claimId))]
       .filter((id) => !allClaims.has(id))
       .map((id) => `the situation names no claim ${id}`),
-    ...situation.proven
-      .map((p) => p.claimId)
-      .filter((id) => allClaims.has(id) && !observed.has(id))
+    ...carried
+      .filter((id) => !known.has(id))
       .map(
         (id) =>
-          `the situation lists claim ${id} as proven, but its basis is inferred, not observed`,
+          `the situation carries open item ${id}, which the last picture does not list; a new item takes no id`,
       ),
+    ...repeated(carried).map(
+      (id) => `the situation carries open item ${id} twice`,
+    ),
   ];
 }
 
@@ -1103,7 +1117,7 @@ function reportsAnswered(
  * raised, as the change report showed it; every report the change report listed has
  * exactly one verdict (R4-2); every task it assigns is deterministic (R4-6), since
  * session work is a unit's; every reassignment it drops is open (R4-4); and its situation
- * names claims the incident has and calls proven only what was observed (R4-5). Its assignments are the plan's tasks, so "Units exist" and
+ * names claims the incident has and carries only open items the last picture lists (R5-2). Its assignments are the plan's tasks, so "Units exist" and
  * "Status is earned" see them (a turn that assigns work and declares `satisfied` is
  * refused as a plan would be), and they pass the other task rules as a leader's do, and
  * "Own unit" against the root. Returns the failing rules with their reasons; the caller
@@ -1228,7 +1242,7 @@ export function validateCommand(
     ),
     ...answers,
     ...drops,
-    ...situationGrounded(turn.situation, ctx.claims).map(
+    ...situationGrounded(turn.situation, ctx.claims, ctx.situation).map(
       (reason): Rejection<CommandRuleName> => ({
         rule: "Situation grounded",
         reason,
