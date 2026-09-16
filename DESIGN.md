@@ -737,7 +737,7 @@ A plan the rules pass may still draw a warning (R4-6): the validator's verdict c
 in the transaction that would have recorded a rejection, printed by `step` after "plan
 approved", and read by the planner in section 9 under "warned last cycle" beside the
 warning's text under "warned on, and applied anyway". A warning never rejects: the plan is
-applied as it stands. One warning exists:
+applied as it stands. The warnings:
 
 | Warning | Check |
 |---|---|
@@ -747,6 +747,7 @@ The IC's command turn is checked by the same code as a plan that creates nothing
 Units exist, Closing is clean and Status is earned, since closing units and setting the
 status is all it does to the tree, with the units its verdicts close (accepted or
 reassigned) folded into the closes those rules check, and its `assignTasks` (R4-6) as a
+| Independent work runs together | A task whose `dependsOn` names a task whose result it does not take in `evidenceFrom.tasks`, where that task is open or created in this plan (R5-7). The dispatcher (Step 6) holds the dependent, and so its unit's pass, until the dependency completes, and the dependent's brief carries nothing from it, so the wait is idle time: run 004's code unit sat out the 278 seconds of a reproduce this way. A dependency already completed holds nothing and draws nothing; one that will never complete is Dependencies resolve's to reject. Warned, not refused, because a plan may order two tasks for a reason the runtime cannot see (two reproduces on one dev server), and the rationale carries it. The warning's text also says the half the validator cannot check: units and tasks with no dependency between them belong in the same period, so a unit that can start now goes in this plan and never the next; the IC's review asks the same (Step 4). |
 plan creating those tasks under the task rules a leader's assignments pass, plus the ic
 type's own rule, Own unit, against command; and by five rules of its own:
 

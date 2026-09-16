@@ -720,7 +720,11 @@ export const RULES: readonly { name: RuleName; check: Rule }[] =
  * What a plan is warned on and applied with anyway (R4-6): session work under the root,
  * which runs in a session of its own with no leader turn after it, against the rule that
  * the IC's digging is assigned to a unit. The planner is told, not refused, since the
- * work still runs and a rejection cost run 003 its unit.
+ * work still runs and a rejection cost run 003 its unit. A wait for nothing (R5-7): a
+ * `dependsOn` on a task whose result the dependent does not take in `evidenceFrom.tasks`
+ * holds the dependent, and its unit's pass, behind work it never reads (run 004's code
+ * unit sat idle for a 278-second reproduce this way). Warned, not refused, since a plan
+ * may order two tasks for a reason the runtime cannot see, and the rationale carries it.
  */
 const WARNING_CHECKS: Record<WarningName, Rule> = {
   "Session work under a unit": (plan, ctx) => {
@@ -732,6 +736,21 @@ const WARNING_CHECKS: Record<WarningName, Rule> = {
             `${label(t)} is session work (${t.capability}) under ${root.id}, the root; it will run in a session of its own with no leader to judge it, so it belongs under a unit`,
           ]
         : [],
+    );
+  },
+  "Independent work runs together": (plan, ctx) => {
+    // A dependency already completed holds nothing; one that will never complete is Dependencies resolve's.
+    const holds = new Set([
+      ...taskRefs(plan),
+      ...ctx.tasks.filter(isOpen).map((t) => t.id),
+    ]);
+    return plan.createTasks.flatMap((t) =>
+      t.dependsOn
+        .filter((id) => holds.has(id) && !t.evidenceFrom.tasks.includes(id))
+        .map(
+          (id) =>
+            `${label(t)} waits on ${id} and does not read its result; the wait holds the task and its unit behind work it does not need, so drop the dependsOn or name ${id} in evidenceFrom.tasks`,
+        ),
     );
   },
 };
