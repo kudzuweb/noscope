@@ -5065,7 +5065,7 @@ Not exactly to spec, with reasons:
   `lastCallOn`, `describeCall`, `sectionsChangedBy`, `renderChangedFile`,
   `BriefingOptions`), `test/stub-claude` (one knob).
 
-## R5-12: Fifth run (#PR, merged 2026-09-16)
+## R5-12: Fifth run (#63, merged 2026-09-16)
 
 R5-12 of the round 5 plan, the last row: the first incident's objective run live a fifth
 time with every code row of round 5 merged (PRs 53 to 62 on `round-5`, the runtime tag
