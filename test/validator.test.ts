@@ -1520,7 +1520,7 @@ describe("validator", () => {
       {
         rule: "Smallest model that fits",
         reason:
-          'task "read the scroll handler" runs investigate on fake-opus-9 with no modelWhy; recording, reproducing and reading are Haiku or Sonnet work, so say why this task needs a larger model or name a smaller one',
+          'task "read the scroll handler" runs investigate on fake-opus-9 with no modelWhy; say in modelWhy why this task\'s work needs it, or name a smaller model',
       },
       {
         rule: "Smallest model that fits",

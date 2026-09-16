@@ -774,7 +774,7 @@ const WARNING_CHECKS: Record<WarningName, Rule> = {
       isLargeModel(t.model) &&
       t.modelWhy === undefined
         ? [
-            `${label(t)} runs ${t.capability} on ${t.model} with no modelWhy; recording, reproducing and reading are Haiku or Sonnet work, so say why this task needs a larger model or name a smaller one`,
+            `${label(t)} runs ${t.capability} on ${t.model} with no modelWhy; say in modelWhy why this task's work needs it, or name a smaller model`,
           ]
         : [],
     ),

@@ -3697,7 +3697,7 @@ Not exactly to spec, with reasons:
   not attach unread evidence to silence it, and `possible` is written as an upper bound on
   `parallel` rather than a value it could reach.
 
-## R5-6: Smallest model that fits (#PR, merged 2026-09-16)
+## R5-6: Smallest model that fits (#54, merged 2026-09-16)
 
 R5-6 of the round 5 plan, ruled by Mauria on 2026-09-15: Sonnet 5 for the IC, and the
 smallest model that fits for everything the planner names. The evidence is run 004
@@ -3726,12 +3726,13 @@ unit names (the config's leader model equals the unit's), since that leader is M
 choice (R4-11); the tier is told by name because that is how Claude Code's list is
 tiered (`DESIGN.md` Model choices: Opus and Fable at 2.5x to 5x Sonnet 5 per token). The
 warning records `plan.warned` and the plan applies, like R4-6's. The IC's review prompt
-(`renderReviewPrompt` in `src/ic.ts`) ends with `REVIEW_MODELS_ASK`, its own line so R5-7's
-review sentence merges beside it: hold every session task and every new unit's leader to
-the smallest model that fits; a task or leader on an Opus or Fable model with no
-`modelWhy`, or with one the work does not bear out, is an unreasoned upgrade; do not
-approve the draft as drafted, correct or amend it to the smaller model. Both the draft's
-and the redraft's review carry it.
+(`renderReviewPrompt` in `src/ic.ts`) ends with `reviewModelsAsk(corrections)`, its own
+line so R5-7's review sentence merges beside it: hold every session task and every new
+unit's leader to the smallest model that fits; a task or leader on an Opus or Fable model
+with no `modelWhy`, or with one the work does not bear out, is an unreasoned upgrade; do
+not approve the draft as drafted, correct or amend it to the smaller model on the draft's
+review, amend it on the redraft's, where `FinalReviewTurn` allows no correct (PR 54's
+review). Both reviews carry it.
 
 The default (`src/leader.ts`, `src/commands/incident.ts`): `IC_MODEL` is
 `claude-sonnet-5`. `create` puts the root unit's leader on `--ic-model` or the default when
@@ -3742,7 +3743,8 @@ claude-code does not serve" after the model when the provider does not serve it;
 briefing's `incomingCommander` is never followed. The `served` branch that routed the IC
 by the briefing (R3-8) is gone. `INITIAL_IC_ROLE` (`src/size-up.ts`) says a narrow read is
 Haiku's or Sonnet's, and that the recommendation is recorded on the transfer for the IC to
-read and does not route it. `renderTransfer` prints the recommendation and "your model:
+read and does not route it, naming `IC_MODEL` by interpolation so the text follows the
+default. `renderTransfer` prints the recommendation and "your model:
 …, chosen by the default (the briefing recommended …)" as before, so the IC's first turn
 sees both. `incident show` and `incident review` print the transfer as they did.
 
@@ -3800,3 +3802,11 @@ Not exactly to spec, with reasons:
 - A briefing recommending a model the provider does not serve is no longer a fallback
   case: the IC is on the default either way, and the reason says the recommendation was
   unserved so the record still shows it.
+- A leader's `assignTasks` on an Opus model and a strike team's kinds on one draw no
+  warning: a leader's assignments pass the task rules and no warning check (as before), and
+  a strike team is held to its three rules and nothing else (ruled 2026-09-14); both are
+  outside the block.
+- `modelWhy` lives only in the plan events (`plan.proposed`, `plan.applied`) and on no
+  task or unit record, so `incident review` cannot yet list the models the planner chose
+  with their whys, which R5-12's write-up asks for; a follow-up reads them from the plan
+  events.
