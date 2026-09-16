@@ -913,7 +913,6 @@ Acceptance: run 004 reaches `satisfied` with the same code path named, and its w
 answers whether the IC revised or reassigned any unit and what that changed, and whether
 the selection's origin (open in run 003) was settled.
 ### Round 4 open questions
-
 None. The two raised while drafting (the IC's model under refusals; who owns the
 situation) were ruled in review on 2026-09-15 and are in R4-7 and R4-5. Ruled in the same
 review: the planner's job after round 4 is the tactics only, drafted as a suggestion for
@@ -934,8 +933,11 @@ What round 5 changes, in one paragraph. A model is called when a decision needs 
 never for process. The unit leader directs and never does: it assigns deterministic tasks,
 which the runtime runs in process, and session tasks, which run in sessions of their own,
 at once when independent; it is called only on a decision. Deterministic output is
-evidence, retrievable by task id, and never a claim. The IC's situation is the IC's own
-statements, with ids the runtime assigns. The validator checks a draft before the IC reads
+evidence, retrievable by task id, and never a claim. The situation is a living picture of
+reality, held by the IC from the size-up on and updated from every report with an
+assessment of whether the incident is on track, its priors need updating, or its tactics
+need changing; each unit leader keeps the picture of its own slice and reports it up. The
+validator checks a draft before the IC reads
 it. The planner picks the smallest model that fits and the IC's review holds it to that;
 the IC runs on Sonnet 5 unless told otherwise. The briefing's questions go to the IC, not to
 Mauria, and the IC decides which reach her.
@@ -943,7 +945,7 @@ Mauria, and the IC decides which reach her.
 | PR  | Title | Depends on | Delivers, in one line |
 |---|---|---|---|
 | R5-1 | Evidence is not a claim | none | A deterministic task's output is evidence kept by task id and attached through `evidenceFrom`, never promoted to claims; the incident file renders it as a count with the id; claims come from seats only. |
-| R5-2 | The situation is the IC's own statements | none | An inferred link is text the IC writes, given an id by the runtime when the turn is applied; the plan's tasks and later claims settle a link by that id; a first turn needs no claims. |
+| R5-2 | The situation is a living picture | none | The IC's situation is one picture of reality, carried from the size-up, updated from every report with an assessment (on track, priors updated, tactics change) and read by every seat; each unit leader keeps its slice's picture and reports it up; the runtime folds unit pictures under the IC's. |
 | R5-3 | Validate before review | none | The validator checks the planner's draft before the IC sees it; a rule break goes back to the planner with no IC call; the IC reviews valid drafts for substance; a mechanical correction the IC names is a patch the runtime applies with no redraft and no re-review. |
 | R5-4 | The leader directs and never does | none | No task runs inside a leader's session; every session task runs in a session of its own, at once when independent and in order when dependent; the leader's equipment for tasks goes and its context stays the objective, the brief and one line per ending. |
 | R5-5 | A leader is called only on a decision | R5-4 | After a completed ending the next ready task starts on its own; the leader is called on an insufficient or failed ending, a revise brief, a result it asked to be consulted on, or when nothing is ready and a report is due. |
@@ -973,23 +975,42 @@ Acceptance: a run test on the stub where a grep under a unit produces evidence a
 claim, the investigate that names it in `evidenceFrom` asserts an `observed` claim with the
 task id in its provenance, and the file shows one evidence line and the claim; a replay
 test on run 004's database renders its file with 54 claims and 8 evidence lines.
-### R5-2: The situation is the IC's own statements
-Scope: `Situation.inferred` entries are text the IC writes (the link, and what would
-settle it), and the runtime assigns each an id (`<incident>-l01`) when the command turn is
-applied, recording `link.stated`; the IC carries a link forward by its id, marks it
-`settled` naming the claims that settle it or `deferred` with a why, and drops it; the
-rule "Situation grounded" checks `proven` claims exist with basis observed and that a
-`settled` link names existing claims, and no longer requires an id on an inferred link;
-the rule "Inferred links are worked" holds the plan to settling every open link by id or
-ref. The first turn writes links from the briefing with no claims in the file (run 004's
-first turn was rejected for inventing four claim ids). The planner's section 10 renders
-each link with its id. `incident show` prints the links with their state. DESIGN.md Step 4
-and Step 5 follow.
+### R5-2: The situation is a living picture
+Ruled by Mauria in review on 2026-09-15 22:41 CDT: the situation is the understanding of
+reality the incident has, starting from the size-up; reading and trying things either
+shows progress or adjusts that understanding, and then priors are updated and tactics may
+change; the IC stays aware of it and responsive to it for the whole incident, and each
+unit leader has a version for its unit that it reports up to the IC through the runtime.
 
-Acceptance: a models test for the text form; a validator test that a first-turn situation
-with two text links passes and a plan settling both by ref passes, one leaving one
-unsettled and undeferred is rejected; a run test on the stub where the IC states a link,
-the plan settles it, and the next turn marks it settled by the claim's id.
+Scope: `Situation` becomes `{ picture, evidence, open, assessment, changed }`: `picture`
+is what the incident now believes is going on, in prose; `evidence` names the claims that
+support or contradict it by id, each marked for or against; `open` lists what is not yet
+known, each item in prose with what would settle it, and the runtime gives each item an id
+(`<incident>-o01`) when the turn is applied so a plan's task or a later claim can name what
+it settles, bookkeeping the IC never writes; `assessment` is one of `on_track`,
+`priors_updated` or `tactics_change`, with a why, and `tactics_change` is what the planner
+reads as the signal to redraw the units rather than extend them; `changed` is what this
+turn changed in the picture. The initial IC's briefing seeds the first picture (its
+dominant problem and needs), so the IC's first turn edits a picture rather than writing
+one from nothing. `LeaderReport` gains `situation`, the unit's own picture of its slice
+(`picture`, `evidence`, `open`, `changed`), and the change report renders each unit's
+situation under its report, so the IC folds slices into the whole on its verdict; the
+leader's orientation carries the IC's picture and its own unit's last picture. The rule
+"Situation grounded" checks that `evidence` names claims that exist and that a claim
+marked for the picture with basis observed is the only way `picture` is called proven;
+"Inferred links are worked" becomes "Open items are worked": every open item is settled by
+a task in the plan or deferred by the IC with a why. `incident show` prints the picture,
+the assessment and the open items with their state; `incident review` lists each turn's
+assessment, so a run reads as a story of priors held, updated or overturned. The planner's
+section 10 renders the picture, the assessment and the open items with ids. DESIGN.md
+Vocabulary (situation), Step 4, Step 5, Step 6 and the ICS mapping rows for the Planning
+Section and the situation report follow.
+
+Acceptance: models tests for the new shape and the report's situation; a validator test
+that a first-turn situation with two open items and no claims passes, a plan settling
+both passes and one leaving one unsettled and undeferred is rejected; a run test on the
+stub where a unit reports a slice picture with one open item, the IC's next turn folds it
+in with `priors_updated`, and `review` prints the assessment.
 ### R5-3: Validate before review
 Scope: in `cycle`, the planner's draft is validated before the IC's review turn; a draft
 that breaks a rule is recorded `plan.rejected` and the planner redrafts with the reasons,
@@ -1086,7 +1107,6 @@ run 003's $4.86 and wall time below 29 minutes, with the reproduce's and the cod
 claims as good as run 004's; the write-up says which of the nine rows earned its keep and
 which did not.
 ### Round 5 open questions
-
 | Question | Blocks |
 |---|---|
 | Whether a session task may still ask the leader for a strike team (R3-5), given the leader no longer runs tasks; the least change is that the task's own session declares the strike team from its brief and the leader's `requestStrikeTeam` goes. | R5-4's scope; decide at its build. |
