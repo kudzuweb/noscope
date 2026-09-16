@@ -1,7 +1,7 @@
 # Handoff: noscope round 4, the build in progress
 
-Refreshed 2026-09-15 23:08 CDT by session noscope-round4 [f7cb98]; round 5 building
-overnight on the `round-5` branch, main untouched. Written by the successor session; the relay session mauriaparker-91 has stopped.
+Refreshed 2026-09-16 00:18 CDT by session noscope-round4 [f7cb98]; round 5 building
+overnight on the `round-5` branch, seven of twelve merged, main untouched. Written by the successor session; the relay session mauriaparker-91 has stopped.
 
 **First actions, in order:** (1) `/warp-pin title noscope-round4-<n>`. (2) Read this file,
 then `BUILD-PLAN.md` "## Round 4" in full (rows R4-10 to R4-12 are new; the fourth run is now R4-13), then the round 4
@@ -50,24 +50,26 @@ thread `~/Documents/Projects/my-quipu/ics-runtime.md`, whose Head carries every 
 
 ## 3. STATE (as of this refresh)
 
-Round 4 is complete on main (`d4ad608` carries the round 5 plan; every round 4 PR #40 to
-#52 merged 2026-09-15). Round 5 is building overnight on the branch `round-5` (cut from
-main at `d4ad608`, pushed): every row is a PR targeting `round-5`, reviewed and squash-merged
-there; main is untouched until Mauria merges `round-5`, cherry-picks, or drops it. Her
-ruling at 23:01: "instead of merge perms, it would be better for you to just build on a
-branch ... we could merge them all if we like it, but if not we can be a bit more strategic
-or trash it entirely"; push permission granted. The plan is `BUILD-PLAN.md` "## Round 5"
-(twelve rows, R5-1 to R5-12; the run is R5-12). Build order: R5-1, R5-2, R5-3, R5-4, R5-6,
-R5-7, R5-10, R5-11 in parallel (eight builders spawned 23:05 to 23:10, worktrees
-`scratchpad/wt-r5-N`, branches `pr-evidence-not-claim`, `pr-living-situation`,
-`pr-validate-before-review`, `pr-leader-directs`, `pr-smallest-model`,
-`pr-independent-work`, `pr-failed-dependents`, `pr-turns-say-less`); merge R5-4 first
-(the dispatcher rewrite), then R5-1, R5-2, R5-3, then the rest rebased; R5-5 after R5-4;
-R5-8 after R5-2; R5-12 last, from `round-5`'s build, `NOSCOPE_DB=~/.noscope/fifth-run.sqlite`,
-no `--ic-model` (R5-6 defaults the IC to Sonnet 5), write-up as the last PR into `round-5`.
-Briefs: `scratchpad/builder-brief.md` (round 5 section: rewrite where the block says so;
-branch from `round-5`) and `scratchpad/round5-common.md`. Heartbeat cron `68507b23` hourly
-at :17. Keeper `quipu` gets one summarized update per stretch (ruled 22:57), not per event.
+Round 5 is building overnight on the branch `round-5` (cut from main at `d4ad608`; main
+is at `deab9cf` plus nothing since, untouched by the build). Merged into `round-5`, in
+order: R5-7 (#53), R5-6 (#54), R5-3 (#56), R5-4 (#57), R5-10 (#55), R5-2 (#58), R5-1
+(#60, 00:17). Seven of twelve. Building: R5-5 (`pr-leader-on-decision`, `scratchpad/wt-r5-5`,
+builder `build-r5-5`, cut at eae2b8a, told to rebase over R5-10 before reporting; it also
+drops the IC's session tools per the orchestrator's ruling), R5-8 (`pr-ic-gates-questions`,
+`wt-r5-8`, builder `build-r5-8`, cut at 7924282). Holding: R5-11 (PR 59,
+`pr-turns-say-less`, `wt-r5-11`, reviewed, fixes in, merges last after a final rebase that
+always renders section 10 on a resumed turn and marks section 2 on a deterministic
+`task.completed`). Then R5-12: `pnpm build` on `round-5`, restore the scratch document,
+`incident create` from roughdraftplus with run 003's objective, constraints and priority,
+no `--ic-model` (Sonnet 5 by R5-6), `NOSCOPE_DB=~/.noscope/fifth-run.sqlite`, step by hand
+with `~/.noscope/fourth-run/step.sh` adapted, then a builder for the write-up as the last
+PR into `round-5`. Every merge so far had one reviewer (R5-4 two); every review's fixes
+are in the PR bodies. Heartbeat cron `68507b23` hourly at :17.
+
+Ruled by the orchestrator overnight, for Mauria's morning read: the IC's session tools
+are residue under "never does" (R5-5 drops them); a strike team is declared by whoever
+defines the task and the leader's request path is gone (R5-4, the plan's open question);
+`~/Downloads/ics-protocol.md` is the protocol extract she asked for at 23:55, kept only there.
 
 Rulings by the orchestrator in review, shown to Mauria and not reversed: a plan cannot close
 a unit whose revise is undelivered (R4-3); the IC can drop a reassignment on a later turn
