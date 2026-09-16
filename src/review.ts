@@ -484,7 +484,9 @@ function icLines(
     } else {
       const verdict = str(e.payload.verdict);
       verdicts.set(verdict, (verdicts.get(verdict) ?? 0) + 1);
-      move = `${e.payload.redraft === true ? "reviewed the redraft" : "reviewed the draft"}: ${verdict}`;
+      const patches = list(e.payload.patches).length;
+      // A log from before R5-3 marks a second read of the cycle as the redraft's.
+      move = `${e.payload.redraft === true ? "reviewed the redraft" : "reviewed the draft"}: ${verdict}${patches === 0 ? "" : `, ${patches} patch(es)`}`;
     }
     lines.push(
       `  ic ${model ?? "(no model)"}: ${describeUsage(usage, turnCost)}  ${move}${session(str(e.payload.sessionId))}`,
@@ -909,6 +911,7 @@ export function renderReview(
   let applied = 0;
   let rejectedPlans = 0;
   let ruleLines = 0;
+  const redrafts = new Map<string, number>();
   let sessionsRan = 0;
   let deterministicRan = 0;
   let leaderTurns = 0;
@@ -964,16 +967,25 @@ export function renderReview(
         e.actor !== IC_ACTOR,
     );
     const a = appliedEvent?.payload ?? {};
+    // Each plan the validator rejected this cycle, by its origin (R5-3: the draft's
+    // ordinal and whether it was the IC's correction of it); a log from before R5-3
+    // carries no origin and its rejections are one plan, since a rejection ended the cycle.
+    rejectedPlans += new Set(
+      rejections.map(
+        (e) =>
+          `${String(e.payload.draft ?? "")}:${String(e.payload.corrected ?? "")}`,
+      ),
+    ).size;
     let verdict: string;
     if (appliedEvent !== undefined) {
       applied += 1;
+      const patches = list(a.patches).length;
       const ic =
         str(a.verdict) === ""
           ? ""
-          : `  ic ${str(a.verdict)}${a.corrections === null || a.corrections === undefined ? "" : " after corrections"}`;
-      verdict = `applied ${str(a.incidentStatus)}${ic}  units +${list(a.units).length} -${list(a.closedUnits).length}  tasks +${list(a.tasks).length} cancelled ${list(a.cancelledTasks).length}`;
+          : `  ic ${str(a.verdict)}${patches === 0 ? "" : ` (${patches} patch(es))`}${typeof a.corrections === "string" ? " after corrections" : ""}`;
+      verdict = `applied ${str(a.incidentStatus)}${ic}${rejections.length === 0 ? "" : ` after ${rejections.length} rule line(s)`}  units +${list(a.units).length} -${list(a.closedUnits).length}  tasks +${list(a.tasks).length} cancelled ${list(a.cancelledTasks).length}`;
     } else if (rejections.length > 0) {
-      rejectedPlans += 1;
       verdict = `rejected on ${rejections.length} rule line(s)`;
     } else if (cycle.events.some((e) => e.type === "command.rejected"))
       verdict = "command turn rejected";
@@ -995,8 +1007,12 @@ export function renderReview(
       const plannerCost = costOf(plannerUsage, plannerModel);
       add(roleTotals("planner", plannerModel), plannerUsage, plannerCost);
       addCost(cost, plannerCost);
+      // A redraft's cause (R5-3): a rule the validator found, or the IC's correction that
+      // broke one; a log from before R5-3 marks a redraft with no cause, which was the IC's correction.
+      const cause = p.redraft === true ? str(p.cause) || "correction" : null;
+      if (cause !== null) redrafts.set(cause, (redrafts.get(cause) ?? 0) + 1);
       lines.push(
-        `  planner ${plannerModel}: ${describeUsage(plannerUsage, plannerCost)}${p.redraft === true ? "  redraft" : ""}${session(str(p.sessionId))}`,
+        `  planner ${plannerModel}: ${describeUsage(plannerUsage, plannerCost)}${cause === null ? "" : `  redraft after a ${cause}`}${session(str(p.sessionId))}`,
       );
     }
     if (cycle.proposals.length > 0)
@@ -1012,7 +1028,7 @@ export function renderReview(
     for (const r of rejections) {
       ruleLines += 1;
       lines.push(
-        `  rejected ${str(r.payload.rule)}: ${clip(str(r.payload.reason))}`,
+        `  rejected${r.payload.corrected === true ? " the IC's correction on" : ""} ${str(r.payload.rule)}: ${clip(str(r.payload.reason))}`,
       );
     }
 
@@ -1280,7 +1296,7 @@ export function renderReview(
     claims.filter((c) => c.status === status).length;
   const drafts = runCycles.reduce((n, c) => n + c.proposals.length, 0);
   lines.push(
-    `plans: ${drafts} drafted in ${runCycles.length} cycle(s), ${applied} applied, ${rejectedPlans} rejected (${ruleLines} rule lines)`,
+    `plans: ${drafts} drafted in ${runCycles.length} cycle(s), ${applied} applied, ${rejectedPlans} rejected (${ruleLines} rule lines); redrafts: ${redrafts.get("rule") ?? 0} after a rule, ${redrafts.get("correction") ?? 0} after a correction`,
   );
   const reviews = [...verdicts.values()].reduce((n, k) => n + k, 0);
   lines.push(

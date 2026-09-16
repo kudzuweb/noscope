@@ -14,7 +14,6 @@ import {
   Claim,
   CommandTurn,
   type Event,
-  FinalReviewTurn,
   FirstCommandTurn,
   HandoffDocument,
   type Incident,
@@ -41,7 +40,8 @@ import { commandUnitOf, leaderRequest } from "./units/index.js";
 
 // The Incident Commander is the root unit's leader: one persistent session, briefed with
 // the full incident file at the top of every cycle, that sets the operational period and
-// reviews the planner's draft once (DESIGN.md Step 4). The runtime is the Planning
+// reviews the planner's draft once, after the validator has passed it (DESIGN.md Step 4;
+// R5-3). The runtime is the Planning
 // Section's bookkeeping around it: it renders the briefing, records every turn, and never
 // consults the IC per task. The session is never compacted (every session runs with
 // `DISABLE_COMPACT=1`), so when its context reaches the handoff threshold the runtime
@@ -53,7 +53,6 @@ const IC_TURN_SECONDS = 300;
 const COMMAND_TURN_SCHEMA = jsonSchemaFor(CommandTurn);
 const FIRST_COMMAND_TURN_SCHEMA = jsonSchemaFor(FirstCommandTurn);
 const REVIEW_TURN_SCHEMA = jsonSchemaFor(ReviewTurn);
-const FINAL_REVIEW_TURN_SCHEMA = jsonSchemaFor(FinalReviewTurn);
 const HANDOFF_SCHEMA = jsonSchemaFor(HandoffDocument);
 
 /** The context size, in tokens of the last message of the IC's last call, at which command is handed off; `NOSCOPE_IC_HANDOFF_TOKENS` overrides it. */
@@ -869,18 +868,19 @@ const SERIALIZED_WORK_ASK =
  * since run 004's planner put every session and both leaders on Opus 5 with no reason and
  * the review approved it without a word; the planner's own rule is Smallest model that fits.
  */
-const reviewModelsAsk = (corrections: string | null) =>
-  `Hold every session task and every new unit's leader to the smallest model its kind of work needs: recording, reproducing and reading are Haiku or Sonnet work, and so is a leader that directs such tasks; weighing evidence to a conclusion may take Opus. A task or leader on an Opus or Fable model with no modelWhy, or with one the work does not bear out, is an unreasoned upgrade: do not approve the draft as drafted, ${corrections === null ? "correct or amend" : "amend"} it to the smaller model.`;
+const MODELS_ASK = `Hold every session task and every new unit's leader to the smallest model its kind of work needs: recording, reproducing and reading are Haiku or Sonnet work, and so is a leader that directs such tasks; weighing evidence to a conclusion may take Opus. A task or leader on an Opus or Fable model with no modelWhy, or with one the work does not bear out, is an unreasoned upgrade: do not approve the draft as drafted, correct or amend it to the smaller model.`;
 
 /**
- * The user message of a review: the draft, and after a redraft the corrections it answers.
- * A session that has not read the file (a fresh one, after the command turn's session was
- * lost) gets the briefing first, so it never reviews blind.
+ * The user message of a review (R5-3): the draft the validator has passed, its tasks
+ * listed by position and ref so a patch can name one, and the ask, which is for
+ * substance: the rules are checked, so the IC holds the draft to the period objectives,
+ * the situation and the priorities. A session that has not read the file (a fresh one,
+ * after the command turn's session was lost) gets the briefing first, so it never
+ * reviews blind.
  */
 function renderReviewPrompt(
   draft: ActionPlan,
   cycle: number,
-  corrections: string | null,
   briefing: string[] | null,
   transfer: TransferPayload | null = null,
 ): string {
@@ -894,19 +894,21 @@ function renderReviewPrompt(
           ...briefing,
           "",
         ]),
-    corrections === null
-      ? `# The planner's draft for operational period ${cycle}`
-      : `# The planner's redraft for operational period ${cycle}, against your corrections`,
+    `# The planner's draft for operational period ${cycle}`,
+    "The validator has passed it: every rule in section 9 holds, so what is left to judge is substance.",
     JSON.stringify(draft, null, 2),
-    ...(corrections === null
-      ? []
-      : ["", "Your corrections were:", corrections]),
     "",
-    corrections === null
-      ? `${evaluate}eview it against the period objectives and priorities: approve it, correct it once with text the planner redrafts against, or amend it and return the whole plan. Correct when the planner must re-plan, since it holds the file's refs and tasks; amend when the change is small and exact.`
-      : `${evaluate}eview it against the period objectives and priorities: approve it, or amend it and return the whole plan.`,
+    "Its tasks, by position, as a patch names them:",
+    ...(draft.createTasks.length === 0
+      ? ["  (none)"]
+      : draft.createTasks.map(
+          (t, i) =>
+            `  #${i + 1}${t.ref === undefined ? "" : ` (ref ${t.ref})`}: ${t.capability} under ${t.unit}: ${t.objective}`,
+        )),
+    "",
+    `${evaluate}eview it against the period objectives, your situation and the priorities: approve it as drafted; correct it with patches (set one field of a task named by ref or #position, add a task, cancel a draft task or an open one), which the runtime applies to the draft and validates, with no second review; or amend it and return the whole plan. Correct when the change is a few exact edits, since it costs no planner call; amend when the plan needs a different shape. A correction or amendment that breaks a rule goes to the planner with the reasons, and the plan is applied without coming back to you.`,
     SERIALIZED_WORK_ASK,
-    reviewModelsAsk(corrections),
+    MODELS_ASK,
   ].join("\n");
 }
 
@@ -1312,29 +1314,28 @@ export function commandTurn(
 }
 
 /**
- * The IC's review of a draft (step 4): the draft is the user message on the resumed
- * session, which read the file in the command turn; a session with no id (lost since the
- * command turn, or started fresh by a handoff) is briefed first, and after a handoff asked
- * to evaluate the document in `briefingEvaluation`, recorded on `plan.reviewed`. The first read may
- * approve, correct or amend; a read of the redraft may only approve or amend, and the
- * schema the provider receives says so. `plan.reviewed` records the verdict, the
- * corrections, and the amended plan when there is one, with the call's provenance, and the
- * call is filed after it. A handoff before the review (the command turn's context reached
- * the threshold) briefs the fresh session with the transfer and the document before the
- * file and the draft, and files `command.transferred` with its `leader.started`.
+ * The IC's review of a valid draft (step 4; R5-3): the draft is the user message on the
+ * resumed session, which read the file in the command turn; a session with no id (lost
+ * since the command turn, or started fresh by a handoff) is briefed first, and after a
+ * handoff asked to evaluate the document in `briefingEvaluation`, recorded on
+ * `plan.reviewed`. The read may approve, correct with patches or amend; the runtime
+ * applies patches and validates, so the IC reads once a cycle. `plan.reviewed` records
+ * the verdict, the patches or the amended plan when there is one, with the call's
+ * provenance, and the call is filed after it. A handoff before the review (the command
+ * turn's context reached the threshold) briefs the fresh session with the transfer and
+ * the document before the file and the draft, and files `command.transferred` with its
+ * `leader.started`.
  */
 export async function reviewTurn(
   store: Store,
   incident: Incident,
   providers: readonly Provider[],
   draft: ActionPlan,
-  corrections: string | null,
   options: IcOptions,
   handoff: Handoff | null = null,
 ): Promise<IcCall<ReviewTurn>> {
   const events = store.listEvents(incident.id);
   const cycle = cycleOf(events);
-  const redraft = corrections !== null;
   const call = await icCall(
     store,
     incident,
@@ -1347,7 +1348,6 @@ export async function reviewTurn(
       return renderReviewPrompt(
         draft,
         cycle,
-        corrections,
         unit.sessionId === null
           ? renderBriefingBody(
               store,
@@ -1360,9 +1360,8 @@ export async function reviewTurn(
         transfer,
       );
     },
-    redraft ? FINAL_REVIEW_TURN_SCHEMA : REVIEW_TURN_SCHEMA,
-    (o): ReviewTurn =>
-      redraft ? FinalReviewTurn.parse(o) : ReviewTurn.parse(o),
+    REVIEW_TURN_SCHEMA,
+    (o): ReviewTurn => ReviewTurn.parse(o),
     options,
     handoff,
   );
@@ -1370,12 +1369,11 @@ export async function reviewTurn(
     store.record(incident.id, "plan.reviewed", options.actor ?? "runtime", {
       ...call.provenance,
       cycle,
-      redraft,
       verdict: call.output.verdict,
       rationale: call.output.rationale,
-      ...(call.output.corrections === undefined
+      ...(call.output.patches === undefined
         ? {}
-        : { corrections: call.output.corrections }),
+        : { patches: call.output.patches }),
       ...(call.output.plan === undefined ? {} : { plan: call.output.plan }),
       ...(call.output.briefingEvaluation === undefined
         ? {}

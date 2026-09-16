@@ -400,7 +400,11 @@ describe("incident run", () => {
       await run(["incident", "run", "001", "--max-cycles", "3"], h.ctx),
     ).toBe(EXIT.ok);
     expect(h.out.filter((l) => l.startsWith("--- cycle"))).toHaveLength(3);
-    expect(h.out.filter((l) => l === "plan rejected:")).toHaveLength(3);
+    // Each cycle drafts, redrafts twice on the same rejection (R5-3) and ends rejected.
+    expect(h.out.filter((l) => l === "plan rejected:")).toHaveLength(9);
+    expect(
+      h.out.filter((l) => l.startsWith("plan redrafted after a rule")),
+    ).toHaveLength(6);
     expect(
       h.out.some((l) =>
         l.includes("Status is earned: satisfied with no observed claim"),
@@ -413,7 +417,7 @@ describe("incident run", () => {
     expect(store.getIncident("001")?.status).toBe("open");
     expect(
       store.listEvents("001").filter((e) => e.type === "plan.rejected"),
-    ).toHaveLength(3);
+    ).toHaveLength(9);
     store.close();
   });
 

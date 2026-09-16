@@ -3812,3 +3812,140 @@ Not exactly to spec, with reasons:
   task or unit record, so `incident review` cannot yet list the models the planner chose
   with their whys, which R5-12's write-up asks for; a follow-up reads them from the plan
   events.
+## R5-3: Validate before review (#56, merged 2026-09-16)
+
+R5-3 of the round 5 plan, under Mauria's ruling of 2026-09-15 that a model is called when
+a decision needs a model, never for process. The evidence: in run 004 the IC's review turn
+found a defect the validator would have rejected (the reconcile task named the new grep in
+`evidenceFrom` but not in `dependsOn`) and spent a `correct` on it, which cost a planner
+redraft ($0.72, 57 s) and a second review on a 114k context ($1.16), $2.84 and 168 seconds
+for a mechanical fix. Built in one commit on `round-5`.
+
+The cycle (`planPeriod` in `src/commands/incident.ts`, steps 3 to 5, which `cycle` calls
+between the command turn and `applyPlan`): the planner drafts; the validator checks the
+draft (`validateAndRecord`, which now records the plan's origin on every `plan.rejected`
+and `plan.warned`: `draft`, the planner draft's ordinal in the cycle, and `corrected`,
+whether the plan checked was the IC's correction of it); a draft that breaks a rule goes
+back to the planner as a redraft with `cause: "rule"` and the reasons, with no IC call
+between; the IC reviews a valid draft once, for substance; a `correct` is a list of
+patches the runtime applies (`applyPatches` in the new `src/patches.ts`) and validates
+again, an `amend` is the IC's whole plan validated again, and either that breaks a rule
+goes to the planner as a redraft with `cause: "correction"`, carrying the draft, the IC's
+verdict and rationale, the patches and the plan they gave (or the amended plan), and the
+reasons, and the redraft is validated and applied without returning to the IC. A cycle
+allows `MAX_REDRAFTS` (2) redrafts whatever their causes, so at most three planner calls
+and one IC read; a plan still rejected after them ends the cycle with no review, as a
+rejected cycle did before, and the next command turn's briefing lists the rejections.
+
+The patch (`PlanPatch` in `src/models.ts`): one strict object with `kind` (`set`, `add`,
+`cancel`), `task`, `field` (one of `TASK_FIELDS`, the task proposal's fields), `value`
+(`z.unknown()`, which `jsonSchemaFor` renders as a property with a description and no
+`type`), `proposal` and `why`, with a refinement tying the fields to the kind. That the
+API accepts the typeless property was checked live on 2026-09-15 with one Haiku call
+through `claudeCodeProvider().run` on the real binary, `outputSchema:
+jsonSchemaFor(ReviewTurn)`, prompt `Return verdict "correct" with one patch: kind "set",
+task "#1", field "dependsOn", value the list ["first"], why "in order". rationale:
+"test".` (the script `review-schema-live.mjs`, kept in the session's scratch directory,
+not the repository); the call returned `{"verdict":"correct","rationale":"test",
+"patches":[{"kind":"set","task":"#1","field":"dependsOn","value":["first"],"why":"in
+order"}]}`, which `ReviewTurn.safeParse` accepts, at 5,065 input and 446 output tokens,
+4.5 s, $0.013. A draft task is addressed by its
+ref or by `#N`, its position in `createTasks` as the review prompt lists them; positions
+name the draft as listed, so a cancel shifts nothing and a set on a task an earlier patch
+cancelled is a reason. `set` replaces the field and parses the task again through
+`TaskProposal`, so a value of the wrong shape is a reason and not a crash, and a `set`
+naming no field is a reason too; `add` appends
+the proposal after the draft's tasks; `cancel` removes a draft task, or adds an open
+task's id to `cancelTasks` once. A patch that does not apply is recorded `plan.rejected`
+under the rule `Patch applies` with `corrected: true` (`recordUnapplied`), and the
+planner redrafts against the draft and the reasons with no plan after the patches shown.
+
+`ReviewTurn` (`src/models.ts`) is one strict object with the three verdicts, `patches`
+with `correct` (at least one), `plan` with `amend`, `rationale`, `discrepancy` and the
+optional `briefingEvaluation`; `FinalReviewTurn` and `corrections` are gone, since the
+IC reads once. `reviewTurn` (`src/ic.ts`) takes no corrections; `renderReviewPrompt`
+says the validator has passed the draft, lists its tasks by position and ref so a patch
+can name one, and asks for substance: correct when the change is a few exact edits,
+amend when the plan needs a different shape, and a correction that breaks a rule goes to
+the planner without coming back. `plan.reviewed` carries `patches` or `plan`;
+`plan.applied` carries `patches` (null unless `correct`) in place of `corrections`, and
+its `diff` is between the draft the IC reviewed and the applied plan. `IC_ROLE`
+(`src/units/ic.ts`) says the validator checks the draft before the IC sees it, what a
+patch is, and never to correct for a rule. The planner's system prompt says the same from
+its side; `Redraft` (`src/planner.ts`) is the two-cause union, `renderRedraft` renders
+each after the file, and `plan.proposed` on a redraft carries `cause`, `reasons` and, on
+a correction, `patches`; section 9's "warned last cycle" lines are deduplicated, since a
+draft validated twice in one cycle records its warnings twice, and section 9's "rejected
+last cycle" lists only rejections before this cycle's first draft (those after the last
+`command.turned`'s first `plan.proposed` are this cycle's, which the redraft appendix
+carries), so a redraft never reads the same rejection twice under two labels.
+
+`incident review` (`src/review.ts`) marks each redraft's planner line `redraft after a
+rule` or `redraft after a correction` (a log from before R5-3 marks a redraft with no
+cause as a correction, which is what it was), prints `reviewed the draft: correct, N
+patch(es)`, marks a rejection of the IC's correction as such, appends `after N rule
+line(s)` to a cycle applied after rejections, counts rejected plans by origin (a log with
+no origin counts one per cycle, as before), and ends the plans line with `redrafts: X
+after a rule, Y after a correction`. The fourth run's database renders under the new
+build with its one redraft counted after a correction (verified on a copy, 2026-09-15).
+`step` prints each rejection, each redraft with its cause, each patch, and the plan as
+corrected or amended before `plan approved`.
+
+DESIGN.md Vocabulary (action plan, cycle), the ICS mapping rows for the Incident
+Commander, the action plan and the Planning P, the file layout, the preamble row, Step 4
+(the `PlanPatch` and `ReviewTurn` blocks and the two paragraphs on the validator before
+the review and the review for substance), Step 5's opening, Step 7's `step` and `review`
+rows and the Speed section follow; `docs/architecture.html` swaps steps 4 and 5 and
+rewrites both, and updates the IC, planner and validator nodes and the speed line;
+CLAUDE.md's `step` row follows.
+
+Tests: `test/patches.test.ts` covers set by ref and by position, add, cancel of a draft
+task and of an open task (once), positions unshifted by a cancel, a set on a cancelled
+task, every non-applying patch collected as a reason with no plan beside them, and
+`describePatch`. `test/ic.test.ts`: the acceptance runs on the stub, a draft that breaks
+"Dependencies resolve" redrafted with the reasons and the IC called once on the redraft,
+and a `correct` that patches one `dependsOn` and its `evidenceFrom` applied with no further planner or IC call;
+a correction that breaks a rule redrafted with the patches and the reasons and applied
+with no second review; a patch naming no task rejected under `Patch applies`; the cap of
+two redrafts ending the cycle with no review; a `correct` with no patches refused by the
+schema and filed as a failed review; the schema test rewritten for patches (one object,
+no top-level `oneOf`). The R4-4 and R4-5 run tests now see their rejected draft
+redrafted and applied in the same cycle. The review, validator, run, dispatcher, handoff
+and providers tests follow the new payloads, prompt text and counts.
+
+Not exactly to spec, with reasons:
+
+- The cap of two redrafts is per cycle, whatever the causes, not two before the review
+  and more after: three planner calls and one IC read is the bound DESIGN.md states, and a
+  correction that breaks a rule is rare enough that sharing the cap costs nothing in
+  practice.
+- A correction or amendment that breaks a rule goes to the planner rather than ending the
+  cycle, which the block does not say: ending the cycle costs the next command turn, an
+  IC call on a full context, while a redraft costs one planner call, and the planner holds
+  the refs and tasks the fix needs. The redraft is applied without a second review because
+  the IC's decision was made and the planner is bounded by the reasons.
+- `cancel` cancels a draft task (removing it from `createTasks`) or an open task (adding
+  it to `cancelTasks`), by whichever the address names, since "a task to cancel" reads
+  both ways and both are one-line edits the IC will want.
+- A patch's `value` is `z.unknown()` rather than JSON text, so the IC writes the field's
+  own shape; the typeless property was checked live (the call above) rather than assumed.
+- The stub needed no extension: `NOSCOPE_STUB_PLANS` already scripts the first and second
+  drafts, and `NOSCOPE_STUB_REVIEW(S)` passes a patch verdict through unchanged.
+- The `plan.applied` diff is between the reviewed draft and the applied plan, not the
+  planner's first draft, since a rule redraft before the review is not the IC's hand and
+  the diff is the record of the IC's hand.
+- Rebased onto R5-7 (#53) and R5-6 (#54): the review prompt's array ends with the
+  substance ask, then `SERIALIZED_WORK_ASK`, then `MODELS_ASK`, which was R5-6's
+  `reviewModelsAsk(corrections)` and is a constant with the "correct or amend" wording
+  now that there is one review and it may always correct; R5-7's and R5-6's assertions on
+  a second review's prompt are gone with the second review, the patch test sets
+  `evidenceFrom` beside `dependsOn` so R5-7's "Independent work runs together" warning has
+  nothing to warn on, and the IC's usage lines in the tests read `claude-sonnet-5`, R5-6's
+  default. The planner snapshot fixture records this cycle's `command.turned` before the
+  render, as every planner call has one before it, so its last-cycle rejection still shows.
+- Files rewritten, for the merge order: `src/commands/incident.ts` (the planning steps of
+  `cycle` are now `planPeriod`), the review schema in `src/models.ts`, `reviewTurn` and
+  `renderReviewPrompt` in `src/ic.ts`, the `Redraft` type and `renderRedraft` in
+  `src/planner.ts`, the plan and IC lines of `src/review.ts`, and the review paragraph of
+  `IC_ROLE`; R5-6 and R5-7 add sentences to the review prompt and R5-11 to the schema
+  descriptions, so those merge onto this prompt and schema.

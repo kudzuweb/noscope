@@ -3154,8 +3154,12 @@ describe("incident step", () => {
     expect(out[4]).toMatch(
       /^ {2}verdict on 001-u02's report [0-9a-f-]{36}: revise: stub: progress; instructions: stub: carry on$/,
     );
-    expect(out[10]).toBe("plan rejected:");
-    expect(out[11]).toMatch(/^ {2}- Units exist: /);
+    // The validator rejects the draft before the IC reads it (R5-3), and the same plan
+    // redrafted twice is rejected each time; no review is called.
+    expect(out[9]).toBe("plan rejected:");
+    expect(out[10]).toMatch(/^ {2}- Units exist: /);
+    expect(out.filter((l) => l === "plan rejected:")).toHaveLength(3);
+    expect(out.some((l) => l.startsWith("IC review"))).toBe(false);
     out.length = 0;
     const done: ActionPlan = {
       ...plan,

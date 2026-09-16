@@ -1361,11 +1361,15 @@ describe("validator", () => {
         reason:
           'task "find scrollTo calls" names no registered capability teleport',
         rationale: "try something",
+        draft: 1,
+        corrected: false,
       },
       {
         rule: "Dependencies resolve",
         reason: 'task "find scrollTo calls" depends on no task t-none',
         rationale: "try something",
+        draft: 1,
+        corrected: false,
       },
     ]);
     const good = validateAndRecord(store, incident, empty, [fakeProvider]);
@@ -1411,6 +1415,8 @@ describe("validator", () => {
         reason:
           'task "read the scroll handler" is session work (investigate) under i1-command, the root; it will run in a session of its own with no leader to judge it, so it belongs under a unit',
         rationale: "read at command",
+        draft: 1,
+        corrected: false,
       },
     ]);
     expect(

@@ -955,24 +955,110 @@ export const IncidentBriefing = z
     });
   });
 
+/** The fields of a task proposal a patch may set (R5-3), the whole value replaced. */
+export const TASK_FIELDS = [
+  "ref",
+  "unit",
+  "capability",
+  "objective",
+  "inputs",
+  "expectedOutput",
+  "completionCriteria",
+  "evidenceRequired",
+  "dependsOn",
+  "evidenceFrom",
+  "instructions",
+  "provider",
+  "model",
+  "budget",
+  "strikeTeam",
+] as const satisfies readonly (keyof TaskProposal)[];
+
 /**
- * The IC's review of the planner's draft: approve it, correct it (the planner redrafts
- * once against the corrections), or amend it directly. After a redraft only approve and
- * amend remain (`FinalReviewTurn`, which has no `corrections` field), so a cycle has at
- * most two planner calls. One strict object per read; the refinement ties the optional
- * fields to their verdicts.
+ * One edit the IC makes to a valid draft (R5-3): set a task's field to a new value, add a
+ * task, or cancel one. The runtime applies the patches to the draft and validates the
+ * result, so a correction costs no planner call and no second review. A draft task is
+ * addressed by its ref, or by `#N`, its position in `createTasks` from 1, as the review
+ * prompt lists them; a `cancel` naming an open task's id adds it to `cancelTasks`. One
+ * strict object; the refinement ties the fields to the kind.
  */
-function reviewTurn<const V extends readonly ["approve", ...string[]]>(
-  verdicts: V,
-) {
-  return z.strictObject({
-    verdict: z.enum(verdicts),
-    corrections: z
+export const PlanPatch = z
+  .strictObject({
+    kind: z
+      .enum(["set", "add", "cancel"])
+      .describe(
+        "set replaces one field of a draft task; add appends a task to createTasks; cancel removes a draft task, or adds an open task's id to cancelTasks",
+      ),
+    task: z
       .string()
       .min(1)
       .optional()
       .describe(
-        "With verdict correct: what the planner must change, as text it redrafts against",
+        "With set or cancel: the draft task's ref, or #N for the Nth task of createTasks as the draft lists them; with cancel, an open task's id instead",
+      ),
+    field: z
+      .enum(TASK_FIELDS)
+      .optional()
+      .describe("With set: the task's field to replace"),
+    value: z
+      .unknown()
+      .optional()
+      .describe(
+        "With set: the field's new value, whole, in the field's own shape (dependsOn is a list of refs or ids, model a string, budget an object)",
+      ),
+    proposal: TaskProposal.optional().describe(
+      "With add: the task to add, whole, as the planner would have drafted it",
+    ),
+    why: z.string().min(1).describe("Why this edit, one sentence"),
+  })
+  .superRefine((p, ctx) => {
+    const need = (field: "task" | "field" | "value" | "proposal") =>
+      ctx.addIssue({
+        code: "custom",
+        path: [field],
+        message: `a ${p.kind} patch carries ${field}`,
+      });
+    const only = (field: "task" | "field" | "value" | "proposal") =>
+      ctx.addIssue({
+        code: "custom",
+        path: [field],
+        message: `a ${p.kind} patch carries no ${field}`,
+      });
+    if (p.kind === "set") {
+      if (p.task === undefined) need("task");
+      if (p.field === undefined) need("field");
+      if (p.value === undefined) need("value");
+      if (p.proposal !== undefined) only("proposal");
+    }
+    if (p.kind === "add") {
+      if (p.proposal === undefined) need("proposal");
+      if (p.task !== undefined) only("task");
+      if (p.field !== undefined) only("field");
+      if (p.value !== undefined) only("value");
+    }
+    if (p.kind === "cancel") {
+      if (p.task === undefined) need("task");
+      if (p.field !== undefined) only("field");
+      if (p.value !== undefined) only("value");
+      if (p.proposal !== undefined) only("proposal");
+    }
+  });
+
+/**
+ * The IC's review of a valid draft (R3-7; R5-3): approve it, correct it with patches the
+ * runtime applies and re-validates, or amend it with a whole plan. The validator has run
+ * before the IC reads, so the review is for substance; a cycle has one review, and the
+ * planner is called again only when a rule is broken. One strict object; the refinement
+ * ties the optional fields to their verdicts.
+ */
+export const ReviewTurn = z
+  .strictObject({
+    verdict: z.enum(["approve", "correct", "amend"]),
+    patches: z
+      .array(PlanPatch)
+      .optional()
+      .describe(
+        "With verdict correct: the edits, each one task's field, a task to add or a task to cancel; the runtime applies them to the draft, and the plan is not reviewed again",
       ),
     plan: ActionPlan.optional().describe(
       "With verdict amend: the whole plan as amended, which is applied in place of the draft",
@@ -985,48 +1071,36 @@ function reviewTurn<const V extends readonly ["approve", ...string[]]>(
       .describe(
         "Only on a review that is this session's first call after a transfer of command (a handoff before the review): each item of the handoff document, accepted, rewritten or discarded, and why",
       ),
+  })
+  .superRefine((t, ctx) => {
+    if (
+      t.verdict === "correct" &&
+      (t.patches === undefined || t.patches.length === 0)
+    )
+      ctx.addIssue({
+        code: "custom",
+        path: ["patches"],
+        message: "a correct verdict carries at least one patch",
+      });
+    if (t.verdict !== "correct" && t.patches !== undefined)
+      ctx.addIssue({
+        code: "custom",
+        path: ["patches"],
+        message: "only a correct verdict carries patches",
+      });
+    if (t.verdict === "amend" && t.plan === undefined)
+      ctx.addIssue({
+        code: "custom",
+        path: ["plan"],
+        message: "an amend verdict carries the amended plan",
+      });
+    if (t.verdict !== "amend" && t.plan !== undefined)
+      ctx.addIssue({
+        code: "custom",
+        path: ["plan"],
+        message: "only an amend verdict carries a plan",
+      });
   });
-}
-
-/** A verdict carries exactly what it needs: corrections with correct, the plan with amend, neither otherwise. */
-function verdictFields(
-  t: { verdict: string; corrections?: string | undefined; plan?: unknown },
-  ctx: z.RefinementCtx,
-): void {
-  if (t.verdict === "correct" && t.corrections === undefined)
-    ctx.addIssue({
-      code: "custom",
-      path: ["corrections"],
-      message: "a correct verdict carries its corrections",
-    });
-  if (t.verdict !== "correct" && t.corrections !== undefined)
-    ctx.addIssue({
-      code: "custom",
-      path: ["corrections"],
-      message: "only a correct verdict carries corrections",
-    });
-  if (t.verdict === "amend" && t.plan === undefined)
-    ctx.addIssue({
-      code: "custom",
-      path: ["plan"],
-      message: "an amend verdict carries the amended plan",
-    });
-  if (t.verdict !== "amend" && t.plan !== undefined)
-    ctx.addIssue({
-      code: "custom",
-      path: ["plan"],
-      message: "only an amend verdict carries a plan",
-    });
-}
-
-export const ReviewTurn = reviewTurn([
-  "approve",
-  "correct",
-  "amend",
-]).superRefine(verdictFields);
-export const FinalReviewTurn = reviewTurn(["approve", "amend"])
-  .omit({ corrections: true })
-  .superRefine(verdictFields);
 
 /**
  * What an outgoing IC writes for its successor at a handoff (R3-9): the session is never
@@ -1204,6 +1278,7 @@ export type ReportVerdict = z.infer<typeof ReportVerdict>;
 export type BriefingVerdict = z.infer<typeof BriefingVerdict>;
 export type IncidentBriefing = z.infer<typeof IncidentBriefing>;
 export type ReviewTurn = z.infer<typeof ReviewTurn>;
+export type PlanPatch = z.infer<typeof PlanPatch>;
 export type HandoffDocument = z.infer<typeof HandoffDocument>;
 export type Settlement = z.infer<typeof Settlement>;
 export type Needed = z.infer<typeof Needed>;

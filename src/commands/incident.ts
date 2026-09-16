@@ -6,6 +6,7 @@ import {
   describeForm,
   formKey,
   matchingConfig,
+  type OutfittedPlan,
   savedFormOf,
   unsavedRepeats,
 } from "../configs.js";
@@ -44,8 +45,13 @@ import {
   type StrikeTeam,
   type Unit,
 } from "../models.js";
-import { proposePlan, renderSituation } from "../planner.js";
-import { getProvider, SessionError } from "../providers/index.js";
+import { applyPatches, describePatch } from "../patches.js";
+import { proposePlan, type Redraft, renderSituation } from "../planner.js";
+import {
+  getProvider,
+  type Provider,
+  SessionError,
+} from "../providers/index.js";
 import { describeRuntimeTag, renderReview } from "../review.js";
 import {
   type Answered,
@@ -56,6 +62,7 @@ import {
   icModelHold,
   icRefusalQuestionId,
   newQuestions,
+  type PlanReview,
   planDiff,
 } from "../runtime.js";
 import { INITIAL_MODEL, sizeUp } from "../size-up.js";
@@ -69,6 +76,7 @@ import {
 } from "../tree.js";
 import { commandUnitOf, getUnitType, newCommandUnit } from "../units/index.js";
 import {
+  type Verdict,
   validateAndRecord,
   validateCommand,
   validationContext,
@@ -753,13 +761,187 @@ function printFallbacks(
       );
 }
 
+/** A cycle's planner calls are bounded (R5-3): the draft and at most this many redrafts, whatever their causes. */
+const MAX_REDRAFTS = 2;
+
+/** What planning a period came to: the plan to apply, outfitted, with the IC's verdict on it; or null when the cycle ends with the plan rejected. */
+type Planned = { plan: OutfittedPlan; review: PlanReview };
+
+/**
+ * Steps 3 to 5 of the cycle (R5-3): the planner drafts; the validator checks the draft
+ * before the IC sees it, and a draft that breaks a rule goes back to the planner with the
+ * reasons, with no IC call between; the IC reviews the valid draft once, for substance;
+ * a `correct` is a list of patches the runtime applies to the draft, and an `amend` is
+ * the IC's whole plan, either validated again and, when it breaks a rule, sent to the
+ * planner with the IC's correction and the reasons, never back to the IC. At most
+ * `MAX_REDRAFTS` planner calls follow the draft in a cycle, whatever their causes; a plan
+ * still rejected then ends the cycle, and the next command turn reads the rejections.
+ * The IC's session is handed off before its review when its last call reached the
+ * context threshold. Prints each draft, each rejection, the verdict and the patches.
+ */
+async function planPeriod(
+  store: Store,
+  current: Incident,
+  planner: Provider,
+  providers: readonly Provider[],
+  ctx: Context,
+  icOptions: { cwd: string; env: NodeJS.ProcessEnv },
+): Promise<Planned | null> {
+  let drafts = 0;
+  const draftPlan = async (redraft?: Redraft) => {
+    drafts += 1;
+    const proposal = await proposePlan(store, current, planner, {
+      providers,
+      cwd: ctx.cwd,
+      ...(redraft === undefined ? {} : { redraft }),
+    });
+    ctx.io.out(
+      `plan ${redraft === undefined ? "drafted" : `redrafted after a ${redraft.cause === "rule" ? "rule" : "correction"}`} (session ${proposal.sessionId}): ${proposal.plan.rationale}`,
+    );
+    printPlan(ctx, proposal.plan);
+    return proposal.plan;
+  };
+  const rejected = (verdict: Verdict<string>) => {
+    if (verdict.ok) return [];
+    ctx.io.out("plan rejected:");
+    for (const r of verdict.rejections)
+      ctx.io.out(`  - ${r.rule}: ${r.reason}`);
+    return verdict.rejections.map((r) => `${r.rule}: ${r.reason}`);
+  };
+  const validate = (plan: ActionPlan, corrected: boolean) =>
+    validateAndRecord(store, current, plan, providers, {
+      draft: drafts,
+      corrected,
+    });
+  const approved = (
+    passed: Extract<Verdict<string>, { ok: true }>,
+    review: PlanReview,
+  ): Planned => {
+    ctx.io.out("plan approved");
+    for (const w of passed.warnings)
+      ctx.io.out(`  warned, applied anyway: ${w.rule}: ${w.reason}`);
+    return { plan: passed.plan, review };
+  };
+
+  // The planner's draft, redrafted until it passes or the cap is reached.
+  let draft = await draftPlan();
+  let verdict: Verdict<string> = validate(draft, false);
+  while (!verdict.ok && drafts <= MAX_REDRAFTS) {
+    const reasons = rejected(verdict);
+    draft = await draftPlan({ cause: "rule", draft, reasons });
+    verdict = validate(draft, false);
+  }
+  if (!verdict.ok) {
+    rejected(verdict);
+    return null;
+  }
+
+  // The IC reads the valid draft once, as proposed (a config's name, not its fields).
+  const before = printHandoff(
+    ctx,
+    await prepareHandoff(store, current, icOptions),
+  );
+  const sinceReview = store.listEvents(current.id).length;
+  const review = await reviewTurn(
+    store,
+    current,
+    providers,
+    draft,
+    icOptions,
+    before,
+  );
+  ctx.io.out(`IC review: ${review.output.verdict}: ${review.output.rationale}`);
+  printFallbacks(ctx, store, current.id, sinceReview);
+  if (before !== null)
+    ctx.io.out(
+      `  command transferred from session ${before.outgoingSessionId} to session ${review.sessionId}`,
+    );
+  for (const v of review.output.briefingEvaluation ?? [])
+    ctx.io.out(`  handoff: ${v.verdict} ${v.item}: ${v.why}`);
+  if (review.output.verdict === "approve")
+    return approved(verdict, {
+      verdict: "approve",
+      patches: null,
+      diff: planDiff(draft, draft),
+    });
+
+  // The IC's correction: patches applied to the draft, or its amended plan, validated
+  // again; a rule break goes to the planner with the correction and the reasons.
+  const patches = review.output.patches ?? [];
+  for (const p of patches) ctx.io.out(`  patch: ${describePatch(p)}`);
+  const patched =
+    review.output.verdict === "amend"
+      ? { ok: true as const, plan: review.output.plan as ActionPlan }
+      : applyPatches(draft, patches, store.listTasks(current.id));
+  if (patched.ok) {
+    ctx.io.out(
+      review.output.verdict === "amend"
+        ? `plan amended by the IC: ${patched.plan.rationale}`
+        : `plan corrected by the IC: ${patches.length} patch(es) applied`,
+    );
+    printPlan(ctx, patched.plan);
+  }
+  let plan: ActionPlan = patched.ok ? patched.plan : draft;
+  verdict = patched.ok
+    ? validate(plan, true)
+    : recordUnapplied(store, current, draft, patched.reasons, drafts);
+  const corrected: Redraft = {
+    cause: "correction",
+    draft,
+    verdict: review.output.verdict,
+    rationale: review.output.rationale,
+    patches,
+    corrected: patched.ok ? patched.plan : null,
+    reasons: [],
+  };
+  while (!verdict.ok && drafts <= MAX_REDRAFTS) {
+    const reasons = rejected(verdict);
+    plan = await draftPlan({ ...corrected, reasons });
+    verdict = validate(plan, false);
+  }
+  if (!verdict.ok) {
+    rejected(verdict);
+    return null;
+  }
+  return approved(verdict, {
+    verdict: review.output.verdict,
+    patches: review.output.verdict === "correct" ? patches : null,
+    diff: planDiff(draft, plan),
+  });
+}
+
+/** A patch that could not be applied is a rejection of the correction (R5-3), recorded as `plan.rejected` under the rule "Patch applies" so the log and the planner's next input read it as one. */
+function recordUnapplied(
+  store: Store,
+  incident: Incident,
+  draft: ActionPlan,
+  reasons: string[],
+  drafts: number,
+): Verdict<string> {
+  store.batch(() => {
+    for (const reason of reasons)
+      store.record(incident.id, "plan.rejected", "validator", {
+        rule: "Patch applies",
+        reason,
+        rationale: draft.rationale,
+        draft: drafts,
+        corrected: true,
+      });
+  });
+  return {
+    ok: false,
+    rejections: reasons.map((reason) => ({ rule: "Patch applies", reason })),
+  };
+}
+
 /**
  * One cycle, the eight steps of DESIGN.md's cycle: (1) the IC's briefing is rendered, (2)
  * the IC's command turn sets the period or ends the incident, (3) the planner drafts, (4)
- * the IC reviews the draft once, with one redraft on a correction, (5) the validator checks
- * the plan to apply, (6) it is applied, (7) the units run under their leaders to their
- * reports or to a change of picture, (8) stop. Before the command turn and before each
- * review, command is handed off when the IC's last call reached the context threshold.
+ * the validator checks the draft, sending a rule break back to the planner, (5) the IC
+ * reviews the valid draft once and its correction is applied and validated by the runtime
+ * (`planPeriod`; R5-3), (6) the plan is applied, (7) the units run under their leaders to
+ * their reports or to a change of picture, (8) stop. Before the command turn and before
+ * the review, command is handed off when the IC's last call reached the context threshold.
  * Prints each turn, the verdicts, what changed and what ran. A provider that cannot run
  * throws; the command decides the exit code.
  */
@@ -882,83 +1064,22 @@ async function cycle(
   if (current === undefined)
     throw new Error(`incident ${incident.id} vanished`);
 
-  const draft = await proposePlan(store, current, planner, {
+  const planned = await planPeriod(
+    store,
+    current,
+    planner,
     providers,
-    cwd: ctx.cwd,
-  });
-  ctx.io.out(
-    `plan drafted (session ${draft.sessionId}): ${draft.plan.rationale}`,
+    ctx,
+    icOptions,
   );
-  printPlan(ctx, draft.plan);
-  const reviewAfterHandoff = async (
-    proposed: ActionPlan,
-    corrections: string | null,
-  ) => {
-    const before = printHandoff(
-      ctx,
-      await prepareHandoff(store, current, icOptions),
-    );
-    const sinceReview = store.listEvents(incident.id).length;
-    const read = await reviewTurn(
-      store,
-      current,
-      providers,
-      proposed,
-      corrections,
-      icOptions,
-      before,
-    );
-    ctx.io.out(`IC review: ${read.output.verdict}: ${read.output.rationale}`);
-    printFallbacks(ctx, store, incident.id, sinceReview);
-    if (before !== null)
-      ctx.io.out(
-        `  command transferred from session ${before.outgoingSessionId} to session ${read.sessionId}`,
-      );
-    for (const v of read.output.briefingEvaluation ?? [])
-      ctx.io.out(`  handoff: ${v.verdict} ${v.item}: ${v.why}`);
-    return read;
-  };
-  let review = await reviewAfterHandoff(draft.plan, null);
-  let corrections: string | null = null;
-  let proposed = draft.plan;
-  if (review.output.verdict === "correct") {
-    corrections = review.output.corrections ?? "";
-    ctx.io.out(`  corrections: ${corrections}`);
-    const redraft = await proposePlan(store, current, planner, {
-      providers,
-      cwd: ctx.cwd,
-      redraft: { draft: draft.plan, corrections },
-    });
-    proposed = redraft.plan;
-    ctx.io.out(
-      `plan redrafted (session ${redraft.sessionId}): ${proposed.rationale}`,
-    );
-    printPlan(ctx, proposed);
-    review = await reviewAfterHandoff(proposed, corrections);
-  }
-  const plan =
-    review.output.verdict === "amend" && review.output.plan !== undefined
-      ? review.output.plan
-      : proposed;
-  if (review.output.verdict === "amend") {
-    ctx.io.out(`plan amended by the IC: ${plan.rationale}`);
-    printPlan(ctx, plan);
-  }
-  const verdict = validateAndRecord(store, current, plan, providers);
-  if (!verdict.ok) {
-    ctx.io.out("plan rejected:");
-    for (const r of verdict.rejections)
-      ctx.io.out(`  - ${r.rule}: ${r.reason}`);
-    return { status: incident.status, stopped: null };
-  }
-  ctx.io.out("plan approved");
-  for (const w of verdict.warnings)
-    ctx.io.out(`  warned, applied anyway: ${w.rule}: ${w.reason}`);
-  const applied = applyPlan(store, current, verdict.plan, "runtime", {
-    verdict: review.output.verdict,
-    corrections,
-    diff: planDiff(draft.plan, plan),
-  });
+  if (planned === null) return { status: incident.status, stopped: null };
+  const applied = applyPlan(
+    store,
+    current,
+    planned.plan,
+    "runtime",
+    planned.review,
+  );
   for (const u of applied.units) {
     const takes = applied.taken.find((t) => t.unitId === u.id);
     ctx.io.out(
