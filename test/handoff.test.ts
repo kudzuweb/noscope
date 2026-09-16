@@ -350,12 +350,15 @@ describe("the IC handoff at the context threshold", () => {
     );
     expect(second?.prompt).toContain(
       [
-        "# Incident file: the sections that changed since your review of period 1's draft",
-        "The sections not shown are as you read them: 1. Command picture; 8. Capabilities and models; 10. The IC's situation.",
+        "# Incident file: the sections that changed since your review of period 1's draft, and the situation",
+        "The sections not shown are as you read them: 1. Command picture; 8. Capabilities and models.",
         "",
-        "## 2. Claims",
-        "  (the claims created since your review of period 1's draft; the rest as you read them)",
-        "  - 001-c001: ",
+        "## 2. Claims and evidence",
+        "  (the claims created and the evidence completed since your review of period 1's draft; the rest as you read them)",
+        "claims:",
+        "  (none)",
+        "evidence, each attached whole to a task that names its id in evidenceFrom.tasks:",
+        "  - 001-t01 (grep ",
       ].join("\n"),
     );
     // Sections 4 to 6 and 9 are windowed on the applied plan, so they are shown after
@@ -367,12 +370,12 @@ describe("the IC handoff at the context threshold", () => {
       "## 6. Unit reports since the last cycle",
       "## 7. Open tasks",
       "## 9. Rules the validator applies\n  (the rules, and what is warned on, as you read them)\nrejected last cycle:",
+      "## 10. The IC's situation",
     ])
       expect(second?.prompt).toContain(`\n${heading}\n`);
     for (const gone of [
       "## 1. Command picture",
       "## 8. Capabilities and models",
-      "## 10. The IC's situation",
       "Capabilities exist:",
     ])
       expect(second?.prompt).not.toContain(gone);

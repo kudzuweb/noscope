@@ -5016,10 +5016,19 @@ Not exactly to spec, with reasons:
   a config saved by `config save` is a system event outside the incident's log (verified
   in `src/store.ts`), so a resumed IC does not see a config saved mid-incident until its
   next fresh session; the planner reads the whole file every cycle and sees it at once.
-- The evidence lines the block names among the changed sections are R5-1's; on this
-  branch a deterministic task's output is still claims, which section 2 carries, so
-  "claims and evidence" is section 2 here, and R5-1's merge adds its evidence events to
-  `sectionsChangedBy` if it renders them in a section of their own.
+- At the final rebase, onto round-5 with every other row merged (0907d51): section 2 is
+  R5-1's "Claims and evidence", marked changed on a claim landing or on a `task.completed`
+  whose task is evidence (`isEvidence`), and narrowed to the claims created and the
+  evidence completed since the window (`landedAfter`, over R5-1's `isSessionClaim` and
+  `isEvidence` filters, replacing the `createdAfter` helper that R5-1 deleted the collapse
+  block around); section 10 is rendered on every resumed turn rather than on its own
+  events, since R5-2's runtime-assigned open-item ids and worked-by statuses move with
+  every plan applied and every task event and the section is short, so the heading reads
+  "the sections that changed since <call>, and the situation" and the "nothing changed"
+  one-liner is gone: a turn after which nothing else changed names every other section
+  as read and carries the situation alone. R5-10's failed-or-cancelled sub-block rides in
+  section 4; R5-8's `evaluateAsk` and R5-3's `reviewTurn` briefing call are the base's,
+  untouched.
 - The input-token acceptance is met on the stub by a knob rather than by the stub's
   fixed usage figures, which every other usage pin relies on: `NOSCOPE_STUB_INPUT_FROM_PROMPT`
   is set by the one test that compares briefings.

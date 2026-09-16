@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { recordActivity } from "./activity.js";
-import { isSessionClaim, measureEvidence } from "./evidence.js";
+import { isEvidence, isSessionClaim, measureEvidence } from "./evidence.js";
 import {
   describeRefusedCall,
   eventsSinceLastCommand,
@@ -922,10 +922,21 @@ function describeCall(e: Event): string {
  * fallback (`leader.failed`) and a transfer of command do. Section 1's budget line
  * changes with every usage any seat records, which matters only when the incident bounds
  * its budget (`budgeted`); an unlimited budget's line reads the same whatever was spent.
+ * Section 2 carries evidence beside claims (R5-1), so a deterministic task completing
+ * (`evidence`, the ids of the tasks whose results are evidence) changes it as a claim
+ * landing does. Section 10 is not listed here: it is rendered on every resumed turn,
+ * since the runtime's open-item ids and worked-by statuses in it move with every plan
+ * applied and every task event (R5-2), and the section is short.
  */
-function sectionsChangedBy(e: Event, budgeted: boolean): number[] {
+function sectionsChangedBy(
+  e: Event,
+  budgeted: boolean,
+  evidence: ReadonlySet<string>,
+): number[] {
   const changed: number[] = [];
   const t = e.type;
+  const taskId = (e.payload.mutation as { taskId?: unknown } | undefined)
+    ?.taskId;
   const spent = typeof e.payload.usage === "object" && e.payload.usage !== null;
   if (
     (budgeted && spent) ||
@@ -943,7 +954,10 @@ function sectionsChangedBy(e: Event, budgeted: boolean): number[] {
   if (
     t === "claim.asserted" ||
     t === "claim.verified" ||
-    t === "claim.rejected"
+    t === "claim.rejected" ||
+    (t === "task.completed" &&
+      typeof taskId === "string" &&
+      evidence.has(taskId))
   )
     changed.push(2);
   if (
@@ -987,23 +1001,17 @@ function sectionsChangedBy(e: Event, budgeted: boolean): number[] {
     applied
   )
     changed.push(9);
-  if (
-    (t === "command.turned" && e.payload.rejected !== true) ||
-    t === "unit.reassigned" ||
-    t === "reassignment.taken" ||
-    t === "reassignment.dropped"
-  )
-    changed.push(10);
   return changed;
 }
 
 /**
  * The incident file for a session that holds it already (R5-11): the sections that
  * changed since the IC's last call on the session, each whole (section 2 only the claims
- * created since, section 9 without its fixed rule texts), under a heading that names the
- * call and lists the sections left out as unchanged. Run 004's IC read the whole file on
- * every turn and reached a 170k context in three periods; the session holds what it read,
- * so a resumed call carries what changed and nothing else.
+ * created and the evidence completed since, section 9 without its fixed rule texts, and
+ * section 10, the situation, always), under a heading that names the call and lists the
+ * sections left out as unchanged. Run 004's IC read the whole file on every turn and
+ * reached a 170k context in three periods; the session holds what it read, so a resumed
+ * call carries what changed and nothing else.
  */
 function renderChangedFile(
   store: Store,
@@ -1015,14 +1023,19 @@ function renderChangedFile(
   const budgeted =
     incident.budget.tokens !== undefined ||
     incident.budget.seconds !== undefined;
-  const changed = new Set(
-    events
-      .filter((e) => e.sequence > since.sequence)
-      .flatMap((e) => sectionsChangedBy(e, budgeted)),
+  const evidence = new Set(
+    store
+      .listTasks(incident.id)
+      .filter(isEvidence)
+      .map((t) => t.id),
   );
+  const changed = new Set([
+    10,
+    ...events
+      .filter((e) => e.sequence > since.sequence)
+      .flatMap((e) => sectionsChangedBy(e, budgeted, evidence)),
+  ]);
   const call = describeCall(since);
-  if (changed.size === 0)
-    return `# Incident file: nothing in it changed since ${call}; it is as you read it`;
   const sections = incidentFileSections(store, incident, providers, {
     claimsSince: since.sequence,
     rulesOmitted: true,
@@ -1034,7 +1047,7 @@ function renderChangedFile(
         ? {
             ...s,
             lines: [
-              `  (the claims created since ${call}; the rest as you read them)`,
+              `  (the claims created and the evidence completed since ${call}; the rest as you read them)`,
               ...s.lines,
             ],
           }
@@ -1046,7 +1059,7 @@ function renderChangedFile(
     .join("; ");
   return renderFile(
     [
-      `# Incident file: the sections that changed since ${call}`,
+      `# Incident file: the sections that changed since ${call}, and the situation`,
       `The sections not shown are as you read them: ${unchanged}.`,
     ].join("\n"),
     shown,

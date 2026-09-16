@@ -483,7 +483,7 @@ describe("a refusal replaces the session", () => {
       "\n# Incident file\n\n## 1. Command picture\n",
     );
     expect(h.calls()[5]?.prompt).toContain(
-      "\n# Incident file: the sections that changed since your review of period 1's draft\n",
+      "\n# Incident file: the sections that changed since your review of period 1's draft, and the situation\n",
     );
     expect(h.calls()[5]?.prompt).not.toContain("## 1. Command picture");
   });

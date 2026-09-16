@@ -1203,9 +1203,10 @@ describe("the IC above the planner", () => {
     );
     expect(briefing).toContain("# Your command turn for operational period 1");
     // The retry resumes the session that read the file on the rejected turn, and nothing
-    // in the file changed since (R5-11): the briefing says so in place of the file.
+    // in the file changed since (R5-11): the briefing names every section as read and
+    // carries the situation alone, which every resumed turn carries.
     expect(briefing).toContain(
-      "\n# Incident file: nothing in it changed since your command turn for period 1; it is as you read it\n\n# Your command turn",
+      "\n# Incident file: the sections that changed since your command turn for period 1, and the situation\nThe sections not shown are as you read them: 1. Command picture; 2. Claims and evidence; 3. Unit tree; 4. Tasks completed since the last cycle; 5. Tasks that came back insufficient since the last cycle; 6. Unit reports since the last cycle; 7. Open tasks; 8. Capabilities and models; 9. Rules the validator applies.\n\n## 10. The IC's situation\n",
     );
     expect(briefing).not.toContain("## 1. Command picture");
     const store = h.store();
@@ -1431,18 +1432,20 @@ describe("the IC above the planner", () => {
     });
     const brief = (incident = s.incident) =>
       renderCommandBriefing(store, incident, [fakeProvider], { resumed: "s1" });
+    const allRead =
+      "The sections not shown are as you read them: 1. Command picture; 2. Claims and evidence; 3. Unit tree; 4. Tasks completed since the last cycle; 5. Tasks that came back insufficient since the last cycle; 6. Unit reports since the last cycle; 7. Open tasks; 8. Capabilities and models; 9. Rules the validator applies.";
     expect(brief()).toContain(
-      "\n# Incident file: nothing in it changed since your command turn for period 1; it is as you read it\n",
+      `\n# Incident file: the sections that changed since your command turn for period 1, and the situation\n${allRead}\n\n## 10. The IC's situation\n`,
     );
     // Spend changes the budget line only when the incident bounds its budget.
     store.record("i1", "task.usage", "dispatcher", {
       taskId: "t1",
       usage: { inputTokens: 40, outputTokens: 2, seconds: 3 },
     });
-    expect(brief()).toContain("nothing in it changed since your command turn");
+    expect(brief()).toContain(allRead);
     const bounded = brief({ ...s.incident, budget: { tokens: 1000 } });
     expect(bounded).toContain(
-      "# Incident file: the sections that changed since your command turn for period 1\nThe sections not shown are as you read them: 2. Claims; 3. Unit tree; 4. Tasks completed since the last cycle; 5. Tasks that came back insufficient since the last cycle; 6. Unit reports since the last cycle; 7. Open tasks; 8. Capabilities and models; 9. Rules the validator applies; 10. The IC's situation.\n\n## 1. Command picture\n",
+      "# Incident file: the sections that changed since your command turn for period 1, and the situation\nThe sections not shown are as you read them: 2. Claims and evidence; 3. Unit tree; 4. Tasks completed since the last cycle; 5. Tasks that came back insufficient since the last cycle; 6. Unit reports since the last cycle; 7. Open tasks; 8. Capabilities and models; 9. Rules the validator applies.\n\n## 1. Command picture\n",
     );
     expect(bounded).toContain("budget remaining: tokens 958");
     // A failed call that got no answer dates nothing; one the model answered does.
@@ -1463,7 +1466,7 @@ describe("the IC above the planner", () => {
       usage: { inputTokens: 500, outputTokens: 20, seconds: 4 },
     });
     expect(brief({ ...s.incident, budget: { tokens: 1000 } })).toContain(
-      "\n# Incident file: nothing in it changed since your failed command turn; it is as you read it\n",
+      `\n# Incident file: the sections that changed since your failed command turn, and the situation\n${allRead}\n`,
     );
     // A session the log does not know is briefed whole.
     expect(
@@ -2245,7 +2248,7 @@ describe("the IC above the planner", () => {
     // The first turn read the whole file; the second the sections the first cycle
     // changed; the third, after a cycle whose verdict closed the unit and whose plan
     // created nothing and ran nothing, the four sections the applied plan's window
-    // emptied, each "(none)", and a line naming the six as it read them.
+    // emptied, each "(none)", the situation, and a line naming the five as it read them.
     expect(second).toBeLessThan(first);
     expect(third).toBeLessThan(second);
     const prompts = h
@@ -2256,14 +2259,16 @@ describe("the IC above the planner", () => {
       "\n# Incident file\n\n## 1. Command picture\n",
     );
     expect(prompts[1]).toContain(
-      "\n# Incident file: the sections that changed since your review of period 1's draft\n",
+      "\n# Incident file: the sections that changed since your review of period 1's draft, and the situation\n",
     );
     expect(prompts[2]).toContain(
       [
-        "# Incident file: the sections that changed since your review of period 2's draft",
-        "The sections not shown are as you read them: 1. Command picture; 2. Claims; 3. Unit tree; 7. Open tasks; 8. Capabilities and models; 10. The IC's situation.",
+        "# Incident file: the sections that changed since your review of period 2's draft, and the situation",
+        "The sections not shown are as you read them: 1. Command picture; 2. Claims and evidence; 3. Unit tree; 7. Open tasks; 8. Capabilities and models.",
         "",
         "## 4. Tasks completed since the last cycle",
+        "  (none)",
+        "failed or cancelled since the last cycle, each with the tasks cancelled because they waited on it; nothing waits on a task that will never complete:",
         "  (none)",
         "",
         "## 5. Tasks that came back insufficient since the last cycle",
@@ -2279,7 +2284,8 @@ describe("the IC above the planner", () => {
         "warned last cycle:",
         "  (nothing warned)",
         "",
-        "# Your command turn for operational period 3",
+        "## 10. The IC's situation",
+        "picture: test picture",
       ].join("\n"),
     );
   });

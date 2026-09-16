@@ -481,18 +481,22 @@ holds what it read and run 004's IC reached a 170k context in three periods read
 whole file every turn. Which sections changed is read from the events after that call:
 the command picture on a question, capability request, grant, budget stop or status
 change, and on any usage recorded when the incident bounds its budget, since the budget
-line reads the spend; the claims on a claim landing, and then only the claims created
-since; the unit tree on a unit created, closed, waiting, resumed, reporting, judged,
+line reads the spend; claims and evidence on a claim landing or a deterministic task
+completing (R5-1), and then only the claims created and the evidence completed since;
+the unit tree on a unit created, closed, waiting, resumed, reporting, judged,
 reassigned or taking a reassignment, a leader's fallback, a transfer of command, or an
 answer to a request, since a waiting unit's line names what it still waits on; sections
 4 to 6 on the task and report events they list and on every plan the planner had
 applied, since their windows open at that plan and empty with it; section 7 on any task
 event; section 9 on a plan rejected or warned (the planner's, not a leader's) or applied,
-and then without its fixed rule texts; the situation on an accepted command turn or a
-reassignment recorded, taken or dropped. Section 8 is fixed for a run
+and then without its fixed rule texts; the situation, section 10, on every resumed
+turn, since the runtime's open-item ids and worked-by statuses in it (R5-2) move with
+every plan applied and every task event and the section is short, so the heading reads
+"the sections that changed since <call>, and the situation". Section 8 is fixed for a run
 (a config saved by `config save` is a system event outside the incident's log, so it
-reaches the IC whole on its next fresh session); when nothing changed the heading says
-so and no section follows. The whole file comes again only on a fresh session: the
+reaches the IC whole on its next fresh session); when nothing else changed the heading
+names every other section as read and the situation follows alone. The whole file comes
+again only on a fresh session: the
 first turn, a handoff's successor, a fallback after a refusal, or a session lost and
 replaced; a review on a resumed session carries the draft alone, as before. The change report opens with every `picture.discrepancy`
 raised since the IC's last turn, then every `unit.reported` (outcome, whether the picture
