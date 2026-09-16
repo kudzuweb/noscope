@@ -12,6 +12,7 @@ import {
 } from "../configs.js";
 import { type Context, EXIT, type Handler } from "../context.js";
 import { dispatch } from "../dispatcher.js";
+import { isEvidence, isSessionClaim, measureEvidence } from "../evidence.js";
 import {
   commandTurn,
   type Handoff,
@@ -399,8 +400,8 @@ function renderIncidentFile(
     tokens: spent.inputTokens + spent.outputTokens,
     seconds: spent.seconds,
   };
-  const byStatus = (status: string) =>
-    claims.filter((c) => c.status === status);
+  const sessionClaims = claims.filter(isSessionClaim);
+  const evidence = tasks.filter(isEvidence);
   const decisions = events.filter(
     (e) => e.type === "plan.applied" && typeof e.payload.rationale === "string",
   );
@@ -492,11 +493,16 @@ function renderIncidentFile(
     `tasks: ${tasks.filter((t) => t.status !== "completed" && t.status !== "cancelled" && t.status !== "failed").length} open, ${tasks.length} total`,
   );
   lines.push(
-    `claims: ${byStatus("verified").length} verified, ${byStatus("asserted").length} asserted, ${byStatus("rejected").length} rejected`,
+    `claims: ${sessionClaims.length} from sessions, ${sessionClaims.filter((c) => c.basis === "observed").length} observed, ${sessionClaims.filter((c) => c.basis === "inferred").length} inferred, ${sessionClaims.filter((c) => c.status === "rejected").length} rejected`,
   );
-  for (const c of claims)
+  for (const c of sessionClaims)
     lines.push(
-      `  [${c.status}] ${c.subject} ${c.predicate} ${clip(JSON.stringify(c.object))}`,
+      `  [${c.basis}] ${c.subject} ${c.predicate} ${clip(JSON.stringify(c.object))}`,
+    );
+  lines.push(`evidence: ${evidence.length} deterministic result(s)`);
+  for (const t of evidence)
+    lines.push(
+      `  ${t.id} (${t.capability}): ${measureEvidence(t.capability, t.result)}`,
     );
   lines.push("");
   lines.push("decisions:");
@@ -1125,7 +1131,7 @@ async function cycle(
   );
   for (const r of ran)
     ctx.io.out(
-      `  ran ${r.taskId} (${r.capability}): ${r.status}${r.reason === undefined ? "" : `, ${r.reason}`}; ${r.claims} claim(s)${r.settled === undefined || r.settled.length === 0 ? "" : `; cancelled because they waited on it: ${r.settled.join(", ")}`}`,
+      `  ran ${r.taskId} (${r.capability}): ${r.status}${r.reason === undefined ? "" : `, ${r.reason}`}; ${r.produced}${r.settled === undefined || r.settled.length === 0 ? "" : `; cancelled because they waited on it: ${r.settled.join(", ")}`}`,
     );
   for (const r of reports) {
     ctx.io.out(
@@ -1161,9 +1167,9 @@ async function cycle(
       `  the pass stopped: unit ${pictureChanged} changed the picture`,
     );
   else if (ran.length === 0) ctx.io.out("  nothing ready to run");
-  const claims = store.listClaims(incident.id);
+  const claims = store.listClaims(incident.id).filter(isSessionClaim);
   ctx.io.out(
-    `claims: ${claims.filter((c) => c.status === "verified").length} verified, ${claims.filter((c) => c.status === "asserted").length} asserted`,
+    `claims: ${claims.length} from sessions, ${claims.filter((c) => c.basis === "observed").length} observed; evidence: ${store.listTasks(incident.id).filter(isEvidence).length} deterministic result(s)`,
   );
   return { status: "open", stopped };
 }

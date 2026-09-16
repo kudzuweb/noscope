@@ -5,6 +5,7 @@ import type {
   Leader,
   Situation,
   Task,
+  TaskProposal,
   Unit,
   UnitProposal,
   UnitSituation,
@@ -165,10 +166,10 @@ export function scriptedIncident(store: Store, id = "i1", at = now()) {
 }
 
 /**
- * A unit under command that ran two tasks and reported (R4-1): a grep whose one verified
- * claim is observed, then an investigate on Haiku whose session made three tool calls and
- * asserted one inferred claim, and a `met` report resting on both. Returns the report's
- * event, the id a verdict answers it by.
+ * A unit under command that ran two tasks and reported (R4-1): a grep whose one match is
+ * evidence (R5-1), then an investigate on Haiku whose session made three tool calls and
+ * asserted two claims, one observed citing the grep and one inferred, and a `met` report
+ * resting on both. Returns the report's event, the id a verdict answers it by.
  */
 export function reportedUnit(
   s: ReturnType<typeof scriptedIncident>,
@@ -185,22 +186,6 @@ export function reportedUnit(
     capability: "grep",
     objective: "find the delete handler",
   });
-  store.createClaim(
-    {
-      id: `${unitId}-c-grep`,
-      incidentId: incident.id,
-      subject: "/r/a.ts:2",
-      predicate: "matches",
-      object: { pattern: "delete", text: "delete()" },
-      status: "verified",
-      basis: "observed",
-      confidence: 1,
-      evidence: ["/r/a.ts:2"],
-      provenance: { capability: "grep", taskId: grep.id, inputs: {} },
-      createdAt: at,
-    },
-    "verifier",
-  );
   store.setTaskStatus(
     incident.id,
     grep.id,
@@ -211,6 +196,7 @@ export function reportedUnit(
       result: {
         root: "/r",
         matches: [{ file: "a.ts", line: 2, text: "delete()" }],
+        truncated: false,
       },
     },
   );
@@ -233,6 +219,27 @@ export function reportedUnit(
       isError: false,
       durationMs: 10,
     });
+  store.createClaim(
+    {
+      id: `${unitId}-c-grep`,
+      incidentId: incident.id,
+      subject: "/r/a.ts:2",
+      predicate: "matches",
+      object: { pattern: "delete", text: "delete()" },
+      status: "asserted",
+      basis: "observed",
+      confidence: 1,
+      evidence: ["/r/a.ts:2"],
+      provenance: {
+        capability: "investigate",
+        taskId: investigate.id,
+        sessionId: "s-investigate",
+        cites: [grep.id],
+      },
+      createdAt: at,
+    },
+    "dispatcher",
+  );
   store.createClaim(
     {
       id: `${unitId}-c-inv`,
@@ -303,4 +310,43 @@ export function reportedUnit(
   const report = store.listEvents(incident.id).at(-1);
   if (report === undefined) throw new Error("the report was recorded");
   return report;
+}
+
+/** A task to investigate under `unit` that reads task `taskId`'s evidence by reference (R5-1), on Haiku. */
+export function readsEvidence(unit: string, taskId: string): TaskProposal {
+  return {
+    unit,
+    capability: "investigate",
+    objective: "say what the match is",
+    inputs: { question: "which line handles delete?" },
+    expectedOutput: "the line",
+    completionCriteria: [],
+    evidenceRequired: [],
+    dependsOn: [],
+    evidenceFrom: { claims: [], tasks: [taskId] },
+    instructions: "",
+    provider: "claude-code",
+    model: "claude-haiku-4-5",
+    budget: { seconds: 30 },
+  };
+}
+
+/** A stub session's answer asserting one observed claim about `subject` that cites task `taskId`'s evidence (R5-1): the observed claim a satisfied incident needs. */
+export function citingOutput(taskId: string, subject: string) {
+  return {
+    outcome: "answered",
+    claims: [
+      {
+        subject,
+        predicate: "handles",
+        object: "deletion",
+        confidence: 0.95,
+        evidence: [subject],
+        basis: "observed",
+        cites: [taskId],
+      },
+    ],
+    findings: { summary: `${subject} is the handler`, observations: [] },
+    needed: [],
+  };
 }

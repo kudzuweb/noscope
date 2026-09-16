@@ -5,6 +5,7 @@ import {
   resolveEquipment,
 } from "../capabilities/index.js";
 import { READ_ONLY_SESSION_COMMANDS } from "../equipment/index.js";
+import { measureEvidence } from "../evidence.js";
 import {
   answeredRequestsOf,
   describeRefusedCall,
@@ -574,39 +575,26 @@ function gistOf(task: Task): string {
     : `${text.slice(0, SUMMARY_CHARS)}…`;
 }
 
-/** A deterministic result's size, since its content is evidence for a task to read, never for the leader. */
-function sizeOf(task: Task): string {
-  const r = task.result as { matches?: unknown; commits?: unknown } | null;
-  if (r !== null && typeof r === "object") {
-    if (Array.isArray(r.matches)) return `${r.matches.length} match(es)`;
-    if (Array.isArray(r.commits)) return `${r.commits.length} commit(s)`;
-  }
-  return `${r === null ? 0 : JSON.stringify(r, null, 2).split("\n").length} line(s) of JSON`;
-}
-
 /**
- * A task's claims in one clause, so the leader can name them in a report or in
- * `evidenceFrom` without reading the work: a session's each by id, subject, predicate,
- * basis and confidence (the form the reassignment brief uses), since a `met` report
- * rests on observed claims and the leader must tell which are which; a deterministic
- * task's as a count and the range of ids, since they are one per match.
+ * A session task's claims in one clause, so the leader can name them in a report or in
+ * `evidenceFrom` without reading the work: each by id, subject, predicate, basis and
+ * confidence (the form the reassignment brief uses), since a `met` report rests on
+ * observed claims and the leader must tell which are which. A deterministic task has
+ * none: its output is evidence (R5-1).
  */
-function claimsLine(task: Task, claims: readonly Claim[]): string {
+function claimsLine(claims: readonly Claim[]): string {
   if (claims.length === 0) return "claims: none";
   const observed = claims.filter((c) => c.basis === "observed").length;
-  const count = `${observed} observed, ${claims.length - observed} inferred`;
-  if (task.model === null)
-    return `claims (${count}): ${claims.length === 1 ? claims[0]?.id : `${claims[0]?.id} to ${claims.at(-1)?.id}`}`;
-  return `claims (${count}): ${claims.map((c) => `${c.id}: ${c.subject} ${c.predicate} (${c.basis}; confidence ${c.confidence ?? "n/a"})`).join("; ")}`;
+  return `claims (${observed} observed, ${claims.length - observed} inferred): ${claims.map((c) => `${c.id}: ${c.subject} ${c.predicate} (${c.basis}; confidence ${c.confidence ?? "n/a"})`).join("; ")}`;
 }
 
 /**
  * How one ending reads to the leader (R5-4: a line, never the work): a failure with its
  * reason and the tasks cancelled because they waited on it (R5-10); a cancellation with
  * the task it waited on and why; an insufficiency with what it needed and what the leader does about each kind;
- * a completion with a session's gist or a deterministic result's size, then its claims by
- * id. The result itself stays in the task record, which a task the leader assigns reads
- * through `evidenceFrom`.
+ * a completion with a session's gist and its claims by id, or a deterministic task's
+ * evidence measured (R5-1). The result itself stays in the task record, which a task the
+ * leader assigns reads through `evidenceFrom`.
  */
 function renderEnding(ending: TaskEnding): string[] {
   const { task } = ending;
@@ -625,12 +613,12 @@ function renderEnding(ending: TaskEnding): string[] {
       ...needed.map((n) => `  - ${n.kind}: ${n.what}`),
       RESOLVE_LACKS,
     ];
-  const what =
-    task.model === null
-      ? `its result, ${sizeOf(task)}, is recorded under its id`
-      : `summary: ${gistOf(task)}`;
+  if (task.model === null)
+    return [
+      `Task ${task.id} (${task.capability}) completed; its evidence, ${measureEvidence(task.capability, task.result)}, is recorded under its id for a task naming it in evidenceFrom.tasks.`,
+    ];
   return [
-    `Task ${task.id} (${task.capability}) completed; ${what}; ${claimsLine(task, ending.claims)}`,
+    `Task ${task.id} (${task.capability}) completed; summary: ${gistOf(task)}; ${claimsLine(ending.claims)}`,
   ];
 }
 

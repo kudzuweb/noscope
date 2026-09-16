@@ -2,7 +2,6 @@ export * from "./deterministic.js";
 export * from "./investigate.js";
 export type {
   Capability,
-  CapabilityResult,
   DeterministicCapability,
   DeterministicRun,
   RunContext,

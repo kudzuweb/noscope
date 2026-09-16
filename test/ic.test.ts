@@ -95,6 +95,66 @@ const findIt: ActionPlan = {
   rationale: "grep for the handler",
 };
 
+/**
+ * `findIt` plus an investigate (ref `say`) under the same unit that reads the grep (ref
+ * `grep`) by reference and whose stub session (`observedOutput` in the environment)
+ * asserts one observed claim citing it: a grep's matches are evidence and not a claim
+ * (R5-1), so a run that is to end `satisfied` or to reassign a unit's claims needs a
+ * session's claim. The investigate runs after the grep, so a scripted leader hears the
+ * grep's ending first and the investigate's second.
+ */
+const findAndSay: ActionPlan = {
+  ...findIt,
+  createTasks: [
+    { ...grepTask, ref: "grep" },
+    {
+      ...grepTask,
+      ref: "say",
+      capability: "investigate",
+      objective: "say where the handler is",
+      inputs: { question: "where is the delete handler?" },
+      dependsOn: ["grep"],
+      evidenceFrom: { claims: [], tasks: ["grep"] },
+      provider: "claude-code",
+      model: "claude-haiku-4-5",
+      budget: { seconds: 30 },
+    },
+  ],
+};
+
+const observedOutput = JSON.stringify({
+  outcome: "answered",
+  claims: [
+    {
+      subject: `${join(tree, "a.txt")}:2`,
+      predicate: "handles",
+      object: "deletion",
+      confidence: 0.95,
+      evidence: ["a.txt:2"],
+      basis: "observed",
+      cites: ["001-t01"],
+    },
+  ],
+  findings: { summary: "a.txt:2 is the handler", observations: [] },
+  needed: [],
+});
+
+/** The leader's turns on `findAndSay`: continue past the grep's ending, then `report` on the investigate's, repeated for any later turn. */
+function leaderTurns(
+  h: { ctx: { env: Record<string, string> } },
+  report: unknown,
+) {
+  h.ctx.env.NOSCOPE_STUB_TURN_COUNTER = join(
+    (h.ctx.env.NOSCOPE_DB ?? "").replace(/db\.sqlite$/, ""),
+    "turns",
+  );
+  h.ctx.env.NOSCOPE_STUB_TURNS = JSON.stringify([
+    { kind: "continue", report: null },
+    { kind: "report", report },
+  ]);
+  h.ctx.env.NOSCOPE_STUB_OUTPUT = observedOutput;
+}
+
 const command = (over: Partial<CommandTurn> = {}): CommandTurn => ({
   periodObjectives: ["find the handler"],
   reportVerdicts: [],
@@ -194,9 +254,9 @@ describe("the IC above the planner", () => {
       "plan approved",
       "  unit 001-u02 created under 001-command: locate the delete handler",
       "  task 001-t01 [ready] under 001-u02: grep: find delete",
-      "  ran 001-t01 (grep): completed; 1 claim(s)",
+      "  ran 001-t01 (grep): completed; evidence: 1 match in 1 file",
       "  unit 001-u02 reported progress: nothing changed",
-      "claims: 1 verified, 0 asserted",
+      "claims: 0 from sessions, 0 observed; evidence: 1 deterministic result(s)",
     ]);
     // The calls in order: the IC's command turn on a fresh session, the draft, the review
     // resumed on the IC's session, then the find unit's leader.
@@ -628,7 +688,9 @@ describe("the IC above the planner", () => {
       "plan redrafted after a correction (session stub-session): grep for the handler, as corrected",
     );
     expect(h.out).toContain("plan approved");
-    expect(h.out).toContain("  ran 001-t01 (grep): completed; 1 claim(s)");
+    expect(h.out).toContain(
+      "  ran 001-t01 (grep): completed; evidence: 1 match in 1 file",
+    );
     const calls = h.calls();
     expect(calls.filter((c) => c.kind !== "leader").map((c) => c.kind)).toEqual(
       ["command", "planner", "review", "planner"],
@@ -863,8 +925,7 @@ describe("the IC above the planner", () => {
           "      changed: stub: nothing yet",
           "    work since its previous report:",
           "      task 001-t01 (grep): find delete",
-          `        claims: 001-c001: ${join(tree, "a.txt")}:2 matches (observed, confidence 1.00)`,
-          "        completed; result: 11 line(s) of JSON, in the task record",
+          "        completed; evidence: 1 match in 1 file, attached whole to a task naming 001-t01 in evidenceFrom.tasks",
           "      tool calls: none",
           "resource requests:",
           "  (none)",
@@ -1215,7 +1276,9 @@ describe("the IC above the planner", () => {
     expect(h.out).toContain(
       "  task 001-t01 [ready] under 001-command: grep: find delete",
     );
-    expect(h.out).toContain("  ran 001-t01 (grep): completed; 1 claim(s)");
+    expect(h.out).toContain(
+      "  ran 001-t01 (grep): completed; evidence: 1 match in 1 file",
+    );
     // The task was created at the command turn, before the planner's call, and ran in
     // this cycle's pass; no leader call was made for it.
     expect(h.calls().map((c) => c.kind)).toEqual([
@@ -1248,12 +1311,11 @@ describe("the IC above the planner", () => {
     expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
     const briefing =
       h.calls().filter((c) => c.kind === "command")[1]?.prompt ?? "";
+    // The IC reads the grep as its evidence line, never its matches (R5-1).
     expect(briefing).toContain(
-      "tasks under command, ended with no leader to report them:\n  - task 001-t01 (grep): find delete\n      claims: 001-c001: ",
+      "tasks under command, ended with no leader to report them:\n  - task 001-t01 (grep): find delete\n      completed; evidence: 1 match in 1 file, attached whole to a task naming 001-t01 in evidenceFrom.tasks\n",
     );
-    expect(briefing).toMatch(
-      /\n {6}completed; result: \{"root":"[^"]*","matches":\[\{"file":"a\.txt","line":2,"text":"the delete handler lives here"\}\],"truncated":false\}\n/,
-    );
+    expect(briefing).not.toContain("the delete handler lives here");
     expect(briefing).toContain(
       "## 4. Tasks completed since the last cycle\n  - 001-t01 (grep, under 001-command)",
     );
@@ -1375,10 +1437,9 @@ describe("the IC above the planner", () => {
       "      changed: test",
       "    work since its previous report:",
       "      task u-a-grep (grep): find the delete handler",
-      "        claims: u-a-c-grep: /r/a.ts:2 matches (observed, confidence 1.00)",
-      "        completed; result: 10 line(s) of JSON, in the task record",
+      "        completed; evidence: 1 match in 1 file, attached whole to a task naming u-a-grep in evidenceFrom.tasks",
       "      task u-a-investigate (investigate, claude-haiku-4-5): explain the scroll",
-      "        claims: u-a-c-inv: /r/a.ts:2 scrolls_on_delete (inferred, confidence 0.70)",
+      "        claims: u-a-c-grep: /r/a.ts:2 matches (observed, confidence 1.00); u-a-c-inv: /r/a.ts:2 scrolls_on_delete (inferred, confidence 0.70)",
       "        completed, answered; summary: the handler resets the scroll",
       "      tool calls: Read 2, Grep 1",
     ]);
@@ -1466,7 +1527,6 @@ describe("the IC above the planner", () => {
       `  - u-a, report ${second?.id}: not_met, picture changed; changed: nothing; why: the file is gone; suggestion: reproduce it`,
       "    work since its previous report:",
       "      task u-a-read (read): read the handler",
-      "        claims: none",
       "        failed: no such file",
       "      task u-a-interpret (interpret, claude-haiku-4-5): weigh it",
       "        claims: none",
@@ -1496,7 +1556,7 @@ describe("the IC above the planner", () => {
     expect(investigate).toBeGreaterThan(grep);
     // The grep's block fits; the investigate's is cut at the cap and points at its task.
     expect(lines[grep + 1]).toBe(
-      "        claims: u-a-c-grep: /r/a.ts:2 matches (observed, confidence 1.00)",
+      "        completed; evidence: 1 match in 1 file, attached whole to a task naming u-a-grep in evidenceFrom.tasks",
     );
     const block = lines.slice(
       investigate,
@@ -1531,7 +1591,7 @@ describe("the IC above the planner", () => {
     store.close();
   });
 
-  it("a task under command that failed or came back insufficient reaches the change report as a leader would read it, and a wide root result is clipped with the task id as the pointer (R4-6)", () => {
+  it("a task under command that failed or came back insufficient reaches the change report as a leader would read it, and a wide root result is its evidence line, never its matches (R4-6, R5-1)", () => {
     const store = new Store(":memory:");
     const s = scriptedIncident(store);
     const failed = s.task({
@@ -1585,7 +1645,7 @@ describe("the IC above the planner", () => {
           root: "/r",
           matches: Array.from({ length: 20 }, (_, i) => ({
             file: "a.ts",
-            line: i,
+            line: i + 1,
             text: "delete()",
           })),
           truncated: false,
@@ -1606,36 +1666,28 @@ describe("the IC above the planner", () => {
         store.listUnits("i1"),
       ),
     );
-    expect(lines.slice(0, 7)).toEqual([
+    // A deterministic result is evidence: the wide grep reaches the IC as its measure with
+    // the task id, twenty matches never entering the IC's context, so nothing clips.
+    expect(lines).toEqual([
       "tasks under command, ended with no leader to report them:",
       "  - task c-read (read): read the handler",
-      "      claims: none",
       "      failed: no such file",
       "  - task c-interpret (interpret, claude-haiku-4-5): weigh it",
       "      claims: none",
       "      completed, insufficient; needed: observation: the view after a delete",
+      "  - task c-grep (grep): find every handler",
+      "      completed; evidence: 20 matches in 1 file, attached whole to a task naming c-grep in evidenceFrom.tasks",
     ]);
-    // A deterministic result is rendered whole under the cap, since no leader reads the
-    // root's results: the wide grep's fits at the default cap and is cut at a small one.
-    expect(lines[7]).toBe("  - task c-grep (grep): find every handler");
-    expect(lines[9]).toMatch(
-      /^ {6}completed; result: \{"root":"\/r","matches":\[/,
-    );
-    expect(lines.join("\n")).not.toContain("chars clipped");
-    const clipped = under(
-      renderChangeReport(
-        store.listEvents("i1"),
-        s.incident,
-        store.listUnits("i1"),
-        200,
+    expect(
+      under(
+        renderChangeReport(
+          store.listEvents("i1"),
+          s.incident,
+          store.listUnits("i1"),
+          200,
+        ),
       ),
-    );
-    expect(clipped.slice(0, 7)).toEqual(lines.slice(0, 7));
-    const block = clipped.slice(7);
-    expect(block.at(-1)).toMatch(
-      /^ {6}\[\+\d+ chars clipped; the full record is task c-grep\]$/,
-    );
-    expect(block.slice(0, -1).join("\n")).toHaveLength(200);
+    ).toEqual(lines);
     store.close();
   });
 
@@ -1687,7 +1739,7 @@ describe("the IC above the planner", () => {
     store.close();
   });
 
-  it("a long summary never clips the claims: they come first and the summary is cut, and a wide grep lists its claims past the first three by id (R4-1)", () => {
+  it("a long summary never clips the claims: they come first and the summary is cut, and a wide grep is one evidence line (R4-1, R5-1)", () => {
     const store = new Store(":memory:");
     const s = scriptedIncident(store);
     s.addUnit({ id: "u-a", objective: "find the scroll" });
@@ -1695,20 +1747,17 @@ describe("the IC above the planner", () => {
     const claim = (
       id: string,
       taskId: string,
-      session: boolean,
     ): Parameters<Store["createClaim"]>[0] => ({
       id,
       incidentId: "i1",
       subject: `/r/${id}.ts:1`,
-      predicate: session ? "causes" : "matches",
+      predicate: "causes",
       object: { text: "x".repeat(200) },
-      status: session ? "asserted" : "verified",
-      basis: session ? "inferred" : "observed",
-      confidence: session ? 0.6 : 1,
+      status: "asserted",
+      basis: "inferred",
+      confidence: 0.6,
       evidence: [`/r/${id}.ts:1`],
-      provenance: session
-        ? { capability: "interpret", taskId, sessionId: "s-i" }
-        : { capability: "grep", taskId, inputs: {} },
+      provenance: { capability: "interpret", taskId, sessionId: "s-i" },
       createdAt: at,
     });
     // Run 003's shape: an interpret with a 3,000-character summary and several claims.
@@ -1721,7 +1770,7 @@ describe("the IC above the planner", () => {
       model: "claude-haiku-4-5",
     });
     for (let i = 1; i <= 6; i++)
-      store.createClaim(claim(`c-i${i}`, interpret.id, true), "dispatcher");
+      store.createClaim(claim(`c-i${i}`, interpret.id), "dispatcher");
     store.setTaskStatus(
       "i1",
       interpret.id,
@@ -1743,8 +1792,6 @@ describe("the IC above the planner", () => {
       capability: "grep",
       objective: "find every handler",
     });
-    for (let i = 1; i <= 6; i++)
-      store.createClaim(claim(`c-g${i}`, grep.id, false), "verifier");
     store.setTaskStatus(
       "i1",
       grep.id,
@@ -1752,7 +1799,15 @@ describe("the IC above the planner", () => {
       "dispatcher",
       "task.completed",
       {
-        result: { root: "/r", matches: [] },
+        result: {
+          root: "/r",
+          matches: Array.from({ length: 60 }, (_, i) => ({
+            file: `f${i % 6}.ts`,
+            line: i + 1,
+            text: "delete()",
+          })),
+          truncated: false,
+        },
       },
     );
     store.record("i1", "unit.reported", "dispatcher", {
@@ -1778,9 +1833,15 @@ describe("the IC above the planner", () => {
       `        completed, answered; summary: ${"y".repeat(300)}…`,
     );
     expect(block.at(-1)).not.toMatch(/chars clipped/);
-    expect(lines).toContain(
-      "        claims: c-g1: /r/c-g1.ts:1 matches (observed, confidence 1.00); c-g2: /r/c-g2.ts:1 matches (observed, confidence 1.00); c-g3: /r/c-g3.ts:1 matches (observed, confidence 1.00); and 3 more, observed at confidence 1.00: c-g4, c-g5, c-g6",
-    );
+    expect(
+      lines.slice(
+        lines.indexOf("      task u-a-grep (grep): find every handler"),
+        lines.indexOf("      tool calls: none"),
+      ),
+    ).toEqual([
+      "      task u-a-grep (grep): find every handler",
+      "        completed; evidence: 60 matches in 6 files, attached whole to a task naming u-a-grep in evidenceFrom.tasks",
+    ]);
     store.close();
   });
 
@@ -2088,7 +2149,7 @@ describe("the IC above the planner", () => {
   }, async () => {
     const h = harness(
       [
-        findIt,
+        findAndSay,
         {
           ...empty,
           incidentStatus: "satisfied",
@@ -2124,12 +2185,9 @@ describe("the IC above the planner", () => {
       ],
       [],
     );
-    // The leader reports met after its one task; the stub fills each verdict's empty
+    // The leader reports met after its two tasks; the stub fills each verdict's empty
     // reportId with the id the briefing lists for that unit.
-    h.ctx.env.NOSCOPE_STUB_TURN = JSON.stringify({
-      kind: "report",
-      report: { outcome: "met", changed: [], pictureChanged: false },
-    });
+    leaderTurns(h, { outcome: "met", changed: [], pictureChanged: false });
     await run(
       ["incident", "create", "--no-size-up", "where is the delete handler"],
       h.ctx,
@@ -2217,7 +2275,7 @@ describe("the IC above the planner", () => {
   }, async () => {
     const h = harness(
       [
-        findIt,
+        findAndSay,
         { ...empty, rationale: "nothing new; the unit revises" },
         {
           ...empty,
@@ -2254,13 +2312,16 @@ describe("the IC above the planner", () => {
       ],
       [],
     );
-    // Cycle 1: the leader reports progress after its grep. Cycle 2: on the brief it
-    // assigns a grep and continues, then reports met on that grep's ending.
+    // Cycle 1: the leader continues past its grep and reports progress after the
+    // investigate. Cycle 2: on the brief it assigns a grep and continues, then reports
+    // met on that grep's ending.
+    h.ctx.env.NOSCOPE_STUB_OUTPUT = observedOutput;
     h.ctx.env.NOSCOPE_STUB_TURN_COUNTER = join(
       (h.ctx.env.NOSCOPE_DB ?? "").replace(/db\.sqlite$/, ""),
       "turns",
     );
     h.ctx.env.NOSCOPE_STUB_TURNS = JSON.stringify([
+      { kind: "continue", report: null },
       {
         kind: "report",
         report: {
@@ -2313,8 +2374,10 @@ describe("the IC above the planner", () => {
     expect(h.out).toContain(
       `  verdict on 001-u02's report ${report.id}: revise: one match is not the whole picture; instructions: also place the remove handler`,
     );
-    expect(h.out).toContain("  leader of 001-u02 assigned 001-t02");
-    expect(h.out).toContain("  ran 001-t02 (grep): completed; 1 claim(s)");
+    expect(h.out).toContain("  leader of 001-u02 assigned 001-t03");
+    expect(h.out).toContain(
+      "  ran 001-t03 (grep): completed; evidence: no matches",
+    );
     expect(h.out).toContain(
       "  unit 001-u02 reported met (revision 1): the delete handler is at a.txt:2; no file mentions remove",
     );
@@ -2326,8 +2389,9 @@ describe("the IC above the planner", () => {
       null,
       "stub-session",
       "stub-session",
+      "stub-session",
     ]);
-    const brief = turns[1]?.prompt ?? "";
+    const brief = turns[2]?.prompt ?? "";
     expect(brief.startsWith("The IC reviewed your report")).toBe(true);
     expect(brief).toContain(
       [
@@ -2344,8 +2408,8 @@ describe("the IC above the planner", () => {
         "No ready tasks remain in your unit. Assign tasks for what the instructions say is missing and continue, or file your report against the unit's objective.",
       ].join("\n"),
     );
-    expect(turns[2]?.prompt).toContain(
-      "Task 001-t02 (grep) completed; its result, 0 match(es), is recorded under its id; claims (1 observed, 0 inferred): 001-c002",
+    expect(turns[3]?.prompt).toContain(
+      "Task 001-t03 (grep) completed; its evidence, no matches, is recorded under its id for a task naming it in evidenceFrom.tasks.",
     );
     const store = h.store();
     const events = store.listEvents("001");
@@ -2361,13 +2425,14 @@ describe("the IC above the planner", () => {
       instructions: "also place the remove handler",
       revision: 1,
     });
-    // Delivery is recorded with the brief's turn, before what the turn did.
+    // Delivery is recorded with the brief's turn, before what the turn did (the first
+    // continue is cycle 1's, past the grep).
     const types = events.map((e) => e.type);
     expect(types.indexOf("unit.revised")).toBeGreaterThan(
       types.indexOf("report.reviewed"),
     );
     expect(types.indexOf("unit.revised")).toBeLessThan(
-      types.indexOf("unit.continued"),
+      types.lastIndexOf("unit.continued"),
     );
     const reports = events.filter((e) => e.type === "unit.reported");
     expect(reports.map((e) => e.payload.revision)).toEqual([undefined, 1]);
@@ -2410,14 +2475,14 @@ describe("the IC above the planner", () => {
     const h = harness(
       [
         {
-          ...findIt,
+          ...findAndSay,
           createTasks: [
-            { ...grepTask, ref: "first" },
+            ...findAndSay.createTasks,
             {
               ...grepTask,
               objective: "find remove",
               inputs: { root: ".", pattern: "remove" },
-              dependsOn: ["first"],
+              dependsOn: ["say"],
             },
           ],
         },
@@ -2465,15 +2530,13 @@ describe("the IC above the planner", () => {
       ],
       [],
     );
-    // The leader reports progress on every turn, so the second grep, which depends on
-    // the first, is still pending when the IC reassigns.
-    h.ctx.env.NOSCOPE_STUB_TURN = JSON.stringify({
-      kind: "report",
-      report: {
-        outcome: "progress",
-        changed: [{ what: "the delete handler is at a.txt:2", claims: [] }],
-        pictureChanged: false,
-      },
+    // The leader continues past the grep and reports progress on every later turn, so
+    // the second grep, which depends on the investigate, is still pending when the IC
+    // reassigns.
+    leaderTurns(h, {
+      outcome: "progress",
+      changed: [{ what: "the delete handler is at a.txt:2", claims: [] }],
+      pictureChanged: false,
     });
     await run(
       ["incident", "create", "--no-size-up", "where is the delete handler"],
@@ -2504,7 +2567,7 @@ describe("the IC above the planner", () => {
     expect(h.out).toContain(
       "  reassignment 001-r01 recorded from unit 001-u02 with 1 claim(s); the next plan gives it to a new unit",
     );
-    expect(h.out).toContain("  task 001-t02 cancelled");
+    expect(h.out).toContain("  task 001-t03 cancelled");
     expect(h.out).toContain("plan rejected:");
     expect(h.out).toContain(
       "  - Reassignments taken: reassignment 001-r01, the slice of closed unit 001-u02, is not taken: no new unit names it in takes",
@@ -2558,12 +2621,13 @@ describe("the IC above the planner", () => {
     ).toMatchObject({
       rationale: "reassign: a reader would do better than another grep",
       reassignmentId: "001-r01",
-      mutation: { kind: "task.status", taskId: "001-t02", status: "cancelled" },
+      mutation: { kind: "task.status", taskId: "001-t03", status: "cancelled" },
     });
     expect(second.listTasks("001").map((t) => [t.id, t.status])).toEqual([
       ["001-t01", "completed"],
-      ["001-t02", "cancelled"],
-      ["001-t03", "completed"],
+      ["001-t02", "completed"],
+      ["001-t03", "cancelled"],
+      ["001-t04", "completed"],
     ]);
     expect(
       second.listUnits("001").find((u) => u.id === "001-u02")?.status,
@@ -2585,10 +2649,13 @@ describe("the IC above the planner", () => {
     expect(h.out).toContain(
       "  unit 001-u03 created under 001-command: read the delete handler (takes reassignment 001-r01)",
     );
-    expect(h.out).toContain("  ran 001-t03 (grep): completed; 1 claim(s)");
+    expect(h.out).toContain(
+      "  ran 001-t04 (grep): completed; evidence: 1 match in 1 file",
+    );
+    // The closed unit's leader took two turns on its session; the reader's starts fresh.
     const turns = h.calls().filter((c) => c.kind === "leader");
-    expect(turns.map((c) => c.resume)).toEqual([null, null]);
-    const brief = turns[1]?.prompt ?? "";
+    expect(turns.map((c) => c.resume)).toEqual([null, "stub-session", null]);
+    const brief = turns[2]?.prompt ?? "";
     expect(brief).toContain(
       [
         "You lead unit 001-u03. Your unit's objective: read the delete handler",
@@ -2600,7 +2667,7 @@ describe("the IC above the planner", () => {
       ].join("\n"),
     );
     expect(brief).toMatch(
-      /^ {2}- 001-c001: \S*a\.txt:2 matches \(observed; confidence 1\)$/m,
+      /^ {2}- 001-c001: \S*a\.txt:2 handles \(observed; confidence 0\.95\)$/m,
     );
     const third = h.store();
     const taken = third
@@ -2655,7 +2722,7 @@ describe("the IC above the planner", () => {
     });
     const h = harness(
       [
-        findIt,
+        findAndSay,
         { ...empty, rationale: "nothing works the open item" },
         {
           ...empty,
@@ -2695,25 +2762,24 @@ describe("the IC above the planner", () => {
       ],
       [],
     );
-    // The unit's leader reports its own slice picture with one open item.
-    h.ctx.env.NOSCOPE_STUB_TURN = JSON.stringify({
-      kind: "report",
-      report: {
-        outcome: "progress",
-        changed: [{ what: "a.txt:2 is a handler", claims: ["001-c001"] }],
-        pictureChanged: false,
-        situation: unitSituation({
-          picture: "THE-UNIT-PICTURE: a.txt:2 handles delete",
-          evidence: [{ claimId: "001-c001", stance: "for" }],
-          open: [
-            {
-              what: "whether other handlers exist",
-              settledBy: "a wider grep",
-            },
-          ],
-          changed: "first report",
-        }),
-      },
+    // The unit's leader continues past the grep and, on the investigate's ending, reports
+    // its own slice picture with one open item, resting on the investigate's observed
+    // claim (R5-1: a grep's matches are evidence, not a claim).
+    leaderTurns(h, {
+      outcome: "progress",
+      changed: [{ what: "a.txt:2 is a handler", claims: ["001-c001"] }],
+      pictureChanged: false,
+      situation: unitSituation({
+        picture: "THE-UNIT-PICTURE: a.txt:2 handles delete",
+        evidence: [{ claimId: "001-c001", stance: "for" }],
+        open: [
+          {
+            what: "whether other handlers exist",
+            settledBy: "a wider grep",
+          },
+        ],
+        changed: "first report",
+      }),
     });
     await run(
       ["incident", "create", "--no-size-up", "where is the delete handler"],
@@ -2766,7 +2832,7 @@ describe("the IC above the planner", () => {
     );
     expect(h.out).toContain("plan approved");
     expect(h.out).toContain(
-      "  task 001-t02 [ready] under 001-u02: grep: find every handler",
+      "  task 001-t03 [ready] under 001-u02: grep: find every handler",
     );
     const store = h.store();
     const events = store.listEvents("001");
@@ -2784,7 +2850,7 @@ describe("the IC above the planner", () => {
     );
     expect(applied.map((e) => e.payload.settles)).toEqual([
       [],
-      [{ taskId: "001-t02", openItemId: "001-o01" }],
+      [{ taskId: "001-t03", openItemId: "001-o01" }],
     ]);
     store.close();
     // No leader turn and no task session read a line of the IC's picture, hypothesis
@@ -2814,7 +2880,7 @@ describe("the IC above the planner", () => {
         "  evidence (only a claim for, observed, proves a part of the picture):",
         "    - 001-c001: for, observed",
         "  open items, each worked by a task in the next plan naming its id in settles, or deferred by the IC:",
-        "    - 001-o01: whether a.txt:2 is the only handler; settled by: a grep for every handler; worked by task 001-t02 (ready)",
+        "    - 001-o01: whether a.txt:2 is the only handler; settled by: a grep for every handler; worked by task 001-t03 (ready)",
         "  reassignments open, each taken by a new unit in the next plan naming its id in takes: (none)",
       ].join("\n"),
     );

@@ -106,7 +106,10 @@ describe("incident commands", () => {
       "budget: tokens unlimited, seconds unlimited; spent tokens 0, seconds 0.0",
     );
     expect(text).toContain("units: 1 active, 0 waiting, 0 closed");
-    expect(text).toContain("claims: 0 verified, 0 asserted, 0 rejected");
+    expect(text).toContain(
+      "claims: 0 from sessions, 0 observed, 0 inferred, 0 rejected",
+    );
+    expect(text).toContain("evidence: 0 deterministic result(s)");
     for (const section of [
       "decisions:",
       "questions waiting on a human:",
@@ -161,10 +164,9 @@ describe("incident commands", () => {
         "      changed: test",
         "    work since its previous report:",
         "      task u-a-grep (grep): find the delete handler",
-        "        claims: u-a-c-grep: /r/a.ts:2 matches (observed, confidence 1.00)",
-        "        completed; result: 10 line(s) of JSON, in the task record",
+        "        completed; evidence: 1 match in 1 file, attached whole to a task naming u-a-grep in evidenceFrom.tasks",
         "      task u-a-investigate (investigate, claude-haiku-4-5): explain the scroll",
-        "        claims: u-a-c-inv: /r/a.ts:2 scrolls_on_delete (inferred, confidence 0.70)",
+        "        claims: u-a-c-grep: /r/a.ts:2 matches (observed, confidence 1.00); u-a-c-inv: /r/a.ts:2 scrolls_on_delete (inferred, confidence 0.70)",
         "        completed, answered; summary: the handler resets the scroll",
         "      tool calls: Read 2, Grep 1",
         "questions waiting on a human:",

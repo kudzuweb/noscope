@@ -978,7 +978,8 @@ have. DESIGN.md Vocabulary (claim, evidence), Step 2, Step 4 and Step 7 follow.
 Acceptance: a run test on the stub where a grep under a unit produces evidence and no
 claim, the investigate that names it in `evidenceFrom` asserts an `observed` claim with the
 task id in its provenance, and the file shows one evidence line and the claim; a replay
-test on run 004's database renders its file with 54 claims and 8 evidence lines.
+test on run 004's database renders its file with 54 claims and four evidence lines (run 004
+has four completed deterministic tasks; its fifth, the TipTap grep, failed with no output).
 ### R5-2: The situation is a living picture
 Ruled by Mauria in review on 2026-09-15 22:41 CDT: the situation is the understanding of
 reality the incident has, starting from the size-up; reading and trying things either

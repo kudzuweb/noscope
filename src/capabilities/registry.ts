@@ -5,7 +5,7 @@ import {
   getExternalEquipment,
   isBuiltinTool,
 } from "../equipment/index.js";
-import { type ClaimProposal, Cost, type Effect } from "../models.js";
+import { Cost, type Effect } from "../models.js";
 
 /** The role text a session-backed capability gives its session; the model comes from each task. */
 export type SessionSpec = {
@@ -22,14 +22,9 @@ export type RunContext = {
   cwd: string;
 };
 
-/** What every capability run yields: its typed output plus the claims it asserts about the world. */
-export type CapabilityResult<O> = {
-  output: O;
-  claims: ClaimProposal[];
-};
-
-/** A finished deterministic run: the result plus the effective inputs it ran with, which are its provenance. */
-export type DeterministicRun = CapabilityResult<unknown> & {
+/** A finished deterministic run: its output, which is evidence, plus the effective inputs it ran with, which are its provenance. */
+export type DeterministicRun = {
+  output: unknown;
   inputs: Record<string, unknown>;
 };
 
@@ -49,7 +44,10 @@ function resolvePaths(
 type Run<I extends z.ZodType, O extends z.ZodType> = (
   input: z.output<I>,
   ctx: RunContext,
-) => Promise<CapabilityResult<z.output<O>>>;
+) => Promise<z.output<O>>;
+
+/** One phrase counting a deterministic output, as the incident file lists the evidence: "74 matches in 11 files", "120 lines", "10 commits, 7 working-tree changes, on main". */
+type Measure<O extends z.ZodType> = (output: z.output<O>) => string;
 
 type CapabilityBase<I extends z.ZodType, O extends z.ZodType> = {
   name: string;
@@ -63,23 +61,22 @@ type CapabilityBase<I extends z.ZodType, O extends z.ZodType> = {
   output: O;
   effect: Effect;
   cost: Cost;
-  /** The predicate whose claims from this capability reach the planner in full only in the cycle after they land, then collapse to one line per task unless the situation names them; null collapses nothing. */
-  summarize: string | null;
 };
 
 /**
  * The assignable thing: declared equipment plus, when judgment is needed, a session. A
- * deterministic capability runs in process and its claims are verified on arrival; a
- * session-backed one produces asserted claims (DESIGN.md Step 3). The kind is the type, so
- * a capability cannot be both or neither.
+ * deterministic capability runs in process and its output is evidence, addressed by task
+ * id and never a claim (R5-1); a session-backed one produces asserted claims (DESIGN.md
+ * Step 3). The kind is the type, so a capability cannot be both or neither.
  */
 export type DeterministicCapability<
   I extends z.ZodType = z.ZodType,
   O extends z.ZodType = z.ZodType,
 > = CapabilityBase<I, O> & {
   kind: "deterministic";
-  produces: "verified_claims";
+  produces: "evidence";
   run: Run<I, O>;
+  measure: Measure<O>;
 };
 
 export type SessionCapability<
@@ -87,7 +84,7 @@ export type SessionCapability<
   O extends z.ZodType = z.ZodType,
 > = CapabilityBase<I, O> & {
   kind: "session";
-  produces: "asserted_claims";
+  produces: "claims";
   session: SessionSpec;
 };
 
@@ -98,30 +95,38 @@ export type Capability<
 
 type Spec<I extends z.ZodType, O extends z.ZodType> = Omit<
   CapabilityBase<I, O>,
-  "cost" | "paths" | "pathsMayBeMissing" | "summarize"
+  "cost" | "paths" | "pathsMayBeMissing"
 > & {
   cost?: Cost;
   paths?: readonly string[];
   pathsMayBeMissing?: boolean;
-  summarize?: string;
 };
 
 const registry = new Map<string, Capability>();
 
 export function defineCapability<I extends z.ZodType, O extends z.ZodType>(
-  spec: Spec<I, O> & { run: Run<I, O>; session?: never },
+  spec: Spec<I, O> & { run: Run<I, O>; measure: Measure<O>; session?: never },
 ): DeterministicCapability<I, O>;
 export function defineCapability<I extends z.ZodType, O extends z.ZodType>(
-  spec: Spec<I, O> & { session: SessionSpec; run?: never },
+  spec: Spec<I, O> & { session: SessionSpec; run?: never; measure?: never },
 ): SessionCapability<I, O>;
 export function defineCapability<I extends z.ZodType, O extends z.ZodType>(
-  spec: Spec<I, O> & { run?: Run<I, O>; session?: SessionSpec },
+  spec: Spec<I, O> & {
+    run?: Run<I, O>;
+    measure?: Measure<O>;
+    session?: SessionSpec;
+  },
 ): Capability<I, O> {
   if (registry.has(spec.name))
     throw new Error(`capability ${spec.name} is already registered`);
   if ((spec.session === undefined) === (spec.run === undefined)) {
     throw new Error(
       `capability ${spec.name} must have exactly one of a session or a run function`,
+    );
+  }
+  if ((spec.run === undefined) !== (spec.measure === undefined)) {
+    throw new Error(
+      `capability ${spec.name} ${spec.run === undefined ? "runs a session and measures nothing" : "is deterministic and must say how its output is counted (measure)"}`,
     );
   }
   for (const name of spec.equipment) {
@@ -147,24 +152,24 @@ export function defineCapability<I extends z.ZodType, O extends z.ZodType>(
     equipment: spec.equipment,
     paths: spec.paths ?? [],
     pathsMayBeMissing: spec.pathsMayBeMissing ?? false,
-    summarize: spec.summarize ?? null,
     input: spec.input,
     output: spec.output,
     effect: spec.effect,
     cost: Cost.parse(spec.cost ?? {}),
   };
   const capability: Capability<I, O> =
-    spec.run !== undefined
+    spec.run !== undefined && spec.measure !== undefined
       ? {
           ...base,
           kind: "deterministic",
-          produces: "verified_claims",
+          produces: "evidence",
           run: spec.run,
+          measure: spec.measure,
         }
       : {
           ...base,
           kind: "session",
-          produces: "asserted_claims",
+          produces: "claims",
           session: spec.session as SessionSpec,
         };
   registry.set(spec.name, capability as Capability);
@@ -181,8 +186,9 @@ export function listCapabilities(): Capability[] {
 
 /**
  * Run a deterministic capability by name: inputs are validated, defaults applied and path
- * fields resolved against the incident's cwd, so the inputs returned are exactly what ran. A
- * session-backed capability needs a provider (PR 7).
+ * fields resolved against the incident's cwd, so the inputs returned are exactly what ran,
+ * and the output is parsed through the capability's schema. A session-backed capability
+ * needs a provider (PR 7).
  */
 export async function runDeterministic(
   name: string,
@@ -197,10 +203,6 @@ export async function runDeterministic(
     );
   const parsed = capability.input.parse(input) as Record<string, unknown>;
   const inputs = resolvePaths(parsed, capability.paths, ctx.cwd);
-  const result = await capability.run(inputs, ctx);
-  return {
-    output: capability.output.parse(result.output),
-    claims: result.claims,
-    inputs,
-  };
+  const output = await capability.run(inputs, ctx);
+  return { output: capability.output.parse(output), inputs };
 }

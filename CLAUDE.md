@@ -27,10 +27,13 @@ unit, whose leader session directs the unit's tasks, runs none of them (every se
 runs in a session of its own, independent ones at once) and reports against the unit's
 objective, and `ic` is command, the root, whose leader is the IC. A filled form the planner
 keeps producing is saved under a name and deployed by name. Whoever defines a task can
-declare a strike team of subagents on it. Tasks run through capabilities (grep, read, investigate, reproduce in a
-browser, interpret) and produce claims with a basis (observed or inferred), a confidence and
-evidence. Deterministic code validates every plan, dispatches, records every call and claim
-as an event, and prints an After Action Review. The human above the IC is the Agency
+declare a strike team of subagents on it. Tasks run through capabilities: a deterministic one
+(grep, read, git history, check a path) runs in process and its output is evidence, kept
+whole under the task id and attached to any session whose brief names it; a session-backed
+one (investigate, reproduce in a browser, interpret) produces claims with a basis (observed
+or inferred), a confidence, evidence, and the task ids of the evidence each claim cites.
+Deterministic code validates every plan, dispatches, records every call and claim as an
+event, and prints an After Action Review. The human above the IC is the Agency
 Administrator: they answer questions only a human can, grant permissions, and set priorities.
 
 `DESIGN.md` is the contract: vocabulary, the ICS mapping table, every build step and the

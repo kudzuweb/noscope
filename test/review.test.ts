@@ -7,7 +7,11 @@ import type { ActionPlan, Event, Incident, Task } from "../src/models.js";
 import { renderReview } from "../src/review.js";
 import { RUNTIME } from "../src/runtime-version.js";
 import { cycleOf } from "../src/store.js";
-import { unitProposal } from "./fixtures/models.js";
+import {
+  citingOutput,
+  readsEvidence,
+  unitProposal,
+} from "./fixtures/models.js";
 
 const tree = resolve("test/fixtures/tree");
 const stub = resolve("test/stub-claude");
@@ -127,13 +131,21 @@ function event(
 }
 
 describe("incident review", () => {
-  it("reviews a scripted run: cycles, the planner's priced usage and session, the deterministic task and its claims, the totals", {
+  it("reviews a scripted run: cycles, the planner's priced usage and session, the deterministic task and its evidence, the session task and its claim, the totals", {
     timeout: 60_000,
   }, async () => {
     const h = harness([
       findIt,
+      {
+        ...empty,
+        createTasks: [readsEvidence("001-u02", "001-t01")],
+        rationale: "read the match",
+      },
       { ...empty, incidentStatus: "satisfied", rationale: "found" },
     ]);
+    h.ctx.env.NOSCOPE_STUB_OUTPUT = JSON.stringify(
+      citingOutput("001-t01", `${join(tree, "a.txt")}:2`),
+    );
     await run(
       ["incident", "create", "--no-size-up", "where is the delete handler"],
       h.ctx,
@@ -145,7 +157,7 @@ describe("incident review", () => {
     expect(h.out[0]).toBe(
       "review of incident 001 [satisfied]  where is the delete handler",
     );
-    expect(h.out[1]).toMatch(/^2 cycle\(s\) from .* events$/);
+    expect(h.out[1]).toMatch(/^3 cycle\(s\) from .* events$/);
     expect(text).toMatch(
       /cycle 1 {2}\S+ {2}applied open {2}ic approve {2}units \+1 -0 {2}tasks \+1 cancelled 0$/m,
     );
@@ -158,7 +170,7 @@ describe("incident review", () => {
       /set period 2: 1 objective\(s\), 0 close\(s\), 1 verdict\(s\), continue {2}session stub-session\n {2}assessment: on_track: stub: nothing tested yet\n {2}verdict on 001-u02's report [0-9a-f-]{36}: revise: stub: progress; instructions: stub: carry on\n {2}ic claude-sonnet-5: in 1,500 \(uncached 1,000 \/ write 200 \/ read 300\) {2}out 42 {2}1\.5 s {2}\$0\.01 {2}reviewed the draft: approve {2}session stub-session/,
     );
     expect(text).toContain(
-      "report verdicts: 1: 0 accepted, 1 revise, 0 reassign\n  001-u02: 0 accepted, 1 revise, 0 reassign",
+      "report verdicts: 2: 0 accepted, 2 revise, 0 reassign\n  001-u02: 0 accepted, 2 revise, 0 reassign",
     );
     // One build wrote the whole log, so review names one runtime spanning every event (R4-12).
     expect(text).toMatch(
@@ -171,45 +183,51 @@ describe("incident review", () => {
       "planner claude-opus-5: in 1,500 (uncached 1,000 / write 200 / read 300)  out 42  1.5 s  $0.01  session stub-session",
     );
     expect(text).toMatch(
-      /ic\s+claude-sonnet-5\s+4\s+6,000\s+168\s+6\.0\s+\$0\.05/,
+      /ic\s+claude-sonnet-5\s+6\s+9,000\s+252\s+9\.0\s+\$0\.07/,
     );
     expect(text).toMatch(
-      /001-t01 grep \(deterministic\): \d+\.\d s {2}completed {2}claims 1 verified$/m,
+      /001-t01 grep \(deterministic\): \d+\.\d s {2}completed {2}evidence 1 match in 1 file$/m,
+    );
+    expect(text).toContain(
+      "001-t02 investigate claude-haiku-4-5: in 1,500 (uncached 1,000 / write 200 / read 300)  out 42  1.5 s  $0.01  completed  claims 1  session stub-session",
     );
     // The cycle's wall time beside the sum of its tasks' seconds (R4-9): the dispatch span
     // runs from the grep's start to the leader's report, so it is never zero here.
     expect(text).toMatch(
       /^ {2}wall time: cycle \d+\.\d s, dispatch \d+\.\d s; 1 task\(s\) summing \d+\.\d s, parallel \d+\.\d\dx; critical path \d+\.\d s \(001-t01\), 1\.00x possible$/m,
     );
-    expect(text.match(/^ {2}wall time:/gm)).toHaveLength(1);
-    expect(text).toMatch(/cycle 2 {2}\S+ {2}applied satisfied/);
+    expect(text.match(/^ {2}wall time:/gm)).toHaveLength(2);
+    expect(text).toMatch(/cycle 3 {2}\S+ {2}applied satisfied/);
     expect(text).toMatch(
-      /planner\s+claude-opus-5\s+2\s+3,000\s+84\s+3\.0\s+\$0\.02/,
+      /planner\s+claude-opus-5\s+3\s+4,500\s+126\s+4\.5\s+\$0\.04/,
     );
     expect(text).toMatch(/grep\s+\(none\)\s+1\s+0\s+0\s+\d+\.\d\s+\$0\.00/);
     // The find unit's leader was asked once, after the grep, and reported with nothing left to run.
     expect(text).toContain(
       "leader of 001-u02 claude-haiku-4-5: in 1,500 (uncached 1,000 / write 200 / read 300)  out 42  1.5 s  $0.01  reported progress, 0 change(s)  session stub-session",
     );
+    // The revised unit's leader continued past the investigate's ending and reported (R4-3).
     expect(text).toMatch(
-      /leader\s+claude-haiku-4-5\s+1\s+1,500\s+42\s+1\.5\s+\$0\.01/,
+      /leader\s+claude-haiku-4-5\s+3\s+4,500\s+126\s+4\.5\s+\$0\.04/,
     );
-    expect(text).toContain("leader turns: 1 (1 reports)");
+    expect(text).toContain("leader turns: 3 (2 reports)");
     expect(text).toContain(
-      "  001-u02: cycle 1: reported progress, 0 change(s)",
-    );
-    expect(text).toContain(
-      "plans: 2 drafted in 2 cycle(s), 2 applied, 0 rejected (0 rule lines)",
+      "  001-u02: cycle 1: reported progress, 0 change(s); cycle 2: reported progress (revision 1), 0 change(s)",
     );
     expect(text).toContain(
-      "ic verdicts: 2 review(s): 2 approve, 0 correct, 0 amend",
+      "plans: 3 drafted in 3 cycle(s), 3 applied, 0 rejected (0 rule lines)",
     );
     expect(text).toContain(
-      "tasks: 1 ran (1 deterministic, 0 sessions) of 1 created",
+      "ic verdicts: 3 review(s): 3 approve, 0 correct, 0 amend",
     );
-    expect(text).toContain("claims: 1 verified, 0 asserted, 0 rejected");
+    expect(text).toContain(
+      "tasks: 2 ran (1 deterministic, 1 sessions) of 2 created",
+    );
+    expect(text).toContain(
+      "claims: 1 from sessions, 1 observed, 0 inferred, 0 rejected; evidence: 1 deterministic result(s)",
+    );
     expect(text).toContain("questions: none");
-    expect(h.out.at(-1)).toBe("cost: $0.09");
+    expect(h.out.at(-1)).toBe("cost: $0.16");
   });
 
   it("exits 4 for an incident that does not exist", async () => {
@@ -375,7 +393,7 @@ describe("incident review", () => {
     );
     expect(text).toContain("    insufficient: the file");
     expect(text).toContain(
-      "t3 investigate some-other-model: in 1,000,000  out 10,000  60.0 s  $1.00  completed  claims 1 asserted (1 inferred)  session s-t3",
+      "t3 investigate some-other-model: in 1,000,000  out 10,000  60.0 s  $1.00  completed  claims 1 (1 inferred)  session s-t3",
     );
     expect(text).toContain(
       "    2 tool call(s) (Grep 1, Agent 1), 1 error(s), 2.0 s in tools",
@@ -414,7 +432,9 @@ describe("incident review", () => {
     expect(text).toContain(
       "tasks: 4 ran (0 deterministic, 4 sessions) of 5 created, 1 failed before running",
     );
-    expect(text).toContain("claims: 0 verified, 0 asserted, 0 rejected");
+    expect(text).toContain(
+      "claims: 0 from sessions, 0 observed, 0 inferred, 0 rejected; evidence: 0 deterministic result(s)",
+    );
     expect(text).toContain("  asked in cycle 2: does it happen every time?");
     expect(text).toContain("  answered at 2026-09-13T13:17:00.000Z: yes");
     // 0.75+2.15+0.30+2.15+1.00+2.00 = 8.35 low; 10.25+2.15+4.10+2.15+1.00+2.00 = 21.65 high.

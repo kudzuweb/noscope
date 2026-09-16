@@ -27,7 +27,7 @@ const fakeProvider: Provider = {
   },
 };
 
-/** An incident one cycle in: a verified and an asserted claim, a completed, an insufficient and an open task, a unit waiting on its leader's request, a rejected plan. */
+/** An incident one cycle in: an observed claim citing a grep's evidence and an inferred one, a completed grep, an insufficient and an open task, a unit waiting on its leader's request, a rejected plan. */
 function cycledIncident(store: Store) {
   const s = scriptedIncident(store, "i1", AT);
   store.createUnit(
@@ -85,24 +85,31 @@ function cycledIncident(store: Store) {
     "dispatcher",
     "task.completed",
     {
-      result: { matches: 1 },
+      result: {
+        root: "/repo/src",
+        matches: [
+          { file: "view.ts", line: 88, text: "el.scrollTo(0, bottom)" },
+        ],
+        truncated: false,
+      },
     },
   );
   store.createClaim(
     {
-      id: "c-verified",
+      id: "c-cited",
       incidentId: "i1",
       subject: "/repo/src/view.ts:88",
-      predicate: "matches",
-      object: { pattern: "scrollTo", text: "el.scrollTo(0, bottom)" },
-      status: "verified",
+      predicate: "calls",
+      object: "scrollTo",
+      status: "asserted",
       basis: "observed",
-      confidence: 1,
+      confidence: 0.95,
       evidence: ["/repo/src/view.ts:88"],
       provenance: {
-        capability: "grep",
-        taskId: "t-grep",
-        inputs: { root: "/repo/src", pattern: "scrollTo" },
+        capability: "investigate",
+        taskId: "t-inv",
+        sessionId: "sess-1",
+        cites: ["t-grep"],
       },
       createdAt: AT,
     },
@@ -171,7 +178,7 @@ function cycledIncident(store: Store) {
       changed: [
         {
           what: "scrollTo is called once, at view.ts:88",
-          claims: ["c-verified"],
+          claims: ["c-cited"],
         },
       ],
       pictureChanged: false,
@@ -249,53 +256,44 @@ function cycledIncident(store: Store) {
 }
 
 describe("planner", () => {
-  it("collapses a summarizing capability's claims to one line per task after their first cycle unless the situation names them as evidence, and shows a session's findings in full", () => {
+  it("lists a session's claims with what they cite, then one evidence line per completed deterministic task, never a grep's matches as claims, and shows a session's findings in full (R5-1)", () => {
     const store = new Store(":memory:");
     const s = cycledIncident(store);
     const incident = store.getIncident("i1");
     if (incident === undefined) throw new Error("no incident");
     const fresh = renderPlannerInput(store, incident, [fakeProvider]);
-    expect(fresh).toContain("  - c-verified: /repo/src/view.ts:88 matches");
-    store.createClaim(
-      {
-        id: "c-second",
-        incidentId: "i1",
-        subject: "/repo/src/view.ts:90",
-        predicate: "matches",
-        object: { pattern: "scrollTo", text: "el.scrollTo(0, 0)" },
-        status: "verified",
-        basis: "observed",
-        confidence: 1,
-        evidence: ["/repo/src/view.ts:90"],
-        provenance: {
-          capability: "grep",
-          taskId: "t-grep",
-          inputs: { root: "/repo/src", pattern: "scrollTo" },
-        },
-        createdAt: AT,
-      },
-      "verifier",
+    const section = fresh.slice(
+      fresh.indexOf("## 2. Claims and evidence"),
+      fresh.indexOf("## 3. Unit tree"),
     );
-    // The IC's situation names c-second as evidence, which keeps it in view (R5-2); the
-    // plan moves the cycle.
-    store.record("i1", "command.turned", "runtime", {
-      cycle: 2,
-      turn: {
-        situation: situation({
-          changed: "the greps landed",
-          picture: "scrollTo at 88 is the one",
-          evidence: [{ claimId: "c-second", stance: "for" }],
-        }),
-      },
-    });
-    store.record("i1", "plan.proposed", "planner", { rationale: "next" });
-    store.record("i1", "plan.applied", "runtime", { rationale: "next" });
-    const later = renderPlannerInput(store, incident, [fakeProvider]);
-    expect(later).toContain("  - c-second: /repo/src/view.ts:90 matches");
-    expect(later).not.toContain("  - c-verified: /repo/src/view.ts:88 matches");
-    expect(later).toContain(
-      '  - task t-grep (grep {"root":"src","pattern":"scrollTo"}): 1 claims across 1 file(s): /repo/src/view.ts (1)',
-    );
+    expect(section.split("\n").slice(0, 7)).toEqual([
+      "## 2. Claims and evidence",
+      "claims:",
+      "  - c-asserted: /repo/src/view.ts:88 runs_after_delete true (asserted, inferred; confidence 0.7; evidence /repo/src/view.ts:80) [from investigate task t-inv, session sess-1]",
+      '  - c-cited: /repo/src/view.ts:88 calls "scrollTo" (asserted, observed; confidence 0.95; evidence /repo/src/view.ts:88) [from investigate task t-inv, session sess-1, citing t-grep]',
+      "evidence, each attached whole to a task that names its id in evidenceFrom.tasks:",
+      '  - t-grep (grep {"root":"src","pattern":"scrollTo"}): 1 match in 1 file',
+      "",
+    ]);
+    // A claim a deterministic task wrote before R5-1 is in the store and not in the file.
+    store.db
+      .prepare(
+        "INSERT INTO claims (id, incident_id, subject, predicate, object_json, status, basis, confidence, evidence_json, provenance_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        "c-legacy",
+        "i1",
+        "/repo/src/view.ts:88",
+        "matches",
+        JSON.stringify({ pattern: "scrollTo" }),
+        "verified",
+        "observed",
+        1,
+        "[]",
+        JSON.stringify({ capability: "grep", taskId: "t-grep", inputs: {} }),
+        AT,
+      );
+    expect(store.listClaims("i1").map((c) => c.id)).toContain("c-legacy");
     const inv = s.task({
       id: "t-inv2",
       capability: "investigate",
@@ -326,8 +324,12 @@ describe("planner", () => {
       },
     );
     const text = renderPlannerInput(store, incident, [fakeProvider]);
+    expect(text).not.toContain("c-legacy");
     expect(text).toContain(
       "result summary: the handler focuses the editor; observations: /repo/src/view.ts:88: calls focus(); claims none",
+    );
+    expect(text).toContain(
+      '  - t-grep (grep, under u-scroll): objective "find scrollTo calls"; inputs {"root":"src","pattern":"scrollTo"}; expected "every call site"; criteria ["each match cited"]; evidence: 1 match in 1 file, attached whole to a task naming t-grep in evidenceFrom.tasks',
     );
     store.close();
   });
@@ -349,11 +351,15 @@ describe("planner", () => {
         subject: "PageCard.tsx:1884",
         predicate: "calls",
         object: "focus()",
-        status: "verified",
+        status: "asserted",
         basis: "observed",
         confidence: 1,
         evidence: [],
-        provenance: { capability: "grep", taskId: "t-x", inputs: {} },
+        provenance: {
+          capability: "investigate",
+          taskId: "t-x",
+          sessionId: "s",
+        },
         createdAt: AT,
       },
       "verifier",
@@ -369,7 +375,11 @@ describe("planner", () => {
         basis: "inferred",
         confidence: 0.6,
         evidence: [],
-        provenance: { capability: "investigate", taskId: "t-y" },
+        provenance: {
+          capability: "investigate",
+          taskId: "t-y",
+          sessionId: "s",
+        },
         createdAt: AT,
       },
       "dispatcher",
@@ -698,9 +708,12 @@ describe("planner", () => {
       capability requests answered:
         (none)
 
-      ## 2. Claims
+      ## 2. Claims and evidence
+      claims:
         - c-asserted: /repo/src/view.ts:88 runs_after_delete true (asserted, inferred; confidence 0.7; evidence /repo/src/view.ts:80) [from investigate task t-inv, session sess-1]
-        - c-verified: /repo/src/view.ts:88 matches {"pattern":"scrollTo","text":"el.scrollTo(0, bottom)"} (verified, observed; confidence 1; evidence /repo/src/view.ts:88) [from grep task t-grep]
+        - c-cited: /repo/src/view.ts:88 calls "scrollTo" (asserted, observed; confidence 0.95; evidence /repo/src/view.ts:88) [from investigate task t-inv, session sess-1, citing t-grep]
+      evidence, each attached whole to a task that names its id in evidenceFrom.tasks:
+        - t-grep (grep {"root":"src","pattern":"scrollTo"}): 1 match in 1 file
 
       ## 3. Unit tree
         i1-command [active] command: where deletion moves the scroll position (ic; leader claude-code/claude-haiku-4-5; last report: none)
@@ -708,7 +721,7 @@ describe("planner", () => {
           u-wait [waiting] what the author expects after a delete (base; leader claude-code/claude-haiku-4-5; last report: progress; waiting on: human_knowledge: where should the view rest after a delete? (the objective does not say) (question i1-q01))
 
       ## 4. Tasks completed since the last cycle
-        - t-grep (grep, under u-scroll): objective "find scrollTo calls"; inputs {"root":"src","pattern":"scrollTo"}; expected "every call site"; criteria ["each match cited"]; result {"matches":1}; claims c-verified
+        - t-grep (grep, under u-scroll): objective "find scrollTo calls"; inputs {"root":"src","pattern":"scrollTo"}; expected "every call site"; criteria ["each match cited"]; evidence: 1 match in 1 file, attached whole to a task naming t-grep in evidenceFrom.tasks
       failed or cancelled since the last cycle, each with the tasks cancelled because they waited on it; nothing waits on a task that will never complete:
         (none)
 
@@ -716,7 +729,7 @@ describe("planner", () => {
         - t-interp (interpret): "say why the view scrolls" needed human_knowledge: which scroll position is wanted
 
       ## 6. Unit reports since the last cycle
-        - u-scroll: not_met; changed: scrollTo is called once, at view.ts:88 (claims c-verified); why: the call site is known but not what reaches it; suggestion: read the handler that calls it
+        - u-scroll: not_met; changed: scrollTo is called once, at view.ts:88 (claims c-cited); why: the call site is known but not what reaches it; suggestion: read the handler that calls it
         - u-wait: progress, picture changed; changed: nothing; resource requests, the unit waits on them: human_knowledge: where should the view rest after a delete? (the objective does not say)
 
       ## 7. Open tasks
@@ -728,13 +741,13 @@ describe("planner", () => {
           inputs: { path: string, required }
         - git_history [deterministic, read_only]: Record a repository's branch, working-tree changes and recent commits, optionally for one path (typical 0.1s)
           inputs: { cwd: string, required; limit: integer = 20; path: string, optional }
-        - grep [deterministic, read_only]: Search files for a pattern and record each match, or the verified absence of any within the search's bounds (typical 0.1s)
+        - grep [deterministic, read_only]: Search files for a pattern and record each match, or the absence of any within the search's bounds (typical 0.1s)
           inputs: { root: string, required; pattern: string, required; glob: string = "*"; ignoreCase: boolean = false; exclude: string[] = ["node_modules",".git"]; maxMatches: integer = 500 }
         - interpret [session, read_only]: Given evidence and nothing else, say what it implies as asserted claims, or what more it would take (typical 15s, 4000 tokens)
           inputs: { question: string, required; evidence: { source: string, required; content: string, required }[] = [] }
         - investigate [session, read_only]: Read the files a question points at and return what they show, as asserted claims with evidence (typical 30s, 8000 tokens)
           inputs: { question: string, required; paths: string[] = [] }
-        - read [deterministic, read_only]: Read a file and record its contents as a fact (typical 0.01s)
+        - read [deterministic, read_only]: Read a file and record its contents (typical 0.01s)
           inputs: { path: string, required; maxBytes: integer = 200000 }
         - reproduce [session, read_only]: Open a page in a browser, perform steps in order, and report what was observed after each; settles a claim about runtime behavior that reading code cannot. Name playwright_browser: claude_in_chrome is refused from a headless session and the task will come back insufficient (typical 90s, 8000 tokens)
           inputs: { browser: "playwright_browser" | "claude_in_chrome", required; url: string, required; steps: string[], required; observe: string[], required }

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { recordActivity } from "./activity.js";
+import { isSessionClaim, measureEvidence } from "./evidence.js";
 import {
   describeRefusedCall,
   eventsSinceLastCommand,
@@ -267,9 +268,10 @@ function describeSettled(
 /**
  * What a task came to, in one line: a session result's outcome and its summary (the
  * conclusion, or the observation count, when the capability's findings carry no summary),
- * clipped at `SUMMARY_CHARS`, a deterministic result's size in lines of JSON, or the
- * failure's reason with the tasks cancelled because they waited on it (R5-10). The result
- * itself stays in the task record.
+ * clipped at `SUMMARY_CHARS`; a deterministic task's evidence as its measure with the
+ * task id, the same line the incident file lists it by (R5-1); or the failure's reason
+ * with the tasks cancelled because they waited on it (R5-10). The result itself stays in
+ * the task record.
  */
 function describeEnding(
   task: Task,
@@ -280,13 +282,8 @@ function describeEnding(
   if (ended.type === "task.failed")
     return `failed: ${str(ended.payload.reason) || "(no reason recorded)"}${describeSettled(task, settled, tasks)}`;
   const result = mutationOf(ended)?.result;
-  if (task.model === null) {
-    const lines =
-      result === undefined || result === null
-        ? 0
-        : JSON.stringify(result, null, 2).split("\n").length;
-    return `completed; result: ${lines} line(s) of JSON, in the task record`;
-  }
+  if (task.model === null)
+    return `completed; evidence: ${measureEvidence(task.capability, result)}, attached whole to a task naming ${task.id} in evidenceFrom.tasks`;
   const r = (result ?? {}) as {
     outcome?: unknown;
     findings?: unknown;
@@ -321,20 +318,9 @@ function describeClaim(c: Claim): string {
   return `${c.id}: ${c.subject} ${c.predicate} (${c.basis}, confidence ${c.confidence === null ? "none" : c.confidence.toFixed(2)})`;
 }
 
-/** A deterministic task's claims past this many are listed by id only: they are observed at confidence 1 by construction, one per match, and a wide grep would otherwise fill the block. */
-const DETERMINISTIC_CLAIMS_SHOWN = 3;
-
-/**
- * A task's claims in one line: none, each in full, or for a deterministic task with many
- * the first few in full and the rest by id, so the block's cap falls on a session's
- * claims (whose basis and confidence are what the IC judges) and not on a match list.
- */
-function describeClaims(task: Task, claims: readonly Claim[]): string {
-  if (claims.length === 0) return "none";
-  if (task.model !== null || claims.length <= DETERMINISTIC_CLAIMS_SHOWN)
-    return claims.map(describeClaim).join("; ");
-  const rest = claims.slice(DETERMINISTIC_CLAIMS_SHOWN);
-  return `${claims.slice(0, DETERMINISTIC_CLAIMS_SHOWN).map(describeClaim).join("; ")}; and ${rest.length} more, observed at confidence 1.00: ${rest.map((c) => c.id).join(", ")}`;
+/** A session task's claims in one line, each in full, so the IC judges their basis and confidence; a deterministic task has none, its output being evidence (R5-1). */
+function describeClaims(claims: readonly Claim[]): string {
+  return claims.length === 0 ? "none" : claims.map(describeClaim).join("; ");
 }
 
 /** A task's block clipped at the cap, the pointer naming the task so the IC can find the full record. */
@@ -347,7 +333,7 @@ function clipBlock(lines: readonly string[], taskId: string, cap: number) {
   ];
 }
 
-/** The claims the log created under the given tasks, by task id, as their `claim.create` mutations carried them. */
+/** The claims sessions asserted under the given tasks, by task id, as their `claim.create` mutations carried them; a record from before R5-1 also holds claims deterministic tasks wrote, which are not read. */
 function claimsUnder(
   events: readonly Event[],
   taskIds: ReadonlySet<string>,
@@ -357,7 +343,11 @@ function claimsUnder(
     const m = mutationOf(e);
     if (m?.kind !== "claim.create") continue;
     const parsed = Claim.safeParse(m.claim);
-    if (!parsed.success || !taskIds.has(parsed.data.provenance.taskId))
+    if (
+      !parsed.success ||
+      !isSessionClaim(parsed.data) ||
+      !taskIds.has(parsed.data.provenance.taskId)
+    )
       continue;
     const list = claimsByTask.get(parsed.data.provenance.taskId) ?? [];
     list.push(parsed.data);
@@ -370,9 +360,9 @@ function claimsUnder(
  * The root's tasks that ended since the IC last acted (R4-6), one block each in the form
  * of a report's work: capability, objective, claims, then how it ended, clipped at `cap`
  * with the task id as the pointer. No leader reports on these, so this block is the IC's
- * only view of them; a deterministic result's text is therefore rendered whole under the
- * cap rather than pointed at, and a session result reads as under a report (its summary,
- * or `insufficient` with what it needed, or the failure's reason).
+ * only view of them: a deterministic result is evidence, rendered as its measure with the
+ * task id (R5-1), and a session result reads as under a report (its summary, or
+ * `insufficient` with what it needed, or the failure's reason).
  */
 function renderTasksUnderCommand(
   events: readonly Event[],
@@ -394,21 +384,21 @@ function renderTasksUnderCommand(
     new Set(ended.map((t) => t.task.id)),
   );
   const settled = settledBy(events);
-  return ended.flatMap(({ task, event }) => {
-    const ending =
-      event.type === "task.completed" && task.model === null
-        ? `completed; result: ${JSON.stringify(mutationOf(event)?.result ?? null)}`
-        : describeEnding(task, event, settled.get(task.id), tasks);
-    return clipBlock(
+  return ended.flatMap(({ task, event }) =>
+    clipBlock(
       [
         `  - task ${task.id} (${task.capability}${task.model === null ? "" : `, ${task.model}`}): ${task.objective}`,
-        `      claims: ${describeClaims(task, claimsByTask.get(task.id) ?? [])}`,
-        `      ${ending}`,
+        ...(task.model === null
+          ? []
+          : [
+              `      claims: ${describeClaims(claimsByTask.get(task.id) ?? [])}`,
+            ]),
+        `      ${describeEnding(task, event, settled.get(task.id), tasks)}`,
       ],
       task.id,
       cap,
-    );
-  });
+    ),
+  );
 }
 
 /**
@@ -416,9 +406,9 @@ function renderTasksUnderCommand(
  * the unit's tasks that ended since its previous report (or since the incident began), in
  * the order they ended, each with its capability, objective, the claims it produced (id,
  * subject, predicate, basis, confidence; the claims before the ending, so the block's cap
- * falls on a summary's tail and never on the claims) and how it ended and what it came
- * to, the task's block clipped at `cap` characters with the task id as the pointer to the
- * full record; then the unit's tool calls in that window by tool name with counts, the tasks'
+ * falls on a summary's tail and never on the claims; a deterministic task lists no claims,
+ * its ending being its evidence, R5-1) and how it ended and what it came to, the task's
+ * block clipped at `cap` characters with the task id as the pointer to the full record; then the unit's tool calls in that window by tool name with counts, the tasks'
  * and the leader's own turns' (a task's calls are filed under it, a turn's under the
  * unit with no task and no cycle; the IC's own calls under the root carry a cycle and
  * are not the root unit's work as a leader). A bounded amount of text per task, so a
@@ -469,18 +459,21 @@ function renderReportWork(
   return [
     "    work since its previous report:",
     ...(ended.length === 0 ? ["      (no task ended)"] : []),
-    ...ended.flatMap(({ task, event }) => {
-      const claims = claimsByTask.get(task.id) ?? [];
-      return clipBlock(
+    ...ended.flatMap(({ task, event }) =>
+      clipBlock(
         [
           `      task ${task.id} (${task.capability}${task.model === null ? "" : `, ${task.model}`}): ${task.objective}`,
-          `        claims: ${describeClaims(task, claims)}`,
+          ...(task.model === null
+            ? []
+            : [
+                `        claims: ${describeClaims(claimsByTask.get(task.id) ?? [])}`,
+              ]),
           `        ${describeEnding(task, event, settled.get(task.id), tasks)}`,
         ],
         task.id,
         cap,
-      );
-    }),
+      ),
+    ),
     `      tool calls: ${calls === "" ? "none" : calls}`,
   ];
 }

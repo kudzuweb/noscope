@@ -66,6 +66,11 @@ checkout read-only and one sizing up a diagnostic objective on it, and a
 `reproduce` session that drives Playwright's MCP server, which needs Playwright's Chromium
 installed (`npx playwright install chromium`) and network access for
 `npx --yes @playwright/mcp@latest`.
+`NOSCOPE_REPLAY_DB`, when it names a copy of run 004's record (`~/.noscope/fourth-run.sqlite`,
+not in the repository), also runs the replay test in `test/replay.test.ts`: the file
+rendered from that record lists its 54 session claims and four evidence lines, and
+`incident review` counts both (R5-1). Point it at a copy, never the original: opening a
+record migrates it in place, and the test copies it once more before opening.
 
 `pnpm build` compiles `src/` into `dist/` and then writes `dist/runtime-version.json`, the
 commit the build ran at (`-dirty` when a tracked file differed from it, `unknown` with no
