@@ -721,7 +721,7 @@ describe("incident review", () => {
       event(11, "plan.applied", {
         incidentStatus: "open",
         verdict: "approve",
-        corrections: null,
+        patches: null,
       }),
     ];
     expect(cycleOf(events)).toBe(3);
@@ -737,7 +737,7 @@ describe("incident review", () => {
       ),
     ]);
     expect(lines).toContain(
-      "plans: 3 drafted in 5 cycle(s), 2 applied, 1 rejected (1 rule lines)",
+      "plans: 3 drafted in 5 cycle(s), 2 applied, 1 rejected (1 rule lines); redrafts: 0 after a rule, 0 after a correction",
     );
     expect(
       lines.some((l) =>

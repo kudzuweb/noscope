@@ -17,21 +17,23 @@ import {
   type Event,
   type Incident,
   jsonSchemaFor,
+  type PlanPatch,
   type Settlement,
   type Situation,
   type Task,
   type Unit,
   type Usage,
 } from "./models.js";
+import { describePatch } from "./patches.js";
 import type { Provider } from "./providers/index.js";
 import { cycleOf, type Store, sumUsage } from "./store.js";
 import { describeLeader, lastReports, lastVerdicts } from "./tree.js";
 
 // The planner is ICS's Planning Section: a stateless provider call each cycle that drafts
 // the tactics, as a suggestion for the IC, from the incident file, the period objectives
-// and the situation the IC wrote (R4-5), and redrafts once when the IC corrects it. It
-// proposes structure and never runs a tool, writes to the store, or marks its own
-// conclusions true (DESIGN.md Step 4).
+// and the situation the IC wrote (R4-5), and redrafts when the validator rejects a draft
+// or the IC's correction (R5-3), up to twice a cycle. It proposes structure and never runs
+// a tool, writes to the store, or marks its own conclusions true (DESIGN.md Step 4).
 
 export const PLANNER_MODEL = "claude-opus-5";
 const PLANNER_SECONDS = 300;
@@ -39,7 +41,7 @@ const CLIP = 200;
 
 export const PLANNER_SYSTEM_PROMPT = `You are the Planning Section of noscope, an agentic runtime modeled on the Incident Command System (ICS).
 
-An incident is any objective Mauria asks to have pursued; it does not mean something went wrong. Around it a temporary organization of units is built and torn down when it is done. Each operational period the Incident Commander sets the period's objectives and priorities; you draft an action plan against them; the IC reviews your draft once, approving it, correcting it (you then redraft once against the corrections) or amending it; a validator checks the plan's shape or rejects it whole; the units then run their tasks under their leaders, and their results come back to you as claims and reports.
+An incident is any objective Mauria asks to have pursued; it does not mean something went wrong. Around it a temporary organization of units is built and torn down when it is done. Each operational period the Incident Commander sets the period's objectives and priorities; you draft an action plan against them; a validator checks your draft against its rules first, and a draft that breaks one comes back to you with the reasons for a redraft, with no IC call between; the IC reviews a valid draft once, for substance, approving it, correcting it with patches the runtime applies to your draft, or amending it; a correction or amendment that breaks a rule comes back to you the same way, and the plan is then applied without a second review; the units then run their tasks under their leaders, and their results come back to you as claims and reports.
 
 The terms: a unit is a box in the incident's tree that owns a slice of the problem, with an objective and a leader, a session on the provider and model the unit names that directs the unit's tasks and reports against the objective; a task is one assignment, owned by one unit, bound to one capability; a capability is the assignable thing, deterministic or session-backed; a claim is a statement with a status and a basis. A task to a session-backed capability on the leader's model, needing no equipment beyond the unit's, runs inside the leader's session; any other task runs in its own session or in process and its result reaches the leader. The status names the source and gates nothing: verified means deterministic equipment produced it, asserted means a session did. The basis says whether it was seen: observed means seen in code, in output or in a browser, inferred means reasoned to from what was seen. An observed claim counts as proven whichever source produced it.
 
@@ -347,9 +349,15 @@ export function renderPlannerInput(
     rejections.length > 0
       ? since
       : lastCycleSequence(events.filter((p) => p.sequence < since));
-  const warnings = events
-    .filter((e) => e.type === "plan.warned" && e.sequence > warnedAfter)
-    .map((e) => `${String(e.payload.rule)}: ${String(e.payload.reason)}`);
+  // A plan validated twice in one cycle (the draft, then the IC's correction of it; R5-3)
+  // records its warnings twice, so the lines are deduplicated.
+  const warnings = [
+    ...new Set(
+      events
+        .filter((e) => e.type === "plan.warned" && e.sequence > warnedAfter)
+        .map((e) => `${String(e.payload.rule)}: ${String(e.payload.reason)}`),
+    ),
+  ];
   const budgetStops = recent
     .filter((e) => e.type === "budget.exceeded")
     .map(
@@ -528,29 +536,69 @@ export type PlanProposal = {
   usage: Usage;
 };
 
-/** What the planner redrafts against: its own draft and the IC's corrections to it. */
-export type Redraft = { draft: ActionPlan; corrections: string };
+/**
+ * What the planner redrafts against (R5-3): its own draft and the rules it broke (cause
+ * `rule`), or the IC's correction of a valid draft, the patches and the plan they gave,
+ * or the IC's amended plan, and the rules that plan broke (cause `correction`).
+ */
+export type Redraft =
+  | { cause: "rule"; draft: ActionPlan; reasons: string[] }
+  | {
+      cause: "correction";
+      draft: ActionPlan;
+      verdict: "correct" | "amend";
+      rationale: string;
+      patches: PlanPatch[];
+      corrected: ActionPlan | null;
+      reasons: string[];
+    };
 
-/** The corrections rendered after the incident file, last so the file's prefix still caches. */
+/** The reasons rendered after the incident file, last so the file's prefix still caches. */
 function renderRedraft(redraft: Redraft): string {
+  if (redraft.cause === "rule")
+    return [
+      "",
+      "# The validator rejected your draft",
+      "Your draft for this period was:",
+      JSON.stringify(redraft.draft, null, 2),
+      "",
+      "The rules it broke:",
+      ...bullets(redraft.reasons),
+      "",
+      "Redraft the plan so that every rule passes; the IC has not seen the draft and reviews the redraft.",
+    ].join("\n");
   return [
     "",
-    "# Corrections from the Incident Commander",
+    "# The Incident Commander corrected your draft, and the validator rejected the correction",
     "Your draft for this period was:",
     JSON.stringify(redraft.draft, null, 2),
     "",
-    "The IC's corrections:",
-    redraft.corrections,
+    `The IC's verdict was ${redraft.verdict}: ${redraft.rationale}`,
+    ...(redraft.patches.length === 0
+      ? []
+      : ["The IC's patches:", ...bullets(redraft.patches.map(describePatch))]),
+    ...(redraft.corrected === null
+      ? []
+      : [
+          redraft.verdict === "amend"
+            ? "The plan as the IC amended it:"
+            : "The plan after the patches:",
+          JSON.stringify(redraft.corrected, null, 2),
+        ]),
     "",
-    "Redraft the plan against them; the IC then approves or amends it.",
+    "What the validator rejected:",
+    ...bullets(redraft.reasons),
+    "",
+    "Redraft the plan keeping the IC's correction in substance and passing every rule; the plan is applied without a second review.",
   ].join("\n");
 }
 
 /**
  * One planner call: render the incident file, ask the provider for an action plan against
  * the ActionPlan schema, and record `plan.proposed` with the plan and its rationale. With
- * `redraft`, the draft and the IC's corrections follow the file and `plan.proposed` says
- * so. The plan is reviewed, validated and applied by the caller; this writes nothing else.
+ * `redraft`, the rejected draft and the reasons follow the file and `plan.proposed`
+ * carries the cause (R5-3). The plan is validated, reviewed and applied by the caller;
+ * this writes nothing else.
  */
 export async function proposePlan(
   store: Store,
@@ -590,7 +638,13 @@ export async function proposePlan(
       redraft: options.redraft !== undefined,
       ...(options.redraft === undefined
         ? {}
-        : { corrections: options.redraft.corrections }),
+        : {
+            cause: options.redraft.cause,
+            reasons: options.redraft.reasons,
+            ...(options.redraft.cause === "correction"
+              ? { patches: options.redraft.patches }
+              : {}),
+          }),
     });
     if (plan.discrepancy !== undefined)
       store.record(incident.id, "picture.discrepancy", "planner", {

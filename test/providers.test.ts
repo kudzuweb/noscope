@@ -244,7 +244,9 @@ describe("claude code provider", () => {
       "A link deferred is a decision recorded, not an omission",
       "A reassignment updates the slice it concerns",
       "as a suggestion of the tactics that work it",
-      "After a redraft you approve or amend, never correct again",
+      "The validator checks the draft before you see it",
+      "correct it with patches, each one task's field set to a new value, a task added or a task cancelled, which the runtime applies to the draft and validates with no planner call and no second review",
+      "never correct for a rule, since the validator has held the draft to every rule already",
       "names the priority that chose between plans",
     ])
       expect(ic).toContain(line);

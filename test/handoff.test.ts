@@ -427,7 +427,7 @@ describe("the IC handoff at the context threshold", () => {
       review.indexOf("# The planner's draft for operational period 1"),
     ).toBeGreaterThan(review.indexOf("## 10. Situation"));
     expect(review).toMatch(
-      /\nFirst, evaluate the handoff document you took command with: for each period objective and priority, each unit's state, the hypothesis, each thing set aside and the next move, say in briefingEvaluation .* Then review it against the period objectives and priorities: approve it, correct it once/,
+      /\nFirst, evaluate the handoff document you took command with: for each period objective and priority, each unit's state, the hypothesis, each thing set aside and the next move, say in briefingEvaluation .* Then review it against the period objectives, your situation and the priorities: approve it as drafted; correct it with patches/,
     );
     expect(Object.keys(schemaOf(calls[3] as Call).properties)).toContain(
       "briefingEvaluation",

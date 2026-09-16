@@ -18,6 +18,7 @@ import {
   type Incident,
   type IncidentStatus,
   type Period,
+  type PlanPatch,
   type Question,
   type ResourceRequest,
   stable,
@@ -113,10 +114,10 @@ function recordChannels(
     );
 }
 
-/** The IC's verdict on the draft, recorded on `plan.applied` beside the plan (DESIGN.md Step 4). */
+/** The IC's verdict on the draft, recorded on `plan.applied` beside the plan (DESIGN.md Step 4): the patches of a `correct` (R5-3), null otherwise. */
 export type PlanReview = {
   verdict: "approve" | "correct" | "amend";
-  corrections: string | null;
+  patches: PlanPatch[] | null;
   diff: PlanDiff;
 };
 

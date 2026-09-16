@@ -17,8 +17,8 @@ import {
   type ActionPlan,
   CommandTurn,
   type Event,
-  FinalReviewTurn,
   jsonSchemaFor,
+  PlanPatch,
   type ReportVerdict,
   type ReviewTurn as Review,
   ReviewTurn,
@@ -161,20 +161,13 @@ const schemaOf = (c: Call) =>
   };
 
 describe("the IC above the planner", () => {
-  it("cycle 1: the IC sets objectives, the planner drafts, the IC corrects, the planner redrafts, the IC approves, the plan applies and a unit reports", {
+  it("cycle 1: the IC sets objectives, the planner drafts, the validator passes it, the IC approves, the plan applies and a unit reports", {
     timeout: 60_000,
   }, async () => {
     const h = harness(
-      [findIt, { ...findIt, rationale: "grep for the handler, narrowly" }],
+      [findIt],
       [command()],
-      [
-        {
-          verdict: "correct",
-          corrections: "narrow the grep to src",
-          rationale: "too wide",
-        },
-        { verdict: "approve", rationale: "narrow enough" },
-      ],
+      [{ verdict: "approve", rationale: "narrow enough" }],
     );
     await run(
       [
@@ -199,12 +192,6 @@ describe("the IC above the planner", () => {
       "  create unit find under 001-command (leader claude-code/claude-haiku-4-5): locate the delete handler",
       "  create task under find: grep: find delete",
       "  status: continue",
-      "IC review: correct: too wide",
-      "  corrections: narrow the grep to src",
-      "plan redrafted (session stub-session): grep for the handler, narrowly",
-      "  create unit find under 001-command (leader claude-code/claude-haiku-4-5): locate the delete handler",
-      "  create task under find: grep: find delete",
-      "  status: continue",
       "IC review: approve: narrow enough",
       "plan approved",
       "  unit 001-u02 created under 001-command: locate the delete handler",
@@ -214,13 +201,10 @@ describe("the IC above the planner", () => {
       "claims: 1 verified, 0 asserted",
     ]);
     // The calls in order: the IC's command turn on a fresh session, the draft, the review
-    // resumed on the IC's session, the redraft with the corrections, the final review whose
-    // schema cannot say correct, then the find unit's leader.
+    // resumed on the IC's session, then the find unit's leader.
     const calls = h.calls();
     expect(calls.map((c) => [c.kind, c.resume])).toEqual([
       ["command", null],
-      ["planner", null],
-      ["review", "stub-session"],
       ["planner", null],
       ["review", "stub-session"],
       ["leader", null],
@@ -241,26 +225,23 @@ describe("the IC above the planner", () => {
     expect(icSystem).toContain(
       "Your role: Incident Commander, leader of command, the root unit",
     );
-    // The planner reads the period in section 1; the redraft carries the draft and the corrections after the file.
+    // The planner reads the period in section 1.
     expect(calls[1]?.prompt).toContain(
       "operational period: 1\nperiod objectives:\n  - find the handler\nperiod priorities:\n  - observation over reading\n",
     );
-    expect(calls[1]?.prompt).not.toContain(
-      "# Corrections from the Incident Commander",
+    // The review says the draft is valid, lists its tasks by position, and asks for substance.
+    const review = calls[2]?.prompt ?? "";
+    expect(review).toContain(
+      "# The planner's draft for operational period 1\nThe validator has passed it: every rule in section 9 holds, so what is left to judge is substance.\n",
     );
-    expect(calls[3]?.prompt).toContain(
-      "# Corrections from the Incident Commander",
+    expect(review).toContain(
+      "Its tasks, by position, as a patch names them:\n  #1: grep under find: find delete\n",
     );
-    expect(calls[3]?.prompt).toContain("narrow the grep to src");
-    expect(calls[3]?.prompt).toContain('"rationale": "grep for the handler"');
-    expect(calls[2]?.prompt).toContain(
-      "# The planner's draft for operational period 1",
+    expect(review).toContain(
+      "Review it against the period objectives, your situation and the priorities: approve it as drafted; correct it with patches",
     );
     // R5-7: every review asks whether the draft serializes independent work.
     expect(calls[2]?.prompt).toContain(
-      "Check whether the draft serializes independent work",
-    );
-    expect(calls[4]?.prompt).toContain(
       "Check whether the draft serializes independent work",
     );
     expect(schemaOf(calls[2] as Call).properties.verdict?.enum).toEqual([
@@ -268,23 +249,12 @@ describe("the IC above the planner", () => {
       "correct",
       "amend",
     ]);
-    // Both reviews hold the draft to the smallest model that fits (R5-6); the redraft's
-    // review can only approve or amend, and its line says so.
-    const modelsAsk = (fix: string) =>
-      `Hold every session task and every new unit's leader to the smallest model its kind of work needs: recording, reproducing and reading are Haiku or Sonnet work, and so is a leader that directs such tasks; weighing evidence to a conclusion may take Opus. A task or leader on an Opus or Fable model with no modelWhy, or with one the work does not bear out, is an unreasoned upgrade: do not approve the draft as drafted, ${fix} it to the smaller model.`;
+    // The review holds the draft to the smallest model that fits (R5-6), on its last line.
     expect(calls[2]?.prompt.split("\n").at(-1)).toBe(
-      modelsAsk("correct or amend"),
+      "Hold every session task and every new unit's leader to the smallest model its kind of work needs: recording, reproducing and reading are Haiku or Sonnet work, and so is a leader that directs such tasks; weighing evidence to a conclusion may take Opus. A task or leader on an Opus or Fable model with no modelWhy, or with one the work does not bear out, is an unreasoned upgrade: do not approve the draft as drafted, correct or amend it to the smaller model.",
     );
-    expect(calls[4]?.prompt.split("\n").at(-1)).toBe(modelsAsk("amend"));
-    expect(calls[4]?.prompt).toContain(
-      "# The planner's redraft for operational period 1, against your corrections",
-    );
-    expect(schemaOf(calls[4] as Call).properties.verdict?.enum).toEqual([
-      "approve",
-      "amend",
-    ]);
     // The leader's orientation carries the period.
-    expect(calls[5]?.prompt).toContain(
+    expect(calls[3]?.prompt).toContain(
       "Operational period 1 objectives:\n  - find the handler\nPriorities this period:\n  - observation over reading\n",
     );
     const store = h.store();
@@ -293,8 +263,8 @@ describe("the IC above the planner", () => {
     expect(types.indexOf("command.turned")).toBeLessThan(
       types.indexOf("leader.started"),
     );
-    expect(types.filter((t) => t === "plan.proposed")).toHaveLength(2);
-    expect(types.filter((t) => t === "plan.reviewed")).toHaveLength(2);
+    expect(types.filter((t) => t === "plan.proposed")).toHaveLength(1);
+    expect(types.filter((t) => t === "plan.reviewed")).toHaveLength(1);
     const turned = events.find((e) => e.type === "command.turned");
     expect(turned?.payload).toMatchObject({
       unitId: "001-command",
@@ -317,29 +287,17 @@ describe("the IC above the planner", () => {
       inputTokens: 1500,
       outputTokens: 42,
     });
-    const proposed = events.filter((e) => e.type === "plan.proposed");
-    expect(proposed[0]?.payload.redraft).toBe(false);
-    expect(proposed[1]?.payload).toMatchObject({
-      redraft: true,
-      corrections: "narrow the grep to src",
-    });
-    const reviewed = events.filter((e) => e.type === "plan.reviewed");
-    expect(
-      reviewed.map((e) => [
-        e.payload.verdict,
-        e.payload.redraft,
-        e.payload.cycle,
-      ]),
-    ).toEqual([
-      ["correct", false, 1],
-      ["approve", true, 1],
-    ]);
-    expect(reviewed[0]?.payload.corrections).toBe("narrow the grep to src");
+    const proposed = events.find((e) => e.type === "plan.proposed");
+    expect(proposed?.payload.redraft).toBe(false);
+    expect(proposed?.payload.cause).toBeUndefined();
+    const reviewed = events.find((e) => e.type === "plan.reviewed");
+    expect(reviewed?.payload).toMatchObject({ verdict: "approve", cycle: 1 });
+    expect(reviewed?.payload.patches).toBeUndefined();
     const applied = events.find((e) => e.type === "plan.applied");
     expect(applied?.payload).toMatchObject({
       verdict: "approve",
-      corrections: "narrow the grep to src",
-      diff: { arrays: {}, changed: ["rationale"] },
+      patches: null,
+      diff: { arrays: {}, changed: [] },
     });
     expect(store.getIncident("001")?.period).toEqual({
       number: 1,
@@ -355,24 +313,478 @@ describe("the IC above the planner", () => {
     );
     h.out.length = 0;
     expect(await run(["incident", "review", "001"], h.ctx)).toBe(EXIT.ok);
-    const review = h.out.join("\n");
-    expect(review).toMatch(
-      /^cycle 1 {2}\S+ {2}applied open {2}ic approve after corrections/m,
+    const aar = h.out.join("\n");
+    expect(aar).toMatch(
+      /^cycle 1 {2}\S+ {2}applied open {2}ic approve {2}units/m,
     );
-    expect(review).toContain("reviewed the draft: correct");
-    expect(review).toContain("reviewed the redraft: approve");
-    expect(review).toContain(
-      "  planner claude-opus-5: in 1,500 (uncached 1,000 / write 200 / read 300)  out 42  1.5 s  $0.01  redraft  session stub-session",
+    expect(aar).toContain("reviewed the draft: approve");
+    expect(aar).toContain(
+      "plans: 1 drafted in 1 cycle(s), 1 applied, 0 rejected (0 rule lines); redrafts: 0 after a rule, 0 after a correction",
     );
-    expect(review).toContain(
-      "plans: 2 drafted in 1 cycle(s), 1 applied, 0 rejected (0 rule lines)",
+    expect(aar).toContain(
+      "ic verdicts: 1 review(s): 1 approve, 0 correct, 0 amend",
     );
-    expect(review).toContain(
-      "ic verdicts: 2 review(s): 1 approve, 1 correct, 0 amend",
+    expect(aar).toMatch(/ic\s+claude-sonnet-5\s+2\s+3,000\s+84\s+3\.0\s+\$0\.02/);
+  });
+
+  it("validate before review (R5-3): a draft that breaks Dependencies resolve goes back to the planner with the reasons, the redraft passes, and the IC is called once, on the redraft", {
+    timeout: 60_000,
+  }, async () => {
+    const reader = {
+      ...grepTask,
+      objective: "find remove",
+      inputs: { root: ".", pattern: "remove" },
+      evidenceFrom: { claims: [], tasks: ["first"] },
+    };
+    const broken: ActionPlan = {
+      ...findIt,
+      createTasks: [{ ...grepTask, ref: "first" }, reader],
+      rationale: "two greps, the second reading the first",
+    };
+    const fixed: ActionPlan = {
+      ...broken,
+      createTasks: [
+        { ...grepTask, ref: "first" },
+        { ...reader, dependsOn: ["first"] },
+      ],
+      rationale: "two greps, the second after the first",
+    };
+    const h = harness(
+      [broken, fixed],
+      [command()],
+      [{ verdict: "approve", rationale: "in order" }],
     );
-    expect(review).toMatch(
-      /ic\s+claude-sonnet-5\s+3\s+4,500\s+126\s+4\.5\s+\$0\.04/,
+    await run(
+      ["incident", "create", "--no-size-up", "where is the delete handler"],
+      h.ctx,
     );
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    expect(h.err).toEqual([]);
+    const reason =
+      'Dependencies resolve: task "find remove" reads the result of task first, which is neither completed nor in its dependsOn';
+    expect(h.out.slice(7, 20)).toEqual([
+      "plan drafted (session stub-session): two greps, the second reading the first",
+      "  create unit find under 001-command (leader claude-code/claude-haiku-4-5): locate the delete handler",
+      "  create task under find: grep: find delete",
+      "  create task under find: grep: find remove",
+      "  status: continue",
+      "plan rejected:",
+      `  - ${reason}`,
+      "plan redrafted after a rule (session stub-session): two greps, the second after the first",
+      "  create unit find under 001-command (leader claude-code/claude-haiku-4-5): locate the delete handler",
+      "  create task under find: grep: find delete",
+      "  create task under find: grep: find remove",
+      "  status: continue",
+      "IC review: approve: in order",
+    ]);
+    expect(h.out).toContain("plan approved");
+    expect(h.out).toContain(
+      "  task 001-t02 [pending] under 001-u02: grep: find remove",
+    );
+    // Two planner calls, one review, in that order; the IC never saw the broken draft.
+    const calls = h.calls();
+    expect(calls.filter((c) => c.kind !== "leader").map((c) => c.kind)).toEqual(
+      ["command", "planner", "planner", "review"],
+    );
+    const redraft = calls[2]?.prompt ?? "";
+    expect(redraft).toContain(
+      "# The validator rejected your draft\nYour draft for this period was:\n",
+    );
+    expect(redraft).toContain(
+      '"rationale": "two greps, the second reading the first"',
+    );
+    expect(redraft).toContain(
+      `The rules it broke:\n  - ${reason}\n\nRedraft the plan so that every rule passes; the IC has not seen the draft and reviews the redraft.`,
+    );
+    expect(calls[3]?.prompt).toContain(
+      '"rationale": "two greps, the second after the first"',
+    );
+    expect(calls[3]?.prompt).not.toContain("reading the first");
+    const store = h.store();
+    const events = store.listEvents("001");
+    const proposed = events.filter((e) => e.type === "plan.proposed");
+    expect(proposed.map((e) => e.payload.redraft)).toEqual([false, true]);
+    expect(proposed[1]?.payload).toMatchObject({
+      cause: "rule",
+      reasons: [reason],
+    });
+    expect(proposed[1]?.payload.patches).toBeUndefined();
+    const rejected = events.filter((e) => e.type === "plan.rejected");
+    expect(rejected.map((e) => e.payload)).toEqual([
+      {
+        rule: "Dependencies resolve",
+        reason: reason.slice("Dependencies resolve: ".length),
+        rationale: "two greps, the second reading the first",
+        draft: 1,
+        corrected: false,
+      },
+    ]);
+    // The rejection sits between the two drafts and before the one review.
+    const order = events.map((e) => e.type);
+    expect(order.indexOf("plan.rejected")).toBeGreaterThan(
+      order.indexOf("plan.proposed"),
+    );
+    expect(order.indexOf("plan.rejected")).toBeLessThan(
+      order.lastIndexOf("plan.proposed"),
+    );
+    expect(order.filter((t) => t === "plan.reviewed")).toHaveLength(1);
+    expect(order.indexOf("plan.reviewed")).toBeGreaterThan(
+      order.lastIndexOf("plan.proposed"),
+    );
+    expect(
+      events.find((e) => e.type === "plan.applied")?.payload,
+    ).toMatchObject({ verdict: "approve", patches: null });
+    store.close();
+    h.out.length = 0;
+    expect(await run(["incident", "review", "001"], h.ctx)).toBe(EXIT.ok);
+    const aar = h.out.join("\n");
+    expect(aar).toMatch(
+      /^cycle 1 {2}\S+ {2}applied open {2}ic approve after 1 rule line\(s\) {2}units \+1/m,
+    );
+    expect(aar).toContain(
+      "  planner claude-opus-5: in 1,500 (uncached 1,000 / write 200 / read 300)  out 42  1.5 s  $0.01  redraft after a rule  session stub-session",
+    );
+    expect(aar).toContain(`  rejected ${reason}`);
+    expect(aar).toContain(
+      "plans: 2 drafted in 1 cycle(s), 1 applied, 1 rejected (1 rule lines); redrafts: 1 after a rule, 0 after a correction",
+    );
+    expect(aar).toContain(
+      "ic verdicts: 1 review(s): 1 approve, 0 correct, 0 amend",
+    );
+  });
+
+  it("correct is a list of patches (R5-3): the IC sets one dependsOn and the evidenceFrom that reads it, the runtime applies them to the draft and validates, and the plan is applied with no further planner or IC call", {
+    timeout: 60_000,
+  }, async () => {
+    const second = {
+      ...grepTask,
+      objective: "find remove",
+      inputs: { root: ".", pattern: "remove" },
+    };
+    const draft: ActionPlan = {
+      ...findIt,
+      createTasks: [{ ...grepTask, ref: "first" }, second],
+      rationale: "two greps at once",
+    };
+    const h = harness(
+      [draft],
+      [command()],
+      [
+        {
+          verdict: "correct",
+          patches: [
+            {
+              kind: "set",
+              task: "#2",
+              field: "dependsOn",
+              value: ["first"],
+              why: "the second grep reads what the first found",
+            },
+            {
+              kind: "set",
+              task: "#2",
+              field: "evidenceFrom",
+              value: { claims: [], tasks: ["first"] },
+              why: "and takes its result",
+            },
+          ],
+          rationale: "in order, not at once",
+        },
+      ],
+    );
+    await run(
+      ["incident", "create", "--no-size-up", "where is the delete handler"],
+      h.ctx,
+    );
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    expect(h.err).toEqual([]);
+    expect(h.out.slice(12, 22)).toEqual([
+      "IC review: correct: in order, not at once",
+      '  patch: set #2.dependsOn to ["first"]: the second grep reads what the first found',
+      '  patch: set #2.evidenceFrom to {"claims":[],"tasks":["first"]}: and takes its result',
+      "plan corrected by the IC: 2 patch(es) applied",
+      "  create unit find under 001-command (leader claude-code/claude-haiku-4-5): locate the delete handler",
+      "  create task under find: grep: find delete",
+      "  create task under find: grep: find remove",
+      "  status: continue",
+      "plan approved",
+      "  unit 001-u02 created under 001-command: locate the delete handler",
+    ]);
+    expect(h.out).toContain(
+      "  task 001-t01 [ready] under 001-u02: grep: find delete",
+    );
+    expect(h.out).toContain(
+      "  task 001-t02 [pending] under 001-u02: grep: find remove",
+    );
+    // One planner call and one review; the patched plan went straight to the validator.
+    const calls = h.calls();
+    expect(calls.filter((c) => c.kind !== "leader").map((c) => c.kind)).toEqual(
+      ["command", "planner", "review"],
+    );
+    const store = h.store();
+    expect(
+      store
+        .listTasks("001")
+        .map((t) => [t.id, t.dependsOn, t.evidenceFrom.tasks, t.status]),
+    ).toEqual([
+      ["001-t01", [], [], "completed"],
+      ["001-t02", ["001-t01"], ["001-t01"], "completed"],
+    ]);
+    const events = store.listEvents("001");
+    expect(events.filter((e) => e.type === "plan.rejected")).toHaveLength(0);
+    expect(
+      events.find((e) => e.type === "plan.reviewed")?.payload,
+    ).toMatchObject({
+      verdict: "correct",
+      patches: [
+        {
+          kind: "set",
+          task: "#2",
+          field: "dependsOn",
+          value: ["first"],
+          why: "the second grep reads what the first found",
+        },
+        { kind: "set", task: "#2", field: "evidenceFrom" },
+      ],
+    });
+    const applied = events.find((e) => e.type === "plan.applied");
+    expect(applied?.payload).toMatchObject({
+      verdict: "correct",
+      patches: [
+        { kind: "set", task: "#2", field: "dependsOn" },
+        { kind: "set", task: "#2", field: "evidenceFrom" },
+      ],
+      diff: {
+        arrays: {
+          createTasks: {
+            added: [
+              {
+                ...second,
+                dependsOn: ["first"],
+                evidenceFrom: { claims: [], tasks: ["first"] },
+              },
+            ],
+            removed: [second],
+          },
+        },
+        changed: [],
+      },
+    });
+    store.close();
+    h.out.length = 0;
+    expect(await run(["incident", "review", "001"], h.ctx)).toBe(EXIT.ok);
+    const aar = h.out.join("\n");
+    expect(aar).toMatch(
+      /^cycle 1 {2}\S+ {2}applied open {2}ic correct \(2 patch\(es\)\) {2}units \+1/m,
+    );
+    expect(aar).toContain("reviewed the draft: correct, 2 patch(es)");
+    expect(aar).toContain(
+      "plans: 1 drafted in 1 cycle(s), 1 applied, 0 rejected (0 rule lines); redrafts: 0 after a rule, 0 after a correction",
+    );
+    expect(aar).toContain(
+      "ic verdicts: 1 review(s): 0 approve, 1 correct, 0 amend",
+    );
+  });
+
+  it("a correction that breaks a rule goes to the planner with the IC's patches and the reasons, and the redraft is applied with no second review (R5-3)", {
+    timeout: 60_000,
+  }, async () => {
+    const h = harness(
+      [findIt, { ...findIt, rationale: "grep for the handler, as corrected" }],
+      [command()],
+      [
+        {
+          verdict: "correct",
+          patches: [
+            {
+              kind: "set",
+              task: "#1",
+              field: "dependsOn",
+              value: ["nowhere"],
+              why: "wait for the read",
+            },
+          ],
+          rationale: "after the read",
+        },
+      ],
+    );
+    await run(
+      ["incident", "create", "--no-size-up", "where is the delete handler"],
+      h.ctx,
+    );
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    expect(h.err).toEqual([]);
+    const reason =
+      'Dependencies resolve: task "find delete" depends on no task nowhere';
+    expect(h.out).toContain(
+      '  patch: set #1.dependsOn to ["nowhere"]: wait for the read',
+    );
+    expect(h.out).toContain("plan corrected by the IC: 1 patch(es) applied");
+    expect(h.out).toContain(`  - ${reason}`);
+    expect(h.out).toContain(
+      "plan redrafted after a correction (session stub-session): grep for the handler, as corrected",
+    );
+    expect(h.out).toContain("plan approved");
+    expect(h.out).toContain("  ran 001-t01 (grep): completed; 1 claim(s)");
+    const calls = h.calls();
+    expect(calls.filter((c) => c.kind !== "leader").map((c) => c.kind)).toEqual(
+      ["command", "planner", "review", "planner"],
+    );
+    const redraft = calls[3]?.prompt ?? "";
+    expect(redraft).toContain(
+      [
+        "# The Incident Commander corrected your draft, and the validator rejected the correction",
+        "Your draft for this period was:",
+      ].join("\n"),
+    );
+    expect(redraft).toContain(
+      [
+        "The IC's verdict was correct: after the read",
+        "The IC's patches:",
+        '  - set #1.dependsOn to ["nowhere"]: wait for the read',
+        "The plan after the patches:",
+      ].join("\n"),
+    );
+    expect(redraft).toContain('"dependsOn": [\n        "nowhere"\n      ]');
+    expect(redraft).toContain(
+      `What the validator rejected:\n  - ${reason}\n\nRedraft the plan keeping the IC's correction in substance and passing every rule; the plan is applied without a second review.`,
+    );
+    const store = h.store();
+    const events = store.listEvents("001");
+    expect(
+      events.filter((e) => e.type === "plan.rejected").map((e) => e.payload),
+    ).toEqual([
+      {
+        rule: "Dependencies resolve",
+        reason: 'task "find delete" depends on no task nowhere',
+        rationale: "grep for the handler",
+        draft: 1,
+        corrected: true,
+      },
+    ]);
+    const proposed = events.filter((e) => e.type === "plan.proposed");
+    expect(proposed[1]?.payload).toMatchObject({
+      redraft: true,
+      cause: "correction",
+      reasons: [reason],
+      patches: [{ kind: "set", task: "#1", field: "dependsOn" }],
+    });
+    expect(events.filter((e) => e.type === "plan.reviewed")).toHaveLength(1);
+    expect(
+      events.find((e) => e.type === "plan.applied")?.payload,
+    ).toMatchObject({
+      verdict: "correct",
+      patches: [{ kind: "set", task: "#1" }],
+      diff: { arrays: {}, changed: ["rationale"] },
+    });
+    store.close();
+    h.out.length = 0;
+    expect(await run(["incident", "review", "001"], h.ctx)).toBe(EXIT.ok);
+    const aar = h.out.join("\n");
+    expect(aar).toContain("  redraft after a correction  session");
+    expect(aar).toContain(`  rejected the IC's correction on ${reason}`);
+    expect(aar).toContain(
+      "plans: 2 drafted in 1 cycle(s), 1 applied, 1 rejected (1 rule lines); redrafts: 0 after a rule, 1 after a correction",
+    );
+  });
+
+  it("a patch that names no task is a rejection of the correction under Patch applies, and the planner redrafts (R5-3)", {
+    timeout: 60_000,
+  }, async () => {
+    const h = harness(
+      [findIt, { ...findIt, rationale: "grep again" }],
+      [command()],
+      [
+        {
+          verdict: "correct",
+          patches: [
+            { kind: "cancel", task: "reader", why: "no reader is needed" },
+          ],
+          rationale: "drop the reader",
+        },
+      ],
+    );
+    await run(
+      ["incident", "create", "--no-size-up", "where is the delete handler"],
+      h.ctx,
+    );
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    expect(h.err).toEqual([]);
+    const reason =
+      "patch 1 (cancel reader: no reader is needed) names reader, which is neither a draft task's ref, a #position in createTasks, nor an open task";
+    expect(h.out).toContain(`  - Patch applies: ${reason}`);
+    expect(h.out).not.toContain(
+      "plan corrected by the IC: 1 patch(es) applied",
+    );
+    expect(h.out).toContain(
+      "plan redrafted after a correction (session stub-session): grep again",
+    );
+    expect(h.out).toContain("plan approved");
+    const redraft = h.calls()[3]?.prompt ?? "";
+    expect(redraft).not.toContain("The plan after the patches:");
+    expect(redraft).toContain(
+      `What the validator rejected:\n  - Patch applies: ${reason}`,
+    );
+    const store = h.store();
+    expect(
+      store
+        .listEvents("001")
+        .filter((e) => e.type === "plan.rejected")
+        .map((e) => e.payload),
+    ).toEqual([
+      {
+        rule: "Patch applies",
+        reason,
+        rationale: "grep for the handler",
+        draft: 1,
+        corrected: true,
+      },
+    ]);
+    store.close();
+  });
+
+  it("a cycle has at most two redrafts (R5-3): a third rejected draft ends the cycle with no review, and the next command turn reads the rejections", {
+    timeout: 60_000,
+  }, async () => {
+    const broken: ActionPlan = {
+      ...findIt,
+      createTasks: [{ ...grepTask, dependsOn: ["nowhere"] }],
+    };
+    const h = harness([broken], [command()], []);
+    await run(
+      ["incident", "create", "--no-size-up", "where is the delete handler"],
+      h.ctx,
+    );
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    expect(h.err).toEqual([]);
+    expect(h.out.filter((l) => l === "plan rejected:")).toHaveLength(3);
+    expect(
+      h.out.filter((l) => l.startsWith("plan redrafted after a rule")),
+    ).toHaveLength(2);
+    expect(h.out).not.toContain("plan approved");
+    expect(h.calls().map((c) => c.kind)).toEqual([
+      "command",
+      "planner",
+      "planner",
+      "planner",
+    ]);
+    const store = h.store();
+    const events = store.listEvents("001");
+    expect(
+      events
+        .filter((e) => e.type === "plan.rejected")
+        .map((e) => e.payload.draft),
+    ).toEqual([1, 2, 3]);
+    expect(events.some((e) => e.type === "plan.applied")).toBe(false);
+    store.close();
+    h.out.length = 0;
+    expect(await run(["incident", "review", "001"], h.ctx)).toBe(EXIT.ok);
+    const aar = h.out.join("\n");
+    expect(aar).toMatch(/^cycle 1 {2}\S+ {2}rejected on 3 rule line\(s\)$/m);
+    expect(aar).toContain(
+      "plans: 3 drafted in 1 cycle(s), 0 applied, 3 rejected (3 rule lines); redrafts: 2 after a rule, 0 after a correction",
+    );
+    expect(aar).toContain("ic verdicts: none");
   });
 
   it("a report that changed the picture ends the pass, and the next step's briefing opens with it", {
@@ -520,7 +932,7 @@ describe("the IC above the planner", () => {
       .find((e) => e.type === "plan.applied");
     expect(applied?.payload).toMatchObject({
       verdict: "amend",
-      corrections: null,
+      patches: null,
       diff: {
         arrays: {
           createTasks: { added: [amended.createTasks[1]], removed: [] },
@@ -540,16 +952,13 @@ describe("the IC above the planner", () => {
     );
   });
 
-  it("a second correction is refused by the schema and ends the step with the IC named", {
+  it("a correct verdict with no patches is refused by the schema and ends the step with the IC named", {
     timeout: 60_000,
   }, async () => {
     const h = harness(
-      [findIt, findIt],
+      [findIt],
       [command()],
-      [
-        { verdict: "correct", corrections: "again", rationale: "no" },
-        { verdict: "correct", corrections: "and again", rationale: "still no" },
-      ],
+      [{ verdict: "correct", rationale: "no" }],
     );
     await run(
       ["incident", "create", "--no-size-up", "where is the delete handler"],
@@ -557,12 +966,12 @@ describe("the IC above the planner", () => {
     );
     expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.failed);
     expect(h.err.at(-1)).toMatch(
-      /^noscope incident step: the IC: the answer did not fit its schema: verdict /,
+      /^noscope incident step: the IC: the answer did not fit its schema: patches /,
     );
     const store = h.store();
     expect(
       store.listEvents("001").filter((e) => e.type === "plan.reviewed"),
-    ).toHaveLength(1);
+    ).toHaveLength(0);
     expect(store.listEvents("001").some((e) => e.type === "plan.applied")).toBe(
       false,
     );
@@ -588,7 +997,7 @@ describe("the IC above the planner", () => {
     expect(review).toMatch(
       /^ {2}ic claude-sonnet-5: in 1,500 .* review turn failed: the answer did not fit/m,
     );
-    expect(review).toMatch(/ic\s+claude-sonnet-5\s+3\s+4,500/);
+    expect(review).toMatch(/ic\s+claude-sonnet-5\s+2\s+3,000/);
   });
 
   it("a command turn whose session fails is filed as command.failed with its session on the unit, and a review on a lost session is re-briefed", {
@@ -1361,19 +1770,30 @@ describe("the IC above the planner", () => {
     store.close();
   });
 
-  it("the IC's schemas: a command turn defaults its answers, a correction carries corrections, an amendment carries the plan, and the final read cannot correct", () => {
+  it("the IC's schemas: a command turn defaults its answers, a correction carries patches, an amendment carries the plan, and a patch carries what its kind needs (R5-3)", () => {
     const turn = CommandTurn.parse(command());
     expect(turn.answers).toEqual([]);
     expect(
       CommandTurn.safeParse(command({ periodObjectives: [] })).success,
     ).toBe(false);
+    const set: PlanPatch = {
+      kind: "set",
+      task: "#1",
+      field: "model",
+      value: "claude-sonnet-5",
+      why: "reading is Sonnet work",
+    };
     expect(
       ReviewTurn.safeParse({ verdict: "correct", rationale: "x" }).success,
     ).toBe(false);
     expect(
+      ReviewTurn.safeParse({ verdict: "correct", patches: [], rationale: "x" })
+        .success,
+    ).toBe(false);
+    expect(
       ReviewTurn.safeParse({
         verdict: "correct",
-        corrections: "narrow it",
+        patches: [set],
         rationale: "x",
       }).success,
     ).toBe(true);
@@ -1384,8 +1804,8 @@ describe("the IC above the planner", () => {
       ReviewTurn.safeParse({ verdict: "amend", plan: findIt, rationale: "x" })
         .success,
     ).toBe(true);
-    // A plan beside approve, or corrections beside amend, does not fit: only an amend
-    // verdict's plan is ever applied.
+    // A plan beside approve, or patches beside amend, does not fit: only an amend
+    // verdict's plan and a correct verdict's patches are ever applied.
     expect(
       ReviewTurn.safeParse({ verdict: "approve", plan: findIt, rationale: "x" })
         .success,
@@ -1394,11 +1814,12 @@ describe("the IC above the planner", () => {
       ReviewTurn.safeParse({
         verdict: "amend",
         plan: findIt,
-        corrections: "x",
+        patches: [set],
         rationale: "x",
       }).success,
     ).toBe(false);
-    // Every turn is one strict object: an unnamed key is refused.
+    // Every turn is one strict object: an unnamed key is refused, and the review's
+    // schema is one object with the three verdicts, since the API refuses a top-level oneOf.
     expect(
       ReviewTurn.safeParse({ verdict: "approve", rationale: "x", extra: 1 })
         .success,
@@ -1406,15 +1827,17 @@ describe("the IC above the planner", () => {
     expect(CommandTurn.safeParse({ ...command(), extra: 1 }).success).toBe(
       false,
     );
-    expect(
-      Object.keys(jsonSchemaFor(FinalReviewTurn).properties as object),
-    ).toEqual([
+    const reviewSchema = jsonSchemaFor(ReviewTurn);
+    expect(Object.keys(reviewSchema.properties as object)).toEqual([
       "verdict",
+      "patches",
       "plan",
       "rationale",
       "discrepancy",
       "briefingEvaluation",
     ]);
+    expect(reviewSchema.type).toBe("object");
+    expect(reviewSchema.oneOf).toBeUndefined();
     expect(jsonSchemaFor(CommandTurn).additionalProperties).toBe(false);
     expect(
       ReviewTurn.safeParse({
@@ -1423,16 +1846,46 @@ describe("the IC above the planner", () => {
         discrepancy: "a hurricane",
       }).success,
     ).toBe(true);
+    // A patch carries exactly what its kind needs: set a task, a field and a value (null
+    // is a value; a missing one is not); add a proposal; cancel a task; nothing else.
+    expect(PlanPatch.safeParse(set).success).toBe(true);
+    expect(PlanPatch.safeParse({ ...set, value: null }).success).toBe(true);
+    expect(PlanPatch.safeParse({ ...set, value: undefined }).success).toBe(
+      false,
+    );
+    expect(PlanPatch.safeParse({ ...set, field: "colour" }).success).toBe(
+      false,
+    );
+    expect(PlanPatch.safeParse({ ...set, task: undefined }).success).toBe(
+      false,
+    );
+    expect(PlanPatch.safeParse({ ...set, proposal: grepTask }).success).toBe(
+      false,
+    );
     expect(
-      FinalReviewTurn.safeParse({
-        verdict: "correct",
-        corrections: "again",
-        rationale: "x",
+      PlanPatch.safeParse({ kind: "add", proposal: grepTask, why: "y" })
+        .success,
+    ).toBe(true);
+    expect(PlanPatch.safeParse({ kind: "add", why: "y" }).success).toBe(false);
+    expect(
+      PlanPatch.safeParse({
+        kind: "add",
+        proposal: grepTask,
+        task: "#1",
+        why: "y",
       }).success,
     ).toBe(false);
     expect(
-      FinalReviewTurn.safeParse({ verdict: "approve", rationale: "x" }).success,
+      PlanPatch.safeParse({ kind: "cancel", task: "001-t01", why: "y" })
+        .success,
     ).toBe(true);
+    expect(
+      PlanPatch.safeParse({ kind: "cancel", task: "#1", value: 1, why: "y" })
+        .success,
+    ).toBe(false);
+    expect(PlanPatch.safeParse({ kind: "cancel", why: "y" }).success).toBe(
+      false,
+    );
   });
 
   it("the plan diff compares each array as a set and names the other fields that changed", () => {
@@ -1993,7 +2446,6 @@ describe("the IC above the planner", () => {
           },
           rationale: "reassign",
         }),
-        command({ rationale: "the retry" }),
       ],
       [],
     );
@@ -2024,7 +2476,8 @@ describe("the IC above the planner", () => {
     if (report === undefined) throw new Error("the unit reported");
     expect(claimIds).toEqual(["001-c001"]);
     // Cycle 2: the reassign verdict closes the unit, cancels its pending grep and records
-    // the reassignment; the planner's draft takes nothing and is rejected.
+    // the reassignment; the planner's draft takes nothing and is rejected before the IC
+    // sees it, and the redraft's reader takes it in the same cycle (R5-3).
     h.out.length = 0;
     expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
     expect(h.err).toEqual([]);
@@ -2094,19 +2547,22 @@ describe("the IC above the planner", () => {
     expect(second.listTasks("001").map((t) => [t.id, t.status])).toEqual([
       ["001-t01", "completed"],
       ["001-t02", "cancelled"],
+      ["001-t03", "completed"],
     ]);
     expect(
       second.listUnits("001").find((u) => u.id === "001-u02")?.status,
     ).toBe("closed");
     second.close();
-    // Cycle 3: the reassignment is still open, the plan's reader takes it, and the
-    // reader's leader is oriented with the instructions and the predecessor's claim.
-    h.out.length = 0;
-    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
-    expect(h.err).toEqual([]);
-    expect(
-      h.calls().filter((c) => c.kind === "planner")[2]?.prompt ?? "",
-    ).toContain(openLine("001-r01 from unit 001-u02"));
+    // The redraft's prompt carries the reassignment still open and the rejection; the
+    // reader takes it, and the reader's leader is oriented with the instructions and the
+    // predecessor's claim.
+    const redraft =
+      h.calls().filter((c) => c.kind === "planner")[2]?.prompt ?? "";
+    expect(redraft).toContain(openLine("001-r01 from unit 001-u02"));
+    expect(redraft).toContain("# The validator rejected your draft\n");
+    expect(redraft).toContain(
+      "  - Reassignments taken: reassignment 001-r01, the slice of closed unit 001-u02, is not taken: no new unit names it in takes",
+    );
     expect(h.out).toContain(
       "  create unit reader under 001-command (leader claude-code/claude-haiku-4-5): read the delete handler (takes reassignment 001-r01)",
     );
@@ -2212,7 +2668,6 @@ describe("the IC above the planner", () => {
           situation,
           rationale: "second period",
         }),
-        command({ situation, rationale: "the retry" }),
       ],
       [],
     );
@@ -2221,7 +2676,9 @@ describe("the IC above the planner", () => {
       h.ctx,
     );
     expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
-    // Cycle 2: the IC writes the link; the draft leaves it unworked and is rejected.
+    // Cycle 2: the IC writes the link; the draft leaves it unworked and is rejected
+    // before the IC sees it, and the redraft gives the task the ref the IC named and is
+    // applied in the same cycle (R5-3).
     h.out.length = 0;
     expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
     expect(h.err).toEqual([]);
@@ -2246,10 +2703,9 @@ describe("the IC above the planner", () => {
         "keep: (none)",
       ].join("\n"),
     );
-    // Cycle 3: the draft gives the task the ref the IC named, and is applied.
-    h.out.length = 0;
-    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
-    expect(h.err).toEqual([]);
+    expect(h.out).toContain(
+      "plan redrafted after a rule (session stub-session): probe settles the link the IC named",
+    );
     expect(h.out).toContain("plan approved");
     expect(h.out).toContain(
       "  task 001-t02 [ready] under 001-u02: grep: find every handler",
@@ -2270,7 +2726,6 @@ describe("the IC above the planner", () => {
         inferred: [],
         keep: [],
       },
-      situation,
       situation,
     ]);
     const applied = store

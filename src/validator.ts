@@ -1229,17 +1229,25 @@ export function validateCommand(
 }
 
 /**
+ * Which plan of the cycle a verdict is on (R5-3): `draft` is the planner's draft by
+ * ordinal in the cycle (1 for the first, 2 for the first redraft), and `corrected` says
+ * the plan checked was the IC's correction or amendment of that draft rather than the
+ * draft itself. `incident review` counts rejected plans by these.
+ */
+export type PlanOrigin = { draft: number; corrected: boolean };
+
+/**
  * Validate a proposed plan against the store and record the verdict: one `plan.rejected`
  * event per failing rule, or one `plan.warned` per warning on a passing plan, each with
- * `rule` and `reason` as the planner's next input reads them (DESIGN.md Step 5). Applying
- * a passing plan is PR 11's.
+ * `rule` and `reason` as the planner's next input reads them (DESIGN.md Step 5), and the
+ * plan's origin in the cycle (R5-3). Applying a passing plan is PR 11's.
  */
 export function validateAndRecord(
   store: Store,
   incident: Incident,
   plan: ActionPlan,
   providers: readonly Provider[],
-  actor = "validator",
+  origin: PlanOrigin = { draft: 1, corrected: false },
 ): Verdict {
   const verdict = validatePlan(
     plan,
@@ -1248,17 +1256,19 @@ export function validateAndRecord(
   store.batch(() => {
     if (verdict.ok)
       for (const w of verdict.warnings)
-        store.record(incident.id, "plan.warned", actor, {
+        store.record(incident.id, "plan.warned", "validator", {
           rule: w.rule,
           reason: w.reason,
           rationale: plan.rationale,
+          ...origin,
         });
     else
       for (const r of verdict.rejections)
-        store.record(incident.id, "plan.rejected", actor, {
+        store.record(incident.id, "plan.rejected", "validator", {
           rule: r.rule,
           reason: r.reason,
           rationale: plan.rationale,
+          ...origin,
         });
   });
   return verdict;
