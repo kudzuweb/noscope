@@ -28,7 +28,9 @@
 // `verdict` property), gets NOSCOPE_STUB_REVIEW, or the next entry of NOSCOPE_STUB_REVIEWS
 // (counter file NOSCOPE_STUB_REVIEW_COUNTER), or by default `approve`. A command turn whose
 // schema requires `briefingEvaluation` (the IC's first turn after a transfer of command)
-// gets one default verdict added when the answer carries none. The initial IC's size-up,
+// gets one default verdict added when the answer carries none, and an empty
+// `briefingQuestions` (R5-8) when it carries none; a test whose briefing proposes
+// questions scripts the rulings. The initial IC's size-up,
 // recognised by the IncidentBriefing schema (an `incomingCommander` property), gets
 // NOSCOPE_STUB_BRIEFING, or by default an investigation briefing with one objective, one
 // unit sketched, no questions and claude-opus-5 as the incoming commander. The IC's
@@ -264,14 +266,14 @@ const nextCommand = () => {
     })),
   );
   const evaluates = Array.isArray(schema.required) && schema.required.includes("briefingEvaluation");
-  return evaluates && turn.briefingEvaluation === undefined
-    ? {
-        ...turn,
-        briefingEvaluation: [
-          { item: "the briefing's first objective", verdict: "accepted", why: "stub evaluation" },
-        ],
-      }
-    : turn;
+  if (!evaluates) return turn;
+  return {
+    ...turn,
+    briefingEvaluation: turn.briefingEvaluation ?? [
+      { item: "the briefing's first objective", verdict: "accepted", why: "stub evaluation" },
+    ],
+    briefingQuestions: turn.briefingQuestions ?? [],
+  };
 };
 
 const nextBriefing = () =>

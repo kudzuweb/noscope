@@ -21,6 +21,7 @@ import {
   openItemsWorked,
   openReassignments,
   openRequests,
+  proposedQuestions,
   type Reassignment,
   reportsAwaitingVerdict,
   requestTargetOf,
@@ -81,6 +82,8 @@ export type ValidationContext = {
   situation: Situation | null;
   /** Which tasks work each open item (R5-2), from every `plan.applied` that recorded `settles`; an open one counts as working the item. */
   worked: ReadonlyMap<string, readonly string[]>;
+  /** The questions the briefing proposed for Mauria that the IC has not ruled on (R5-8): its first turn rules on each, by number, and no later turn rules on any. */
+  proposals: readonly string[];
   /** The incident's log, from which a unit's share of the budget is computed. */
   events: readonly Event[];
   /** The saved unit configs (R4-11), which a new unit may name in `config`. */
@@ -983,6 +986,7 @@ export function validationContext(
     reassignments: openReassignments(events),
     situation: icSituation(events),
     worked: openItemsWorked(events),
+    proposals: proposedQuestions(events),
     events,
     configs: store.listUnitConfigs(),
     cwd,
@@ -996,13 +1000,45 @@ const COMMAND_RULES: readonly RuleName[] = [
   "Status is earned",
 ];
 
-/** The IC's own rules: an answer names a request a waiting unit raised; every report in the change report has one verdict; an assignment under command is deterministic; a drop names an open reassignment (R4-4); the situation's evidence names claims the incident has and a carried open item names one of the last picture's (R5-2). */
+/** The IC's own rules: an answer names a request a waiting unit raised; every report in the change report has one verdict; an assignment under command is deterministic; a drop names an open reassignment (R4-4); the situation's evidence names claims the incident has and a carried open item names one of the last picture's (R5-2); every question the briefing proposed is ruled on once, and none that it did not (R5-8). */
 type CommandRuleName =
   | "Answers match"
   | "Reports answered"
   | "Deterministic only"
   | "Drops match"
-  | "Situation grounded";
+  | "Situation grounded"
+  | "Proposals ruled";
+
+/**
+ * The briefing's questions are the IC's to gate (R5-8): on the turn that takes command,
+ * each question the briefing proposed has exactly one ruling, by its number, and no
+ * ruling names a number the briefing did not propose; once the first turn is accepted no
+ * question is proposed, so a later turn's rulings name nothing. Returns the reasons.
+ */
+function proposalsRuled(
+  turn: CommandTurn,
+  proposals: readonly string[],
+): string[] {
+  const rulings = turn.briefingQuestions ?? [];
+  const reasons: string[] = [];
+  for (const r of rulings)
+    if (proposals[r.proposal - 1] === undefined)
+      reasons.push(
+        proposals.length === 0
+          ? `question ${r.proposal} is ruled on, and no briefing question is pending: a question of your own goes in questionsForHuman`
+          : `question ${r.proposal} is ruled on, and the briefing proposed ${proposals.length}`,
+      );
+  proposals.forEach((text, i) => {
+    const n = rulings.filter((r) => r.proposal === i + 1).length;
+    if (n === 0)
+      reasons.push(
+        `the briefing's question ${i + 1} ("${text}") has no ruling; accept, discard or answer it in briefingQuestions`,
+      );
+    if (n > 1)
+      reasons.push(`the briefing's question ${i + 1} is ruled on ${n} times`);
+  });
+  return reasons;
+}
 
 /**
  * The IC's situation rests on the incident's claims (R5-2; R4-5's checks on `proven`
@@ -1116,9 +1152,10 @@ function reportsAnswered(
  * rules of its own: every answer names a waiting unit and an open request that unit
  * raised, as the change report showed it; every report the change report listed has
  * exactly one verdict (R4-2); every task it assigns is deterministic (R4-6), since
- * session work is a unit's; every reassignment it drops is open (R4-4); and its situation
+ * session work is a unit's; every reassignment it drops is open (R4-4); its situation
  * names claims the incident has, carries only open items the last picture lists, and its
- * assignments settle only those (R5-2). Its assignments are the plan's tasks, so "Units exist" and
+ * assignments settle only those (R5-2); and every question the briefing proposed is ruled
+ * on once, and none it did not propose (R5-8). Its assignments are the plan's tasks, so "Units exist" and
  * "Status is earned" see them (a turn that assigns work and declares `satisfied` is
  * refused as a plan would be), and they pass the other task rules as a leader's do, and
  * "Own unit" against the root. Returns the failing rules with their reasons; the caller
@@ -1264,6 +1301,12 @@ export function validateCommand(
     ...reportsAnswered(turn, window, latest).map(
       (reason): Rejection<CommandRuleName> => ({
         rule: "Reports answered",
+        reason,
+      }),
+    ),
+    ...proposalsRuled(turn, ctx.proposals).map(
+      (reason): Rejection<CommandRuleName> => ({
+        rule: "Proposals ruled",
         reason,
       }),
     ),

@@ -5,6 +5,7 @@ import {
   describeRefusedCall,
   eventsSinceLastCommand,
   fallbackModel,
+  IC_ACTOR,
   latestReports,
   openRequests,
   type RefusedCall,
@@ -591,7 +592,10 @@ export function renderChangeReport(
   });
   const answered = recent
     .filter((e) => e.type === "question.answered" && str(e.payload.answer))
-    .map((e) => `${str(e.payload.questionId)} → ${str(e.payload.answer)}`);
+    .map(
+      (e) =>
+        `${str(e.payload.questionId)} → ${str(e.payload.answer)}${e.actor === IC_ACTOR ? " (your own answer, on taking command)" : ""}`,
+    );
   const provided = recent
     .filter((e) => e.type === "capability.answered" && str(e.payload.answer))
     .map((e) => `${str(e.payload.need)} → ${str(e.payload.answer)}`);
@@ -836,16 +840,20 @@ function renderTransfer(p: TransferPayload): string[] {
     ...bullets(b.initialOrganization),
     "hazards:",
     ...bullets(b.hazards),
-    "questions it raised for Mauria (answered ones are in the incident file):",
-    ...bullets(b.questionsForHuman),
+    "questions it proposed for Mauria, by number; each is yours to rule on in briefingQuestions (accept: it is asked and the incident waits on her answer; discard: with why; answer: from the objective, with the answer):",
+    ...bullets(b.questionsForHuman.map((q, i) => `${i + 1}. ${q}`)),
     `incoming commander it recommended: ${b.incomingCommander.provider}/${b.incomingCommander.model}: ${b.incomingCommander.why}`,
     `your model: ${str(incoming.model)}, chosen by ${str(p.chosenBy)}${str(p.reason) === "" ? "" : ` (${str(p.reason)})`}`,
   ];
 }
 
-/** The IC's first instruction on taking command: judge what it was handed, item by item, before setting the period. */
+/** The IC's first instruction on taking command: judge what it was handed, item by item, and rule on the briefing's questions (R5-8), before setting the period. */
 function evaluateAsk(transfer: TransferPayload): string {
-  return `First, evaluate the ${transfer.kind === "initial" ? "briefing" : "handoff document"} you took command with: for ${evaluationItems(transfer)}, say in briefingEvaluation whether you accept it, rewrite it or discard it, and why; you are not bound by any of it, and a rewritten or discarded item costs nothing. Then `;
+  const questions =
+    transfer.kind === "initial"
+      ? " For each question it proposed for Mauria, say in briefingQuestions, by its number, whether you accept it (it is asked, and the incident waits on her answer), discard it with why, or answer it from the objective; only a question you accept reaches her."
+      : "";
+  return `First, evaluate the ${transfer.kind === "initial" ? "briefing" : "handoff document"} you took command with: for ${evaluationItems(transfer)}, say in briefingEvaluation whether you accept it, rewrite it or discard it, and why; you are not bound by any of it, and a rewritten or discarded item costs nothing.${questions} Then `;
 }
 
 /**

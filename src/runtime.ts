@@ -5,6 +5,7 @@ import {
   LEADER_ACTOR,
   numberOpenItems,
   openRequestsByUnit,
+  proposedQuestions,
   type Reassignment,
   type RefusedCall,
   type RequestTarget,
@@ -101,15 +102,17 @@ export function cancelDependents(
   return settled;
 }
 
-/** The incident's status after a plan or a command turn: a closing status stands, a raised channel blocks, otherwise open. */
-function statusAfter(turn: {
-  incidentStatus: ActionPlan["incidentStatus"];
-  questionsForHuman: readonly string[];
-  capabilityRequests: readonly unknown[];
-  grantRequests: readonly unknown[];
-}): IncidentStatus {
+/** The incident's status after a plan or a command turn: a closing status stands, an open question or a raised request blocks, otherwise open. */
+function statusAfter(
+  turn: {
+    incidentStatus: ActionPlan["incidentStatus"];
+    capabilityRequests: readonly unknown[];
+    grantRequests: readonly unknown[];
+  },
+  questions: readonly Question[],
+): IncidentStatus {
   const blocked =
-    turn.questionsForHuman.length > 0 ||
+    questions.some((q) => q.answer === undefined) ||
     turn.capabilityRequests.length > 0 ||
     turn.grantRequests.length > 0;
   return turn.incidentStatus === "satisfied" || turn.incidentStatus === "failed"
@@ -131,17 +134,20 @@ export function newQuestions(
   }));
 }
 
-/** The channels a plan or a command turn raises, written with their events; the status change follows in the same transaction. */
+/**
+ * The channels a plan or a command turn raises, written with their events; the status
+ * change follows in the same transaction. `proposals` (R5-8) names, for each question the
+ * IC accepted or answered from the briefing, its number there and the id it got, so the
+ * file can say what became of each proposal.
+ */
 function recordChannels(
   store: Store,
   incident: Incident,
-  turn: Pick<
-    ActionPlan,
-    "questionsForHuman" | "capabilityRequests" | "grantRequests" | "rationale"
-  >,
+  turn: Pick<ActionPlan, "capabilityRequests" | "grantRequests" | "rationale">,
   questions: readonly Question[],
   incidentStatus: IncidentStatus,
   actor: string,
+  proposals: readonly { proposal: number; questionId: string }[] = [],
 ): void {
   if (questions.length > 0)
     store.setIncidentQuestions(
@@ -149,7 +155,7 @@ function recordChannels(
       [...incident.questions, ...questions],
       actor,
       "question.asked",
-      { questions },
+      { questions, ...(proposals.length === 0 ? {} : { proposals }) },
     );
   if (turn.capabilityRequests.length > 0)
     store.setIncidentCapabilityRequests(
@@ -683,7 +689,7 @@ export function applyPlan(
     at,
   );
   const questions = newQuestions(incident, plan.questionsForHuman);
-  const incidentStatus = statusAfter(plan);
+  const incidentStatus = statusAfter(plan, questions);
   const taken = plan.createUnits.flatMap((u) =>
     u.takes === undefined
       ? []
@@ -828,7 +834,11 @@ function reassignmentsOf(
  * an accepted or reassigned verdict (through the same close path, the verdict as the
  * reason; a revised unit stays active for R4-3 to brief), a reassigned unit's open tasks
  * cancelled (`task.cancelled` naming the reassignment; `unit.close` sets status only), then
- * questions and requests recorded, and the incident's status set (DESIGN.md Step 4). The
+ * questions and requests recorded (the briefing's questions the IC accepted or answered
+ * first, R5-8: `question.asked` names each one's number in the briefing under
+ * `proposals`, and an answered one gets a `question.answered` by the actor `ic` with the
+ * answer and the why; a discarded one is only the ruling on the turn), and the incident's
+ * status set (DESIGN.md Step 4). The
  * period's number is the cycle. Each answer to a unit's resource request is delivered with
  * `answerRequest` (validated to name an open request of a waiting unit), so the unit
  * resumes in this cycle's dispatch once nothing of its is open. The deterministic tasks the
@@ -854,16 +864,46 @@ export function applyCommand(
     );
   // The turn is recorded with its situation's open items numbered (R5-2): a new item
   // takes the next id the incident has not issued, a carried one keeps its own.
+  const events = store.listEvents(incident.id);
   const turn: CommandTurn = {
     ...proposed,
-    situation: numberOpenItems(
-      proposed.situation,
-      incident.id,
-      store.listEvents(incident.id),
-    ),
+    situation: numberOpenItems(proposed.situation, incident.id, events),
   };
-  const questions = newQuestions(incident, turn.questionsForHuman);
-  const incidentStatus = statusAfter(turn);
+  // The briefing's questions the IC accepted or answered (R5-8) become questions of the
+  // IC's, numbered before its own; an accepted one is open and blocks, an answered one is
+  // recorded with the IC's answer, and a discarded one is only the ruling on the turn.
+  const proposals = proposedQuestions(events);
+  const ruled = [...(turn.briefingQuestions ?? [])]
+    .filter((r) => r.verdict !== "discard")
+    .sort((a, b) => a.proposal - b.proposal);
+  const fromBriefing = ruled.map((r) => {
+    const text = proposals[r.proposal - 1];
+    if (text === undefined)
+      throw new Error(
+        `the briefing proposed no question ${r.proposal} for the IC to ${r.verdict}`,
+      );
+    return text;
+  });
+  const questions = newQuestions(incident, [
+    ...fromBriefing,
+    ...turn.questionsForHuman,
+  ]).map((q, i) => {
+    const r = ruled[i];
+    return r?.verdict === "answer" && r.answer !== undefined
+      ? { ...q, answer: r.answer }
+      : q;
+  });
+  const asked = ruled.flatMap((r, i) => {
+    const q = questions[i];
+    return q === undefined ? [] : [{ proposal: r.proposal, questionId: q.id }];
+  });
+  const answeredByIc = ruled.flatMap((r, i) => {
+    const q = questions[i];
+    return r.verdict === "answer" && q !== undefined
+      ? [{ questionId: q.id, answer: r.answer ?? "", why: r.why }]
+      : [];
+  });
+  const incidentStatus = statusAfter(turn, questions);
   const period: Period = {
     number: cycle,
     objectives: turn.periodObjectives,
@@ -886,7 +926,6 @@ export function applyCommand(
   // The turn was validated: every verdict names a listed report and its unit, so the
   // closes here are the same set the validator folded into "Closing is clean".
   const closes = [...turn.closeUnits, ...verdictCloses(turn)];
-  const events = store.listEvents(incident.id);
   const reassigned = reassignmentsOf(
     incident,
     turn,
@@ -974,7 +1013,21 @@ export function applyCommand(
           actor,
         ),
       );
-    recordChannels(store, incident, turn, questions, incidentStatus, actor);
+    recordChannels(
+      store,
+      incident,
+      turn,
+      questions,
+      incidentStatus,
+      actor,
+      asked,
+    );
+    for (const a of answeredByIc)
+      store.record(incident.id, "question.answered", IC_ACTOR, {
+        questionId: a.questionId,
+        answer: a.answer,
+        why: a.why,
+      });
     for (const a of turn.answers) {
       const current = store.getIncident(incident.id);
       const target =

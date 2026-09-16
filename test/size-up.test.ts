@@ -400,57 +400,249 @@ describe("the initial IC and the transfer of command", () => {
     expect(schemaOf(first).required).not.toContain("briefingEvaluation");
   });
 
-  it("a briefing question leaves the incident blocked with the question recorded, before the IC starts; answer reopens it", async () => {
+  it("a briefing question is a proposal to the IC (R5-8): the incident stays open, the IC's first turn discards it with why, and nothing ever blocks", async () => {
+    const h = harness({
+      briefing: {
+        ...briefing,
+        questionsForHuman: ["what should the scroll do after a deletion?"],
+      },
+      commands: [
+        {
+          ...evaluated,
+          briefingQuestions: [
+            {
+              proposal: 1,
+              verdict: "discard",
+              why: "a diagnosis needs no ruling on intended behavior",
+            },
+          ],
+        },
+        command({ rationale: "second period" }),
+      ],
+      plans: [findIt, empty],
+    });
+    expect(await run(["incident", "create", "x"], h.ctx)).toBe(EXIT.ok);
+    expect(h.out.slice(-2)).toEqual([
+      "  question proposed for Mauria, 1: what should the scroll do after a deletion? (the IC's first turn rules on it)",
+      "command transferred to claude-code/claude-sonnet-5, chosen by the default: the briefing recommended claude-code/claude-opus-5: a subtle investigation, not a narrow read",
+    ]);
+    let store = h.store();
+    expect(store.getIncident("001")?.status).toBe("open");
+    expect(store.getIncident("001")?.questions).toEqual([]);
+    expect(store.listEvents("001").map((e) => e.type)).toEqual([
+      "incident.created",
+      "unit.created",
+      "incident.briefed",
+      "command.transferred",
+    ]);
+    store.close();
+    h.out.length = 0;
+    // The IC runs at once; the proposal is in its briefing, numbered, with the ask.
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    const first = h.calls()[1] as Call;
+    expect(first.kind).toBe("command");
+    expect(first.prompt).toContain(
+      "questions it proposed for Mauria, by number; each is yours to rule on in briefingQuestions (accept: it is asked and the incident waits on her answer; discard: with why; answer: from the objective, with the answer):\n  - 1. what should the scroll do after a deletion?\n",
+    );
+    expect(first.prompt).toContain(
+      " For each question it proposed for Mauria, say in briefingQuestions, by its number, whether you accept it (it is asked, and the incident waits on her answer), discard it with why, or answer it from the objective; only a question you accept reaches her. Then set the period's objectives",
+    );
+    expect(schemaOf(first).required).toContain("briefingQuestions");
+    expect(h.out).toContain(
+      "  briefing question 1 (what should the scroll do after a deletion?): discard: a diagnosis needs no ruling on intended behavior",
+    );
+    expect(h.out.some((l) => l.startsWith("  question 001-q"))).toBe(false);
+    store = h.store();
+    expect(store.getIncident("001")?.status).toBe("open");
+    expect(store.getIncident("001")?.questions).toEqual([]);
+    const types = store.listEvents("001").map((e) => e.type);
+    expect(types).not.toContain("question.asked");
+    expect(types).not.toContain("incident.blocked");
+    store.close();
+    h.out.length = 0;
+    expect(await run(["incident", "show", "001"], h.ctx)).toBe(EXIT.ok);
+    expect(h.out).toContain(
+      "questions the briefing proposed for Mauria, as the IC ruled:",
+    );
+    expect(h.out).toContain(
+      "  - 1. what should the scroll do after a deletion?: discarded by the IC: a diagnosis needs no ruling on intended behavior",
+    );
+    h.out.length = 0;
+    expect(await run(["incident", "review", "001"], h.ctx)).toBe(EXIT.ok);
+    const text = h.out.join("\n");
+    expect(text).toContain(
+      "  question proposed 1: what should the scroll do after a deletion?: discarded by the IC: a diagnosis needs no ruling on intended behavior",
+    );
+    expect(text).toContain(
+      "briefing questions: 1 proposed, 0 accepted and asked, 1 discarded, 0 answered by the IC",
+    );
+    // The second turn is not asked to rule again.
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    const second = h.calls().filter((c) => c.kind === "command")[1] as Call;
+    expect(schemaOf(second).required).not.toContain("briefingQuestions");
+  });
+
+  it("a briefing question the IC accepts is asked as the IC's and blocks until Mauria answers; one it answers from the objective is recorded as answered by the IC (R5-8)", async () => {
+    const h = harness({
+      briefing: {
+        ...briefing,
+        questionsForHuman: [
+          "which document is the scratch document?",
+          "which branch is the one that ships?",
+        ],
+      },
+      commands: [
+        {
+          ...evaluated,
+          briefingQuestions: [
+            {
+              proposal: 2,
+              verdict: "accept",
+              why: "only she knows which branch ships",
+            },
+            {
+              proposal: 1,
+              verdict: "answer",
+              why: "the objective names it",
+              answer: "docs/scratch.md, as the objective says",
+            },
+          ],
+        },
+        command({ rationale: "second period" }),
+      ],
+      plans: [findIt, empty],
+    });
+    expect(await run(["incident", "create", "x"], h.ctx)).toBe(EXIT.ok);
+    h.out.length = 0;
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    expect(h.out).toContain(
+      "  briefing question 2 (which branch is the one that ships?): accept: only she knows which branch ships",
+    );
+    expect(h.out).toContain(
+      "  briefing question 1 (which document is the scratch document?): answer: the objective names it; answer: docs/scratch.md, as the objective says",
+    );
+    expect(h.out).toContain(
+      "  question 001-q01: which document is the scratch document? (answered by the IC: docs/scratch.md, as the objective says)",
+    );
+    expect(h.out).toContain(
+      "  question 001-q02: which branch is the one that ships?",
+    );
+    expect(h.out.at(-1)).toBe("incident 001 is now blocked");
+    let store = h.store();
+    let incident = store.getIncident("001");
+    expect(incident?.status).toBe("blocked");
+    expect(incident?.questions).toEqual([
+      {
+        id: "001-q01",
+        text: "which document is the scratch document?",
+        answer: "docs/scratch.md, as the objective says",
+      },
+      { id: "001-q02", text: "which branch is the one that ships?" },
+    ]);
+    const events = store.listEvents("001");
+    const asked = events.find((e) => e.type === "question.asked");
+    expect(asked?.payload.proposals).toEqual([
+      { proposal: 1, questionId: "001-q01" },
+      { proposal: 2, questionId: "001-q02" },
+    ]);
+    const answered = events.find((e) => e.type === "question.answered");
+    expect(answered?.actor).toBe("ic");
+    expect(answered?.payload).toEqual({
+      questionId: "001-q01",
+      answer: "docs/scratch.md, as the objective says",
+      why: "the objective names it",
+    });
+    expect(events.some((e) => e.type === "incident.blocked")).toBe(true);
+    store.close();
+    // No planner call ran: the incident blocked at the command turn.
+    expect(h.calls().map((c) => c.kind)).toEqual(["size-up", "command"]);
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(
+      EXIT.cannotProceed,
+    );
+    h.out.length = 0;
+    expect(await run(["incident", "show", "001"], h.ctx)).toBe(EXIT.ok);
+    expect(h.out).toContain(
+      "  - 1. which document is the scratch document?: answered by the IC as 001-q01: docs/scratch.md, as the objective says (the objective names it)",
+    );
+    expect(h.out).toContain(
+      "  - 2. which branch is the one that ships?: accepted by the IC, asked as 001-q02: only she knows which branch ships",
+    );
+    expect(h.out).toContain("  - which branch is the one that ships?");
+    // Mauria's answer goes to the accepted question, the only open one, and reopens the incident.
+    expect(await run(["incident", "answer", "001", "main"], h.ctx)).toBe(
+      EXIT.ok,
+    );
+    store = h.store();
+    incident = store.getIncident("001");
+    expect(incident?.status).toBe("open");
+    expect(incident?.questions[1]?.answer).toBe("main");
+    store.close();
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    const second = h.calls().filter((c) => c.kind === "command")[1] as Call;
+    expect(second.prompt).toContain(
+      "questions answered:\n  - 001-q01 → docs/scratch.md, as the objective says (your own answer, on taking command)\n  - 001-q02 → main\n",
+    );
+    expect(second.prompt).not.toContain("questions it proposed for Mauria");
+    h.out.length = 0;
+    expect(await run(["incident", "review", "001"], h.ctx)).toBe(EXIT.ok);
+    const text = h.out.join("\n");
+    expect(text).toContain(
+      "briefing questions: 2 proposed, 1 accepted and asked, 0 discarded, 1 answered by the IC",
+    );
+    expect(text).toContain(
+      "  answered by the IC: docs/scratch.md, as the objective says",
+    );
+    expect(text).toContain("  answered: main");
+  });
+
+  it("a first turn that leaves a proposal unruled, or rules on one the briefing did not propose, is rejected under Proposals ruled and the retry rules again", async () => {
     const h = harness({
       briefing: {
         ...briefing,
         questionsForHuman: ["which branch is the one that ships?"],
       },
+      commands: [
+        evaluated,
+        {
+          ...evaluated,
+          briefingQuestions: [
+            { proposal: 1, verdict: "discard", why: "not needed" },
+            { proposal: 2, verdict: "discard", why: "not needed" },
+          ],
+        },
+        {
+          ...evaluated,
+          briefingQuestions: [
+            { proposal: 1, verdict: "discard", why: "not needed" },
+          ],
+        },
+      ],
+      plans: [findIt, empty],
     });
     expect(await run(["incident", "create", "x"], h.ctx)).toBe(EXIT.ok);
-    expect(h.out.slice(-3)).toEqual([
-      "  question 001-q01: which branch is the one that ships?",
-      "command transferred to claude-code/claude-sonnet-5, chosen by the default: the briefing recommended claude-code/claude-opus-5: a subtle investigation, not a narrow read",
-      'incident 001 is blocked on 1 question(s) before the IC starts; answer with noscope incident answer 001 "..."',
+    h.out.length = 0;
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    expect(h.out.slice(-2)).toEqual([
+      "command turn rejected:",
+      '  - Proposals ruled: the briefing\'s question 1 ("which branch is the one that ships?") has no ruling; accept, discard or answer it in briefingQuestions',
     ]);
-    let store = h.store();
-    const incident = store.getIncident("001");
-    expect(incident?.status).toBe("blocked");
-    expect(incident?.questions).toEqual([
-      { id: "001-q01", text: "which branch is the one that ships?" },
+    h.out.length = 0;
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    expect(h.out.slice(-2)).toEqual([
+      "command turn rejected:",
+      "  - Proposals ruled: question 2 is ruled on, and the briefing proposed 1",
     ]);
-    const events = store.listEvents("001");
-    expect(events.map((e) => e.type)).toEqual([
-      "incident.created",
-      "unit.created",
-      "incident.briefed",
-      "command.transferred",
-      "question.asked",
-      "incident.blocked",
-    ]);
-    expect(events[4]?.payload.seat).toBe("initial_ic");
-    expect(events[5]?.payload.rationale).toBe(
-      "the initial IC's briefing raised 1 question(s) for Mauria",
+    const retry = h.calls().filter((c) => c.kind === "command")[1] as Call;
+    expect(schemaOf(retry).required).toContain("briefingQuestions");
+    expect(retry.prompt).toContain(
+      "  - 1. which branch is the one that ships?",
     );
-    store.close();
-    // No IC call has run: a step is refused until Mauria answers.
-    expect(await run(["incident", "step", "001"], h.ctx)).toBe(
-      EXIT.cannotProceed,
-    );
-    expect(h.calls().map((c) => c.kind)).toEqual(["size-up"]);
-    expect(await run(["incident", "answer", "001", "main"], h.ctx)).toBe(
-      EXIT.ok,
-    );
-    store = h.store();
+    h.out.length = 0;
+    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
+    expect(h.out).not.toContain("command turn rejected:");
+    const store = h.store();
     expect(store.getIncident("001")?.status).toBe("open");
     store.close();
-    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
-    const first = h.calls()[1] as Call;
-    expect(first.kind).toBe("command");
-    expect(first.prompt).toContain(
-      "questions it raised for Mauria (answered ones are in the incident file):\n  - which branch is the one that ships?\n",
-    );
-    expect(first.prompt).toContain("questions answered:\n  - 001-q01 → main\n");
   });
 
   it("the IC's first command turn carries the briefing and the evaluation instruction, its schema requires the evaluation, and the next turn carries neither", async () => {
@@ -472,9 +664,10 @@ describe("the initial IC and the transfer of command", () => {
       "your model: claude-sonnet-5, chosen by the default (the briefing recommended claude-code/claude-opus-5: a subtle investigation, not a narrow read)\n\n# Incident file\n",
     );
     expect(first.prompt).toContain(
-      "# Your command turn for operational period 1\nFirst, evaluate the briefing you took command with: for each initial objective and each unit sketched, say in briefingEvaluation whether you accept it, rewrite it or discard it, and why; you are not bound by any of it, and a rewritten or discarded item costs nothing. Then set the period's objectives",
+      "# Your command turn for operational period 1\nFirst, evaluate the briefing you took command with: for each initial objective and each unit sketched, say in briefingEvaluation whether you accept it, rewrite it or discard it, and why; you are not bound by any of it, and a rewritten or discarded item costs nothing. For each question it proposed for Mauria, say in briefingQuestions, by its number, whether you accept it (it is asked, and the incident waits on her answer), discard it with why, or answer it from the objective; only a question you accept reaches her. Then set the period's objectives",
     );
     expect(schemaOf(first).required).toContain("briefingEvaluation");
+    expect(schemaOf(first).required).toContain("briefingQuestions");
     const store = h.store();
     const turned = store
       .listEvents("001")
@@ -509,7 +702,7 @@ describe("the initial IC and the transfer of command", () => {
     expect(h.out[1]).toBe("no cycle has run");
     expect(text).toMatch(/\nsize-up {2}\S+\n/);
     expect(text).toContain(
-      "  initial ic claude-haiku-4-5: in 1,500 (uncached 1,000 / write 200 / read 300)  out 42  1.5 s  $0.01  briefed: bug hunt, 2 objective(s), 1 unit(s) sketched, 0 question(s), recommended claude-code/claude-opus-5  session stub-session",
+      "  initial ic claude-haiku-4-5: in 1,500 (uncached 1,000 / write 200 / read 300)  out 42  1.5 s  $0.01  briefed: bug hunt, 2 objective(s), 1 unit(s) sketched, 0 question(s) proposed, recommended claude-code/claude-opus-5  session stub-session",
     );
     expect(text).toContain(
       "  command transferred (initial) to claude-code/claude-sonnet-5, chosen by the default",
@@ -518,6 +711,7 @@ describe("the initial IC and the transfer of command", () => {
       "    1 tool call(s) (Bash 1), 1.5 s in tools (initial ic)",
     );
     expect(text).toContain("briefing kept: not evaluated yet");
+    expect(text).toContain("briefing questions: none proposed");
     expect(text).toMatch(/initial_ic\s+claude-haiku-4-5\s+1\s+1,500\s+42/);
     h.ctx.env.NOSCOPE_STUB_TOOLS = "[]";
     await run(["incident", "step", "001"], h.ctx);
@@ -761,7 +955,7 @@ describe("the initial IC and the transfer of command", () => {
         - one unit to read the handler, leader on claude-haiku-4-5
       hazards:
         - the scratch document may be stale
-      questions it raised for Mauria (answered ones are in the incident file):
+      questions it proposed for Mauria, by number; each is yours to rule on in briefingQuestions (accept: it is asked and the incident waits on her answer; discard: with why; answer: from the objective, with the answer):
         (none)
       incoming commander it recommended: claude-code/claude-opus-5: a subtle investigation, not a narrow read
       your model: claude-sonnet-5, chosen by the default (the briefing recommended claude-code/claude-opus-5: a subtle investigation, not a narrow read)
@@ -772,7 +966,7 @@ describe("the initial IC and the transfer of command", () => {
       text.slice(text.indexOf("# Your command turn")),
     ).toMatchInlineSnapshot(`
       "# Your command turn for operational period 1
-      First, evaluate the briefing you took command with: for each initial objective and each unit sketched, say in briefingEvaluation whether you accept it, rewrite it or discard it, and why; you are not bound by any of it, and a rewritten or discarded item costs nothing. Then set the period's objectives and priorities, answer each unit's last report the change report lists with a verdict (accepted, revise or reassign; instructions say what is missing or what was found and not found, never what you think the answer is), edit the situation from section 10 (the picture, folding each unit's slice into it; the claims for and against it by id; the open items, each carried by its id or new without one, worked by the plan or deferred with why; your assessment, on_track, priors_updated or tactics_change, with why; and what this turn changed), close what is done, answer the resource requests you can, raise for Mauria what only she can supply, and say whether the incident continues."
+      First, evaluate the briefing you took command with: for each initial objective and each unit sketched, say in briefingEvaluation whether you accept it, rewrite it or discard it, and why; you are not bound by any of it, and a rewritten or discarded item costs nothing. For each question it proposed for Mauria, say in briefingQuestions, by its number, whether you accept it (it is asked, and the incident waits on her answer), discard it with why, or answer it from the objective; only a question you accept reaches her. Then set the period's objectives and priorities, answer each unit's last report the change report lists with a verdict (accepted, revise or reassign; instructions say what is missing or what was found and not found, never what you think the answer is), edit the situation from section 10 (the picture, folding each unit's slice into it; the claims for and against it by id; the open items, each carried by its id or new without one, worked by the plan or deferred with why; your assessment, on_track, priors_updated or tactics_change, with why; and what this turn changed), close what is done, answer the resource requests you can, raise for Mauria what only she can supply, and say whether the incident continues."
     `);
     expect(text.startsWith("# Change report\n")).toBe(true);
   });
@@ -838,7 +1032,7 @@ describe("the initial IC and the transfer of command", () => {
       "An objective that asks to build, change, fix or add is a build and takes those",
     );
     expect(INITIAL_IC_ROLE).toContain(
-      "ask only what no tool could find and the objective does not already settle",
+      "A question for Mauria is a proposal to the Incident Commander, who accepts it (it is then asked, and the incident waits on her answer), discards it with a why, or answers it from the objective; propose only what no tool could find and the objective does not already settle",
     );
     const schema = JSON.stringify(jsonSchemaFor(IncidentBriefing));
     expect(schema).toContain(
@@ -848,10 +1042,13 @@ describe("the initial IC and the transfer of command", () => {
     expect(schema).toContain(
       "on a diagnosis, no question about what the intended behavior should be",
     );
+    expect(schema).toContain(
+      "Questions for Mauria you propose to the Incident Commander, who accepts each",
+    );
     const { incident } = scriptedIncident(new Store(":memory:"));
     const findings = await gatherFindings(incident, tmpdir(), [fakeProvider]);
     expect(renderSizeUpPrompt(incident, findings)).toContain(
-      "scoped to the objective's verb, questionsForHuman (only what no tool could find and the objective does not settle)",
+      "scoped to the objective's verb, questionsForHuman (proposals to the Incident Commander, who gates them: only what no tool could find and the objective does not settle)",
     );
   });
 

@@ -1,4 +1,5 @@
 import {
+  BriefingQuestionVerdict,
   type CapabilityRequest,
   type Event,
   IncidentBriefing,
@@ -438,6 +439,96 @@ function lastAcceptedTurn(events: readonly Event[]): Event | null {
   for (const e of events)
     if (e.type === "command.turned" && e.payload.rejected !== true) last = e;
   return last;
+}
+
+/**
+ * The questions the initial IC proposed for Mauria (R5-8), while the IC's first turn has
+ * not ruled on them: the briefing's `questionsForHuman` until an accepted `command.turned`
+ * follows the briefing, then none. A rejected first turn leaves them proposed, so its
+ * retry rules on them again, as it evaluates the briefing again.
+ */
+export function proposedQuestions(events: readonly Event[]): string[] {
+  const briefed = briefingOf(events);
+  if (briefed === null) return [];
+  const last = lastAcceptedTurn(events);
+  return last !== null && last.sequence > briefed.event.sequence
+    ? []
+    : briefed.briefing.questionsForHuman;
+}
+
+/** What became of one question the briefing proposed (R5-8): the IC's ruling and, for an accepted or answered one, the question's id, or null before the IC's first accepted turn. */
+export type ProposalOutcome = {
+  proposal: number;
+  text: string;
+  ruling:
+    | (BriefingQuestionVerdict & {
+        questionId: string | null;
+      })
+    | null;
+};
+
+/**
+ * Every question the briefing proposed with what the IC made of it (R5-8): the ruling on
+ * the first accepted `command.turned` after the briefing that carries `briefingQuestions`,
+ * and the question id the runtime gave an accepted or answered one, from the
+ * `question.asked` that recorded the turn's questions with `proposals`. An empty list
+ * without a briefing or when it proposed none.
+ */
+export function briefingQuestionOutcomes(
+  events: readonly Event[],
+): ProposalOutcome[] {
+  const briefed = briefingOf(events);
+  if (briefed === null) return [];
+  const ruled = events.find(
+    (e) =>
+      e.type === "command.turned" &&
+      e.sequence > briefed.event.sequence &&
+      e.payload.rejected !== true &&
+      Array.isArray(
+        (e.payload.turn as { briefingQuestions?: unknown } | undefined)
+          ?.briefingQuestions,
+      ),
+  );
+  const rulings = BriefingQuestionVerdict.array().safeParse(
+    (ruled?.payload.turn as { briefingQuestions?: unknown } | undefined)
+      ?.briefingQuestions,
+  );
+  const ids = new Map<number, string>();
+  for (const e of events)
+    if (e.type === "question.asked" && Array.isArray(e.payload.proposals))
+      for (const p of e.payload.proposals as {
+        proposal?: unknown;
+        questionId?: unknown;
+      }[])
+        if (typeof p.proposal === "number" && typeof p.questionId === "string")
+          ids.set(p.proposal, p.questionId);
+  return briefed.briefing.questionsForHuman.map((text, i) => {
+    const proposal = i + 1;
+    const verdict = rulings.success
+      ? rulings.data.find((r) => r.proposal === proposal)
+      : undefined;
+    return {
+      proposal,
+      text,
+      ruling:
+        verdict === undefined
+          ? null
+          : { ...verdict, questionId: ids.get(proposal) ?? null },
+    };
+  });
+}
+
+/** One proposal's outcome as the file, `step` and `review` print it (R5-8). */
+export function describeProposal(o: ProposalOutcome): string {
+  if (o.ruling === null) return "not yet ruled on; the IC's first turn does";
+  switch (o.ruling.verdict) {
+    case "accept":
+      return `accepted by the IC, asked as ${o.ruling.questionId ?? "(unrecorded)"}: ${o.ruling.why}`;
+    case "discard":
+      return `discarded by the IC: ${o.ruling.why}`;
+    case "answer":
+      return `answered by the IC${o.ruling.questionId === null ? "" : ` as ${o.ruling.questionId}`}: ${o.ruling.answer ?? ""} (${o.ruling.why})`;
+  }
 }
 
 /**

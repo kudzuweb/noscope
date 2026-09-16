@@ -322,9 +322,13 @@ describe("contracts", () => {
     expect(() =>
       FirstCommandTurn.parse({ ...turn, briefingEvaluation: [] }),
     ).toThrow(/briefingEvaluation/);
-    expect(FirstCommandTurn.parse(evaluated).briefingEvaluation).toHaveLength(
-      2,
+    // The first turn rules on the briefing's questions too (R5-8): the field is required
+    // there, empty when the briefing proposed none.
+    expect(() => FirstCommandTurn.parse(evaluated)).toThrow(
+      /briefingQuestions/,
     );
+    const ruled = { ...evaluated, briefingQuestions: [] };
+    expect(FirstCommandTurn.parse(ruled).briefingEvaluation).toHaveLength(2);
     expect(() =>
       CommandTurn.parse({
         ...turn,
@@ -333,8 +337,68 @@ describe("contracts", () => {
     ).toThrow(/verdict/);
     const first = jsonSchemaFor(FirstCommandTurn) as { required: string[] };
     expect(first.required).toContain("briefingEvaluation");
+    expect(first.required).toContain("briefingQuestions");
     const any = jsonSchemaFor(CommandTurn) as { required: string[] };
     expect(any.required).not.toContain("briefingEvaluation");
+    expect(any.required).not.toContain("briefingQuestions");
+  });
+
+  it("a ruling on a briefing question is accept, discard or answer, by number; an answer carries the answer and the others none (R5-8)", () => {
+    const turn = {
+      periodObjectives: ["find the handler"],
+      priorities: [],
+      reportVerdicts: [],
+      situation: situation(),
+      closeUnits: [],
+      questionsForHuman: [],
+      capabilityRequests: [],
+      grantRequests: [],
+      incidentStatus: "continue",
+      rationale: "first period",
+      briefingEvaluation: [
+        { item: "find the handler", verdict: "accepted", why: "the objective" },
+      ],
+    };
+    const rulings = [
+      {
+        proposal: 1,
+        verdict: "accept",
+        why: "only she knows which branch ships",
+      },
+      {
+        proposal: 2,
+        verdict: "discard",
+        why: "a diagnosis needs no ruling on intended behavior",
+      },
+      {
+        proposal: 3,
+        verdict: "answer",
+        why: "the objective names the scratch document",
+        answer: "the scratch document at docs/scratch.md",
+      },
+    ];
+    const parsed = FirstCommandTurn.parse({
+      ...turn,
+      briefingQuestions: rulings,
+    });
+    expect(parsed.briefingQuestions).toEqual(rulings);
+    expect(
+      CommandTurn.parse({ ...turn, briefingQuestions: rulings })
+        .briefingQuestions,
+    ).toHaveLength(3);
+    for (const [bad, message] of [
+      [{ proposal: 1, verdict: "answer", why: "the objective" }, /answer/],
+      [
+        { proposal: 1, verdict: "discard", why: "not needed", answer: "x" },
+        /no answer/,
+      ],
+      [{ proposal: 0, verdict: "accept", why: "x" }, /proposal/],
+      [{ proposal: 1, verdict: "rewrite", why: "x" }, /verdict/],
+      [{ proposal: 1, verdict: "accept", why: "" }, /why/],
+    ] as const)
+      expect(() =>
+        FirstCommandTurn.parse({ ...turn, briefingQuestions: [bad] }),
+      ).toThrow(message);
   });
 
   it("a command turn answers each report with one of three verdicts; instructions are required on a revise or reassign and refused on an accepted (R4-2)", () => {

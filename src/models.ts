@@ -798,6 +798,52 @@ export const BriefingVerdict = z.strictObject({
 });
 
 /**
+ * The IC's ruling on one question the initial IC proposed for Mauria (R5-8), named by its
+ * number in the briefing as the first turn's transfer renders it: `accept` asks it (it
+ * becomes a question the IC raises, recorded and blocking until she answers), `discard`
+ * drops it with a why, and `answer` answers it from the objective, the constraints or the
+ * file, recorded as answered by the IC. Only an accepted question reaches Mauria. The
+ * answer is what an `answer` is for, so it is required there and refused on the other
+ * two, enforced after parse since every turn schema is one strict object.
+ */
+export const BriefingQuestionVerdict = z
+  .strictObject({
+    proposal: z
+      .number()
+      .int()
+      .positive()
+      .describe(
+        "The question's number in the briefing, as the transfer of command lists it",
+      ),
+    verdict: z.enum(["accept", "discard", "answer"]),
+    why: z
+      .string()
+      .min(1)
+      .describe(
+        "For accept: why only Mauria can answer it; for discard: why the incident does not need it; for answer: where the answer comes from (the objective, a constraint, the file)",
+      ),
+    answer: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("With verdict answer: the answer, recorded as the IC's"),
+  })
+  .superRefine((v, ctx) => {
+    if (v.verdict === "answer" && v.answer === undefined)
+      ctx.addIssue({
+        code: "custom",
+        path: ["answer"],
+        message: "an answered question carries the answer",
+      });
+    if (v.verdict !== "answer" && v.answer !== undefined)
+      ctx.addIssue({
+        code: "custom",
+        path: ["answer"],
+        message: `a ${v.verdict} verdict carries no answer`,
+      });
+  });
+
+/**
  * The IC's verdict on one unit's report (R4-2), named by the report's event id as the
  * change report heads it: `accepted` closes the unit, its objective met on the work shown;
  * `revise` keeps the unit and sends the instructions back to its leader (R4-3); `reassign`
@@ -858,6 +904,12 @@ export const CommandTurn = z.strictObject({
     .optional()
     .describe(
       "On the first turn after a transfer of command: each initial objective and each unit sketched in the briefing, accepted, rewritten or discarded, and why",
+    ),
+  briefingQuestions: z
+    .array(BriefingQuestionVerdict)
+    .optional()
+    .describe(
+      "On the first turn after the initial IC's briefing: a ruling on each question it proposed for Mauria, by number: accept (it is asked, and the incident waits on her answer), discard with why, or answer it from the objective with the answer; a question you would ask differently is discarded here and raised in questionsForHuman; empty when the briefing proposed none or you took command by handoff",
     ),
   periodObjectives: z
     .array(z.string().min(1))
@@ -934,6 +986,11 @@ export const FirstCommandTurn = CommandTurn.extend({
     .describe(
       "Each initial objective and each unit sketched in the briefing, accepted, rewritten or discarded, and why; nothing in the briefing binds you",
     ),
+  briefingQuestions: z
+    .array(BriefingQuestionVerdict)
+    .describe(
+      "A ruling on each question the briefing proposed for Mauria, by number: accept (it is asked, and the incident waits on her answer), discard with why, or answer it from the objective with the answer; a question you would ask differently is discarded here and raised in questionsForHuman; empty when the briefing proposed none or you took command by handoff",
+    ),
 });
 
 // What the initial IC returns: the incident briefing (R3-8), on ICS 201's lines.
@@ -965,9 +1022,10 @@ export const IncomingCommander = z.strictObject({
  * The incident briefing the initial IC writes from its size-up, the first handoff
  * document, on ICS 201's lines: what sort of incident this is, the dominant problem, what
  * is obviously needed (checked where a tool could check it), initial objectives, an
- * initial organization sketched one unit per line, questions for Mauria, hazards, and the
- * incoming commander's model with a reason. The IC proper evaluates every line of it on
- * taking command (`FirstCommandTurn`). One strict object, like every turn schema.
+ * initial organization sketched one unit per line, questions proposed for Mauria, hazards,
+ * and the incoming commander's model with a reason. The IC proper evaluates every line of
+ * it on taking command (`FirstCommandTurn`), and rules on each proposed question (R5-8):
+ * only one it accepts reaches Mauria. One strict object, like every turn schema.
  */
 export const IncidentBriefing = z
   .strictObject({
@@ -1000,7 +1058,7 @@ export const IncidentBriefing = z
     questionsForHuman: z
       .array(z.string().min(1))
       .describe(
-        "What only Mauria knows or may decide, that no tool could find and the objective does not already settle; on a diagnosis, no question about what the intended behavior should be; each blocks the incident until she answers",
+        "Questions for Mauria you propose to the Incident Commander, who accepts each (it is asked, and the incident waits on her answer), discards it with a why, or answers it from the objective: only what only she knows or may decide, that no tool could find and the objective does not already settle; on a diagnosis, no question about what the intended behavior should be",
       ),
     hazards: z
       .array(z.string().min(1))
@@ -1350,6 +1408,7 @@ export type CommandTurn = z.infer<typeof CommandTurn>;
 export type ReportVerdict = z.infer<typeof ReportVerdict>;
 export type BriefingVerdict = z.infer<typeof BriefingVerdict>;
 export type IncidentBriefing = z.infer<typeof IncidentBriefing>;
+export type BriefingQuestionVerdict = z.infer<typeof BriefingQuestionVerdict>;
 export type ReviewTurn = z.infer<typeof ReviewTurn>;
 export type PlanPatch = z.infer<typeof PlanPatch>;
 export type HandoffDocument = z.infer<typeof HandoffDocument>;

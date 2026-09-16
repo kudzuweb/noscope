@@ -27,6 +27,8 @@ import {
 } from "../ic.js";
 import {
   briefingOf,
+  briefingQuestionOutcomes,
+  describeProposal,
   describeRefusedCall,
   IC_MODEL,
   IC_PROVIDER,
@@ -34,6 +36,7 @@ import {
   openItemsWorked,
   openReassignments,
   openRequestsByUnit,
+  proposedQuestions,
   type RefusedCall,
   SITUATION_PREDATES_SHAPE,
   situationPredatesShape,
@@ -110,8 +113,9 @@ function describeFailure(error: unknown): string {
  * transfers to the IC proper on `--ic-model` or the default, Sonnet 5 (R5-6), as
  * `command.transferred` with the briefing as its document and the root unit's leader as
  * its mutation; the briefing's `incomingCommander` is recorded on the transfer as the
- * initial IC's recommendation and not followed. A question in the briefing blocks the
- * incident before the IC starts, the way a plan's does. `--no-size-up` creates the
+ * initial IC's recommendation and not followed. A question in the briefing is a proposal
+ * to the IC (R5-8): the incident stays open, the IC's first turn accepts, discards or
+ * answers each, and only an accepted one is asked. `--no-size-up` creates the
  * incident on `--ic-model` or the default with no briefing, so the IC's first turn carries
  * no evaluation. A size-up that fails is filed as `command.failed` under the seat
  * `initial_ic`; the incident stands, unbriefed, and the command exits 1.
@@ -286,7 +290,6 @@ export const create: Handler = async (args, ctx) => {
       recommended.provider === IC_PROVIDER &&
       icProvider.models.includes(recommended.model);
     const reason = `the briefing recommended ${recommended.provider}/${recommended.model}${served ? "" : `, which ${IC_PROVIDER} does not serve`}: ${recommended.why}`;
-    const questions = newQuestions(incident, briefing.questionsForHuman);
     store.batch(() => {
       store.record(id, "incident.briefed", "runtime", {
         unitId: command.id,
@@ -317,15 +320,6 @@ export const create: Handler = async (args, ctx) => {
         chosenBy,
         reason,
       });
-      if (questions.length > 0) {
-        store.setIncidentQuestions(id, questions, "runtime", "question.asked", {
-          questions,
-          seat: "initial_ic",
-        });
-        store.setIncidentStatus(id, "blocked", "runtime", "incident.blocked", {
-          rationale: `the initial IC's briefing raised ${questions.length} question(s) for Mauria`,
-        });
-      }
     });
     ctx.io.out(
       `size-up by ${initial.provider}/${initial.model} (session ${sized.sessionId}): ${briefing.kind}`,
@@ -339,14 +333,14 @@ export const create: Handler = async (args, ctx) => {
       ctx.io.out(`  initial objective: ${o}`);
     for (const u of briefing.initialOrganization) ctx.io.out(`  unit: ${u}`);
     for (const h of briefing.hazards) ctx.io.out(`  hazard: ${h}`);
-    for (const q of questions) ctx.io.out(`  question ${q.id}: ${q.text}`);
+    briefing.questionsForHuman.forEach((q, i) => {
+      ctx.io.out(
+        `  question proposed for Mauria, ${i + 1}: ${q} (the IC's first turn rules on it)`,
+      );
+    });
     ctx.io.out(
       `command transferred to ${incoming.provider}/${incoming.model}, chosen by ${chosenBy}: ${reason}`,
     );
-    if (questions.length > 0)
-      ctx.io.out(
-        `incident ${id} is blocked on ${questions.length} question(s) before the IC starts; answer with noscope incident answer ${id} "..."`,
-      );
     return EXIT.ok;
   } finally {
     store.close();
@@ -531,6 +525,12 @@ function renderIncidentFile(
   }
   const raisedBy = (unitId: string | undefined) =>
     unitId === undefined ? "" : ` (raised by unit ${unitId})`;
+  const proposals = briefingQuestionOutcomes(events);
+  if (proposals.length > 0) {
+    lines.push("questions the briefing proposed for Mauria, as the IC ruled:");
+    for (const o of proposals)
+      lines.push(`  - ${o.proposal}. ${o.text}: ${describeProposal(o)}`);
+  }
   lines.push("questions waiting on a human:");
   for (const q of incident.questions.filter((q) => q.answer === undefined))
     lines.push(`  - ${q.text}${raisedBy(q.unitId)}`);
@@ -1002,6 +1002,11 @@ async function cycle(
     ctx.io.out(`  discrepancy: ${turn.discrepancy}`);
   for (const v of turn.briefingEvaluation ?? [])
     ctx.io.out(`  ${evaluating}: ${v.verdict} ${v.item}: ${v.why}`);
+  const proposals = proposedQuestions(store.listEvents(incident.id));
+  for (const r of turn.briefingQuestions ?? [])
+    ctx.io.out(
+      `  briefing question ${r.proposal} (${proposals[r.proposal - 1] ?? "not proposed"}): ${r.verdict}: ${r.why}${r.answer === undefined ? "" : `; answer: ${r.answer}`}`,
+    );
   for (const o of turn.periodObjectives) ctx.io.out(`  objective: ${o}`);
   for (const p of turn.priorities) ctx.io.out(`  priority: ${p}`);
   ctx.io.out(`  situation changed: ${turn.situation.changed}`);
@@ -1070,7 +1075,11 @@ async function cycle(
   for (const s of commanded.settled)
     ctx.io.out(`  task ${s.taskId} cancelled: ${s.reason}`);
   for (const q of commanded.questions)
-    ctx.io.out(`  question ${q.id}: ${q.text}`);
+    ctx.io.out(
+      q.answer === undefined
+        ? `  question ${q.id}: ${q.text}`
+        : `  question ${q.id}: ${q.text} (answered by the IC: ${q.answer})`,
+    );
   for (const a of commanded.answered)
     for (const line of describeAnswered(a)) ctx.io.out(`  ${line}`);
   for (const t of commanded.tasks)

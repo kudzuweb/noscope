@@ -63,7 +63,7 @@ the runtime starts inherits that directory, read-only.
 
 | Step | Command |
 |---|---|
-| Create an incident. The initial IC (Haiku) sizes it up, writes a briefing and hands command to the IC on Sonnet 5, or the model `--ic-model` names; the briefing's recommended commander is recorded and not followed. Questions in the briefing block the incident until answered. | `noscope incident create "<objective>" --constraint "<text>" --priority "<text>" [--ic-model <model>]` |
+| Create an incident. The initial IC (Haiku) sizes it up, writes a briefing and hands command to the IC on Sonnet 5, or the model `--ic-model` names; the briefing's recommended commander is recorded and not followed. Questions in the briefing are proposals to the IC, whose first turn accepts, discards or answers each; only an accepted one reaches you, and blocks until answered. | `noscope incident create "<objective>" --constraint "<text>" --priority "<text>" [--ic-model <model>]` |
 | Answer a question or a capability request, the planner's or a unit's. | `noscope incident answer <id> "<text>"`, `noscope incident provide <id> "<text>"` |
 | Run one cycle: the IC sets the period, the planner drafts, the validator checks (a rule break goes back to the planner), the IC reviews the valid draft, units run to their reports. A cycle with a browser reproduce can take ten minutes; run it detached and read the log. | `noscope incident step <id>` |
 | Run cycles until the incident leaves `open` or the cap is hit. | `noscope incident run <id> --max-cycles N` |
