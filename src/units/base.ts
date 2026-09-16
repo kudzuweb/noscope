@@ -1074,7 +1074,7 @@ function answered(ctx: PassContext, unit: Unit): readonly string[] {
 export const baseUnitType = defineUnitType({
   name: BASE_TYPE,
   description:
-    "The led unit: a leader session runs the unit's tasks in order and reports against its objective, and the IC answers each report with a verdict.",
+    "The led unit: a leader session directs the unit's tasks, which run in sessions of their own or in process, and reports against its objective, and the IC answers each report with a verdict.",
   plannable: true,
   form: BaseUnitForm,
   protocol: {
