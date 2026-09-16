@@ -297,7 +297,7 @@ describe("the IC above the planner", () => {
       unitId: "001-command",
       sessionId: "stub-session",
       provider: "claude-code",
-      model: "claude-opus-5",
+      model: "claude-sonnet-5",
       cycle: 1,
       incidentStatus: "open",
       turn: { periodObjectives: ["find the handler"] },
@@ -368,7 +368,7 @@ describe("the IC above the planner", () => {
       "ic verdicts: 2 review(s): 1 approve, 1 correct, 0 amend",
     );
     expect(review).toMatch(
-      /ic\s+claude-opus-5\s+3\s+4,500\s+126\s+4\.5\s+\$0\.04/,
+      /ic\s+claude-sonnet-5\s+3\s+4,500\s+126\s+4\.5\s+\$0\.04/,
     );
   });
 
@@ -570,7 +570,7 @@ describe("the IC above the planner", () => {
     expect(failed?.payload).toMatchObject({
       unitId: "001-command",
       sessionId: "stub-session",
-      model: "claude-opus-5",
+      model: "claude-sonnet-5",
       seat: "ic",
       turn: "review",
       cycle: 1,
@@ -583,9 +583,9 @@ describe("the IC above the planner", () => {
     const review = h.out.join("\n");
     expect(review).toMatch(/^cycle 1 {2}\S+ {2}review turn failed$/m);
     expect(review).toMatch(
-      /^ {2}ic claude-opus-5: in 1,500 .* review turn failed: the answer did not fit/m,
+      /^ {2}ic claude-sonnet-5: in 1,500 .* review turn failed: the answer did not fit/m,
     );
-    expect(review).toMatch(/ic\s+claude-opus-5\s+3\s+4,500/);
+    expect(review).toMatch(/ic\s+claude-sonnet-5\s+3\s+4,500/);
   });
 
   it("a command turn whose session fails is filed as command.failed with its session on the unit, and a review on a lost session is re-briefed", {

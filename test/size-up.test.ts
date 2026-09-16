@@ -56,10 +56,12 @@ const briefing: IncidentBriefing = {
   ],
   questionsForHuman: [],
   hazards: ["the scratch document may be stale"],
+  // Recommends Opus 5, which the transfer records and does not follow (R5-6): the IC is on
+  // Sonnet 5 unless --ic-model names another.
   incomingCommander: {
     provider: "claude-code",
-    model: "claude-sonnet-5",
-    why: "a narrow read with one subtle link",
+    model: "claude-opus-5",
+    why: "a subtle investigation, not a narrow read",
   },
 };
 
@@ -198,7 +200,7 @@ const argAfter = (c: Call, flag: string) =>
   c.args[c.args.indexOf(flag) + 1] ?? "";
 
 describe("the initial IC and the transfer of command", () => {
-  it("create runs the size-up on the stub, records the briefing, sets the IC's model from it and writes the transfer event", async () => {
+  it("create runs the size-up on the stub, records the briefing, puts the IC on Sonnet 5 by default with the briefing's recommendation recorded and not followed, and writes the transfer event", async () => {
     const h = harness();
     expect(
       await run(
@@ -224,7 +226,7 @@ describe("the initial IC and the transfer of command", () => {
       "  initial objective: find what scrolls",
       "  unit: one unit to read the handler, leader on claude-haiku-4-5",
       "  hazard: the scratch document may be stale",
-      "command transferred to claude-code/claude-sonnet-5, chosen by the briefing: a narrow read with one subtle link",
+      "command transferred to claude-code/claude-sonnet-5, chosen by the default: the briefing recommended claude-code/claude-opus-5: a subtle investigation, not a narrow read",
     ]);
     // One call: the initial IC on Haiku with the read-only tool set, the read-only
     // allowlist, the initial IC's seat and role, and the runtime's findings in its prompt.
@@ -294,8 +296,9 @@ describe("the initial IC and the transfer of command", () => {
       incomingSessionId: null,
       incoming: { provider: "claude-code", model: "claude-sonnet-5" },
       document: briefing,
-      chosenBy: "the briefing",
-      reason: "a narrow read with one subtle link",
+      chosenBy: "the default",
+      reason:
+        "the briefing recommended claude-code/claude-opus-5: a subtle investigation, not a narrow read",
       mutation: {
         kind: "unit.leader",
         unitId: "001-command",
@@ -309,7 +312,7 @@ describe("the initial IC and the transfer of command", () => {
       "briefing: bug hunt, by the initial IC on claude-haiku-4-5: a comment delete moves the scroll position",
     );
     expect(h.out).toContain(
-      "command transferred to claude-code/claude-sonnet-5, chosen by the briefing",
+      "command transferred to claude-code/claude-sonnet-5, chosen by the default",
     );
     // The transfer replays: a fresh store rebuilt from the log routes the leader the same way.
     const replayed = new Store(":memory:");
@@ -319,17 +322,17 @@ describe("the initial IC and the transfer of command", () => {
     store.close();
   });
 
-  it("--ic-model overrides the briefing's commander, and a briefing that names a model the provider does not serve falls back to the default", async () => {
+  it("--ic-model names the IC's model over the default, and a briefing that names a model the provider does not serve is recorded as unserved", async () => {
     const overridden = harness();
     await run(
-      ["incident", "create", "x", "--ic-model", "claude-opus-5"],
+      ["incident", "create", "x", "--ic-model", "claude-opus-4-8"],
       overridden.ctx,
     );
     expect(overridden.out.at(-1)).toBe(
-      "command transferred to claude-code/claude-opus-5, chosen by --ic-model: the briefing recommended claude-code/claude-sonnet-5: a narrow read with one subtle link",
+      "command transferred to claude-code/claude-opus-4-8, chosen by --ic-model: the briefing recommended claude-code/claude-opus-5: a subtle investigation, not a narrow read",
     );
     let store = overridden.store();
-    expect(store.listUnits("001")[0]?.leader.model).toBe("claude-opus-5");
+    expect(store.listUnits("001")[0]?.leader.model).toBe("claude-opus-4-8");
     store.close();
 
     const unknown = harness({
@@ -344,10 +347,10 @@ describe("the initial IC and the transfer of command", () => {
     });
     await run(["incident", "create", "x"], unknown.ctx);
     expect(unknown.out.at(-1)).toBe(
-      "command transferred to claude-code/claude-opus-5, chosen by the default: the briefing recommended claude-code/gpt-9, which claude-code does not serve",
+      "command transferred to claude-code/claude-sonnet-5, chosen by the default: the briefing recommended claude-code/gpt-9, which claude-code does not serve: ?",
     );
     store = unknown.store();
-    expect(store.listUnits("001")[0]?.leader.model).toBe("claude-opus-5");
+    expect(store.listUnits("001")[0]?.leader.model).toBe("claude-sonnet-5");
     expect(
       store.listEvents("001").find((e) => e.type === "command.transferred")
         ?.payload.chosenBy,
@@ -382,7 +385,7 @@ describe("the initial IC and the transfer of command", () => {
       await run(["incident", "create", "--no-size-up", "x"], skipped.ctx),
     ).toBe(EXIT.ok);
     expect(skipped.out).toEqual([
-      "incident 001 created: x (IC claude-code/claude-opus-5)",
+      "incident 001 created: x (IC claude-code/claude-sonnet-5)",
     ]);
     expect(() => skipped.calls()).toThrow();
     const store = skipped.store();
@@ -412,7 +415,7 @@ describe("the initial IC and the transfer of command", () => {
     expect(await run(["incident", "create", "x"], h.ctx)).toBe(EXIT.ok);
     expect(h.out.slice(-3)).toEqual([
       "  question 001-q01: which branch is the one that ships?",
-      "command transferred to claude-code/claude-sonnet-5, chosen by the briefing: a narrow read with one subtle link",
+      "command transferred to claude-code/claude-sonnet-5, chosen by the default: the briefing recommended claude-code/claude-opus-5: a subtle investigation, not a narrow read",
       'incident 001 is blocked on 1 question(s) before the IC starts; answer with noscope incident answer 001 "..."',
     ]);
     let store = h.store();
@@ -471,7 +474,7 @@ describe("the initial IC and the transfer of command", () => {
       "\n# Transfer of command: the initial IC's briefing\nWritten by the initial IC on claude-code/claude-haiku-4-5 (session stub-session)",
     );
     expect(first.prompt).toContain(
-      "your model: claude-sonnet-5, chosen by the briefing (a narrow read with one subtle link)\n\n# Incident file\n",
+      "your model: claude-sonnet-5, chosen by the default (the briefing recommended claude-code/claude-opus-5: a subtle investigation, not a narrow read)\n\n# Incident file\n",
     );
     expect(first.prompt).toContain(
       "# Your command turn for operational period 1\nFirst, evaluate the briefing you took command with: for each initial objective and each unit sketched, say in briefingEvaluation whether you accept it, rewrite it or discard it, and why; you are not bound by any of it, and a rewritten or discarded item costs nothing. Then set the period's objectives",
@@ -511,10 +514,10 @@ describe("the initial IC and the transfer of command", () => {
     expect(h.out[1]).toBe("no cycle has run");
     expect(text).toMatch(/\nsize-up {2}\S+\n/);
     expect(text).toContain(
-      "  initial ic claude-haiku-4-5: in 1,500 (uncached 1,000 / write 200 / read 300)  out 42  1.5 s  $0.01  briefed: bug hunt, 2 objective(s), 1 unit(s) sketched, 0 question(s), recommended claude-code/claude-sonnet-5  session stub-session",
+      "  initial ic claude-haiku-4-5: in 1,500 (uncached 1,000 / write 200 / read 300)  out 42  1.5 s  $0.01  briefed: bug hunt, 2 objective(s), 1 unit(s) sketched, 0 question(s), recommended claude-code/claude-opus-5  session stub-session",
     );
     expect(text).toContain(
-      "  command transferred (initial) to claude-code/claude-sonnet-5, chosen by the briefing",
+      "  command transferred (initial) to claude-code/claude-sonnet-5, chosen by the default",
     );
     expect(text).toContain(
       "    1 tool call(s) (Bash 1), 1.5 s in tools (initial ic)",
@@ -539,7 +542,7 @@ describe("the initial IC and the transfer of command", () => {
     expect(await run(["incident", "create", "x"], h.ctx)).toBe(EXIT.failed);
     expect(h.out).toEqual(["incident 001 created: x"]);
     expect(h.err.at(-1)).toMatch(
-      /^noscope incident create: the size-up failed: .*stub failure.*; incident 001 stands with no briefing, and the IC on claude-code\/claude-opus-5 takes command without one$/,
+      /^noscope incident create: the size-up failed: .*stub failure.*; incident 001 stands with no briefing, and the IC on claude-code\/claude-sonnet-5 takes command without one$/,
     );
     const store = h.store();
     const events = store.listEvents("001");
@@ -556,7 +559,7 @@ describe("the initial IC and the transfer of command", () => {
       model: "claude-haiku-4-5",
     });
     expect(store.getIncident("001")?.status).toBe("open");
-    expect(store.listUnits("001")[0]?.leader.model).toBe("claude-opus-5");
+    expect(store.listUnits("001")[0]?.leader.model).toBe("claude-sonnet-5");
     store.close();
     h.out.length = 0;
     await run(["incident", "review", "001"], h.ctx);
@@ -716,7 +719,7 @@ describe("the initial IC and the transfer of command", () => {
     h.out.length = 0;
     await run(["incident", "show", "001"], h.ctx);
     expect(h.out).toContain(
-      "command transferred to claude-code/claude-sonnet-5, chosen by the briefing",
+      "command transferred to claude-code/claude-sonnet-5, chosen by the default",
     );
   });
 
@@ -740,8 +743,9 @@ describe("the initial IC and the transfer of command", () => {
       incomingSessionId: null,
       incoming: { provider: "claude-code", model: "claude-sonnet-5" },
       document: briefing,
-      chosenBy: "the briefing",
-      reason: "a narrow read with one subtle link",
+      chosenBy: "the default",
+      reason:
+        "the briefing recommended claude-code/claude-opus-5: a subtle investigation, not a narrow read",
     });
     const text = renderCommandBriefing(store, incident, [fakeProvider]);
     store.close();
@@ -764,8 +768,8 @@ describe("the initial IC and the transfer of command", () => {
         - the scratch document may be stale
       questions it raised for Mauria (answered ones are in the incident file):
         (none)
-      incoming commander it recommended: claude-code/claude-sonnet-5: a narrow read with one subtle link
-      your model: claude-sonnet-5, chosen by the briefing (a narrow read with one subtle link)
+      incoming commander it recommended: claude-code/claude-opus-5: a subtle investigation, not a narrow read
+      your model: claude-sonnet-5, chosen by the default (the briefing recommended claude-code/claude-opus-5: a subtle investigation, not a narrow read)
 
       "
     `);

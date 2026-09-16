@@ -95,13 +95,14 @@ function describeFailure(error: unknown): string {
  * The incident and its root unit, then the size-up (R3-8): the initial IC on a cheap model
  * reads the objective and the runtime's findings with read-only tools and writes the
  * incident briefing, recorded as `incident.briefed` with its activity; command then
- * transfers to the IC proper on the model the briefing names, or `--ic-model`, as
+ * transfers to the IC proper on `--ic-model` or the default, Sonnet 5 (R5-6), as
  * `command.transferred` with the briefing as its document and the root unit's leader as
- * its mutation. A question in the briefing blocks the incident before the IC starts, the
- * way a plan's does. `--no-size-up` creates the incident on `--ic-model` (default Opus 5)
- * with no briefing, so the IC's first turn carries no evaluation. A size-up that fails is
- * filed as `command.failed` under the seat `initial_ic`; the incident stands, unbriefed,
- * and the command exits 1.
+ * its mutation; the briefing's `incomingCommander` is recorded on the transfer as the
+ * initial IC's recommendation and not followed. A question in the briefing blocks the
+ * incident before the IC starts, the way a plan's does. `--no-size-up` creates the
+ * incident on `--ic-model` or the default with no briefing, so the IC's first turn carries
+ * no evaluation. A size-up that fails is filed as `command.failed` under the seat
+ * `initial_ic`; the incident stands, unbriefed, and the command exits 1.
  */
 export const create: Handler = async (args, ctx) => {
   let parsed: ReturnType<typeof parseArgs>;
@@ -181,8 +182,8 @@ export const create: Handler = async (args, ctx) => {
       updatedAt: at,
     };
     // The root unit is command, of the ic type (R4-10): its leader is the Incident
-    // Commander, on `--ic-model` or the default until the size-up's transfer of command
-    // routes it, and its form's defaults give it the read-only built-ins and nothing else.
+    // Commander, on `--ic-model` or the default, which the size-up's transfer of command
+    // confirms, and its form's defaults give it the read-only built-ins and nothing else.
     const command = newCommandUnit(
       id,
       { provider: IC_PROVIDER, model: override ?? IC_MODEL },
@@ -264,30 +265,15 @@ export const create: Handler = async (args, ctx) => {
       );
       return EXIT.failed;
     }
-    // The IC's model: `--ic-model` over the briefing's recommendation, and the default when
-    // the briefing names a pair the provider does not serve.
+    // The IC's model (R5-6): `--ic-model` or the default, the unit's leader as created; the
+    // briefing's recommendation is the transfer's reason, recorded and not followed.
     const recommended = briefing.incomingCommander;
+    const incoming: Leader = command.leader;
+    const chosenBy = override !== null ? "--ic-model" : "the default";
     const served =
       recommended.provider === IC_PROVIDER &&
       icProvider.models.includes(recommended.model);
-    const incoming: Leader =
-      override !== null
-        ? { provider: IC_PROVIDER, model: override }
-        : served
-          ? { provider: recommended.provider, model: recommended.model }
-          : { provider: IC_PROVIDER, model: IC_MODEL };
-    const chosenBy =
-      override !== null
-        ? "--ic-model"
-        : served
-          ? "the briefing"
-          : "the default";
-    const reason =
-      override !== null
-        ? `the briefing recommended ${recommended.provider}/${recommended.model}: ${recommended.why}`
-        : served
-          ? recommended.why
-          : `the briefing recommended ${recommended.provider}/${recommended.model}, which ${IC_PROVIDER} does not serve`;
+    const reason = `the briefing recommended ${recommended.provider}/${recommended.model}${served ? "" : `, which ${IC_PROVIDER} does not serve`}: ${recommended.why}`;
     const questions = newQuestions(incident, briefing.questionsForHuman);
     store.batch(() => {
       store.record(id, "incident.briefed", "runtime", {
