@@ -1,18 +1,25 @@
 # Handoff: noscope round 4, the build in progress
 
-Refreshed 2026-09-16 01:30 CDT by session noscope-round4 [f7cb98]; round 5 building
-overnight on the `round-5` branch, ten of twelve merged, main untouched. Written by the successor session; the relay session mauriaparker-91 has stopped.
+Refreshed 2026-09-16 01:36 CDT by session noscope-round4 [f7cb98] (transcript
+home-laptop:~/.claude/projects/-Users-mauriaparker-Documents-Projects-noscope/5c3f3ef0-a43b-4a43-b0d5-afcbc0e7673c.jsonl),
+at 75 percent of its context, mid round 5. The successor is named `noscope-round5` and is you.
+Mauria is asleep (she went to bed at 23:01 CDT); the run is unattended.
 
-**First actions, in order:** (1) `/warp-pin title noscope-round4-<n>`. (2) Read this file,
-then `BUILD-PLAN.md` "## Round 4" in full (rows R4-10 to R4-12 are new; the fourth run is now R4-13), then the round 4
-entries at the end of `docs/build-record.md`. (3) Run `git -C ~/Documents/Projects/noscope
-status --short`, `git log --oneline -5`, `git worktree list`, `gh pr list --repo
-kudzuweb/noscope`. (4) Spawn your own `quipu` keeper per the quipu instructions and a
-heartbeat cron; the agents named in section 3 belong to the session that wrote this and
-cannot take your messages, so spawn fresh builders, briefing each with the builder brief
-and its plan block or review report. (5) Continue the build as section 4 says. Mauria's
-authority to push and merge stands for the round ("go for it. authority stands", 11:10 CDT;
-"you have permission to merge for this build", 12:46 CDT).
+**First actions, in order:** (1) `/warp-pin title noscope-round5`. (2) `SendMessage` to
+`noscope-round4` saying "noscope-round5 is up, send the pending results here". That session
+stays alive as the relay until `review59-rebase` has delivered (the one agent pending; see
+section 3). (3) Read this file, then `BUILD-PLAN.md` "## Round 5" in full, then the round 5
+entries at the end of `docs/build-record.md` on the `round-5` branch (`git show
+origin/round-5:docs/build-record.md`). (4) Run `git -C ~/Documents/Projects/noscope status
+--short`, `git log --oneline -3 origin/round-5`, `git worktree list`, `gh pr list --repo
+kudzuweb/noscope --base round-5`. (5) Spawn your own `quipu` keeper per the quipu
+instructions (one summarized update per stretch, ruled 22:57; the stretch's put-down goes
+when Mauria says the session is done) and a heartbeat cron (`CronCreate`, hourly off the
+:00, prompt as in section 3). The agents named in section 3 belong to the session that wrote
+this; spawn fresh ones. (6) Continue as section 4 says. Push and merge authority: topic
+branches and the `round-5` integration branch are standing; `main` and any preexisting
+branch ask (her rule of 23:08, in the global CLAUDE.md); merging into `round-5` was her
+instruction of 23:01.
 
 ## 1. GOAL
 
@@ -54,10 +61,17 @@ Round 5 is building overnight on the branch `round-5` (cut from main at `d4ad608
 untouched by the build; the handoff refreshes are committed on local main and not pushed,
 per the branch rule of 23:08). Merged into `round-5`, in order: R5-7 (#53), R5-6 (#54),
 R5-3 (#56), R5-4 (#57), R5-10 (#55), R5-2 (#58), R5-1 (#60), R5-8 (#61), R5-5 (#62, 01:22).
-Ten of twelve. In flight: R5-11 (PR 59, `pr-turns-say-less`, `scratchpad/wt-r5-11`, builder
-`build-r5-11`, reviewed, doing its final rebase onto 0907d51 with two integration items:
-section 10 always rendered on a resumed turn; section 2 as claims and evidence with evidence
-narrowed to the window). Then R5-12: `pnpm build` on `round-5`, restore the scratch document,
+Ten of twelve. In flight: R5-11 (PR 59, `pr-turns-say-less`, worktree `scratchpad/wt-r5-11`
+of the old session at `/private/tmp/claude-501/-Users-mauriaparker-Documents-Projects-noscope/5c3f3ef0-a43b-4a43-b0d5-afcbc0e7673c/scratchpad/`),
+head 2b823db pushed, final rebase done with its two integration items (section 10 always in
+a resumed briefing; section 2 as claims and evidence narrowed to the window), `pnpm check`
+exit 0 verified by the orchestrator; a second short reviewer `review59-rebase` is checking
+the hand-re-applied planner refactor (whole-file rendering unchanged; every event marks the
+right sections). On its verdict: apply any fix (a fresh builder, since `build-r5-11` belongs
+to the old session), fill PR 59's "## From the review" (first review: `review59`, three
+fixes applied: budget and windowed sections marked, the window dated from an answered call,
+header and role clause; second: whatever it says), CI, `gh pr merge 59 --squash
+--delete-branch --match-head-commit <sha>`. Then R5-12: `pnpm build` on `round-5`, restore the scratch document,
 `incident create` from roughdraftplus with run 003's objective, constraints and priority, no
 `--ic-model` (Sonnet 5 by R5-6), `NOSCOPE_DB=~/.noscope/fifth-run.sqlite`, step by hand with
 `~/.noscope/fourth-run/step.sh` adapted, then a builder for the write-up as the last PR into
@@ -107,21 +121,34 @@ Notes for the next round, Mauria's, 2026-09-16:
 
 ## 4. NEXT STEPS, IN ORDER
 
-1. (done) Every row of round 4 merged, the run written up (#52).
-2. (done; kept as the pattern) Spawn builders one at a time, each on a
-   fresh worktree from main (`git worktree add -b <branch> <path> origin/main`), briefed with
-   the builder brief plus its plan block; review each by a subagent; merge. Before R4-5's
-   brief, confirm the brief's situation sentence (already updated). R4-10 and R4-11 get two
-   reviewers each (a rewrite).
-3. (done, 2026-09-15 18:00) R4-13: restore `~/.noscope/second-run/document.md` from `document.pristine.md`; from
-   `~/Documents/Projects/roughdraftplus` (at `6a996e8`) with `NOSCOPE_DB=~/.noscope/fourth-run.sqlite`,
-   `incident create` with run 003's objective, constraints and priority, the IC on Opus 5
-   with the R4-7 fallback; step by hand, detached, one cycle at a time (the runner pattern is
-   `~/.noscope/third-run/step.sh`); write "## Fourth run" in `docs/first-incident.md` with
-   the measures beside runs 001 to 003, the verdicts by kind, what each revise or reassign
-   cost and found, and the cycle wall time beside summed task seconds; a build-record entry
-   for R4-13; message `quipu` with the thread and the change.
-4. After every merge: refresh section 3 of this file, commit, push; message `quipu`.
+1. PR 59 (R5-11): on `review59-rebase`'s verdict (relayed by `noscope-round4`, or read its
+   report if it arrives at you directly), apply fixes through a fresh builder in a new
+   worktree of `pr-turns-say-less` (`git worktree add <path> origin/pr-turns-say-less`; `pnpm
+   install --frozen-lockfile`), verify `pnpm check` yourself, push, fill the PR body's
+   "## From the review", wait for CI (`gh pr checks 59`), merge with `gh pr merge 59 --squash
+   --delete-branch --match-head-commit <sha>`. That completes eleven of twelve.
+2. R5-12, the fifth run: `git checkout round-5 && git pull && pnpm build` in the repo
+   (main's checkout may stay on main; use a worktree of `round-5` if you prefer and call its
+   `bin/noscope.mjs`). Restore `~/.noscope/second-run/document.md` from
+   `document.pristine.md`. Confirm Roughdraft answers at `http://localhost:7373/` (it did all
+   night). Adapt `~/.noscope/fourth-run/step.sh` to `~/.noscope/fifth-run/step.sh` with
+   `NOSCOPE_DB=~/.noscope/fifth-run.sqlite` and the round-5 binary. From
+   `~/Documents/Projects/roughdraftplus` (at 6a996e8), `incident create` with run 003's exact
+   objective, two constraints and priority (they are in section 3 of the previous refresh and
+   in `~/.noscope/fourth-run/create.log`), no `--ic-model` (Sonnet 5 by R5-6). R5-8 means the
+   size-up's questions no longer block; the IC rules on them. Step one cycle at a time,
+   detached, reading each log; stop if the IC blocks on a question only Mauria can answer, or
+   cost passes $8 without progress, and leave it for the morning either way.
+3. The write-up: a builder on a worktree of `round-5`, PR into `round-5`, "## Fifth run" in
+   `docs/first-incident.md` beside runs 001 to 004 with the same measures plus the evidence
+   count beside claims, leader calls per unit, the critical path per period, the models the
+   planner chose with their whys, and which of the twelve rows earned its keep; the
+   build-record entry `## R5-12: Fifth run (#PR, merged 2026-09-16)`; DESIGN.md Reference
+   rows touched by what the run showed. Reviewer, fixes, merge.
+4. Morning report: refresh this file's section 3 with the round's outcome and the run's
+   measures beside run 003's ($4.86, 29 min) and run 004's ($15.96, 35 min); commit on local
+   main (do not push main); one message to your `quipu` keeper with the stretch's state;
+   `CronDelete` your heartbeat. Mauria decides on `round-5` when she wakes.
 
 ## 5. WORKING AGREEMENTS (standing)
 
