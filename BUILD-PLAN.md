@@ -936,7 +936,8 @@ at once when independent; it is called only on a decision. Deterministic output 
 evidence, retrievable by task id, and never a claim. The situation is a living picture of
 reality, held by the IC from the size-up on and updated from every report with an
 assessment of whether the incident is on track, its priors need updating, or its tactics
-need changing; each unit leader keeps the picture of its own slice and reports it up. The
+need changing; each unit leader keeps the picture of its own slice and reports it up,
+and never reads the IC's, so a misconception at the top cannot propagate down. The
 validator checks a draft before the IC reads
 it. The planner picks the smallest model that fits and the IC's review holds it to that;
 the IC runs on Sonnet 5 unless told otherwise. The briefing's questions go to the IC, not to
@@ -945,7 +946,7 @@ Mauria, and the IC decides which reach her.
 | PR  | Title | Depends on | Delivers, in one line |
 |---|---|---|---|
 | R5-1 | Evidence is not a claim | none | A deterministic task's output is evidence kept by task id and attached through `evidenceFrom`, never promoted to claims; the incident file renders it as a count with the id; claims come from seats only. |
-| R5-2 | The situation is a living picture | none | The IC's situation is one picture of reality, carried from the size-up, updated from every report with an assessment (on track, priors updated, tactics change) and read by every seat; each unit leader keeps its slice's picture and reports it up; the runtime folds unit pictures under the IC's. |
+| R5-2 | The situation is a living picture | none | The IC's situation is one picture of reality, carried from the size-up, updated from every report with an assessment (on track, priors updated, tactics change), read by the planner and never by a unit; each unit leader keeps its slice's picture and reports it up, and observations flow up while only objectives and evidence flow down. |
 | R5-3 | Validate before review | none | The validator checks the planner's draft before the IC sees it; a rule break goes back to the planner with no IC call; the IC reviews valid drafts for substance; a mechanical correction the IC names is a patch the runtime applies with no redraft and no re-review. |
 | R5-4 | The leader directs and never does | none | No task runs inside a leader's session; every session task runs in a session of its own, at once when independent and in order when dependent; the leader's equipment for tasks goes and its context stays the objective, the brief and one line per ending. |
 | R5-5 | A leader is called only on a decision | R5-4 | After a completed ending the next ready task starts on its own; the leader is called on an insufficient or failed ending, a revise brief, a result it asked to be consulted on, or when nothing is ready and a report is due. |
@@ -994,8 +995,16 @@ turn changed in the picture. The initial IC's briefing seeds the first picture (
 dominant problem and needs), so the IC's first turn edits a picture rather than writing
 one from nothing. `LeaderReport` gains `situation`, the unit's own picture of its slice
 (`picture`, `evidence`, `open`, `changed`), and the change report renders each unit's
-situation under its report, so the IC folds slices into the whole on its verdict; the
-leader's orientation carries the IC's picture and its own unit's last picture. The rule
+situation under its report, so the IC folds slices into the whole on its verdict.
+Observations flow up and only objectives and evidence flow down, ruled by Mauria in
+review at 22:53 so that a misconception at the top cannot propagate into what a unit sees:
+a leader's orientation carries its unit's objective, the period objectives that concern
+it, the evidence attached to its tasks and its own unit's last picture, never the IC's
+picture, hypothesis or assessment; a task brief carries its brief and the evidence named
+in `evidenceFrom`, and no longer the situation's proven claims; a revise's or a reassign's
+instructions carry what is missing or what was found and not found, never what the IC
+thinks the answer is, and the IC role text says so. The planner reads the IC's picture in
+full, since it drafts tactics for the IC. The rule
 "Situation grounded" checks that `evidence` names claims that exist and that a claim
 marked for the picture with basis observed is the only way `picture` is called proven;
 "Inferred links are worked" becomes "Open items are worked": every open item is settled by
@@ -1010,7 +1019,9 @@ Acceptance: models tests for the new shape and the report's situation; a validat
 that a first-turn situation with two open items and no claims passes, a plan settling
 both passes and one leaving one unsettled and undeferred is rejected; a run test on the
 stub where a unit reports a slice picture with one open item, the IC's next turn folds it
-in with `priors_updated`, and `review` prints the assessment.
+in with `priors_updated`, and `review` prints the assessment; a test that a leader's
+orientation and a task brief contain no line of the IC's picture, hypothesis or
+assessment.
 ### R5-3: Validate before review
 Scope: in `cycle`, the planner's draft is validated before the IC's review turn; a draft
 that breaks a rule is recorded `plan.rejected` and the planner redrafts with the reasons,
