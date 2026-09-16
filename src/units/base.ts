@@ -39,6 +39,7 @@ import {
   assignmentRule,
   defineUnitType,
   describeError,
+  lacksOf,
   leaderRequest,
   OWN_UNIT_RULE,
   type PassContext,
@@ -61,10 +62,17 @@ import {
 // inside it, paid for it on every turn, and could not be called for 494 seconds); every
 // session task runs in a session of its own and a deterministic one in process, and the
 // leader's session holds the orientation, the revise brief and a line per ending with its
-// claims by id. Everything the leader's turns need is here: the role text and rules, the
-// unit's share of the budget, the turns a unit is owed (a report, a resume, a revision
-// brief), the orientation and the turn prompt, the turn itself with its refusal fallback,
-// and the pass hooks the dispatcher calls (`open`, `ending`, `close`).
+// claims by id. The leader is called only on a decision (R5-5, Mauria's ruling for round
+// 5: a model is called when a decision needs a model, never for process; run 004's four
+// continue turns produced 74 output tokens each for $1.81): a completed ending starts the
+// next ready task with no turn unless the leader asked to be consulted on that task, and
+// the leader is called on a failed or insufficient ending, a revision brief, an ending it
+// flagged `consult`, and when nothing is ready and the unit owes a report; the endings it
+// was not called for ride on its next turn. Everything the leader's turns need is here:
+// the role text and rules, the unit's share of the budget, the turns a unit is owed (a
+// report, a resume, a revision brief), the orientation and the turn prompt, the turn
+// itself with its refusal fallback, and the pass hooks the dispatcher calls (`open`,
+// `ending`, `close`).
 
 export const BASE_TYPE = "base";
 
@@ -121,6 +129,8 @@ export const LEADER_RULES = BASE_RULES.map((r) => r.text);
 
 /** The role text as a unit leader reads it; the IC reads `IC_ROLE`. */
 export const LEADER_ROLE = `Your role: unit leader. You own your unit's objective and direct its tasks until you can report against it. You direct and never do: no task runs in this session and you hold no tools, since a leader busy on a task cannot answer for its unit. Every session task runs in a session of its own and every deterministic task in process; tasks start at once when nothing they depend on is still open, dependsOn is what serializes them, a task with none waits for nothing, and each reaches you as a line when it ends, with the claims it produced by id. A task that fails settles what waited on it: the runtime cancels every task that depended on it, names them to you with the failure, and nothing of yours waits on a task that will never complete; assign the work again in a form that can run, or report.
+
+You are called only when a decision needs you: a task that failed or came back insufficient, a revision brief from the IC, a task you named in consult, and when nothing is ready to start and your report is due. A completed task you did not name in consult starts what depends on it without you, and its ending reaches you on your next turn; name in consult, by id or by the ref of a task you assign, the tasks whose result you want to weigh before their dependents run.
 
 Report what changed, not what you did: each item in changed is something now true that was not, naming the claim ids it rests on; a change with no claims behind it is a claim of its own and counts for less. Outcome met means the unit's objective is established by observed claims; not_met means it cannot be met as set, and then why and suggestion are required, because the IC, who has more perspective, decides what happens next; progress means the unit has more to run or more to say. Set pictureChanged, and report rather than continue, the moment an outcome changes the picture the incident is working from: the IC acts on it before anything new starts.
 
@@ -244,8 +254,9 @@ export function unitShare(
 
 /**
  * Units returned to `active` since their leader's last turn (`unit.resumed` after the last
- * `unit.reported` or `unit.continued`): dispatch opens such a unit's pass with a turn
- * carrying the answers, before any task, so the leader reads them before it runs.
+ * `unit.reported` or `unit.continued` the leader made; one the runtime wrote is not a
+ * turn): dispatch opens such a unit's pass with a turn carrying the answers, before any
+ * task, so the leader reads them before it runs.
  */
 export function resumedUnits(
   units: readonly Unit[],
@@ -255,7 +266,10 @@ export function resumedUnits(
   const lastResume = new Map<string, number>();
   for (const e of events) {
     if (typeof e.payload.unitId !== "string") continue;
-    if (e.type === "unit.reported" || e.type === "unit.continued")
+    if (
+      (e.type === "unit.reported" || e.type === "unit.continued") &&
+      e.payload.writtenBy !== "runtime"
+    )
       lastTurn.set(e.payload.unitId, e.sequence);
     if (e.type === "unit.resumed") lastResume.set(e.payload.unitId, e.sequence);
   }
@@ -453,12 +467,14 @@ export function renderLeaderOrientation(
 }
 
 /**
- * Why the leader is asked for a move: a task ended, its unit resumed with the answers to its
+ * Why the leader is asked for a move: a task ended in a way that needs a decision (failed,
+ * insufficient, or flagged `consult`; R5-5), its unit resumed with the answers to its
  * requests, the IC sent its report back for revision (R4-3: the brief, the period the
  * verdict opened, and the answers when the unit resumed at the same time), or the unit owes
- * a report from an earlier pass. The endings its leader has not yet heard (tasks that ended
- * after its last turn: a pass that died, or tasks still in flight when the leader reported)
- * travel beside the cause on the first turn of a pass, whatever the cause is.
+ * a report and nothing is ready. The endings its leader has not yet heard (tasks that
+ * ended after its last turn: completed endings that needed no turn, a pass that died, or
+ * tasks still in flight when the leader reported) travel beside the cause on every turn,
+ * whatever the cause is.
  */
 export type TurnCause =
   | TaskEnding
@@ -472,34 +488,46 @@ export type TurnCause =
   | { status: "owing" };
 
 /**
+ * The endings a unit's leader has heard: the task ids every turn of its own (`unit.reported`
+ * or `unit.continued` by the leader; one the runtime wrote is no turn) carried under
+ * `heard`, the turn's cause and the endings rendered beside it. By id rather than by
+ * sequence, since a task that lands while a turn is in progress is recorded before the
+ * turn is and was not in its prompt.
+ */
+function heardEndings(events: readonly Event[], unitId: string): Set<string> {
+  const heard = new Set<string>();
+  for (const e of events) {
+    if (e.type !== "unit.reported" && e.type !== "unit.continued") continue;
+    if (e.payload.unitId !== unitId || e.payload.writtenBy === "runtime")
+      continue;
+    for (const id of (e.payload.heard as unknown[] | undefined) ?? [])
+      if (typeof id === "string") heard.add(id);
+  }
+  return heard;
+}
+
+/**
  * The endings a unit's leader has not heard: tasks of the unit that completed, failed or
- * were cancelled because a task they waited on will never complete (R5-10) after the
- * leader's last turn (`unit.reported` or `unit.continued`). A report the runtime wrote on
- * the leader's behalf after two refusals (`writtenBy: "runtime"`, R4-7) is not a turn and
- * moves nothing. Empty when every ending reached a turn. A completed task's ending carries
- * the claims it produced, from the store. A failed task carries the tasks settled because
- * of it, so a cancellation whose root is a failure listed here is not listed again on its
+ * were cancelled because a task they waited on will never complete (R5-10) and were never
+ * put to the leader on a turn (`heardEndings`): an ending that needed no turn (R5-5), one
+ * that landed after the leader reported or while a turn was in progress, or one of a pass
+ * that died. Empty when every ending reached a turn. A completed task's ending carries
+ * the claims it produced, from the store; a task whose session said it lacked something is
+ * `insufficient` with what it needed. A failed task carries the tasks settled because of
+ * it, so a cancellation whose root is a failure listed here is not listed again on its
  * own.
  */
-export function endedSinceLastTurn(
+export function unheardEndings(
   unit: Unit,
   tasks: readonly Task[],
   events: readonly Event[],
   claims: readonly Claim[] = [],
 ): TaskEnding[] {
   const byId = new Map(tasks.map((t) => [t.id, t]));
-  let lastTurn = -1;
-  for (const e of events)
-    if (
-      (e.type === "unit.reported" || e.type === "unit.continued") &&
-      e.payload.unitId === unit.id &&
-      e.payload.writtenBy !== "runtime"
-    )
-      lastTurn = e.sequence;
+  const heard = heardEndings(events, unit.id);
   const settled = settledBy(events);
   const ended: TaskEnding[] = [];
   for (const e of events) {
-    if (e.sequence <= lastTurn) continue;
     const cascaded =
       e.type === "task.cancelled" && typeof e.payload.because === "string";
     if (e.type !== "task.completed" && e.type !== "task.failed" && !cascaded)
@@ -507,27 +535,35 @@ export function endedSinceLastTurn(
     const taskId = (e.payload.mutation as { taskId?: unknown } | undefined)
       ?.taskId;
     const task = typeof taskId === "string" ? byId.get(taskId) : undefined;
-    if (task === undefined || task.unitId !== unit.id) continue;
+    if (task === undefined || task.unitId !== unit.id || heard.has(task.id))
+      continue;
+    if (e.type === "task.failed") {
+      ended.push({
+        task,
+        status: "failed",
+        reason: String(e.payload.reason ?? ""),
+        settled: settled.get(task.id) ?? [],
+      });
+      continue;
+    }
+    if (cascaded) {
+      ended.push({
+        task,
+        status: "cancelled",
+        because: String(e.payload.because),
+        reason: String(e.payload.reason ?? ""),
+      });
+      continue;
+    }
+    const needed = lacksOf(task.result);
     ended.push(
-      e.type === "task.completed"
+      needed === null
         ? {
             task,
             status: "completed",
             claims: claims.filter((c) => c.provenance.taskId === task.id),
           }
-        : e.type === "task.failed"
-          ? {
-              task,
-              status: "failed",
-              reason: String(e.payload.reason ?? ""),
-              settled: settled.get(task.id) ?? [],
-            }
-          : {
-              task,
-              status: "cancelled",
-              because: String(e.payload.because),
-              reason: String(e.payload.reason ?? ""),
-            },
+        : { task, status: "insufficient", needed },
     );
   }
   const failedHere = new Set(
@@ -538,13 +574,25 @@ export function endedSinceLastTurn(
   );
 }
 
-/** What a task that came back insufficient needed, each with its kind; empty for any other result. */
-function insufficiencyOf(task: Task): { kind: string; what: string }[] {
-  const result = task.result as {
-    outcome?: unknown;
-    needed?: { kind: string; what: string }[];
-  } | null;
-  return result?.outcome === "insufficient" ? (result.needed ?? []) : [];
+/**
+ * The tasks a unit's leader asked to be called on when they end (R5-5): named by id in
+ * `consult` on a turn of its own (recorded on the `unit.continued` or `unit.reported`),
+ * or by ref on the turn that assigned them (recorded resolved on the leader's
+ * `plan.applied`). A flag holds until the task ends.
+ */
+function consultFlagged(events: readonly Event[], unitId: string): Set<string> {
+  const flagged = new Set<string>();
+  for (const e of events) {
+    if (e.payload.unitId !== unitId) continue;
+    const turn =
+      (e.type === "unit.continued" || e.type === "unit.reported") &&
+      e.payload.writtenBy !== "runtime";
+    const applied = e.type === "plan.applied" && e.actor === LEADER_ACTOR;
+    if (!turn && !applied) continue;
+    for (const id of (e.payload.consult as unknown[] | undefined) ?? [])
+      if (typeof id === "string") flagged.add(id);
+  }
+  return flagged;
 }
 
 /** How the leader resolves what a task lacked: a retrievable fact by assigning, the rest by a resource request on its report. */
@@ -606,11 +654,10 @@ function renderEnding(ending: TaskEnding): string[] {
     return [
       `Task ${task.id} (${task.capability}) was cancelled: ${ending.reason}.`,
     ];
-  const needed = insufficiencyOf(task);
-  if (needed.length > 0)
+  if (ending.status === "insufficient")
     return [
       `Task ${task.id} (${task.capability}) came back insufficient. It needed:`,
-      ...needed.map((n) => `  - ${n.kind}: ${n.what}`),
+      ...ending.needed.map((n) => `  - ${n.kind}: ${n.what}`),
       RESOLVE_LACKS,
     ];
   if (task.model === null)
@@ -660,16 +707,16 @@ function renderRevisionBrief(
 }
 
 /**
- * The user message of a turn: the endings the leader has not heard from earlier passes
- * (`unheard`, on the first turn of a pass, each rendered as an ending is), then what the
- * turn is for (the last task's ending, with its insufficiency and what the leader does
- * about each kind when it came back insufficient; the answers when the unit resumed; the
- * revision brief when the IC sent its report back, R4-3; that a report is owed), any assignment the validator refused since the last turn, then how
- * many ready tasks wait to start, which tasks of
- * the unit are still running in sessions of their own, which have ended in this pass and
- * reach the leader on turns of their own, and what the leader is asked for: its report when
- * nothing remains, nothing runs and nothing is left to hear (on a revision brief, to
- * assign what the instructions call for or report), otherwise its next move.
+ * The user message of a turn: the endings the leader has not heard (`unheard`: the
+ * completed endings that needed no turn, R5-5, and those of earlier passes, each rendered
+ * as an ending is), then what the turn is for (the ending that needs a decision, with its
+ * insufficiency and what the leader does about each kind when it came back insufficient;
+ * the answers when the unit resumed; the revision brief when the IC sent its report back,
+ * R4-3; that a report is owed), any assignment the validator refused since the last turn,
+ * then which ready tasks wait to start, which tasks of the unit are still running in
+ * sessions of their own, and what the leader is asked for: its report when nothing remains
+ * and nothing runs (on a revision brief, to assign what the instructions call for or
+ * report), otherwise its next move.
  */
 export function renderTurnPrompt(
   cause: TurnCause,
@@ -677,12 +724,11 @@ export function renderTurnPrompt(
   remaining: readonly Task[],
   rejections: readonly string[] = [],
   running: readonly Task[] = [],
-  landed: readonly Task[] = [],
 ): string {
   const came: string[] = [];
   if (unheard.length > 0)
     came.push(
-      "Since your last turn these tasks also ended:",
+      "Endings of your unit's tasks you have not heard:",
       ...unheard.flatMap(renderEnding),
       "",
     );
@@ -706,11 +752,9 @@ export function renderTurnPrompt(
       ? `${remaining.length} ready task(s) remain in your unit and start when you continue: ${remaining.map((t) => `${t.id} (${t.capability})`).join(", ")}. Your next move: continue, or report now if the picture changed.`
       : running.length > 0
         ? "No task of yours is ready to start. Your next move: continue and wait for the running ones, or report now if the picture changed."
-        : landed.length > 0
-          ? "No task of yours is ready to start and none is running. Your next move: continue to hear the tasks that ended, or report now if the picture changed."
-          : cause.status === "revise"
-            ? NO_TASKS_REMAIN_ON_BRIEF
-            : NO_TASKS_REMAIN;
+        : cause.status === "revise"
+          ? NO_TASKS_REMAIN_ON_BRIEF
+          : NO_TASKS_REMAIN;
   return [
     ...came,
     "",
@@ -718,12 +762,7 @@ export function renderTurnPrompt(
     ...(running.length === 0
       ? []
       : [
-          `Still running in sessions of their own: ${running.map((t) => `${t.id} (${t.capability})`).join(", ")}; each reaches you on the turn after it ends.`,
-        ]),
-    ...(landed.length === 0
-      ? []
-      : [
-          `Ended already: ${landed.map((t) => `${t.id} (${t.capability})`).join(", ")}; each reaches you on a turn of its own next.`,
+          `Still running in sessions of their own: ${running.map((t) => `${t.id} (${t.capability})`).join(", ")}; each reaches you when it needs you, or on your next turn.`,
         ]),
   ].join("\n");
 }
@@ -835,24 +874,25 @@ function couldNotResume(error: unknown, unit: Unit): error is SessionError {
 }
 
 /**
- * Ask the unit's leader for its next move: the endings it has not heard from earlier passes
- * (`unheard`, on a pass's first turn), the last task's ending or the IC's revision brief
- * (R4-3; delivered on this turn, recorded as `unit.revised` with the turn), which ready
- * tasks wait to start, which tasks of the unit are still running and which have ended and
- * reach it on turns of their own, under the `LeaderTurn` schema. The first call creates the
+ * Ask the unit's leader for its next move: the endings it has not heard (`unheard`), the
+ * ending that needs its decision or the IC's revision brief (R4-3; delivered on this turn,
+ * recorded as `unit.revised` with the turn), which ready tasks wait to start and which
+ * tasks of the unit are still running, under the `LeaderTurn` schema. The first call creates the
  * session and opens with the orientation; `leader.started` records its id on the unit,
  * with the cwd it was launched from. A session that cannot be resumed (the call died
  * before its init line) is replaced: a fresh session is oriented and asked the same turn,
  * and its `leader.started` names the dead session and the reason; a session the API
  * refused is replaced the same way on the fallback model, once (R4-7). Every turn is recorded,
  * `unit.reported` with the report (and `revision`, the count of revise verdicts on the
- * unit, when the report answers one) or `unit.continued`, each with the call's usage, and
- * a `discrepancy` becomes `picture.discrepancy`. A leader that cannot answer otherwise
- * ends the pass. In the
+ * unit, when the report answers one) or `unit.continued`, each with the call's usage, the
+ * task ids of the endings the turn put to the leader (`heard`) and the task ids the
+ * leader named in `consult` (R5-5), and a `discrepancy` becomes
+ * `picture.discrepancy`. A leader that cannot answer otherwise ends the pass. In the
  * same transaction: tasks the leader assigns are validated and applied under its unit
- * (`plan.applied` with the leader as actor) or refused (`plan.rejected`, read back into
- * its next prompt), then a report carrying resource requests, forced `pictureChanged`, is
- * raised (`raiseResourceRequests`: the unit waits).
+ * (`plan.applied` with the leader as actor, carrying the refs of `consult` resolved) or
+ * refused (`plan.rejected`, read back into its next prompt), then a report carrying
+ * resource requests, forced `pictureChanged`, is raised (`raiseResourceRequests`: the
+ * unit waits).
  */
 async function leaderTurn(
   ctx: PassContext,
@@ -861,7 +901,6 @@ async function leaderTurn(
   unheard: readonly TaskEnding[],
   remaining: readonly Task[],
   running: readonly Task[],
-  landed: readonly Task[],
 ): Promise<LeaderTurned> {
   const { store, incident, actor } = ctx;
   const provider = getProvider(listed.leader.provider, ctx.env);
@@ -874,7 +913,7 @@ async function leaderTurn(
         unit,
         [
           ...orientation(ctx, unit),
-          renderTurnPrompt(cause, unheard, remaining, refused, running, landed),
+          renderTurnPrompt(cause, unheard, remaining, refused, running),
         ].join("\n"),
         LEADER_TURN_SCHEMA,
         ctx.cwd,
@@ -1004,6 +1043,24 @@ async function leaderTurn(
   const seat = { unitId: unit.id, sessionId, ...unit.leader };
   const current = { ...unit, sessionId };
   let assigned = 0;
+  // What the leader asked to be consulted on (R5-5): the unit's task ids go on the turn's
+  // record, and the rest are refs of this turn's assignments, resolved when they are
+  // applied and recorded on the `plan.applied`.
+  const ownTasks = new Set(
+    store
+      .listTasks(incident.id)
+      .filter((t) => t.unitId === unit.id)
+      .map((t) => t.id),
+  );
+  const consultIds = (turn.consult ?? []).filter((id) => ownTasks.has(id));
+  const consultRefs = (turn.consult ?? []).filter((id) => !ownTasks.has(id));
+  const consult = consultIds.length === 0 ? {} : { consult: consultIds };
+  // The endings this turn put to the leader: its cause when that is an ending, and the
+  // unheard ones rendered beside it.
+  const heard = [
+    ...("task" in cause ? [cause.task.id] : []),
+    ...unheard.map((e) => e.task.id),
+  ];
   // One transaction for the turn and what it changes: the record of the turn, the tasks it
   // assigned (validated first, while the unit is still active), then the requests it
   // raised, so a crash can never leave a recorded report whose requests were not raised.
@@ -1040,6 +1097,8 @@ async function leaderTurn(
         ...seat,
         report: turn.report,
         usage: outcome.usage,
+        heard,
+        ...consult,
         ...(revision === 0 ? {} : { revision }),
       });
     else
@@ -1047,45 +1106,56 @@ async function leaderTurn(
         ...seat,
         remaining: remaining.length,
         usage: outcome.usage,
+        heard,
+        ...consult,
       });
     const proposals = turn.assignTasks ?? [];
     if (
       proposals.length > 0 &&
       ctx.bookkeeping.validateAssignments(current, proposals)
     )
-      assigned = ctx.bookkeeping.applyAssignments(current, proposals);
+      assigned = ctx.bookkeeping.applyAssignments(
+        current,
+        proposals,
+        consultRefs,
+      );
     if (requests.length > 0) ctx.bookkeeping.raiseRequests(current, requests);
   });
   return { turn, sessionId, unit: current, assigned, revision };
 }
 
-/** The turn cause when a unit owes a report from an earlier pass and nothing else calls for a turn. */
+/** The turn cause when a unit owes a report and nothing else calls for a turn. */
 const OWED: TurnCause = { status: "owing" };
 
 /**
  * One turn of the leader as the pass sees it: the leader is asked for its move against the
- * runnable tasks remaining, and a report ends the unit's pass (the report filed, the pass
- * halted when it changed the picture), while a continue with nothing left to run, nothing
- * running, nothing to hear and nothing assigned ends the pass without a report, so the next
- * pass asks again.
+ * runnable tasks remaining, with every ending it has not heard (from the log: the endings
+ * that needed no turn this pass and those of earlier passes, less the one the turn is
+ * for), and a report ends the unit's pass (the report filed, the pass halted when it
+ * changed the picture), while a continue leaves the pass to its loop: the ready tasks
+ * start, and the report is asked for at `close` when the unit still owes one.
  */
 async function settle(
   ctx: PassContext,
   unit: Unit,
   cause: TurnCause,
   view: PassView,
-  running: readonly Task[] = [],
-  landed: readonly Task[] = [],
 ): Promise<Turned> {
-  const remaining = view.remaining();
+  const { store, incident } = ctx;
+  const causeTask = "task" in cause ? cause.task.id : null;
+  const unheard = unheardEndings(
+    unit,
+    store.listTasks(incident.id),
+    store.listEvents(incident.id),
+    store.listClaims(incident.id),
+  ).filter((e) => e.task.id !== causeTask);
   const turned = await leaderTurn(
     ctx,
     unit,
     cause,
-    view.hear(),
-    remaining,
-    running,
-    landed,
+    unheard,
+    view.remaining(),
+    view.running(),
   );
   if (turned.turn.kind === "report" && turned.turn.report !== null)
     return {
@@ -1099,16 +1169,30 @@ async function settle(
       done: true,
       stop: turned.turn.report.pictureChanged,
     };
-  return {
-    unit: turned.unit,
-    report: null,
-    done:
-      remaining.length === 0 &&
-      turned.assigned === 0 &&
-      running.length === 0 &&
-      landed.length === 0,
-    stop: false,
-  };
+  return { unit: turned.unit, report: null, done: false, stop: false };
+}
+
+/**
+ * The runtime's record of an ending that needed no turn (R5-5): `unit.continued` with
+ * `writtenBy: "runtime"`, the task that ended and how many ready tasks start, so the log
+ * shows the unit's progress; not a turn of the leader's, so the ending still rides on its
+ * next one.
+ */
+function continueWithoutTurn(
+  ctx: PassContext,
+  unit: Unit,
+  ending: TaskEnding,
+  remaining: number,
+): Turned {
+  ctx.store.record(ctx.incident.id, "unit.continued", ctx.actor, {
+    unitId: unit.id,
+    sessionId: unit.sessionId,
+    ...unit.leader,
+    taskId: ending.task.id,
+    remaining,
+    writtenBy: "runtime",
+  });
+  return { unit, report: null, done: false, stop: false };
 }
 
 /** The answers a resumed unit's leader reads on its next turn (R3-6). */
@@ -1148,16 +1232,6 @@ export const baseUnitType = defineUnitType({
         ).has(unit.id)
       );
     },
-    // The endings of earlier passes the leader has not heard (tasks that landed after it
-    // reported, or a pass that died): the pass's first turn carries them, whatever it is
-    // for, so a result never goes unread.
-    unheard: (ctx, unit) =>
-      endedSinceLastTurn(
-        unit,
-        ctx.store.listTasks(ctx.incident.id),
-        ctx.store.listEvents(ctx.incident.id),
-        ctx.store.listClaims(ctx.incident.id),
-      ),
     // The pass opens with the turns the unit is owed before any task runs: the IC's
     // revision brief (R4-3), on a fresh oriented session when the leader has none, with the
     // answers to the unit's requests when it resumed at the same time; else the answers
@@ -1187,12 +1261,15 @@ export const baseUnitType = defineUnitType({
         );
       return null;
     },
-    // Whether an ending calls the leader is decided here and nowhere else. A task refused
-    // on both models (R4-7): the runtime reports `not_met` for the unit with both
+    // Whether an ending calls the leader is decided here and nowhere else (R5-5). A task
+    // refused on both models (R4-7): the runtime reports `not_met` for the unit with both
     // refusals, picture-changing, and the pass ends for the IC to decide, whether or not
     // the leader has reported this pass. A unit that reported already this pass hears the
-    // ending on its next turn (`unheard`). Every other ending calls the leader on a turn
-    // of its own; R5-5 narrows that to the endings that need a decision.
+    // ending on its next turn. A failed or insufficient ending, and a completed one the
+    // leader asked to be consulted on, call the leader, unless a turn already put it to
+    // the leader. A completed ending otherwise needs no decision: the runtime records the
+    // unit's progress and the ready tasks start, and the ending rides on the leader's
+    // next turn.
     ending: async (ctx, unit, ending, view) => {
       if (ending.refusals !== undefined) {
         const { report, revision } = reportRefusals(
@@ -1214,12 +1291,21 @@ export const baseUnitType = defineUnitType({
         };
       }
       if (view.done()) return null;
-      return settle(ctx, unit, ending, view, view.running(), view.landed());
+      const events = ctx.store.listEvents(ctx.incident.id);
+      const needsDecision =
+        ending.status !== "completed" ||
+        consultFlagged(events, unit.id).has(ending.task.id);
+      // An ending a turn has already put to the leader (it was queued behind the ending
+      // that turn was for, and rode on it as unheard) needs no turn of its own.
+      const heard = heardEndings(events, unit.id).has(ending.task.id);
+      if (needsDecision && !heard) return settle(ctx, unit, ending, view);
+      return continueWithoutTurn(ctx, unit, ending, view.remaining().length);
     },
-    // A unit that ran nothing this pass and owes a report from an earlier one is asked for
-    // it, unless the pass has halted.
+    // Once nothing is ready and nothing runs, a unit that owes a report (a task ended
+    // after its last one, this pass or an earlier one) is asked for it, unless the pass
+    // has halted or the unit is done for it (it reported this pass).
     close: async (ctx, unit, view) => {
-      if (view.ran() || view.halted()) return null;
+      if (view.done() || view.halted()) return null;
       const owing = unitsOwingReport(
         [unit],
         ctx.store.listTasks(ctx.incident.id),

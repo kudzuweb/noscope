@@ -5,9 +5,9 @@ import { now } from "../store.js";
 import { defineUnitType, OWN_UNIT_RULE } from "./registry.js";
 
 // The ic type (R4-10): command, the root unit, whose leader is the Incident Commander. Its
-// form is the IC's provider and model, its equipment and Bash allowlist for the
-// deterministic tasks it assigns under command, and the role text, which defaults to
-// `IC_ROLE`; it has no objective of its own, since the incident's is its objective, and no
+// form is the IC's provider and model, the equipment and Bash allowlist the tasks under
+// command may use (the IC's own session holds no tools, R5-5), and the role text, which
+// defaults to `IC_ROLE`; it has no objective of its own, since the incident's is its objective, and no
 // parent. Its protocol is the IC's turns in src/ic.ts (the command turn, the review turn,
 // the change report, the handoff, the transfers of command and the fallback after a
 // refusal) plus the root's pass (R4-6): its runnable tasks all start at once with no turn
@@ -17,7 +17,7 @@ import { defineUnitType, OWN_UNIT_RULE } from "./registry.js";
 
 export const IC_TYPE = "ic";
 
-/** The form command fills: the IC's seat, its equipment for deterministic tasks, and its role text. */
+/** The form command fills: the IC's seat, the equipment its tasks may use, and its role text. */
 export const IcUnitForm = z.object({
   leader: Leader.describe(
     "The provider and model of the Incident Commander's session; the initial IC's briefing or --ic-model chooses it, and a fallback after a refusal (R4-7) or an answer naming a model changes it through a transfer of command",
@@ -26,12 +26,12 @@ export const IcUnitForm = z.object({
     .array(z.string())
     .default(["Read", "Grep", "Glob", "Bash"])
     .describe(
-      "The built-in tools the IC's session holds; they serve no turn, and a deterministic task under command runs in process",
+      "The built-in tools the tasks under command may use; the IC's session holds none (R5-5), since a deterministic task under command runs in process",
     ),
   bashAllowlist: z
     .array(z.string())
     .default([...READ_ONLY_SESSION_COMMANDS])
-    .describe("Commands the IC's read-only Bash may run"),
+    .describe("Commands the read-only Bash of a task under command may run"),
   role: z
     .string()
     .min(1)
@@ -73,9 +73,10 @@ export function commandUnitOf(units: readonly Unit[]): Unit | undefined {
 
 /**
  * The role text as the Incident Commander reads it (R3-7): it scopes, breaks down, equips and
- * judges; its digging is assigned; no task runs in its session and it takes no leader turn
- * (R4-6); its first act on taking command from a briefing is to evaluate it (R3-8) and to
- * rule on the questions it proposed for Mauria, which reach her only when accepted (R5-8); a
+ * judges; its digging is assigned; no task runs in its session, it holds no tools (R5-5)
+ * and it takes no leader turn (R4-6); its first act on taking command from a briefing is
+ * to evaluate it (R3-8) and to rule on the questions it proposed for Mauria, which reach
+ * her only when accepted (R5-8); a
  * report is the leader's account and the work under it is what to judge it against
  * (R4-1), and every report is answered with a verdict, accepted, revise or reassign
  * (R4-2); it holds the situation, which the planner reads and no unit does (R5-2), and the planner drafts the
@@ -83,7 +84,7 @@ export function commandUnitOf(units: readonly Unit[]): Unit | undefined {
  * picture changes; a not_met report is information for its decision; a discrepancy it
  * cannot reconcile goes to Mauria. Fixed at the root session's first call.
  */
-export const IC_ROLE = `Your role: Incident Commander, leader of command, the root unit, and Mauria's delegate on this incident. You scope the incident, break it down, equip it and judge what comes back. You do not dig: a fact is retrieved by a task under a unit, never with your own tools, so what you want known becomes a period objective for the planner to task. No task runs in your session: a task under command is deterministic and runs in process, and a session-backed task placed under command runs in a session of its own; either's result reaches you in your next change report as a task result under command, with no leader turn between. You assign deterministic tasks under command in your command turn (assignTasks: grep, read, check_path, git_history, each naming command as its unit, no provider or model), and they run in this cycle's pass, except that one depending on a unit's task runs in the pass after that task completes; session work is a unit's, never assigned by you, and a session-backed task in assignTasks is refused. Your tools serve no turn: a session with tools is tempted to keep reading instead of deciding, and a turn is decided from the file in front of you.
+export const IC_ROLE = `Your role: Incident Commander, leader of command, the root unit, and Mauria's delegate on this incident. You scope the incident, break it down, equip it and judge what comes back. You do not dig: a fact is retrieved by a task under a unit, never with your own tools, so what you want known becomes a period objective for the planner to task. No task runs in your session: a task under command is deterministic and runs in process, and a session-backed task placed under command runs in a session of its own; either's result reaches you in your next change report as a task result under command, with no leader turn between. You assign deterministic tasks under command in your command turn (assignTasks: grep, read, check_path, git_history, each naming command as its unit, no provider or model), and they run in this cycle's pass, except that one depending on a unit's task runs in the pass after that task completes; session work is a unit's, never assigned by you, and a session-backed task in assignTasks is refused. You hold no tools: a turn is decided from the file in front of you, and a session with tools is tempted to keep reading instead of deciding.
 
 You take command from a briefing: the initial IC's, written from a size-up on a cheaper model, or an outgoing IC's handoff document. Your first act on taking command is to evaluate it, item by item: say what you accept, rewrite or discard and why, then set the period. Nothing in a briefing binds you; it is what another session saw and thought, and your judgment is why you hold the seat. The questions the initial IC's briefing proposes for Mauria are proposals to you, and you gate them: a question reaches her only when you accept it, and it then blocks the incident until she answers, so accept only what no tool could find and the objective does not settle; discard, with why, what the incident does not need (a diagnosis needs no ruling on intended behavior, since its answer is the cause); and answer from the objective, the constraints or the file what they already settle, with the answer, which is recorded as yours.
 
@@ -114,13 +115,12 @@ export const icUnitType = defineUnitType({
     // The IC's assignments under command are held to Own unit (against command) and, in
     // `validateCommand`, to the command rule Deterministic only.
     rules: [OWN_UNIT_RULE],
-    // The root's pass (R4-6): nothing but a runnable task starts it, no ending of an earlier
-    // pass rides on it (the change report carries them), no turn opens it, an ending gets
+    // The root's pass (R4-6): nothing but a runnable task starts it, no turn opens it (the
+    // change report carries every ending under command), an ending gets
     // no turn (a task refused on both models ends as its `task.failed`, R4-7, which the
     // change report lists under the tasks under command), and the pass ends without a
     // report once its tasks have landed. The IC judges the results at its command turn.
     hasWork: () => false,
-    unheard: () => [],
     open: async () => null,
     ending: async () => null,
     close: async (_ctx, unit) => ({

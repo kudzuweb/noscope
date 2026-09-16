@@ -24,8 +24,10 @@ picture up for the IC to fold in. A unit
 is a type plus a config: the type is the form (the fields a kind of unit fills) and the
 protocol (how it uses what is in the box), the config is the filled form; `base` is the led
 unit, whose leader session directs the unit's tasks, runs none of them (every session task
-runs in a session of its own, independent ones at once) and reports against the unit's
-objective, and `ic` is command, the root, whose leader is the IC. A filled form the planner
+runs in a session of its own, independent ones at once), is called only on a decision (a
+failed or insufficient ending, a task it asked to be consulted on, a revision brief, or the
+report it owes; a completed ending starts the next task with no call) and reports against
+the unit's objective, and `ic` is command, the root, whose leader is the IC. A filled form the planner
 keeps producing is saved under a name and deployed by name. Whoever defines a task can
 declare a strike team of subagents on it. Tasks run through capabilities: a deterministic one
 (grep, read, git history, check a path) runs in process and its output is evidence, kept

@@ -22,6 +22,7 @@ import {
   type ReportVerdict,
   type ReviewTurn as Review,
   ReviewTurn,
+  type TaskProposal,
 } from "../src/models.js";
 import { renderReview } from "../src/review.js";
 import {
@@ -139,19 +140,12 @@ const observedOutput = JSON.stringify({
   needed: [],
 });
 
-/** The leader's turns on `findAndSay`: continue past the grep's ending, then `report` on the investigate's, repeated for any later turn. */
+/** The leader's turns on `findAndSay`: the grep's and the investigate's endings need no turn (R5-5), so every turn is the report the unit owes. */
 function leaderTurns(
   h: { ctx: { env: Record<string, string> } },
   report: unknown,
 ) {
-  h.ctx.env.NOSCOPE_STUB_TURN_COUNTER = join(
-    (h.ctx.env.NOSCOPE_DB ?? "").replace(/db\.sqlite$/, ""),
-    "turns",
-  );
-  h.ctx.env.NOSCOPE_STUB_TURNS = JSON.stringify([
-    { kind: "continue", report: null },
-    { kind: "report", report },
-  ]);
+  h.ctx.env.NOSCOPE_STUB_TURN = JSON.stringify({ kind: "report", report });
   h.ctx.env.NOSCOPE_STUB_OUTPUT = observedOutput;
 }
 
@@ -2312,16 +2306,15 @@ describe("the IC above the planner", () => {
       ],
       [],
     );
-    // Cycle 1: the leader continues past its grep and reports progress after the
-    // investigate. Cycle 2: on the brief it assigns a grep and continues, then reports
-    // met on that grep's ending.
+    // Cycle 1: the grep's and the investigate's endings need no turn (R5-5), and the
+    // leader reports progress on the one turn it owes. Cycle 2: on the brief it assigns
+    // a grep and continues, then reports met once that grep has ended.
     h.ctx.env.NOSCOPE_STUB_OUTPUT = observedOutput;
     h.ctx.env.NOSCOPE_STUB_TURN_COUNTER = join(
       (h.ctx.env.NOSCOPE_DB ?? "").replace(/db\.sqlite$/, ""),
       "turns",
     );
     h.ctx.env.NOSCOPE_STUB_TURNS = JSON.stringify([
-      { kind: "continue", report: null },
       {
         kind: "report",
         report: {
@@ -2383,15 +2376,14 @@ describe("the IC above the planner", () => {
     );
     // The brief opened the unit's pass on its resumed session, before any task, with the
     // instructions, the report reviewed and the period objectives; the grep's ending
-    // came on the next turn.
+    // needed no turn (R5-5) and rode on the report turn the unit owed.
     const turns = h.calls().filter((c) => c.kind === "leader");
     expect(turns.map((c) => c.resume)).toEqual([
       null,
       "stub-session",
       "stub-session",
-      "stub-session",
     ]);
-    const brief = turns[2]?.prompt ?? "";
+    const brief = turns[1]?.prompt ?? "";
     expect(brief.startsWith("The IC reviewed your report")).toBe(true);
     expect(brief).toContain(
       [
@@ -2408,8 +2400,8 @@ describe("the IC above the planner", () => {
         "No ready tasks remain in your unit. Assign tasks for what the instructions say is missing and continue, or file your report against the unit's objective.",
       ].join("\n"),
     );
-    expect(turns[3]?.prompt).toContain(
-      "Task 001-t03 (grep) completed; its evidence, no matches, is recorded under its id for a task naming it in evidenceFrom.tasks.",
+    expect(turns[2]?.prompt).toContain(
+      "Endings of your unit's tasks you have not heard:\nTask 001-t03 (grep) completed; its evidence, no matches, is recorded under its id for a task naming it in evidenceFrom.tasks.\n\nYour unit has not reported since its last task ended.",
     );
     const store = h.store();
     const events = store.listEvents("001");
@@ -2425,14 +2417,16 @@ describe("the IC above the planner", () => {
       instructions: "also place the remove handler",
       revision: 1,
     });
-    // Delivery is recorded with the brief's turn, before what the turn did (the first
-    // continue is cycle 1's, past the grep).
+    // Delivery is recorded with the brief's turn, before what the turn did (the leader's
+    // one continue; cycle 1's `unit.continued` are the runtime's, R5-5).
     const types = events.map((e) => e.type);
     expect(types.indexOf("unit.revised")).toBeGreaterThan(
       types.indexOf("report.reviewed"),
     );
     expect(types.indexOf("unit.revised")).toBeLessThan(
-      types.lastIndexOf("unit.continued"),
+      events.findIndex(
+        (e) => e.type === "unit.continued" && e.payload.writtenBy !== "runtime",
+      ),
     );
     const reports = events.filter((e) => e.type === "unit.reported");
     expect(reports.map((e) => e.payload.revision)).toEqual([undefined, 1]);
@@ -2477,7 +2471,17 @@ describe("the IC above the planner", () => {
         {
           ...findAndSay,
           createTasks: [
-            ...findAndSay.createTasks,
+            findAndSay.createTasks[0] as TaskProposal,
+            {
+              ...(findAndSay.createTasks[1] as TaskProposal),
+              ref: "ask",
+              objective: "ask what handles deletion",
+              inputs: { question: "what handles deletion?" },
+            },
+            {
+              ...(findAndSay.createTasks[1] as TaskProposal),
+              dependsOn: ["grep", "ask"],
+            },
             {
               ...grepTask,
               objective: "find remove",
@@ -2530,13 +2534,31 @@ describe("the IC above the planner", () => {
       ],
       [],
     );
-    // The leader continues past the grep and reports progress on every later turn, so
-    // the second grep, which depends on the investigate, is still pending when the IC
-    // reassigns.
-    leaderTurns(h, {
-      outcome: "progress",
-      changed: [{ what: "the delete handler is at a.txt:2", claims: [] }],
-      pictureChanged: false,
+    // The grep's and the first investigate's endings need no turn (R5-5); the second
+    // investigate, which waits on both, comes back insufficient and calls the leader,
+    // which reports progress, so the grep that depends on it is still pending when the IC
+    // reassigns (a grep on a root that does not exist would be refused by the validator,
+    // and a failed task's dependents would be cancelled with it, R5-10).
+    h.ctx.env.NOSCOPE_STUB_OUTPUT_COUNTER = join(
+      (h.ctx.env.NOSCOPE_DB ?? "").replace(/db\.sqlite$/, ""),
+      "outputs",
+    );
+    h.ctx.env.NOSCOPE_STUB_OUTPUTS = JSON.stringify([
+      JSON.parse(observedOutput),
+      {
+        outcome: "insufficient",
+        claims: [],
+        findings: null,
+        needed: [{ kind: "retrievable_fact", what: "what calls the handler" }],
+      },
+    ]);
+    h.ctx.env.NOSCOPE_STUB_TURN = JSON.stringify({
+      kind: "report",
+      report: {
+        outcome: "progress",
+        changed: [{ what: "the delete handler is at a.txt:2", claims: [] }],
+        pictureChanged: false,
+      },
     });
     await run(
       ["incident", "create", "--no-size-up", "where is the delete handler"],
@@ -2567,7 +2589,7 @@ describe("the IC above the planner", () => {
     expect(h.out).toContain(
       "  reassignment 001-r01 recorded from unit 001-u02 with 1 claim(s); the next plan gives it to a new unit",
     );
-    expect(h.out).toContain("  task 001-t03 cancelled");
+    expect(h.out).toContain("  task 001-t04 cancelled");
     expect(h.out).toContain("plan rejected:");
     expect(h.out).toContain(
       "  - Reassignments taken: reassignment 001-r01, the slice of closed unit 001-u02, is not taken: no new unit names it in takes",
@@ -2621,13 +2643,14 @@ describe("the IC above the planner", () => {
     ).toMatchObject({
       rationale: "reassign: a reader would do better than another grep",
       reassignmentId: "001-r01",
-      mutation: { kind: "task.status", taskId: "001-t03", status: "cancelled" },
+      mutation: { kind: "task.status", taskId: "001-t04", status: "cancelled" },
     });
     expect(second.listTasks("001").map((t) => [t.id, t.status])).toEqual([
       ["001-t01", "completed"],
       ["001-t02", "completed"],
-      ["001-t03", "cancelled"],
-      ["001-t04", "completed"],
+      ["001-t03", "completed"],
+      ["001-t04", "cancelled"],
+      ["001-t05", "completed"],
     ]);
     expect(
       second.listUnits("001").find((u) => u.id === "001-u02")?.status,
@@ -2650,12 +2673,13 @@ describe("the IC above the planner", () => {
       "  unit 001-u03 created under 001-command: read the delete handler (takes reassignment 001-r01)",
     );
     expect(h.out).toContain(
-      "  ran 001-t04 (grep): completed; evidence: 1 match in 1 file",
+      "  ran 001-t05 (grep): completed; evidence: 1 match in 1 file",
     );
-    // The closed unit's leader took two turns on its session; the reader's starts fresh.
+    // The closed unit's leader took one turn, on the failure; the reader's starts fresh
+    // and reports once its grep has ended.
     const turns = h.calls().filter((c) => c.kind === "leader");
-    expect(turns.map((c) => c.resume)).toEqual([null, "stub-session", null]);
-    const brief = turns[2]?.prompt ?? "";
+    expect(turns.map((c) => c.resume)).toEqual([null, null]);
+    const brief = turns[1]?.prompt ?? "";
     expect(brief).toContain(
       [
         "You lead unit 001-u03. Your unit's objective: read the delete handler",

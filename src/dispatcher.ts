@@ -37,11 +37,11 @@ import { unitsInTreeOrder } from "./tree.js";
 import {
   describeError,
   type Landed,
+  lacksOf,
   type PassContext,
   type PassView,
   protocolOf,
   type Reported,
-  type TaskEnding,
   type Turned,
 } from "./units/index.js";
 import { validateLeaderTasksAndRecord } from "./validator.js";
@@ -441,7 +441,7 @@ function relatedUnits(
  * still running and which have landed and reach it next, and the leader continues (the
  * tasks its ending made runnable start, and any it assigned), or reports, which ends the
  * unit's pass while its tasks in flight finish and land. Their endings, and any other the
- * leader has not heard (`endedSinceLastTurn`), ride on the first turn of the unit's next
+ * leader has not heard (`unheardEndings`), ride on the first turn of the unit's next
  * pass whatever that turn is for, so a result never goes unread. A unit with nothing left
  * to run, nothing running and nothing left to hear is asked for its report; a unit resumed
  * since its last report opens with a turn carrying the answers, before any task, and a
@@ -534,8 +534,8 @@ export async function dispatch(
         providers,
         options.cwd,
       ).ok,
-    applyAssignments: (unit, tasks) =>
-      applyLeaderTasks(store, incident, unit, tasks).length,
+    applyAssignments: (unit, tasks, consult) =>
+      applyLeaderTasks(store, incident, unit, tasks, consult).length,
     raiseRequests: (unit, requests) =>
       raiseResourceRequests(store, incident, unit, requests, actor),
   };
@@ -558,34 +558,22 @@ export async function dispatch(
     let unit =
       store.listUnits(incident.id).find((u) => u.id === listed.id) ?? listed;
     const protocol = protocolOf(unit);
-    // Tasks started and not yet landed, the endings landed and not yet heard (with the
-    // refusals when the task's session was refused on both models, R4-7), and the waker
-    // for the loop below when it has nothing to hear.
+    // Tasks started and not yet landed, the endings landed and not yet put to the protocol
+    // (with the refusals when the task's session was refused on both models, R4-7), and
+    // the waker for the loop below when it has nothing to hear.
     const inFlight = new Map<string, Task>();
     const landed: Landed[] = [];
     let wake: (() => void) | null = null;
-    // The endings of earlier passes the unit has not heard, the protocol's to name: its
-    // first turn this pass carries them.
-    let unheard: readonly TaskEnding[] = protocol.unheard(ctx, unit);
     const pending = new Set<Promise<void>>();
     // A run that threw past `runOne` (a store that failed in its record) ends the pass with
     // that error once the other runs have landed.
     let crashed: unknown;
-    let ranInUnit = false;
     // What the protocol sees of the pass at a turn: the runnable tasks not yet attempted,
-    // the endings of earlier passes (given once), the tasks still running in sessions of
-    // their own, the tasks that landed and wait for turns of their own, and the pass's
-    // state.
+    // the tasks still running in sessions of their own, and the pass's state; the endings
+    // the leader has not heard are the log's to tell (R5-5).
     const view: PassView = {
       remaining: () => runnableIn(unit.id),
-      hear: () => {
-        const heard = unheard;
-        unheard = [];
-        return heard;
-      },
       running: () => [...inFlight.values()],
-      landed: () => landed.map((e) => e.task),
-      ran: () => ranInUnit,
       done: () => done.has(unit.id),
       halted: () => halt !== null,
     };
@@ -616,7 +604,6 @@ export async function dispatch(
             );
       if (room.room === "deferred") return "deferred";
       attempted.add(next.id);
-      ranInUnit = true;
       inFlight.set(next.id, next);
       if (next.status === "pending")
         store.setTaskStatus(incident.id, next.id, "ready", actor, "task.ready");
@@ -725,13 +712,14 @@ export async function dispatch(
         if (crashed !== undefined) throw crashed;
         const ending = landed.shift();
         if (ending === undefined) continue;
-        // The ending's turn is the protocol's: the leader hears it, or the runtime reports
-        // a task refused on both models, under the base protocol; under the ic's it stays
-        // recorded for the change report.
+        // The ending is the protocol's to decide on: under the base protocol the leader
+        // hears it when it needs a decision and the runtime records the unit's progress
+        // when it does not (R5-5), or the runtime reports a task refused on both models;
+        // under the ic's it stays recorded for the change report.
         take(await protocol.ending(ctx, unit, ending, view));
       }
-      // Once every run has landed: the protocol's closing turn (the report owed from an
-      // earlier pass under the base protocol; command is simply done for the pass).
+      // Once every run has landed: the protocol's closing turn (the report the unit owes,
+      // under the base protocol; command is simply done for the pass).
       take(await protocol.close(ctx, unit, view));
     } catch (error) {
       // A leader that cannot answer, or a run that crashed: nothing new starts anywhere,
@@ -848,7 +836,12 @@ async function runOne(
           ? `evidence: ${measureEvidence(capability.name, outcome.result)}`
           : `${claims.length} claim(s)`,
     });
-    return { task: next, status: "completed", claims };
+    // A session that said it lacked something ends `insufficient` for the protocol (R5-5),
+    // with what it needed and no claims; the task itself is completed with that result.
+    const needed = lacksOf(outcome.result);
+    return needed === null
+      ? { task: next, status: "completed", claims }
+      : { task: next, status: "insufficient", needed };
   } catch (error) {
     const reason = describeError(error);
     const usage: Usage =

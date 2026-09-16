@@ -238,7 +238,7 @@ describe("claude code provider", () => {
       "A period ends when the units have reported or when one report changes the picture; you are never consulted per task",
       "is information for your decision and never a decision",
       "No task runs in your session: a task under command is deterministic and runs in process, and a session-backed task placed under command runs in a session of its own",
-      "Your tools serve no turn",
+      "You hold no tools: a turn is decided from the file in front of you",
       "command files no report",
       "You assign deterministic tasks under command in your command turn (assignTasks",
       "session work is a unit's, never assigned by you",

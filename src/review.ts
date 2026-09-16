@@ -943,6 +943,7 @@ export function renderReview(
   let deterministicRan = 0;
   let evidenceRecorded = 0;
   let leaderTurns = 0;
+  let endingsWithoutTurn = 0;
   const verdicts = new Map<string, number>();
   const reportsByUnit = new Map<string, string[]>();
   let resolvedAtLeader = 0;
@@ -1188,6 +1189,15 @@ export function renderReview(
         continue;
       }
       if (e.type !== "unit.reported" && e.type !== "unit.continued") continue;
+      // An ending that needed no decision (R5-5) is the runtime's `unit.continued`: no
+      // turn, nothing spent, the unit's progress on record.
+      if (e.type === "unit.continued" && e.payload.writtenBy === "runtime") {
+        endingsWithoutTurn += 1;
+        lines.push(
+          `  runtime for ${str(e.payload.unitId)}: task ${str(e.payload.taskId)} ended with no turn, ${String(e.payload.remaining ?? 0)} ready task(s) start`,
+        );
+        continue;
+      }
       // A report the runtime wrote on the leader's behalf after two refusals (R4-7) is no
       // turn and spent nothing; it is listed by who wrote it and why.
       if (e.payload.writtenBy === "runtime") {
@@ -1375,7 +1385,9 @@ export function renderReview(
     (n, r) => n + r.length,
     0,
   );
-  lines.push(`leader turns: ${leaderTurns} (${reported} reports)`);
+  lines.push(
+    `leader turns: ${leaderTurns} (${reported} reports); endings that needed no turn: ${endingsWithoutTurn}`,
+  );
   for (const [unitId, unitReports] of reportsByUnit)
     lines.push(`  ${unitId}: ${unitReports.join("; ")}`);
   lines.push(

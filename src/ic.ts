@@ -1125,10 +1125,7 @@ async function icCall<T extends object>(
   const provider = getProvider(listed.leader.provider, options.env);
   const ask = (unit: Unit) =>
     provider.run(
-      leaderRequest(unit, prompt(unit), schema, options.cwd, IC_TURN_SECONDS, {
-        equipment: unit.equipment,
-        bashAllowlist: unit.bashAllowlist,
-      }),
+      leaderRequest(unit, prompt(unit), schema, options.cwd, IC_TURN_SECONDS),
     );
   let unit = listed;
   let replaced: { sessionId: string; reason: string } | null = null;

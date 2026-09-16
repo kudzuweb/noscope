@@ -19,6 +19,7 @@ import {
   newCommandUnit,
   protocolOf,
   roleOf,
+  unheardEndings,
 } from "../src/units/index.js";
 import { scriptedIncident } from "./fixtures/models.js";
 
@@ -162,7 +163,7 @@ describe("unit types (R4-10)", () => {
     store.close();
   });
 
-  it("command has a pass only for a runnable task and hears no earlier ending, while a led unit owing a report has work and hears its unheard endings", () => {
+  it("command has a pass only for a runnable task, while a led unit owing a report has work and its unheard endings are read from the log", () => {
     const store = new Store(":memory:");
     const { incident, unit, addUnit, task } = scriptedIncident(store);
     const led = addUnit({ id: "u-led", objective: "the led half" });
@@ -200,13 +201,75 @@ describe("unit types (R4-10)", () => {
       },
     };
     expect(protocolOf(unit).hasWork(ctx, unit)).toBe(false);
-    expect(protocolOf(unit).unheard(ctx, unit)).toEqual([]);
     expect(protocolOf(led).hasWork(ctx, led)).toBe(true);
+    const events = store.listEvents("i1");
     expect(
-      protocolOf(led)
-        .unheard(ctx, led)
-        .map((e) => [e.task.id, e.status]),
+      unheardEndings(led, store.listTasks("i1"), events).map((e) => [
+        e.task.id,
+        e.status,
+      ]),
     ).toEqual([["t-led", "completed"]]);
+    store.close();
+  });
+
+  it("the endings a leader has not heard are those no turn of its own carried under heard (R5-5): a session that lacked something is insufficient with what it needed, a failure carries its reason, and the runtime's records move nothing", () => {
+    const store = new Store(":memory:");
+    const { addUnit, task } = scriptedIncident(store);
+    const led = addUnit({ id: "u-led", objective: "the led half" });
+    for (const id of ["t-1", "t-2", "t-3", "t-4"])
+      task({
+        id,
+        capability: "investigate",
+        unitId: led.id,
+        inputs: { question: id },
+        status: "ready",
+      });
+    const end = (
+      id: string,
+      status: "completed" | "failed",
+      result?: unknown,
+    ) =>
+      store.setTaskStatus("i1", id, status, "dispatcher", `task.${status}`, {
+        ...(result === undefined ? {} : { result }),
+        extra: status === "failed" ? { reason: "no such root" } : {},
+      });
+    end("t-1", "completed", { outcome: "answered", claims: [] });
+    end("t-2", "completed", {
+      outcome: "insufficient",
+      needed: [{ kind: "permission", what: "to run the app" }],
+    });
+    end("t-3", "failed");
+    // t-1 was heard on a turn; the runtime's record of t-3 and a report it wrote are no
+    // turns.
+    store.record("i1", "unit.continued", "dispatcher", {
+      unitId: led.id,
+      heard: ["t-1"],
+    });
+    store.record("i1", "unit.continued", "dispatcher", {
+      unitId: led.id,
+      taskId: "t-3",
+      remaining: 0,
+      writtenBy: "runtime",
+    });
+    store.record("i1", "unit.reported", "dispatcher", {
+      unitId: led.id,
+      heard: ["t-2", "t-3"],
+      writtenBy: "runtime",
+    });
+    end("t-4", "completed", { outcome: "answered", claims: [] });
+    expect(
+      unheardEndings(led, store.listTasks("i1"), store.listEvents("i1")).map(
+        (e) => [
+          e.task.id,
+          e.status,
+          "needed" in e ? e.needed : "reason" in e ? e.reason : e.claims,
+        ],
+      ),
+    ).toEqual([
+      ["t-2", "insufficient", [{ kind: "permission", what: "to run the app" }]],
+      ["t-3", "failed", "no such root"],
+      ["t-4", "completed", []],
+    ]);
     store.close();
   });
 

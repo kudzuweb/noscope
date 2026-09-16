@@ -731,6 +731,19 @@ describe("contracts", () => {
         discrepancy: "a hurricane",
       }).discrepancy,
     ).toBe("a hurricane");
+    // Either turn may name the tasks the leader wants to be called on, by id or by the
+    // ref of an assignment on the same turn (R5-5); the schema carries the field.
+    expect(
+      LeaderTurn.parse({
+        kind: "continue",
+        report: null,
+        consult: ["i1-t04", "g"],
+      }).consult,
+    ).toEqual(["i1-t04", "g"]);
+    expect(() =>
+      LeaderTurn.parse({ kind: "continue", report: null, consult: [""] }),
+    ).toThrow();
+    expect(jsonSchemaFor(LeaderTurn).properties).toHaveProperty("consult");
     // The report is required, null on a continue turn and present on a report turn.
     expect(() => LeaderTurn.parse({ kind: "continue" })).toThrow(/report/);
     expect(() => LeaderTurn.parse({ kind: "report", report: null })).toThrow(
