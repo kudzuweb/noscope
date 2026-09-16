@@ -23,6 +23,7 @@ import {
 } from "./leader.js";
 import {
   type ActionPlan,
+  type BaseUnitForm,
   type Claim,
   type CommandTurn,
   type Event,
@@ -110,6 +111,15 @@ function modelUnknown(
     ? null
     : `${model}, which ${provider} does not serve`;
 }
+
+/**
+ * The large tier of the models Claude Code serves, told by name (DESIGN.md Model choices):
+ * Opus and Fable cost 2.5x to 5x Sonnet 5 per token, and run 004 put every session and
+ * leader on Opus 5 for work run 003 did on Sonnet 5 (R5-6). A proposal naming one carries
+ * a `modelWhy`, or is warned on under Smallest model that fits.
+ */
+const LARGE_MODEL = /opus|fable/;
+const isLargeModel = (model: string) => LARGE_MODEL.test(model);
 
 /** The three rules a strike team is held to, and nothing else (ruled 2026-09-14): its model, its tools, its count. */
 const STRIKE_TEAM_RULES = [
@@ -755,6 +765,33 @@ const WARNING_CHECKS: Record<WarningName, Rule> = {
         ),
     );
   },
+  // A leader filled from a saved config is Mauria's choice (R4-11) and draws nothing; a
+  // leader the plan gives, beside a config or without one, is the planner's.
+  "Smallest model that fits": (plan, ctx) => [
+    ...perRegisteredTask(plan, (t, capability) =>
+      capability.kind === "session" &&
+      t.model !== null &&
+      isLargeModel(t.model) &&
+      t.modelWhy === undefined
+        ? [
+            `${label(t)} runs ${t.capability} on ${t.model} with no modelWhy; recording, reproducing and reading are Haiku or Sonnet work, so say why this task needs a larger model or name a smaller one`,
+          ]
+        : [],
+    ),
+    ...plan.createUnits.flatMap((u) => {
+      const saved = ctx.configs.find((c) => c.name === u.config);
+      const fromConfig =
+        saved !== undefined &&
+        (saved.form as Partial<BaseUnitForm>).leader?.model === u.leader.model;
+      return isLargeModel(u.leader.model) &&
+        u.modelWhy === undefined &&
+        !fromConfig
+        ? [
+            `${unitLabel(u)} puts its leader on ${u.leader.model} with no modelWhy; a leader directs its tasks and judges their endings, which is Haiku or Sonnet work, so say why this unit needs a larger leader or name a smaller one`,
+          ]
+        : [];
+    }),
+  ],
 };
 
 const WARNINGS: readonly { name: WarningName; check: Rule }[] =

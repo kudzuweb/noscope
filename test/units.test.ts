@@ -69,7 +69,7 @@ describe("unit types (R4-10)", () => {
     ).toThrow("must carry the role text as a form field named role");
   });
 
-  it("the planner's unit proposal is the base form plus config, ref, parent, type and takes, with the descriptions rendered into its schema", () => {
+  it("the planner's unit proposal is the base form plus config, ref, parent, type, takes and modelWhy, with the descriptions rendered into its schema", () => {
     const schema = jsonSchemaFor(UnitProposal) as {
       properties: Record<string, { description?: string; default?: unknown }>;
       required: string[];
@@ -85,8 +85,13 @@ describe("unit types (R4-10)", () => {
       "parent",
       "type",
       "takes",
+      "modelWhy",
     ]);
     expect(schema.properties.type?.default).toBe("base");
+    expect(schema.properties.modelWhy?.description).toContain(
+      "Opus or Fable model",
+    );
+    expect(schema.required).not.toContain("modelWhy");
     expect(schema.properties.type?.description).toContain(
       "base, the led unit, is the only type a plan may create",
     );

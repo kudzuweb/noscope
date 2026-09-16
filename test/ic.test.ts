@@ -268,6 +268,11 @@ describe("the IC above the planner", () => {
       "correct",
       "amend",
     ]);
+    // Both reviews hold the draft to the smallest model that fits (R5-6).
+    for (const review of [calls[2], calls[4]])
+      expect(review?.prompt.split("\n").at(-1)).toBe(
+        "Hold every session task and every new unit's leader to the smallest model its kind of work needs: recording, reproducing and reading are Haiku or Sonnet work, and so is a leader that directs such tasks; weighing evidence to a conclusion may take Opus. A task or leader on an Opus or Fable model with no modelWhy, or with one the work does not bear out, is an unreasoned upgrade: do not approve the draft as drafted, correct or amend it to the smaller model.",
+      );
     expect(calls[4]?.prompt).toContain(
       "# The planner's redraft for operational period 1, against your corrections",
     );
