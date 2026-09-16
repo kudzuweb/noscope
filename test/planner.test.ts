@@ -375,7 +375,11 @@ describe("planner", () => {
         basis: "inferred",
         confidence: 0.6,
         evidence: [],
-        provenance: { capability: "investigate", taskId: "t-y" },
+        provenance: {
+          capability: "investigate",
+          taskId: "t-y",
+          sessionId: "s",
+        },
         createdAt: AT,
       },
       "dispatcher",
