@@ -812,8 +812,9 @@ function criticalPath(
  * ending or leader turn; the tasks' recorded seconds summed; `parallel`, the sum over
  * the dispatch span, which is 1.0 when tasks ran one after another and higher when they
  * overlapped; and the critical path (R5-7), the longest chain of dependent tasks by their
- * seconds, with the factor the sum over that chain, which is what `parallel` could have
- * reached had every independent task run at once. Nothing when no task ran in the cycle.
+ * seconds, with `possible`, the sum over that chain: an upper bound on `parallel`, what
+ * the plan's dependencies allowed, which `parallel` never reaches since its span also
+ * holds the leader turns. Nothing when no task ran in the cycle.
  */
 function wallTimeLine(
   cycle: Cycle,

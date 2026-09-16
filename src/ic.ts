@@ -858,10 +858,11 @@ export function renderCommandBriefing(
  * The review's question on parallelism (R5-7): a draft that leaves a unit for the next
  * period when it could start now, or chains a task behind one whose result it does not
  * read, serializes work the runtime would run at once (run 004's code unit idled for a
- * 278-second reproduce it did not need). Asked on every review, its own line.
+ * 278-second reproduce while its reading waited on a failed grep, and its period 2
+ * planned three readings in sequence). Asked on every review, its own line.
  */
 const SERIALIZED_WORK_ASK =
-  "Ask whether the draft serializes independent work: a unit or task that could start this period but is left for the next, or a dependsOn on a task whose result the dependent does not name in evidenceFrom.tasks, holds work behind work it does not need, and a code reading never waits behind a reproduce it does not need; independent units and tasks run at once, so correct or amend a draft that serializes them, naming what runs together.";
+  "Check whether the draft serializes independent work: a unit or task that could start this period but is left for the next, or a dependsOn on a task whose result the dependent does not name in evidenceFrom.tasks, holds work behind work it does not need, and a code reading never waits behind a reproduce it does not need; independent units and tasks run at once, so correct or amend a draft that serializes them, naming what runs together.";
 
 /**
  * The user message of a review: the draft, and after a redraft the corrections it answers.

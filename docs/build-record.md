@@ -3602,7 +3602,7 @@ Not exactly to spec, with reasons:
   verified the real path by `readlink` on 2026-09-15 rather than from the run's record,
   and says so.
 
-## R5-7: Independent work runs together (#PR, merged 2026-09-16)
+## R5-7: Independent work runs together (#53, merged 2026-09-16)
 
 R5-7 of the round 5 plan. Built: the planner's rule text, the IC's review ask and
 `incident review`'s wall-time line each carry the rule that independent work runs
@@ -3637,13 +3637,15 @@ time: cycle N s, dispatch N s; K task(s) summing N s, parallel Rx; critical path
 t2), Px possible`: `criticalPath` walks the `dependsOn` graph of the tasks that recorded
 usage in the cycle (a task's seconds summed over its usages, so a refused call's and its
 retry's count together) and returns the chain whose seconds sum highest, named in run
-order; `possible` is the summed seconds over the chain's, the factor `parallel` would have
-reached had every independent task run at once. A dependency that completed in an earlier
+order; `possible` is the summed seconds over the chain's, an upper bound on `parallel`,
+what the plan's dependencies allowed, which `parallel` never reaches since its span also
+holds the leader turns. A dependency that completed in an earlier
 cycle held nothing in this one and is off the graph; a task the log has no `dependsOn`
 for stands alone. Run 004's period 1 would read `critical path 278.0 s (<the reproduce's task
 id>), 1.00x possible` beside its `parallel 0.92x`, which is the evidence the row was written from:
-the reproduce was the only session task that ran, the code unit's investigate waited on a
-grep that had failed at once and never needed the reproduce. `secondsByTask` replaces
+the reproduce was the only session task that ran while the code unit's investigate waited
+on a grep that had failed at once; period 2 would read 375 seconds of path under 612 of
+work, 1.63x possible against 0.92x measured. `secondsByTask` replaces
 `ranInCycle` and the summed `taskSeconds` in `renderReview`, and the "failed before
 running" check reads it. DESIGN.md Step 4 (the review's ask), Step 5 (the warning table,
 now two rows), Step 6 (the wall-time sentence), Step 7 (the review row) and the Speed
@@ -3685,3 +3687,12 @@ Not exactly to spec, with reasons:
 - The IC reviews before the validator runs in the current cycle order (R5-3 reverses it),
   so the ask does not point the IC at the validator's warnings; it names the same shape in
   its own words so it holds under either order.
+- Review of PR 53 found that run 004 did not exhibit the wait-for-nothing shape: every
+  `dependsOn` in its plans was also in `evidenceFrom.tasks` (001-t06 and t07 named t01,
+  t02 and t05; t10 and t12 named all of theirs), and the code unit's idle came from a real
+  evidence dependency on a grep that failed in 4 milliseconds, which R5-10's row settles.
+  The warning guards a shape the runtime cannot otherwise tell from a needed wait; the
+  comments, the warning text and DESIGN.md say so rather than crediting it with run 004.
+  The warning's reason also offers the rationale as the third way out, so a planner does
+  not attach unread evidence to silence it, and `possible` is written as an upper bound on
+  `parallel` rather than a value it could reach.

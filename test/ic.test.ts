@@ -258,10 +258,10 @@ describe("the IC above the planner", () => {
     );
     // R5-7: every review asks whether the draft serializes independent work.
     expect(calls[2]?.prompt).toContain(
-      "Ask whether the draft serializes independent work",
+      "Check whether the draft serializes independent work",
     );
     expect(calls[4]?.prompt).toContain(
-      "Ask whether the draft serializes independent work",
+      "Check whether the draft serializes independent work",
     );
     expect(schemaOf(calls[2] as Call).properties.verdict?.enum).toEqual([
       "approve",

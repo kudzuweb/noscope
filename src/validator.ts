@@ -722,9 +722,11 @@ export const RULES: readonly { name: RuleName; check: Rule }[] =
  * the IC's digging is assigned to a unit. The planner is told, not refused, since the
  * work still runs and a rejection cost run 003 its unit. A wait for nothing (R5-7): a
  * `dependsOn` on a task whose result the dependent does not take in `evidenceFrom.tasks`
- * holds the dependent, and its unit's pass, behind work it never reads (run 004's code
- * unit sat idle for a 278-second reproduce this way). Warned, not refused, since a plan
- * may order two tasks for a reason the runtime cannot see, and the rationale carries it.
+ * holds the dependent, and its unit's pass, behind work it never reads. Run 004 did not
+ * show this shape (its code unit idled on a real evidence dependency, a grep that failed
+ * in 4 ms, which R5-10 settles); the warning guards the wait the dispatcher cannot tell
+ * from a needed one. Warned, not refused, since a plan may order two tasks for a reason
+ * the runtime cannot see, and the rationale carries it.
  */
 const WARNING_CHECKS: Record<WarningName, Rule> = {
   "Session work under a unit": (plan, ctx) => {
@@ -749,7 +751,7 @@ const WARNING_CHECKS: Record<WarningName, Rule> = {
         .filter((id) => holds.has(id) && !t.evidenceFrom.tasks.includes(id))
         .map(
           (id) =>
-            `${label(t)} waits on ${id} and does not read its result; the wait holds the task and its unit behind work it does not need, so drop the dependsOn or name ${id} in evidenceFrom.tasks`,
+            `${label(t)} waits on ${id} and does not read its result; the wait holds the task and its unit behind work it does not need, so drop the dependsOn, name ${id} in evidenceFrom.tasks, or say in the rationale why the order is needed`,
         ),
     );
   },

@@ -1446,7 +1446,7 @@ describe("validator", () => {
         {
           rule: "Independent work runs together",
           reason:
-            'task "read the scroll handler" waits on t-running and does not read its result; the wait holds the task and its unit behind work it does not need, so drop the dependsOn or name t-running in evidenceFrom.tasks',
+            'task "read the scroll handler" waits on t-running and does not read its result; the wait holds the task and its unit behind work it does not need, so drop the dependsOn, name t-running in evidenceFrom.tasks, or say in the rationale why the order is needed',
         },
       ],
     });
