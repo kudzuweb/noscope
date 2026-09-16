@@ -5,7 +5,6 @@ import { describe, expect, it } from "vitest";
 import { EXIT, run } from "../src/cli.js";
 import type { ActionPlan, Event, Incident, Task } from "../src/models.js";
 import { renderReview } from "../src/review.js";
-import { RUNTIME } from "../src/runtime-version.js";
 import { cycleOf } from "../src/store.js";
 import { unitProposal } from "./fixtures/models.js";
 
@@ -22,6 +21,13 @@ const empty: ActionPlan = {
   capabilityRequests: [],
   applySops: [],
   incidentStatus: "continue",
+  situation: {
+    changed: "test",
+    hypothesis: "test",
+    proven: [],
+    inferred: [],
+    keep: [],
+  },
   rationale: "scripted",
 };
 
@@ -122,7 +128,6 @@ function event(
     actor: "test",
     payload,
     createdAt: `2026-09-13T13:${String(sequence).padStart(2, "0")}:00.000Z`,
-    runtime: null,
   };
 }
 
@@ -151,18 +156,7 @@ describe("incident review", () => {
     );
     // The IC's command turn and its review are priced on the root leader's model, before the planner's draft.
     expect(text).toContain(
-      "  ic claude-opus-5: in 1,500 (uncached 1,000 / write 200 / read 300)  out 42  1.5 s  $0.01  set period 1: 1 objective(s), 0 close(s), 0 verdict(s), continue  session stub-session",
-    );
-    // The stub's second command turn answered the unit's progress report with a revise (R4-2), listed under the turn and counted.
-    expect(text).toMatch(
-      /set period 2: 1 objective\(s\), 0 close\(s\), 1 verdict\(s\), continue {2}session stub-session\n {2}verdict on 001-u02's report [0-9a-f-]{36}: revise: stub: progress; instructions: stub: carry on\n {2}ic claude-opus-5: in 1,500 \(uncached 1,000 \/ write 200 \/ read 300\) {2}out 42 {2}1\.5 s {2}\$0\.01 {2}reviewed the draft: approve {2}session stub-session/,
-    );
-    expect(text).toContain(
-      "report verdicts: 1: 0 accepted, 1 revise, 0 reassign\n  001-u02: 0 accepted, 1 revise, 0 reassign",
-    );
-    // One build wrote the whole log, so review names one runtime spanning every event (R4-12).
-    expect(text).toMatch(
-      new RegExp(`^runtimes: 1: ${RUNTIME} \\(events 0 to \\d+\\)$`, "m"),
+      "  ic claude-opus-5: in 1,500 (uncached 1,000 / write 200 / read 300)  out 42  1.5 s  $0.01  set period 1: 1 objective(s), 0 close(s), continue  session stub-session",
     );
     expect(text).toContain(
       "  ic claude-opus-5: in 1,500 (uncached 1,000 / write 200 / read 300)  out 42  1.5 s  $0.01  reviewed the draft: approve  session stub-session",
@@ -176,12 +170,6 @@ describe("incident review", () => {
     expect(text).toMatch(
       /001-t01 grep \(deterministic\): \d+\.\d s {2}completed {2}claims 1 verified$/m,
     );
-    // The cycle's wall time beside the sum of its tasks' seconds (R4-9): the dispatch span
-    // runs from the grep's start to the leader's report, so it is never zero here.
-    expect(text).toMatch(
-      /^ {2}wall time: cycle \d+\.\d s, dispatch \d+\.\d s; 1 task\(s\) summing \d+\.\d s, parallel \d+\.\d\dx$/m,
-    );
-    expect(text.match(/^ {2}wall time:/gm)).toHaveLength(1);
     expect(text).toMatch(/cycle 2 {2}\S+ {2}applied satisfied/);
     expect(text).toMatch(
       /planner\s+claude-opus-5\s+2\s+3,000\s+84\s+3\.0\s+\$0\.02/,
@@ -563,29 +551,6 @@ describe("incident review", () => {
     const none = renderReview({ ...incident, status: "open" }, [], [], []);
     expect(none[1]).toBe("no cycle has run");
     expect(none.at(-1)).toBe("cost: $0.00");
-    expect(none).toContain("runtimes: none");
-  });
-
-  it("names the runtimes a log was written under, in order, with each one's event range and the untagged events named (R4-12)", () => {
-    const tagged = (sequence: number, runtime: string | null): Event => ({
-      ...event(sequence, "plan.proposed", { rationale: "r" }),
-      runtime,
-    });
-    const lines = renderReview(
-      { ...incident, status: "open" },
-      [
-        tagged(0, null),
-        tagged(1, "aaaa"),
-        tagged(2, "aaaa"),
-        tagged(3, "bbbb-dirty"),
-        tagged(4, "aaaa"),
-      ],
-      [],
-      [],
-    );
-    expect(lines).toContain(
-      "runtimes: 4: none recorded (written before the tag) (events 0 to 0), aaaa (events 1 to 2), bbbb-dirty (events 3 to 3), aaaa (events 4 to 4)",
-    );
   });
 
   it("numbers the cycles of an incident migrated under the IC the way cycleOf does: drafts before the first command turn, then command turns, a rejected or failed turn as the period it attempted", () => {
@@ -671,7 +636,7 @@ describe("incident review", () => {
     ).toBe(true);
     expect(
       lines.some((l) =>
-        /^ {2}ic claude-opus-5: .* set period 3: 1 objective\(s\), 0 close\(s\), 0 verdict\(s\), continue$/.test(
+        /^ {2}ic claude-opus-5: .* set period 3: 1 objective\(s\), 0 close\(s\), continue$/.test(
           l,
         ),
       ),

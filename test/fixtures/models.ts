@@ -1,6 +1,5 @@
 import { READ_ONLY_SESSION_COMMANDS } from "../../src/equipment/index.js";
 import type {
-  Event,
   Incident,
   Leader,
   Task,
@@ -39,7 +38,6 @@ export function unitProposal(
     ref,
     objective,
     parent,
-    type: "base",
     leader: STUB_LEADER,
     equipment: [],
     bashAllowlist: [],
@@ -65,13 +63,10 @@ export function scriptedIncident(store: Store, id = "i1", at = now()) {
     id: `${id}-command`,
     incidentId: id,
     parentId: null,
-    type: "ic",
     objective: "command: where deletion moves the scroll position",
     leader: STUB_LEADER,
     equipment: ["Read", "Grep", "Glob", "Bash"],
     bashAllowlist: [...READ_ONLY_SESSION_COMMANDS],
-    role: null,
-    config: null,
     sessionId: null,
     status: "active",
     createdAt: at,
@@ -85,12 +80,9 @@ export function scriptedIncident(store: Store, id = "i1", at = now()) {
     const u: Unit = {
       incidentId: id,
       parentId: unit.id,
-      type: "base",
       leader: STUB_LEADER,
       equipment: [],
       bashAllowlist: [],
-      role: null,
-      config: null,
       sessionId: null,
       status: "active",
       createdAt: at,
@@ -100,14 +92,6 @@ export function scriptedIncident(store: Store, id = "i1", at = now()) {
     store.createUnit(u, "runtime");
     return u;
   };
-  /** A unit under command with the root's equipment, for tests of a leader's turns: the root takes none (R4-6). */
-  const led = (id = "u-led"): Unit =>
-    addUnit({
-      id,
-      objective: "the led half",
-      equipment: [...unit.equipment],
-      bashAllowlist: [...unit.bashAllowlist],
-    });
   const task = (overrides: Partial<Task> & Pick<Task, "capability">): Task => {
     const t: Task = {
       id: `t-${overrides.capability}`,
@@ -134,139 +118,5 @@ export function scriptedIncident(store: Store, id = "i1", at = now()) {
     store.createTask(t, "planner");
     return t;
   };
-  return { store, incident, unit, addUnit, led, task };
-}
-
-/**
- * A unit under command that ran two tasks and reported (R4-1): a grep whose one verified
- * claim is observed, then an investigate on Haiku whose session made three tool calls and
- * asserted one inferred claim, and a `met` report resting on both. Returns the report's
- * event, the id a verdict answers it by.
- */
-export function reportedUnit(
-  s: ReturnType<typeof scriptedIncident>,
-  unitId: string,
-  summary: string,
-): Event {
-  const { incident, addUnit, task } = s;
-  const store = s.store;
-  const at = now();
-  addUnit({ id: unitId, objective: "find the scroll" });
-  const grep = task({
-    id: `${unitId}-grep`,
-    unitId,
-    capability: "grep",
-    objective: "find the delete handler",
-  });
-  store.createClaim(
-    {
-      id: `${unitId}-c-grep`,
-      incidentId: incident.id,
-      subject: "/r/a.ts:2",
-      predicate: "matches",
-      object: { pattern: "delete", text: "delete()" },
-      status: "verified",
-      basis: "observed",
-      confidence: 1,
-      evidence: ["/r/a.ts:2"],
-      provenance: { capability: "grep", taskId: grep.id, inputs: {} },
-      createdAt: at,
-    },
-    "verifier",
-  );
-  store.setTaskStatus(
-    incident.id,
-    grep.id,
-    "completed",
-    "dispatcher",
-    "task.completed",
-    {
-      result: {
-        root: "/r",
-        matches: [{ file: "a.ts", line: 2, text: "delete()" }],
-      },
-    },
-  );
-  const investigate = task({
-    id: `${unitId}-investigate`,
-    unitId,
-    capability: "investigate",
-    objective: "explain the scroll",
-    provider: "claude-code",
-    model: "claude-haiku-4-5",
-  });
-  for (const tool of ["Read", "Grep", "Read"])
-    store.record(incident.id, "tool.called", "dispatcher", {
-      sessionId: "s-investigate",
-      unitId,
-      taskId: investigate.id,
-      cycle: null,
-      agentId: null,
-      tool,
-      isError: false,
-      durationMs: 10,
-    });
-  store.createClaim(
-    {
-      id: `${unitId}-c-inv`,
-      incidentId: incident.id,
-      subject: "/r/a.ts:2",
-      predicate: "scrolls_on_delete",
-      object: { because: "the handler resets the view" },
-      status: "asserted",
-      basis: "inferred",
-      confidence: 0.7,
-      evidence: ["/r/a.ts:2"],
-      provenance: {
-        capability: "investigate",
-        taskId: investigate.id,
-        sessionId: "s-investigate",
-      },
-      createdAt: at,
-    },
-    "dispatcher",
-  );
-  store.setTaskStatus(
-    incident.id,
-    investigate.id,
-    "completed",
-    "dispatcher",
-    "task.completed",
-    {
-      result: {
-        outcome: "answered",
-        claims: [],
-        findings: { summary, observations: [] },
-        needed: [],
-      },
-    },
-  );
-  store.record(incident.id, "unit.reported", "dispatcher", {
-    unitId,
-    sessionId: "s-leader",
-    provider: "claude-code",
-    model: "claude-haiku-4-5",
-    report: {
-      outcome: "met",
-      changed: [
-        {
-          what: "the handler is found",
-          claims: [`${unitId}-c-grep`, `${unitId}-c-inv`],
-        },
-      ],
-      pictureChanged: false,
-    },
-    usage: {
-      inputTokens: 100,
-      uncachedInputTokens: 100,
-      cacheWriteTokens: 0,
-      cacheReadTokens: 0,
-      outputTokens: 10,
-      seconds: 1,
-      costUsd: 0.01,
-    },
-  });
-  const report = store.listEvents(incident.id).at(-1);
-  if (report === undefined) throw new Error("the report was recorded");
-  return report;
+  return { incident, unit, addUnit, task };
 }

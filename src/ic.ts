@@ -1,17 +1,8 @@
 import { z } from "zod";
 import { recordActivity } from "./activity.js";
-import {
-  describeRefusedCall,
-  eventsSinceLastCommand,
-  fallbackModel,
-  latestReports,
-  openRequests,
-  type RefusedCall,
-  reportsAwaitingVerdict,
-} from "./leader.js";
+import { leaderRequest, openRequests } from "./leader.js";
 import {
   type ActionPlan,
-  Claim,
   CommandTurn,
   type Event,
   FinalReviewTurn,
@@ -21,9 +12,7 @@ import {
   IncidentBriefing,
   jsonSchemaFor,
   type Leader,
-  type Question,
   ReviewTurn,
-  Task,
   type Unit,
   type Usage,
 } from "./models.js";
@@ -35,9 +24,7 @@ import {
   type SessionActivity,
   SessionError,
 } from "./providers/index.js";
-import { fallbackTransferred, newQuestions } from "./runtime.js";
 import { cycleOf, type Store } from "./store.js";
-import { commandUnitOf, leaderRequest } from "./units/index.js";
 
 // The Incident Commander is the root unit's leader: one persistent session, briefed with
 // the full incident file at the top of every cycle, that sets the operational period and
@@ -59,50 +46,22 @@ const HANDOFF_SCHEMA = jsonSchemaFor(HandoffDocument);
 /** The context size, in tokens of the last message of the IC's last call, at which command is handed off; `NOSCOPE_IC_HANDOFF_TOKENS` overrides it. */
 const DEFAULT_HANDOFF_TOKENS = 120_000;
 
-/** The size, in characters, at which a task's block under a report in the change report is clipped (R4-1); `NOSCOPE_REPORT_WORK_CHARS` overrides it. */
-const DEFAULT_REPORT_WORK_CHARS = 1500;
-
-/** A setting the environment gives as a positive whole number, or its default; refused when it is anything else. */
-function wholeNumberSetting(
-  env: NodeJS.ProcessEnv,
-  name: string,
-  unit: string,
-  fallback: number,
-): number {
-  const raw = env[name];
-  if (raw === undefined || raw === "") return fallback;
+/** The handoff threshold the environment sets, or the default; refused when it is not a positive whole number. */
+export function handoffThreshold(env: NodeJS.ProcessEnv = {}): number {
+  const raw = env.NOSCOPE_IC_HANDOFF_TOKENS;
+  if (raw === undefined || raw === "") return DEFAULT_HANDOFF_TOKENS;
   if (!/^[1-9]\d*$/.test(raw))
     throw new Error(
-      `${name} must be a positive whole number of ${unit}, not ${JSON.stringify(raw)}`,
+      `NOSCOPE_IC_HANDOFF_TOKENS must be a positive whole number of tokens, not ${JSON.stringify(raw)}`,
     );
   return Number(raw);
 }
 
-/** The handoff threshold the environment sets, or the default; refused when it is not a positive whole number. */
-export function handoffThreshold(env: NodeJS.ProcessEnv = {}): number {
-  return wholeNumberSetting(
-    env,
-    "NOSCOPE_IC_HANDOFF_TOKENS",
-    "tokens",
-    DEFAULT_HANDOFF_TOKENS,
-  );
-}
-
-/** The clip cap for a task's block under a report, from the environment or the default; refused when it is not a positive whole number. */
-export function reportWorkChars(env: NodeJS.ProcessEnv = {}): number {
-  return wholeNumberSetting(
-    env,
-    "NOSCOPE_REPORT_WORK_CHARS",
-    "characters",
-    DEFAULT_REPORT_WORK_CHARS,
-  );
-}
-
-/** Command, the unit of the ic type, whose leader is the IC. */
+/** The root unit, whose leader is the IC. */
 function commandUnit(store: Store, incidentId: string): Unit {
-  const unit = commandUnitOf(store.listUnits(incidentId));
+  const unit = store.listUnits(incidentId).find((u) => u.parentId === null);
   if (unit === undefined)
-    throw new Error(`incident ${incidentId} has no command unit`);
+    throw new Error(`incident ${incidentId} has no root unit`);
   return unit;
 }
 
@@ -215,298 +174,14 @@ function spendSince(events: readonly Event[], since: number): Usage {
   return costUsd === undefined || priced === 0 ? total : { ...total, costUsd };
 }
 
-/** A task event's recorded mutation, read loosely: the task it created, or the task id and result of its status change. */
-const mutationOf = (e: Event) =>
-  e.payload.mutation as
-    | {
-        kind?: unknown;
-        taskId?: unknown;
-        task?: unknown;
-        claim?: unknown;
-        result?: unknown;
-      }
-    | undefined;
-
-/** Every task the log created, by id, as its `task.create` mutation carried it. */
-function tasksCreated(events: readonly Event[]): Map<string, Task> {
-  const tasks = new Map<string, Task>();
-  for (const e of events) {
-    const m = mutationOf(e);
-    if (m?.kind !== "task.create") continue;
-    const parsed = Task.safeParse(m.task);
-    if (parsed.success) tasks.set(parsed.data.id, parsed.data);
-  }
-  return tasks;
-}
-
-/** A session result's summary is clipped to this many characters under a report: the incident file carries the findings in full, and the block's cap is for the claims. */
-const SUMMARY_CHARS = 300;
-
-/** The text cut at `SUMMARY_CHARS` with an ellipsis, or whole when it fits. */
-const clipSummary = (text: string): string =>
-  text.length <= SUMMARY_CHARS ? text : `${text.slice(0, SUMMARY_CHARS)}…`;
-
-/**
- * What a task came to, in one line: a session result's outcome and its summary (the
- * conclusion, or the observation count, when the capability's findings carry no summary),
- * clipped at `SUMMARY_CHARS`, a deterministic result's size in lines of JSON, or the
- * failure's reason. The result itself stays in the task record.
- */
-function describeEnding(task: Task, ended: Event): string {
-  if (ended.type === "task.failed")
-    return `failed: ${str(ended.payload.reason) || "(no reason recorded)"}`;
-  const result = mutationOf(ended)?.result;
-  if (task.model === null) {
-    const lines =
-      result === undefined || result === null
-        ? 0
-        : JSON.stringify(result, null, 2).split("\n").length;
-    return `completed; result: ${lines} line(s) of JSON, in the task record`;
-  }
-  const r = (result ?? {}) as {
-    outcome?: unknown;
-    findings?: unknown;
-    needed?: unknown;
-  };
-  const f = (r.findings ?? {}) as {
-    summary?: unknown;
-    conclusion?: unknown;
-    observations?: unknown;
-  };
-  const summary =
-    typeof f.summary === "string"
-      ? clipSummary(f.summary)
-      : typeof f.conclusion === "string"
-        ? clipSummary(f.conclusion)
-        : Array.isArray(f.observations)
-          ? `${f.observations.length} observation(s), in the task record`
-          : "(no summary)";
-  const needed = Array.isArray(r.needed)
-    ? r.needed
-        .map((n) => {
-          const need = n as { kind?: unknown; what?: unknown };
-          return `${str(need.kind)}: ${str(need.what)}`;
-        })
-        .join("; ")
-    : "";
-  return `completed, ${str(r.outcome) || "(no outcome)"}; ${r.outcome === "insufficient" && needed !== "" ? `needed: ${needed}` : `summary: ${summary}`}`;
-}
-
-/** One claim in one line: id, subject, predicate, basis, confidence. Its object is in the incident file's claims, never here. */
-function describeClaim(c: Claim): string {
-  return `${c.id}: ${c.subject} ${c.predicate} (${c.basis}, confidence ${c.confidence === null ? "none" : c.confidence.toFixed(2)})`;
-}
-
-/** A deterministic task's claims past this many are listed by id only: they are observed at confidence 1 by construction, one per match, and a wide grep would otherwise fill the block. */
-const DETERMINISTIC_CLAIMS_SHOWN = 3;
-
-/**
- * A task's claims in one line: none, each in full, or for a deterministic task with many
- * the first few in full and the rest by id, so the block's cap falls on a session's
- * claims (whose basis and confidence are what the IC judges) and not on a match list.
- */
-function describeClaims(task: Task, claims: readonly Claim[]): string {
-  if (claims.length === 0) return "none";
-  if (task.model !== null || claims.length <= DETERMINISTIC_CLAIMS_SHOWN)
-    return claims.map(describeClaim).join("; ");
-  const rest = claims.slice(DETERMINISTIC_CLAIMS_SHOWN);
-  return `${claims.slice(0, DETERMINISTIC_CLAIMS_SHOWN).map(describeClaim).join("; ")}; and ${rest.length} more, observed at confidence 1.00: ${rest.map((c) => c.id).join(", ")}`;
-}
-
-/** A task's block clipped at the cap, the pointer naming the task so the IC can find the full record. */
-function clipBlock(lines: readonly string[], taskId: string, cap: number) {
-  const text = lines.join("\n");
-  if (text.length <= cap) return [...lines];
-  return [
-    ...text.slice(0, cap).split("\n"),
-    `      [+${text.length - cap} chars clipped; the full record is task ${taskId}]`,
-  ];
-}
-
-/** The claims the log created under the given tasks, by task id, as their `claim.create` mutations carried them. */
-function claimsUnder(
-  events: readonly Event[],
-  taskIds: ReadonlySet<string>,
-): Map<string, Claim[]> {
-  const claimsByTask = new Map<string, Claim[]>();
-  for (const e of events) {
-    const m = mutationOf(e);
-    if (m?.kind !== "claim.create") continue;
-    const parsed = Claim.safeParse(m.claim);
-    if (!parsed.success || !taskIds.has(parsed.data.provenance.taskId))
-      continue;
-    const list = claimsByTask.get(parsed.data.provenance.taskId) ?? [];
-    list.push(parsed.data);
-    claimsByTask.set(parsed.data.provenance.taskId, list);
-  }
-  return claimsByTask;
-}
-
-/**
- * The root's tasks that ended since the IC last acted (R4-6), one block each in the form
- * of a report's work: capability, objective, claims, then how it ended, clipped at `cap`
- * with the task id as the pointer. No leader reports on these, so this block is the IC's
- * only view of them; a deterministic result's text is therefore rendered whole under the
- * cap rather than pointed at, and a session result reads as under a report (its summary,
- * or `insufficient` with what it needed, or the failure's reason).
- */
-function renderTasksUnderCommand(
-  events: readonly Event[],
-  recent: readonly Event[],
-  root: Unit | undefined,
-  cap: number,
-): string[] {
-  if (root === undefined) return [];
-  const tasks = tasksCreated(events);
-  const ended: { task: Task; event: Event }[] = [];
-  for (const e of recent) {
-    if (e.type !== "task.completed" && e.type !== "task.failed") continue;
-    const task = tasks.get(str(mutationOf(e)?.taskId));
-    if (task !== undefined && task.unitId === root.id)
-      ended.push({ task, event: e });
-  }
-  const claimsByTask = claimsUnder(
-    events,
-    new Set(ended.map((t) => t.task.id)),
-  );
-  return ended.flatMap(({ task, event }) => {
-    const ending =
-      event.type === "task.completed" && task.model === null
-        ? `completed; result: ${JSON.stringify(mutationOf(event)?.result ?? null)}`
-        : describeEnding(task, event);
-    return clipBlock(
-      [
-        `  - task ${task.id} (${task.capability}${task.model === null ? "" : `, ${task.model}`}): ${task.objective}`,
-        `      claims: ${describeClaims(task, claimsByTask.get(task.id) ?? [])}`,
-        `      ${ending}`,
-      ],
-      task.id,
-      cap,
-    );
-  });
-}
-
-/**
- * The work behind one report (R4-1), for the IC to judge the leader's account against:
- * the unit's tasks that ended since its previous report (or since the incident began), in
- * the order they ended, each with its capability, objective, the claims it produced (id,
- * subject, predicate, basis, confidence; the claims before the ending, so the block's cap
- * falls on a summary's tail and never on the claims) and how it ended and what it came
- * to, the task's block clipped at `cap` characters with the task id as the pointer to the
- * full record; then the unit's tool calls in that window by tool name with counts, the tasks'
- * and the leader's own turns' (a task's calls are filed under it, a turn's under the
- * unit with no task and no cycle; the IC's own calls under the root carry a cycle and
- * are not the root unit's work as a leader). A bounded amount of text per task, so a
- * report's work adds a bounded amount to the IC's context and the handoff threshold
- * stays meaningful.
- */
-function renderReportWork(
-  events: readonly Event[],
-  report: Event,
-  cap: number,
-): string[] {
-  const unitId = str(report.payload.unitId);
-  let previous = -1;
-  for (const e of events)
-    if (
-      e.type === "unit.reported" &&
-      e.sequence < report.sequence &&
-      str(e.payload.unitId) === unitId
-    )
-      previous = e.sequence;
-  const window = events.filter(
-    (e) => e.sequence > previous && e.sequence <= report.sequence,
-  );
-  const tasks = tasksCreated(events);
-  const ended: { task: Task; event: Event }[] = [];
-  for (const e of window) {
-    if (e.type !== "task.completed" && e.type !== "task.failed") continue;
-    const task = tasks.get(str(mutationOf(e)?.taskId));
-    if (task !== undefined && task.unitId === unitId)
-      ended.push({ task, event: e });
-  }
-  const taskIds = new Set(ended.map((t) => t.task.id));
-  const claimsByTask = claimsUnder(events, taskIds);
-  const byTool = new Map<string, number>();
-  for (const e of window) {
-    if (e.type !== "tool.called" || str(e.payload.unitId) !== unitId) continue;
-    const taskId = e.payload.taskId;
-    const own =
-      typeof taskId === "string"
-        ? taskIds.has(taskId)
-        : taskId === null && e.payload.cycle === null;
-    if (!own) continue;
-    const tool = str(e.payload.tool) || "?";
-    byTool.set(tool, (byTool.get(tool) ?? 0) + 1);
-  }
-  const calls = [...byTool].map(([tool, k]) => `${tool} ${k}`).join(", ");
-  return [
-    "    work since its previous report:",
-    ...(ended.length === 0 ? ["      (no task ended)"] : []),
-    ...ended.flatMap(({ task, event }) => {
-      const claims = claimsByTask.get(task.id) ?? [];
-      return clipBlock(
-        [
-          `      task ${task.id} (${task.capability}${task.model === null ? "" : `, ${task.model}`}): ${task.objective}`,
-          `        claims: ${describeClaims(task, claims)}`,
-          `        ${describeEnding(task, event)}`,
-        ],
-        task.id,
-        cap,
-      );
-    }),
-    `      tool calls: ${calls === "" ? "none" : calls}`,
-  ];
-}
-
-/**
- * A unit's report as the IC reads it: one line headed by the unit id and the report's
- * event id (the id a verdict answers it by), with the outcome, the revision number when
- * the report answers a revise verdict (R4-3), whether the picture changed, what changed on
- * which claims, and for `not_met` the why and suggestion; then the work behind it
- * (`renderReportWork`).
- */
-export function renderReport(
-  events: readonly Event[],
-  report: Event,
-  cap: number,
-): string[] {
-  const r = report.payload.report as
-    | {
-        outcome?: unknown;
-        changed?: { what?: unknown; claims?: unknown }[];
-        pictureChanged?: unknown;
-        why?: unknown;
-        suggestion?: unknown;
-      }
-    | undefined;
-  const changed = (r?.changed ?? [])
-    .map(
-      (c) =>
-        `${str(c.what)} (claims ${Array.isArray(c.claims) && c.claims.length > 0 ? c.claims.join(", ") : "none"})`,
-    )
-    .join("; ");
-  return [
-    `  - ${str(report.payload.unitId)}, report ${report.id}: ${str(r?.outcome)}${typeof report.payload.revision === "number" ? ` (revision ${report.payload.revision})` : ""}${r?.pictureChanged === true ? ", picture changed" : ""}; changed: ${changed || "nothing"}${typeof r?.why === "string" ? `; why: ${r.why}` : ""}${typeof r?.suggestion === "string" ? `; suggestion: ${r.suggestion}` : ""}`,
-    ...renderReportWork(events, report, cap),
-  ];
-}
-
 /**
  * What changed since the IC last acted, rendered first in its briefing under a heading that
  * names the window: discrepancies raised below the IC (first, so the IC reconciles them or
  * sends them up), every unit report with its why and suggestion and whether the picture
- * changed, every task under command that ended, with its claims and result (no leader
- * reports on the root's tasks, so this is where the IC judges them; R4-6), the resource
- * requests the waiting units still wait on (each with the text an `answers` entry names it
- * by, so the IC can answer what it can; a permission request only a grant answers), every
- * question answered and capability provided, the rules its last turn failed, and the spend
- * since then. Each report carries the work behind it, and each task's block, under a
- * report or under command, is clipped at `workChars` (R4-1). The reports listed are those
- * since the IC's last accepted command turn, the ones its verdicts must answer (R4-2), so a
- * report a rejected turn left unanswered is listed again for the retry; a unit's earlier
- * report in that window is marked as answered through its last. The tasks under command
- * use the same window, so a rejected turn does not drop the root's ended tasks either.
+ * changed, the resource requests the waiting units still wait on (each with the text an
+ * `answers` entry names it by, so the IC can answer what it can; a permission request only
+ * a grant answers), every question answered and capability provided, the rules its last
+ * turn failed, and the spend since then.
  */
 export function renderChangeReport(
   events: readonly Event[],
@@ -515,7 +190,6 @@ export function renderChangeReport(
     capabilityRequests: [],
   },
   units: readonly Unit[] = [],
-  workChars = DEFAULT_REPORT_WORK_CHARS,
 ): string[] {
   const waiting = new Set(
     units.filter((u) => u.status === "waiting").map((u) => u.id),
@@ -535,17 +209,26 @@ export function renderChangeReport(
       (e) =>
         `${str(e.payload.seat)}${str(e.payload.unitId) === "" ? "" : ` of ${str(e.payload.unitId)}`}: ${str(e.payload.discrepancy)}`,
     );
-  const latest = latestReports(events);
-  const reports = reportsAwaitingVerdict(events).flatMap((e) => {
-    const [head = "", ...work] = renderReport(events, e, workChars);
-    const last = latest.get(str(e.payload.unitId));
-    return [
-      last === undefined || last.id === e.id
-        ? head
-        : `${head} [an earlier report this window; the verdict answers report ${last.id}]`,
-      ...work,
-    ];
-  });
+  const reports = recent
+    .filter((e) => e.type === "unit.reported")
+    .map((e) => {
+      const r = e.payload.report as
+        | {
+            outcome?: unknown;
+            changed?: { what?: unknown; claims?: unknown }[];
+            pictureChanged?: unknown;
+            why?: unknown;
+            suggestion?: unknown;
+          }
+        | undefined;
+      const changed = (r?.changed ?? [])
+        .map(
+          (c) =>
+            `${str(c.what)} (claims ${Array.isArray(c.claims) && c.claims.length > 0 ? c.claims.join(", ") : "none"})`,
+        )
+        .join("; ");
+      return `${str(e.payload.unitId)}: ${str(r?.outcome)}${r?.pictureChanged === true ? ", picture changed" : ""}; changed: ${changed || "nothing"}${typeof r?.why === "string" ? `; why: ${r.why}` : ""}${typeof r?.suggestion === "string" ? `; suggestion: ${r.suggestion}` : ""}`;
+    });
   const answered = recent
     .filter((e) => e.type === "question.answered" && str(e.payload.answer))
     .map((e) => `${str(e.payload.questionId)} → ${str(e.payload.answer)}`);
@@ -555,12 +238,14 @@ export function renderChangeReport(
   const rejected = recent
     .filter((e) => e.type === "command.rejected")
     .map((e) => `${str(e.payload.rule)}: ${str(e.payload.reason)}`);
-  const underCommand = renderTasksUnderCommand(
-    events,
-    eventsSinceLastCommand(events),
-    commandUnitOf(units),
-    workChars,
-  );
+  const refusedUnderCommand = recent
+    .filter(
+      (e) =>
+        e.type === "plan.rejected" &&
+        e.actor === "leader" &&
+        units.some((u) => u.parentId === null && u.id === e.payload.unitId),
+    )
+    .map((e) => `${str(e.payload.rule)}: ${str(e.payload.reason)}`);
   const spend = spendSince(events, since);
   return [
     changeReportHeading(last),
@@ -570,13 +255,7 @@ export function renderChangeReport(
     "discrepancies raised:",
     ...bullets(discrepancies),
     "unit reports:",
-    ...(reports.length === 0 ? ["  (none)"] : reports),
-    ...(underCommand.length === 0
-      ? []
-      : [
-          "tasks under command, ended with no leader to report them:",
-          ...underCommand,
-        ]),
+    ...bullets(reports),
     "resource requests:",
     ...bullets(requests),
     "questions answered:",
@@ -586,6 +265,12 @@ export function renderChangeReport(
     ...(rejected.length === 0
       ? []
       : ["your last command turn was rejected on:", ...bullets(rejected)]),
+    ...(refusedUnderCommand.length === 0
+      ? []
+      : [
+          "refused on your last leader turn under command:",
+          ...bullets(refusedUnderCommand),
+        ]),
     `spend since then: tokens ${spend.inputTokens + spend.outputTokens}, seconds ${spend.seconds.toFixed(1)}${spend.costUsd === undefined ? "" : `, cost $${spend.costUsd.toFixed(2)} at list price`}`,
   ];
 }
@@ -617,13 +302,10 @@ type TransferCore = {
 };
 
 /**
- * A transfer of command's payload, one event type for every kind (R3-8, R3-9, R4-7):
- * `initial` is the size-up's transfer, whose incoming model was chosen by the briefing,
- * `--ic-model` or the default; `handoff` is the context-threshold handoff, which says what
- * context size triggered it against what threshold; `fallback` is a change of the IC's
- * model after the API refused its call, to the fallback model by the runtime or to the
- * model Mauria's answer named, with the refusals as its reason and no document (the
- * successor is briefed with the full file, and evaluates nothing).
+ * A transfer of command's payload, one event type for both kinds (R3-8, R3-9): `initial`
+ * is the size-up's transfer, whose incoming model was chosen by the briefing, `--ic-model`
+ * or the default; `handoff` is the context-threshold handoff, which says what context size
+ * triggered it against what threshold.
  */
 export type Transfer =
   | (TransferCore & { kind: "initial"; chosenBy: string; reason: string })
@@ -632,13 +314,6 @@ export type Transfer =
       contextTokens: number;
       threshold: number;
       document: HandoffDocument;
-    })
-  | (TransferCore & {
-      kind: "fallback";
-      chosenBy: "runtime" | "answer";
-      reason: string;
-      refusals: RefusedCall[];
-      document: null;
     });
 
 /** A handoff in flight (R3-9): the transfer as the outgoing session left it, its incoming session null until the successor's first call names it. */
@@ -676,7 +351,7 @@ export function recordTransfer(
  * `briefingEvaluation` (the field is optional there), has run on that session: the
  * successor evaluates the document once, on whichever call was its first, and a review
  * that skipped the field leaves the next command turn to evaluate under the schema that
- * requires it. A fallback transfer (R4-7) hands over no document and is never pending.
+ * requires it.
  */
 export function pendingTransfer(events: readonly Event[]): Event | null {
   let accepted = -1;
@@ -692,9 +367,7 @@ export function pendingTransfer(events: readonly Event[]): Event | null {
       Array.isArray(e.payload.briefingEvaluation)
     )
       turnedOn.add(str(e.payload.sessionId));
-    // A fallback transfer hands over no document, so there is nothing to evaluate.
-    if (e.type === "command.transferred" && e.payload.kind !== "fallback")
-      transfer = e;
+    if (e.type === "command.transferred") transfer = e;
   }
   if (transfer === null) return null;
   const incoming = transfer.payload.incomingSessionId;
@@ -815,14 +488,12 @@ function renderBriefingBody(
   incident: Incident,
   providers: readonly Provider[],
   transfer: TransferPayload | null = null,
-  env: NodeJS.ProcessEnv = {},
 ): string[] {
   return [
     ...renderChangeReport(
       store.listEvents(incident.id),
       incident,
       store.listUnits(incident.id),
-      reportWorkChars(env),
     ),
     "",
     ...(transfer === null ? [] : [...renderTransfer(transfer), ""]),
@@ -842,15 +513,14 @@ export function renderCommandBriefing(
   incident: Incident,
   providers: readonly Provider[],
   handoff: Handoff | null = null,
-  env: NodeJS.ProcessEnv = {},
 ): string {
   const events = store.listEvents(incident.id);
   const transfer = transferToEvaluate(events, handoff);
   return [
-    ...renderBriefingBody(store, incident, providers, transfer, env),
+    ...renderBriefingBody(store, incident, providers, transfer),
     "",
     `# Your command turn for operational period ${cycleOf(events) + 1}`,
-    `${transfer === null ? "S" : `${evaluateAsk(transfer)}s`}et the period's objectives and priorities, answer each unit's last report the change report lists with a verdict (accepted, revise or reassign), write the situation every seat works from this period (what changed, the hypothesis, the observed claims it rests on, every inferred link settled by a task or deferred with why, the claims to keep in view; a reassignment written into the slice it concerns), close what is done, answer the resource requests you can, raise for Mauria what only she can supply, and say whether the incident continues.`,
+    `${transfer === null ? "S" : `${evaluateAsk(transfer)}s`}et the period's objectives and priorities, close what is done, answer the resource requests you can, raise for Mauria what only she can supply, and say whether the incident continues.`,
   ].join("\n");
 }
 
@@ -941,65 +611,6 @@ class OutgoingSessionLost extends Error {
 }
 
 /**
- * The IC's call was refused on its model and on the fallback (R4-7): the incident is
- * blocked on a question naming both, and the cycle ends here. `incident answer` with a
- * model name resumes the IC on that model.
- */
-export class IcRefused extends Error {
-  constructor(
-    readonly question: Question,
-    readonly refusals: readonly RefusedCall[],
-  ) {
-    super(
-      `the IC was refused on ${refusals.map(describeRefusedCall).join(" and on ")}; the incident is blocked on question ${question.id}, answered with the model to resume the IC on`,
-    );
-  }
-}
-
-/**
- * Block the incident on the IC's refusals (R4-7): the question naming them is asked
- * (`question.asked` with `icRefusals`), the incident is blocked (`incident.blocked` with
- * the same, which `icModelHold` reads until a transfer of command follows), and the error
- * that ends the cycle is returned for the caller to throw.
- */
-function blockOnRefusals(
-  store: Store,
-  incidentId: string,
-  refusals: readonly RefusedCall[],
-  models: readonly string[],
-  actor: string,
-): IcRefused {
-  const current = store.getIncident(incidentId);
-  if (current === undefined) throw new Error(`incident ${incidentId} vanished`);
-  const question = newQuestions(current, [
-    renderRefusalQuestion(refusals, models),
-  ])[0] as Question;
-  store.batch(() => {
-    store.setIncidentQuestions(
-      incidentId,
-      [...current.questions, question],
-      actor,
-      "question.asked",
-      { questions: [question], icRefusals: refusals },
-    );
-    store.setIncidentStatus(incidentId, "blocked", actor, "incident.blocked", {
-      rationale: `the IC was refused on ${refusals.map(describeRefusedCall).join(" and on ")}`,
-      icRefusals: refusals,
-    });
-  });
-  return new IcRefused(question, refusals);
-}
-
-/** The question the IC's refusals raise for Mauria: both refusals, and that the answer names the model to resume on. */
-function renderRefusalQuestion(
-  refusals: readonly RefusedCall[],
-  models: readonly string[],
-): string {
-  const last = refusals.at(-1);
-  return `The IC was refused by the API on ${refusals.map(describeRefusedCall).join(" and then on the fallback ")}${last === undefined || last.refused.explanation === "" ? "" : `: ${last.refused.explanation}`} Which model should the IC resume on? Answer with one of ${models.join(", ")}; an answer naming none keeps the incident blocked and asks again.`;
-}
-
-/**
  * One call on the IC's session: the root unit's leader request with the prompt built for
  * the unit as it stands (a fresh session gets what a resumed one already read) and the
  * schema, resumed once the session exists. A session that cannot be resumed (the call
@@ -1015,15 +626,6 @@ function renderRefusalQuestion(
  * the seat. After a handoff (`prepareHandoff`), the first call on the fresh session also
  * files `command.transferred` before its `leader.started`, in both paths. The handoff
  * call itself never replaces a lost session, since a fresh one has nothing to hand off.
- *
- * A call the API refused (R3-10a, R4-7) is filed, its session released when it was
- * resumed, and, once per incident, command transfers to the fallback model
- * (`command.transferred` of kind `fallback`, the refusal as its reason, the root unit's
- * leader changed so every later IC call stays there) and a fresh session on it is asked
- * the same turn; the fresh session's `leader.started` names the refused session and the
- * model it fell back from. Refused on the fallback too, or refused after the fallback has
- * already been tried, the incident is blocked on a question naming the refusals
- * (`IcRefused`), and only an answer naming a model resumes it.
  */
 async function icCall<T extends object>(
   store: Store,
@@ -1045,19 +647,16 @@ async function icCall<T extends object>(
     );
   let unit = listed;
   let replaced: { sessionId: string; reason: string } | null = null;
-  let fallbackFrom: string | null = null;
   let outcome: Awaited<ReturnType<typeof provider.run>> | null = null;
   let output: T;
   // The session's first call: after a handoff, the transfer is recorded the moment the
-  // successor's id is known, whether or not it answered, then the session goes on the
-  // unit. The handoff's incoming leader is the unit's as it now stands, so a successor
-  // that fell back keeps the fallback model.
+  // successor's id is known, whether or not it answered, then the session goes on the unit.
   const started = (sessionId: string, extra: Record<string, unknown>) => {
     if (handoff !== null)
       recordTransfer(
         store,
         incident.id,
-        { ...handoff, incomingSessionId: sessionId, incoming: unit.leader },
+        { ...handoff, incomingSessionId: sessionId },
         actor,
       );
     store.setUnitSession(incident.id, unit.id, sessionId, actor, {
@@ -1068,7 +667,6 @@ async function icCall<T extends object>(
       ...(replaced === null
         ? {}
         : { replaced: replaced.sessionId, reason: replaced.reason }),
-      ...(fallbackFrom === null ? {} : { fallbackFrom }),
       ...extra,
     });
   };
@@ -1077,7 +675,7 @@ async function icCall<T extends object>(
   // session goes on the unit when this was its first call.
   const fileFailure = (
     failed: {
-      sessionId: string | null;
+      sessionId: string;
       usage: Usage | null;
       activity: SessionActivity;
       refused: Refusal | null;
@@ -1096,7 +694,6 @@ async function icCall<T extends object>(
         ...(failed.refused === null ? {} : { refused: failed.refused }),
         ...(failed.usage === null ? {} : { usage: failed.usage }),
       });
-      if (failed.sessionId === null) return;
       // A refused fresh session is not put on the unit: there is nothing to resume in it.
       if (unit.sessionId === null && failed.refused === null)
         started(failed.sessionId, { failed: true });
@@ -1108,98 +705,42 @@ async function icCall<T extends object>(
         seat: "ic",
       });
     });
-  // A refused call: filed with the refusal, and its session released with the category
-  // when it was resumed (a refused session stays refused on every later call, seen
-  // 2026-09-15). A refused handoff call is released by `prepareHandoff`, with its own reason.
-  const fileRefusal = (error: SessionError, refused: Refusal): RefusedCall => {
-    const dead = unit.sessionId;
-    store.batch(() => {
-      fileFailure(
-        {
-          sessionId: error.sessionId,
-          usage: error.usage,
-          activity: error.activity,
-          refused,
-        },
-        describe(error),
-      );
-      if (dead !== null && turn !== "handoff")
-        store.setUnitSession(incident.id, unit.id, null, actor, {
-          unitId: unit.id,
-          released: dead,
-          ...unit.leader,
-          reason: `refused: ${refused.category}`,
-          refused,
-        });
-    });
-    return { model: unit.leader.model, sessionId: error.sessionId, refused };
-  };
-  // Refused on the fallback too, or after the fallback was already tried: the incident is
-  // blocked on a question naming the refusals, and the cycle ends.
-  const block = (refusals: RefusedCall[]): IcRefused =>
-    blockOnRefusals(store, incident.id, refusals, provider.models, actor);
   try {
     try {
       outcome = await ask(unit);
     } catch (error) {
-      if (!(error instanceof SessionError)) throw error;
       const dead = unit.sessionId;
-      if (error.refused !== null) {
-        const first = fileRefusal(error, error.refused);
-        if (turn === "handoff" && dead !== null)
-          throw new OutgoingSessionLost(dead, error.message);
-        // Once per incident: a refusal on the IC's model transfers command to the fallback.
-        const fallback = fallbackModel(options.env, provider);
-        if (
-          unit.leader.model === fallback ||
-          fallbackTransferred(store.listEvents(incident.id))
-        )
-          throw block([first]);
-        const incoming: Leader = { ...unit.leader, model: fallback };
-        recordTransfer(
-          store,
-          incident.id,
-          {
-            kind: "fallback",
-            unitId: unit.id,
-            outgoingSessionId: error.sessionId ?? dead ?? "",
-            outgoing: unit.leader,
-            incomingSessionId: null,
-            incoming,
-            document: null,
-            chosenBy: "runtime",
-            reason: `refused on ${describeRefusedCall(first)}`,
-            refusals: [first],
-          },
-          actor,
-        );
-        if (error.sessionId !== null)
-          replaced = { sessionId: error.sessionId, reason: error.message };
-        fallbackFrom = unit.leader.model;
-        unit = { ...unit, sessionId: null, leader: incoming };
-        try {
-          outcome = await ask(unit);
-        } catch (again) {
-          if (again instanceof SessionError && again.refused !== null)
-            throw block([first, fileRefusal(again, again.refused)]);
-          throw again;
-        }
-      } else {
-        // A call that died before the stream's init line found no session to resume and
-        // is replaced by a fresh session asked the same turn with the full briefing.
-        if (dead === null || error.sessionId !== null) throw error;
-        // A handoff asks the outgoing session for what it knows; a fresh one knows nothing.
-        if (turn === "handoff")
-          throw new OutgoingSessionLost(dead, error.message);
-        replaced = { sessionId: dead, reason: error.message };
-        unit = { ...unit, sessionId: null };
-        outcome = await ask(unit);
-      }
+      if (!(error instanceof SessionError) || dead === null) throw error;
+      // A refused resumed call: the session stays refused on every later call (seen
+      // 2026-09-15), so it is filed, released with the category, and replaced by a fresh
+      // session asked the same turn with the full briefing. A call that died before the
+      // stream's init line found no session to resume and is replaced the same way.
+      if (error.refused !== null && error.sessionId !== null) {
+        const { sessionId, usage, activity, refused } = error;
+        // One transaction for the filing and the release (a batch inside a batch is a savepoint).
+        store.batch(() => {
+          fileFailure({ sessionId, usage, activity, refused }, describe(error));
+          // A refused handoff call is released by `prepareHandoff`, with its own reason.
+          if (turn !== "handoff")
+            store.setUnitSession(incident.id, unit.id, null, actor, {
+              unitId: unit.id,
+              released: dead,
+              ...unit.leader,
+              reason: `refused: ${refused.category}`,
+              refused,
+            });
+        });
+      } else if (error.sessionId !== null) throw error;
+      // A handoff asks the outgoing session for what it knows; a fresh one knows nothing.
+      if (turn === "handoff")
+        throw new OutgoingSessionLost(dead, error.message);
+      replaced = { sessionId: dead, reason: error.message };
+      unit = { ...unit, sessionId: null };
+      outcome = await ask(unit);
     }
     output = parse(outcome.output);
   } catch (error) {
-    if (error instanceof OutgoingSessionLost || error instanceof IcRefused)
-      throw error;
+    if (error instanceof OutgoingSessionLost) throw error;
     const reason = describe(error);
     const failed =
       outcome !== null
@@ -1218,7 +759,12 @@ async function icCall<T extends object>(
             }
           : null;
     if (failed !== null) fileFailure(failed, reason);
-    throw new Error(`the IC: ${reason}`, { cause: error });
+    // A fresh session refused too: the message names the category and Claude Code's advice.
+    const advice =
+      failed?.refused !== null && failed?.refused !== undefined
+        ? ` (${failed.refused.category}${replaced === null ? "" : `, after session ${replaced.sessionId} was refused and replaced`}; Claude Code's advice is to rephrase the request in a new session or change the model)`
+        : "";
+    throw new Error(`the IC: ${reason}${advice}`, { cause: error });
   }
   const sessionId = outcome.sessionId;
   const provenance = {
@@ -1281,7 +827,6 @@ export function commandTurn(
         incident,
         providers,
         unit.sessionId === null ? handoff : null,
-        options.env,
       ),
     evaluates ? FIRST_COMMAND_TURN_SCHEMA : COMMAND_TURN_SCHEMA,
     (o): CommandTurn =>
@@ -1329,13 +874,7 @@ export async function reviewTurn(
         cycle,
         corrections,
         unit.sessionId === null
-          ? renderBriefingBody(
-              store,
-              incident,
-              providers,
-              transfer,
-              options.env,
-            )
+          ? renderBriefingBody(store, incident, providers, transfer)
           : null,
         transfer,
       );

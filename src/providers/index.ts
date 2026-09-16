@@ -4,7 +4,6 @@ import { claudeCodeProvider } from "./claude-code.js";
 export type {
   Provider,
   Refusal,
-  Seat,
   SessionActivity,
   SessionRequest,
   ToolCall,

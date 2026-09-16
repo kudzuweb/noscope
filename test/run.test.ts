@@ -20,6 +20,13 @@ const empty: ActionPlan = {
   capabilityRequests: [],
   applySops: [],
   incidentStatus: "continue",
+  situation: {
+    changed: "test",
+    hypothesis: "test",
+    proven: [],
+    inferred: [],
+    keep: [],
+  },
   rationale: "scripted",
 };
 
@@ -76,6 +83,13 @@ describe("incident run", () => {
       {
         ...empty,
         incidentStatus: "satisfied",
+        situation: {
+          changed: "test",
+          hypothesis: "test",
+          proven: [],
+          inferred: [],
+          keep: [],
+        },
         rationale: "the handler is at a.txt:2",
       },
     ]);
@@ -94,9 +108,8 @@ describe("incident run", () => {
     const shown = harness([]);
     shown.ctx.env.NOSCOPE_DB = h.ctx.env.NOSCOPE_DB as string;
     expect(await run(["incident", "show", "001"], shown.ctx)).toBe(EXIT.ok);
-    // The IC's situation prints under the period (R4-5), the stub's default one here.
     expect(shown.out.join("\n")).toContain(
-      "period priorities:\n  (none)\nsituation, the IC's:\n  changed: stub: nothing yet\n  hypothesis: stub hypothesis\n  proven:\n    (none)\n  inferred:\n    (none)\n  keep: (none)\n  reassignments open, each taken by a new unit in the next plan naming its id in takes: (none)",
+      "situation, from the last plan:\n  changed: test\n  hypothesis: test\n  proven:\n    (none)\n  inferred:\n    (none)\n  keep: (none)",
     );
     const claims = store.listClaims("001");
     expect(claims).toHaveLength(1);
@@ -117,215 +130,6 @@ describe("incident run", () => {
       EXIT.cannotProceed,
     );
     expect(h.err.at(-1)).toMatch(/is satisfied; run needs an open incident/);
-  });
-
-  it("a round 4 store, written before units named a type, reads and replays as ic on the root and base elsewhere, with the same show and tree (R4-10)", {
-    timeout: 60_000,
-  }, async () => {
-    const h = harness([
-      findIt,
-      {
-        ...empty,
-        incidentStatus: "satisfied",
-        rationale: "the handler is at a.txt:2",
-      },
-    ]);
-    await run(
-      ["incident", "create", "--no-size-up", "where is the delete handler"],
-      h.ctx,
-    );
-    expect(await run(["incident", "run", "001"], h.ctx)).toBe(EXIT.ok);
-    // Make the file a round 4 one: no type, role or config column on units (config is
-    // R4-11's), none of the three in any unit.create mutation, and schema version 6.
-    const s1 = h.store();
-    s1.db.exec("ALTER TABLE units DROP COLUMN type");
-    s1.db.exec("ALTER TABLE units DROP COLUMN role");
-    s1.db.exec("ALTER TABLE units DROP COLUMN config");
-    s1.db.exec(
-      "UPDATE events SET payload_json = json_remove(payload_json, '$.mutation.unit.type', '$.mutation.unit.role', '$.mutation.unit.config') WHERE type = 'unit.created'",
-    );
-    s1.db.pragma("user_version = 6");
-    s1.close();
-    const migrated = h.store();
-    expect(migrated.db.pragma("user_version", { simple: true })).toBe(9);
-    expect(
-      migrated.listUnits("001").map((u) => [u.id, u.type, u.role]),
-    ).toEqual([
-      ["001-command", "ic", null],
-      ["001-u02", "base", null],
-    ]);
-    for (const e of migrated.listEvents("001"))
-      if (e.type === "unit.created")
-        expect(
-          (e.payload.mutation as { unit: Record<string, unknown> }).unit,
-        ).not.toHaveProperty("type");
-    // The replay of the round 4 log yields the same store.
-    const replayed = harness([]);
-    const rebuilt = replayed.store();
-    rebuilt.replay([
-      ...migrated.listEvents(null),
-      ...migrated.listEvents("001"),
-    ]);
-    expect(rebuilt.snapshot()).toEqual(migrated.snapshot());
-    expect(rebuilt.listUnits("001").map((u) => [u.id, u.type])).toEqual([
-      ["001-command", "ic"],
-      ["001-u02", "base"],
-    ]);
-    migrated.close();
-    rebuilt.close();
-    const shown = harness([]);
-    shown.ctx.env.NOSCOPE_DB = h.ctx.env.NOSCOPE_DB as string;
-    expect(await run(["incident", "show", "001"], shown.ctx)).toBe(EXIT.ok);
-    expect(await run(["incident", "tree", "001"], shown.ctx)).toBe(EXIT.ok);
-    expect(await run(["incident", "show", "001"], replayed.ctx)).toBe(EXIT.ok);
-    expect(await run(["incident", "tree", "001"], replayed.ctx)).toBe(EXIT.ok);
-    expect(replayed.out).toEqual(shown.out);
-    expect(shown.out).toContain(
-      "001-command [active] command: holds the objective and the current plan (ic; leader claude-code/claude-opus-5; last report: none)",
-    );
-    expect(shown.out).toContain(
-      "  001-u02 [active] locate the delete handler (base; leader claude-code/claude-haiku-4-5; last report: progress, revise)",
-    );
-  });
-
-  it("a unit saved as a config is deployed by name in the next plan, the applied unit carries its fields, and review names it (R4-11)", {
-    timeout: 60_000,
-  }, async () => {
-    const byHand: ActionPlan = {
-      ...findIt,
-      createUnits: [
-        unitProposal("find", "locate the delete handler", "001-command", {
-          equipment: ["Read", "Grep"],
-          bashAllowlist: ["ls"],
-          role: "Your role: a reader who reports in one line.",
-        }),
-      ],
-    };
-    const byName: ActionPlan = {
-      ...findIt,
-      createUnits: [
-        {
-          ref: "find2",
-          objective: "confirm the delete handler",
-          parent: "001-command",
-          type: "base",
-          config: "reader",
-        },
-      ],
-      createTasks: [
-        {
-          ...(findIt.createTasks[0] as TaskProposal),
-          unit: "find2",
-          inputs: { root: ".", pattern: "handler" },
-        },
-      ],
-      rationale: "the same reader, deployed by name",
-    };
-    const h = harness([byHand, byName]);
-    await run(
-      ["incident", "create", "--no-size-up", "where is the delete handler"],
-      h.ctx,
-    );
-    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
-    expect(h.out).toContain(
-      "  create unit find under 001-command (leader claude-code/claude-haiku-4-5): locate the delete handler",
-    );
-    const saving = harness([]);
-    saving.ctx.env.NOSCOPE_DB = h.ctx.env.NOSCOPE_DB as string;
-    expect(
-      await run(["config", "save", "001", "001-u02", "reader"], saving.ctx),
-    ).toBe(EXIT.ok);
-    expect(saving.out[0]).toBe(
-      "saved config reader (base) from unit 001-u02 of incident 001: leader claude-code/claude-haiku-4-5; equipment Read, Grep; bash allowlist ls; role: its own (44 chars)",
-    );
-    h.out.length = 0;
-    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
-    expect(h.out).toContain(
-      "  create unit find2 under 001-command (config reader): confirm the delete handler",
-    );
-    expect(h.out).toContain(
-      "  unit 001-u03 created under 001-command from saved config reader: confirm the delete handler",
-    );
-    const store = h.store();
-    const deployed = store.listUnits("001").find((u) => u.id === "001-u03");
-    expect(deployed).toMatchObject({
-      type: "base",
-      config: "reader",
-      leader: { provider: "claude-code", model: "claude-haiku-4-5" },
-      equipment: ["Read", "Grep"],
-      bashAllowlist: ["ls"],
-      role: "Your role: a reader who reports in one line.",
-    });
-    // The planner's second draft read the saved config in section 8.
-    const secondDraft = store
-      .listEvents("001")
-      .filter((e) => e.type === "plan.proposed")[1];
-    expect(secondDraft?.payload.plan).toMatchObject({
-      createUnits: [{ ref: "find2", config: "reader" }],
-    });
-    store.close();
-    const reviewed = harness([]);
-    reviewed.ctx.env.NOSCOPE_DB = h.ctx.env.NOSCOPE_DB as string;
-    expect(await run(["incident", "review", "001"], reviewed.ctx)).toBe(
-      EXIT.ok,
-    );
-    expect(reviewed.out).toContain(
-      "  unit 001-u03 deployed from saved config reader",
-    );
-    expect(reviewed.out).toContain(
-      "units from saved configs: 1 (001-u03 from reader)",
-    );
-    const shown = harness([]);
-    shown.ctx.env.NOSCOPE_DB = h.ctx.env.NOSCOPE_DB as string;
-    expect(await run(["incident", "show", "001"], shown.ctx)).toBe(EXIT.ok);
-    expect(shown.out).toContain(
-      "  001-u03 [active] confirm the delete handler (base, from config reader; leader claude-code/claude-haiku-4-5; last report: progress)",
-    );
-    expect(await run(["incident", "tree", "001"], shown.ctx)).toBe(EXIT.ok);
-    expect(shown.out).toContain(
-      "  001-u03 [active] confirm the delete handler (base, from config reader; leader claude-code/claude-haiku-4-5; last report: progress)",
-    );
-  });
-
-  it("step offers to save a form filled by hand the third time it appears unsaved, and not the second (R4-11)", {
-    timeout: 90_000,
-  }, async () => {
-    const same = (ref: string, n: number): ActionPlan => ({
-      ...findIt,
-      createUnits: [
-        unitProposal(ref, `look ${n}`, "001-command", {
-          equipment: ["Read"],
-          bashAllowlist: ["ls"],
-        }),
-      ],
-      createTasks: [
-        {
-          ...(findIt.createTasks[0] as TaskProposal),
-          unit: ref,
-          inputs: { root: ".", pattern: `delete${n}` },
-        },
-      ],
-      rationale: `the same form, time ${n}`,
-    });
-    const h = harness([same("a", 1), same("b", 2), same("c", 3)]);
-    await run(
-      ["incident", "create", "--no-size-up", "where is the delete handler"],
-      h.ctx,
-    );
-    const offer = (line: string) => line.includes("filled by hand");
-    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
-    expect(h.out.filter(offer)).toEqual([]);
-    h.out.length = 0;
-    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
-    expect(h.out.filter(offer)).toEqual([]);
-    h.out.length = 0;
-    expect(await run(["incident", "step", "001"], h.ctx)).toBe(EXIT.ok);
-    expect(h.out.filter(offer)).toEqual([
-      "  unit 001-u04's config (base: leader claude-code/claude-haiku-4-5; equipment Read; bash allowlist ls; role: the type's) has now been filled by hand 3 times across this file's incidents and is not saved; to deploy it by name from the next plan on, save it: noscope config save 001 001-u04 <name>",
-    ]);
-    const store = h.store();
-    expect(store.listUnitConfigs()).toEqual([]);
-    store.close();
   });
 
   it("a chain of grep then interpret, linked by a task ref in one plan, completes in one cycle", {
@@ -424,6 +228,13 @@ describe("incident run", () => {
       {
         ...empty,
         incidentStatus: "failed",
+        situation: {
+          changed: "test",
+          hypothesis: "test",
+          proven: [],
+          inferred: [],
+          keep: [],
+        },
         rationale: "the tree has no such handler",
       },
     ]);

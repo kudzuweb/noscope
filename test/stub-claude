@@ -14,16 +14,7 @@
 // remain and a progress report once it says none do. The IC's command turn, recognised by
 // the CommandTurn schema (a `periodObjectives` property), gets NOSCOPE_STUB_COMMAND, or the
 // next entry of NOSCOPE_STUB_COMMANDS (counter file NOSCOPE_STUB_COMMAND_COUNTER), or by
-// default one objective and `continue`. A command turn answers every report its briefing
-// lists (R4-2; the change report heads each `  - <unit>, report <event id>: <outcome>`,
-// and a unit that reported twice is answered on its last): a turn with no
-// `reportVerdicts`, or an empty list (the typed test helpers' default), gets one per
-// reporting unit, `accepted` for a `met` report and `revise` with stub instructions
-// otherwise, and a turn whose verdicts omit `reportId` or leave it empty gets each filled
-// with the id of the last report listed for that unit, since a test cannot know the
-// store's UUID. A command turn with no `situation` (R4-5) gets a stub one, so a scripted
-// turn need not carry the picture. Its review,
-// recognised by the ReviewTurn schema (a
+// default one objective and `continue`; its review, recognised by the ReviewTurn schema (a
 // `verdict` property), gets NOSCOPE_STUB_REVIEW, or the next entry of NOSCOPE_STUB_REVIEWS
 // (counter file NOSCOPE_STUB_REVIEW_COUNTER), or by default `approve`. A command turn whose
 // schema requires `briefingEvaluation` (the IC's first turn after a transfer of command)
@@ -46,19 +37,15 @@
 // of a failing task session still gets its leader's turn; NOSCOPE_STUB_LEADER_FAIL fails every
 // turn instead.
 // NOSCOPE_STUB_SLEEP_MS makes a task call sleep that long after its tool lines, before the
-// envelope, so a bound can kill it or a run can be held in flight; NOSCOPE_STUB_SLEEP_IF
-// narrows the sleep to task calls whose prompt contains that text (a task's objective, say),
-// so one task of a pass is slow and the rest are not. A --resume call answers with the id it was given as
+// envelope, so a bound can kill it. A --resume call answers with the id it was given as
 // session_id, as the real binary does; NOSCOPE_STUB_RESUME_FAIL names a session id whose
 // resume exits 1 before any output, as the binary does for a session it cannot find.
 // NOSCOPE_STUB_REFUSE names call ordinals (1-based, comma-separated, counted in the file
 // NOSCOPE_STUB_CALL_COUNTER) the API refuses: after the init line the stub prints the
-// `model_refusal_no_fallback` system line with the stream's snake_case keys
-// (`api_refusal_category`, NOSCOPE_STUB_REFUSE_CATEGORY, default reasoning_extraction; the
-// transcript spells them apiRefusalCategory), a synthetic assistant line with stop_reason
-// refusal and the stop_details the transcript records on it, and a result with stop_reason
-// refusal and the call's usage, then exits 1, on the shape Claude Code 2.1.272 logged on
-// 2026-09-15 (the system line's keys from the binary's serializer, not seen live). Each
+// `model_refusal_no_fallback` system line (category NOSCOPE_STUB_REFUSE_CATEGORY, default
+// reasoning_extraction), a synthetic assistant line with stop_reason refusal, and a result
+// with stop_reason refusal and the call's usage, then exits 1, as Claude Code 2.1.272 did
+// on 2026-09-15. Each
 // NOSCOPE_STUB_CALLS line also carries `concurrent`, how many other stub processes on the same
 // log were still running when this one started.
 import {
@@ -164,11 +151,9 @@ if (process.env.NOSCOPE_STUB_REFUSE) {
         type: "system",
         subtype: "model_refusal_no_fallback",
         level: "warning",
-        original_model: "claude-opus-5",
-        request_id: "req_stub",
-        api_refusal_category: category,
-        api_refusal_explanation: explanation,
-        content: "",
+        originalModel: "claude-opus-5",
+        apiRefusalCategory: category,
+        apiRefusalExplanation: explanation,
         session_id: sessionId,
       },
       {
@@ -180,7 +165,6 @@ if (process.env.NOSCOPE_STUB_REFUSE) {
           role: "assistant",
           content: [{ type: "text", text: `API Error: Opus 5's safeguards flagged this message. ${explanation} Try rephrasing the request in a new session or change your model.` }],
           stop_reason: "refusal",
-          stop_details: { type: "refusal", category, explanation },
           usage,
         },
       },
@@ -203,50 +187,18 @@ function nextOf(one, many, counterName, fallback) {
   return fallback();
 }
 
-const listedReports = [...prompt.matchAll(/^  - (\S+), report (\S+): (met|not_met|progress)\b/gm)]
-  .map((m) => ({ unitId: m[1], reportId: m[2], outcome: m[3] }))
-  .filter((r, i, all) => all.findLastIndex((o) => o.unitId === r.unitId) === i);
-
-const defaultVerdict = (r) =>
-  r.outcome === "met"
-    ? { reportId: r.reportId, unitId: r.unitId, verdict: "accepted", instructions: "", why: "stub: met on the work shown" }
-    : { reportId: r.reportId, unitId: r.unitId, verdict: "revise", instructions: "stub: carry on", why: `stub: ${r.outcome}` };
-
-const STUB_SITUATION = {
-  changed: "stub: nothing yet",
-  hypothesis: "stub hypothesis",
-  proven: [],
-  inferred: [],
-  keep: [],
-};
-
-const withVerdicts = (turn) => ({
-  ...turn,
-  situation: turn.situation ?? STUB_SITUATION,
-  reportVerdicts:
-    turn.reportVerdicts === undefined || turn.reportVerdicts.length === 0
-      ? listedReports.map(defaultVerdict)
-      : turn.reportVerdicts.map((v) =>
-          v.reportId === undefined || v.reportId === ""
-            ? { ...v, reportId: listedReports.filter((r) => r.unitId === v.unitId).at(-1)?.reportId ?? "(no report listed)" }
-            : v,
-        ),
-});
-
 const nextCommand = () => {
-  const turn = withVerdicts(
-    nextOf("NOSCOPE_STUB_COMMAND", "NOSCOPE_STUB_COMMANDS", "NOSCOPE_STUB_COMMAND_COUNTER", () => ({
-      periodObjectives: ["pursue the incident objective"],
-      priorities: [],
-      closeUnits: [],
-      answers: [],
-      questionsForHuman: [],
-      capabilityRequests: [],
-      grantRequests: [],
-      incidentStatus: "continue",
-      rationale: "stub command turn",
-    })),
-  );
+  const turn = nextOf("NOSCOPE_STUB_COMMAND", "NOSCOPE_STUB_COMMANDS", "NOSCOPE_STUB_COMMAND_COUNTER", () => ({
+    periodObjectives: ["pursue the incident objective"],
+    priorities: [],
+    closeUnits: [],
+    answers: [],
+    questionsForHuman: [],
+    capabilityRequests: [],
+    grantRequests: [],
+    incidentStatus: "continue",
+    rationale: "stub command turn",
+  }));
   const evaluates = Array.isArray(schema.required) && schema.required.includes("briefingEvaluation");
   return evaluates && turn.briefingEvaluation === undefined
     ? {
@@ -428,11 +380,7 @@ lines.push({
     },
   },
 });
-const sleepIf = process.env.NOSCOPE_STUB_SLEEP_IF ?? "";
-const sleepMs =
-  isTurn || (sleepIf !== "" && !prompt.includes(sleepIf))
-    ? 0
-    : Number(process.env.NOSCOPE_STUB_SLEEP_MS ?? 0);
+const sleepMs = isTurn ? 0 : Number(process.env.NOSCOPE_STUB_SLEEP_MS ?? 0);
 if (sleepMs > 0) {
   process.stdout.write(`${lines.map((l) => JSON.stringify(l)).join("\n")}\n`);
   setTimeout(() => {

@@ -11,17 +11,11 @@ ICS is the structure emergency services use to run an incident: one commander, a
 operational period, a tree of units each with a leader and a clear assignment, resources
 typed so everyone means the same thing by a name, and a record of every decision. noscope
 maps it onto agents. The Incident Commander (IC) is a persistent Claude session that sets each
-period's objectives and priorities, writes the situation every seat works from, reviews the
-planner's draft, reviews each unit's report against the work behind it (accepting it,
-sending it back for revision, or reassigning its slice to a different unit) and decides
-whether the incident is met. The planner is a stateless call that drafts each period's
-tactics from the incident file and the IC's situation, as a suggestion for the IC. A unit
-is a type plus a config: the type is the form (the fields a kind of unit fills) and the
-protocol (how it uses what is in the box), the config is the filled form; `base` is the led
-unit, whose leader session runs the unit's tasks in order and reports against the unit's
-objective, and `ic` is command, the root, whose leader is the IC. A filled form the planner
-keeps producing is saved under a name and deployed by name. A leader can send a
-strike team of subagents at a task. Tasks run through capabilities (grep, read, investigate, reproduce in a
+period's objectives and priorities, reviews the planner's draft, reads the units' reports and
+decides whether the incident is met. The planner is a stateless call that drafts each period's
+action plan from the incident file. Every unit has a leader session that runs the unit's tasks
+in order and reports against the unit's objective, and a leader can send a strike team of
+subagents at a task. Tasks run through capabilities (grep, read, investigate, reproduce in a
 browser, interpret) and produce claims with a basis (observed or inferred), a confidence and
 evidence. Deterministic code validates every plan, dispatches, records every call and claim
 as an event, and prints an After Action Review. The human above the IC is the Agency
@@ -60,24 +54,17 @@ the runtime starts inherits that directory, read-only.
 | Run cycles until the incident leaves `open` or the cap is hit. | `noscope incident run <id> --max-cycles N` |
 | Read the incident file, the unit tree, the event log. | `noscope incident show <id>`, `tree`, `events` |
 | The After Action Review: every cycle, every call with tokens and cost, verdicts, reports, transfers of command, claims. | `noscope incident review <id>` |
-| Save a unit's config (its type, leader, equipment, Bash allowlist and role text) under a name the planner deploys it by; `step` offers this when the same form has been filled three times unsaved. | `noscope config save <incident> <unit-id> <name>`, `config list`, `config show <name>` |
 
 Environment: `NOSCOPE_DB` names the SQLite file (default `~/.noscope/noscope.sqlite`; use one
 file per investigation); `NOSCOPE_CLAUDE_BIN` names the Claude Code binary (default `claude`);
 `NOSCOPE_IC_HANDOFF_TOKENS` is the IC context size at which command is handed to a fresh
-session (default 120000); `NOSCOPE_IC_FALLBACK_MODEL` is the model a refused seat is retried
-on once (default `claude-opus-4-8`); `NOSCOPE_PARALLEL` is how many units run at once
-(default 3; 1 runs them one at a time). The README's "Install and run" section has the rest.
+session (default 120000). The README's "Install and run" section has the rest.
 
 Everything is read-only in this version: sessions get `Read`, `Grep`, `Glob` and `Bash` under a
 read-only allowlist, and nothing that writes runs without a grant, which is not built yet.
-Opus 5's safeguards refused the IC's resumed turns on 2026-09-15 (`DESIGN.md` Reference
-table); since R4-7 a refused IC call falls back to Opus 4.8 for the rest of the incident, and
-a refusal there too blocks the incident on a question you answer with a model name
-(`noscope incident answer <id> "claude-sonnet-5"`). The fourth run took that fallback: Opus 5
-refused the review turn once and Opus 4.8 ran the rest of the incident with no refusal, at
-Opus prices. Sonnet 5 ran every turn in the third run, so `--ic-model claude-sonnet-5` at
-`create` still avoids the refusal outright and costs less.
+The IC runs on Sonnet 5 by default in practice: Opus 5's safeguards refused the IC's resumed
+turns on 2026-09-15 (`DESIGN.md` Reference table), so pass `--ic-model claude-sonnet-5` at
+`create` unless that has changed.
 
 ## What to read next
 
@@ -85,7 +72,8 @@ Opus prices. Sonnet 5 ran every turn in the third run, so `--ic-model claude-son
 |---|---|
 | How it works, in order | `docs/architecture.html`, then `DESIGN.md` Steps 4 to 6 |
 | What has been built and what is next | `BUILD-PLAN.md` (rounds 3 and 4 at the end) and `docs/build-record.md` |
-| What a run looks like and what it cost | `docs/first-incident.md` (four runs of one objective) |
+| Rounds 4 and 5, built and run and then rolled back off `main` on 2026-09-16 | The branch `rounds-4-5` (PRs 40 to 63): its `docs/first-incident.md` has the fourth and fifth runs, and its `BUILD-PLAN.md` the two rounds. `main` is round 3, the state after the third run, on purpose: run 005 on round 5 cost $9.52 and 55 minutes against run 003's $4.86 and 29 |
+| What a run looks like and what it cost | `docs/first-incident.md` (three runs of one objective) |
 | The runtime against plain instructions | `docs/instructions-only-run.md` |
 
 ## Working in this repository

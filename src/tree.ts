@@ -61,38 +61,22 @@ export function lastReports(
   return reports;
 }
 
-/** The IC's last verdict on each unit's report, from `report.reviewed` events (R4-2). */
-export function lastVerdicts(events: readonly Event[]): Map<string, string> {
-  const verdicts = new Map<string, string>();
-  for (const e of events)
-    if (
-      e.type === "report.reviewed" &&
-      typeof e.payload.unitId === "string" &&
-      typeof e.payload.verdict === "string"
-    )
-      verdicts.set(e.payload.unitId, e.payload.verdict);
-  return verdicts;
-}
-
 /**
- * A unit's type, leader, last report and the IC's last verdict on one line, `(base; leader
- * claude-code/claude-opus-5; last report: met, accepted)`, and for a unit that waits,
- * what it waits on.
+ * A unit's leader and last report on one line, `(leader claude-code/claude-opus-5; last
+ * report: met)`, and for a unit that waits, what it waits on.
  */
 export function describeLeader(
   unit: Unit,
   reports: ReadonlyMap<string, LeaderReport>,
   waitingOn: ReadonlyMap<string, readonly string[]> = new Map(),
-  verdicts: ReadonlyMap<string, string> = new Map(),
 ): string {
   const report = reports.get(unit.id);
-  const verdict = verdicts.get(unit.id);
   const requests = waitingOn.get(unit.id) ?? [];
   const waits =
     unit.status === "waiting"
       ? `; waiting on: ${requests.join("; ") || "(nothing recorded)"}`
       : "";
-  return `(${unit.type}${unit.config === null ? "" : `, from config ${unit.config}`}; leader ${unit.leader.provider}/${unit.leader.model}; last report: ${report === undefined ? "none" : report.outcome}${verdict === undefined ? "" : `, ${verdict}`}${waits})`;
+  return `(leader ${unit.leader.provider}/${unit.leader.model}; last report: ${report === undefined ? "none" : report.outcome}${waits})`;
 }
 
 /**
@@ -118,7 +102,7 @@ export function renderHierarchy(unit: Unit, units: readonly Unit[]): string[] {
   ];
 }
 
-/** The unit tree with each unit's status, objective, type, leader, last report and the IC's last verdict on it, and what it waits on, and under each unit its tasks with their marks. */
+/** The unit tree with each unit's status, objective, leader, last report and what it waits on, and under each unit its tasks with their marks. */
 export function renderTree(
   units: readonly Unit[],
   tasks: readonly Task[],
@@ -127,13 +111,12 @@ export function renderTree(
 ): string[] {
   const children = childrenOf(units);
   const reports = lastReports(events);
-  const verdicts = lastVerdicts(events);
   const lines: string[] = [];
   const walk = (parent: string | null, depth: number) => {
     const indent = "  ".repeat(depth);
     for (const u of children.get(parent) ?? []) {
       lines.push(
-        `${indent}${u.id} [${u.status}] ${u.objective} ${describeLeader(u, reports, waitingOn, verdicts)}`,
+        `${indent}${u.id} [${u.status}] ${u.objective} ${describeLeader(u, reports, waitingOn)}`,
       );
       for (const t of tasks.filter((t) => t.unitId === u.id))
         lines.push(

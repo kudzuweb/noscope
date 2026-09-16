@@ -1,32 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { defineCapability } from "../src/capabilities/registry.js";
-import { configOf } from "../src/configs.js";
 import { READ_ONLY_SESSION_COMMANDS } from "../src/equipment/index.js";
-import type {
-  ActionPlan,
-  CommandTurn,
-  Situation,
-  TaskProposal,
-  Unit,
-  UnitProposal,
-} from "../src/models.js";
+import { LEADER_RULES } from "../src/leader.js";
+import type { ActionPlan, TaskProposal, Unit } from "../src/models.js";
 import { PLANNER_RULES } from "../src/planner.js";
 import { Store } from "../src/store.js";
 import {
-  BASE_RULES,
-  baseUnitType,
-  icUnitType,
-  LEADER_RULES,
-  OWN_UNIT_RULE,
-} from "../src/units/index.js";
-import {
+  LEADER_RULE_CHECKS,
   RULES,
   type RuleName,
   SPAN_OF_CONTROL,
   strikeTeamRejections,
   validateAndRecord,
-  validateCommand,
   validateLeaderTasks,
   validateLeaderTasksAndRecord,
   validatePlan,
@@ -61,13 +47,6 @@ const empty: ActionPlan = {
   capabilityRequests: [],
   applySops: [],
   incidentStatus: "continue",
-  rationale: "test",
-};
-
-const turn: CommandTurn = {
-  periodObjectives: ["finish"],
-  priorities: [],
-  reportVerdicts: [],
   situation: {
     changed: "test",
     hypothesis: "test",
@@ -75,13 +54,6 @@ const turn: CommandTurn = {
     inferred: [],
     keep: [],
   },
-  closeUnits: [],
-  answers: [],
-  assignTasks: [],
-  questionsForHuman: [],
-  capabilityRequests: [],
-  grantRequests: [],
-  incidentStatus: "continue",
   rationale: "test",
 };
 
@@ -249,7 +221,7 @@ function reasonsOf(
 }
 
 describe("validator", () => {
-  it("names the rules the planner reads, in the same order", () => {
+  it("names the thirteen rules the planner reads, in the same order", () => {
     expect(RULES.map((r) => r.name)).toEqual(
       PLANNER_RULES.map((line) => line.split(":")[0]),
     );
@@ -268,7 +240,7 @@ describe("validator", () => {
         investigateTask({ unit: "u-new", dependsOn: ["t-done", "t-running"] }),
       ],
     };
-    expect(verdictOf(plan)).toEqual({ ok: true, plan, warnings: [] });
+    expect(verdictOf(plan)).toEqual({ ok: true, plan });
   });
 
   const failing: [RuleName, ActionPlan][] = [
@@ -279,33 +251,6 @@ describe("validator", () => {
     [
       "Units exist",
       { ...empty, createTasks: [grepTask({ unit: "u-nowhere" })] },
-    ],
-    [
-      "Type exists",
-      {
-        ...empty,
-        createUnits: [
-          unitProposal("a", "a", "i1-command", {
-            leader: FAKE_LEADER,
-            type: "strike",
-          }),
-        ],
-      },
-    ],
-    [
-      "Config exists",
-      {
-        ...empty,
-        createUnits: [
-          {
-            ref: "a",
-            objective: "a",
-            parent: "i1-command",
-            type: "base",
-            config: "nobody",
-          },
-        ],
-      },
     ],
     [
       "No cycles",
@@ -373,158 +318,6 @@ describe("validator", () => {
       expect(rulesHit(plan)).toEqual([rule]);
     });
   }
-
-  it("Type exists: a new unit names a registered type a plan may create, so base passes, an unknown type and the ic type are refused, and the default is base (R4-10)", () => {
-    const plan = (type?: string): ActionPlan => ({
-      ...empty,
-      createUnits: [
-        unitProposal("a", "a", "i1-command", {
-          leader: FAKE_LEADER,
-          ...(type === undefined ? {} : { type }),
-        }),
-      ],
-    });
-    expect(rulesHit(plan("base"))).toEqual([]);
-    expect(reasonsOf(plan("strike"))).toEqual([
-      "Type exists: new unit a names no registered unit type strike",
-    ]);
-    expect(reasonsOf(plan("ic"))).toEqual([
-      "Type exists: new unit a names type ic, which a plan may not create; a plan may create base",
-    ]);
-    expect(plan().createUnits[0]?.type).toBe("base");
-  });
-
-  it("Config exists: a new unit naming a config names a saved one of its type, and the passing plan comes back outfitted with the config's fields, a field given beside the config overriding it (R4-11)", () => {
-    const { store, ctx, incident: seededIncident } = seeded();
-    const own = store.listUnits("i1").find((u) => u.id === "u-scroll");
-    if (own === undefined) throw new Error("no u-scroll");
-    store.saveUnitConfig(
-      configOf(
-        {
-          ...own,
-          leader: FAKE_LEADER,
-          equipment: ["Read"],
-          role: "Your role: a reader.",
-        },
-        "reader",
-        AT,
-      ),
-      "cli",
-    );
-    const command = store.listUnits("i1").find((u) => u.id === "i1-command");
-    if (command === undefined) throw new Error("no command");
-    store.saveUnitConfig(configOf(command, "command", AT), "cli");
-    const naming = (
-      config: string,
-      over: Partial<UnitProposal> = {},
-    ): ActionPlan => ({
-      ...empty,
-      createUnits: [
-        {
-          ref: "a",
-          objective: "deployed by name",
-          parent: "i1-command",
-          type: "base",
-          config,
-          ...over,
-        },
-      ],
-    });
-    const c = ctx();
-    expect(validatePlan(naming("nobody"), c)).toEqual({
-      ok: false,
-      rejections: [
-        {
-          rule: "Config exists",
-          reason:
-            "new unit a names no saved config nobody; saved: command, reader",
-        },
-      ],
-    });
-    expect(validatePlan(naming("command"), c)).toEqual({
-      ok: false,
-      rejections: [
-        {
-          rule: "Config exists",
-          reason:
-            "new unit a names config command, which is of type ic, not base",
-        },
-      ],
-    });
-    // A unit naming no config and leaving a form field unfilled is this rule's too, so a
-    // draft missing its leader is rejected and recorded rather than failing to parse.
-    const unfilled: ActionPlan = {
-      ...empty,
-      createUnits: [
-        { ref: "a", objective: "by hand", parent: "i1-command", type: "base" },
-      ],
-    };
-    expect(validatePlan(unfilled, c)).toEqual({
-      ok: false,
-      rejections: [
-        {
-          rule: "Config exists",
-          reason:
-            "new unit a names no config and leaves leader, equipment, bashAllowlist unfilled; fill the form or name a saved config",
-        },
-      ],
-    });
-    const recorded = validateAndRecord(store, seededIncident, unfilled, [
-      fakeProvider,
-    ]);
-    expect(recorded.ok).toBe(false);
-    expect(
-      store
-        .listEvents("i1")
-        .filter((e) => e.type === "plan.rejected")
-        .map((e) => e.payload.rule),
-    ).toEqual(["Config exists"]);
-    const passing = validatePlan(naming("reader"), c);
-    expect(passing.ok).toBe(true);
-    if (!passing.ok) throw new Error("rejected");
-    expect(passing.plan.createUnits[0]).toEqual({
-      ref: "a",
-      objective: "deployed by name",
-      parent: "i1-command",
-      type: "base",
-      config: "reader",
-      leader: FAKE_LEADER,
-      equipment: ["Read"],
-      bashAllowlist: [],
-      role: "Your role: a reader.",
-    });
-    const overriding = validatePlan(
-      naming("reader", { equipment: ["Read", "Grep"] }),
-      c,
-    );
-    if (!overriding.ok) throw new Error("rejected");
-    expect(overriding.plan.createUnits[0]).toMatchObject({
-      config: "reader",
-      equipment: ["Read", "Grep"],
-      leader: FAKE_LEADER,
-    });
-    // The config's fields are what the other rules read: a config on a model the provider
-    // does not serve fails Model known through the outfitted unit.
-    store.saveUnitConfig(
-      configOf(
-        { ...own, leader: { provider: "fake", model: "fake-huge" } },
-        "huge",
-        AT,
-      ),
-      "cli",
-    );
-    expect(validatePlan(naming("huge"), ctx())).toMatchObject({
-      ok: false,
-      rejections: [
-        {
-          rule: "Model known",
-          reason:
-            "new unit a names fake-huge, which fake does not serve for its leader",
-        },
-      ],
-    });
-    store.close();
-  });
 
   it("Units exist: a closed unit takes no new task or unit, and a ref that is its own parent is one No cycles fault", () => {
     expect(
@@ -876,65 +669,6 @@ describe("validator", () => {
     store.close();
   });
 
-  it("Closing is clean: a plan cannot close a unit whose revise verdict is not yet delivered, while the IC's own closeUnits can, and the close is free once unit.revised follows (R4-3)", () => {
-    const { store, ctx } = seeded();
-    store.setTaskStatus(
-      "i1",
-      "t-running",
-      "failed",
-      "dispatcher",
-      "task.failed",
-    );
-    store.record("i1", "unit.reported", "dispatcher", {
-      unitId: "u-scroll",
-      sessionId: "s-lead",
-      report: { outcome: "progress", changed: [], pictureChanged: false },
-    });
-    const reported = store
-      .listEvents("i1")
-      .find((e) => e.type === "unit.reported");
-    store.record("i1", "report.reviewed", "ic", {
-      reportId: reported?.id,
-      unitId: "u-scroll",
-      verdict: "revise",
-      instructions: "read the file the grep found",
-      why: "a match is not a handler",
-      cycle: 1,
-    });
-    // The verdict's own command turn is accepted, so the window is empty for the next.
-    store.record("i1", "command.turned", "runtime", { cycle: 1 });
-    const closing: ActionPlan = {
-      ...empty,
-      closeUnits: [{ unitId: "u-scroll", reason: "done" }],
-    };
-    const planned = validatePlan(closing, ctx());
-    expect(planned.ok).toBe(false);
-    if (!planned.ok)
-      expect(planned.rejections).toEqual([
-        {
-          rule: "Closing is clean",
-          reason:
-            "unit u-scroll has a revision not yet delivered; its leader answers it first",
-        },
-      ]);
-    const closingTurn: CommandTurn = {
-      ...turn,
-      closeUnits: [{ unitId: "u-scroll", reason: "the IC changed its mind" }],
-      rationale: "close it",
-    };
-    expect(validateCommand(closingTurn, ctx())).toEqual([]);
-    store.record("i1", "unit.revised", "dispatcher", {
-      unitId: "u-scroll",
-      sessionId: "s-lead",
-      reviewedId: "x",
-      reportId: reported?.id,
-      instructions: "read the file the grep found",
-      revision: 1,
-    });
-    expect(validatePlan(closing, ctx()).ok).toBe(true);
-    store.close();
-  });
-
   it("Closing is clean: refuses an already closed unit, a double close, and new work under a unit closed in the same plan", () => {
     expect(
       reasonsOf({
@@ -1179,115 +913,60 @@ describe("validator", () => {
     ]);
   });
 
-  it("Inferred links are worked: every inferred link in the IC's situation is settled by a ref in this plan, an open task, a reproduce task the same way, or deferred with a why; a link left unsettled rejects the plan", () => {
-    const { store, ctx } = seeded();
-    const situation = (inferred: Situation["inferred"]): Situation => ({
-      changed: "the IC's",
-      hypothesis: "a.ts handles deletion",
-      proven: [{ claimId: "c-seen", line: "a.ts:9 calls scrollTo" }],
-      inferred,
-      keep: [],
-    });
-    const turned = (inferred: Situation["inferred"]) =>
-      store.record("i1", "command.turned", "runtime", {
-        cycle: 1,
-        turn: { ...turn, situation: situation(inferred) },
-      });
-    const reasonsWith = (plan: ActionPlan) => {
-      const verdict = validatePlan(plan, ctx());
-      return verdict.ok
-        ? []
-        : verdict.rejections.map((r) => `${r.rule}: ${r.reason}`);
-    };
-    // No situation yet: nothing to settle.
-    expect(reasonsWith(empty)).toEqual([]);
-    turned([
-      { claimId: "c-asserted", settledBy: { task: "probe" } },
-      { claimId: "c-asserted", settledBy: { task: "t-running" } },
-      { claimId: "c-asserted", settledBy: { reproduce: "probe" } },
-      {
-        claimId: "c-asserted",
-        settledBy: { deferred: "the browser is not available this period" },
-      },
-    ]);
-    expect(
-      reasonsWith({ ...empty, createTasks: [grepTask({ ref: "probe" })] }),
-    ).toEqual([]);
-    // A rejected turn's situation is not the IC's; the last accepted one stands.
-    store.record("i1", "command.turned", "runtime", {
-      cycle: 2,
-      rejected: true,
-      turn: {
-        ...turn,
-        situation: situation([
-          { claimId: "c-asserted", settledBy: { task: "never" } },
-        ]),
-      },
+  it("Inferred links are worked: a ref, an open task, a question in this plan or a reproduce task settles a link; anything else, or a claim the incident lacks, is refused", () => {
+    const situation = (over: Partial<ActionPlan["situation"]>) => ({
+      ...empty.situation,
+      ...over,
     });
     expect(
-      reasonsWith({ ...empty, createTasks: [grepTask({ ref: "probe" })] }),
+      reasonsOf({
+        ...empty,
+        createTasks: [grepTask({ ref: "probe" })],
+        questionsForHuman: ["does it happen every time?"],
+        situation: situation({
+          proven: [
+            { claimId: "c-verified", line: "a.ts exists" },
+            {
+              claimId: "c-seen",
+              line: "a.ts:9 calls scrollTo, seen by a session",
+            },
+          ],
+          inferred: [
+            { claimId: "c-asserted", settledBy: { task: "probe" } },
+            { claimId: "c-asserted", settledBy: { task: "t-running" } },
+            { claimId: "c-asserted", settledBy: { question: 1 } },
+            { claimId: "c-asserted", settledBy: { reproduce: "probe" } },
+          ],
+          keep: ["c-verified"],
+        }),
+      }),
     ).toEqual([]);
-    turned([
-      { claimId: "c-asserted", settledBy: { task: "t-none" } },
-      { claimId: "c-asserted", settledBy: { task: "t-running" } },
-      { claimId: "c-asserted", settledBy: { reproduce: "t-done" } },
+    expect(
+      reasonsOf({
+        ...empty,
+        cancelTasks: ["t-running"],
+        situation: situation({
+          inferred: [
+            { claimId: "c-asserted", settledBy: { task: "t-none" } },
+            { claimId: "c-asserted", settledBy: { task: "t-running" } },
+            { claimId: "c-asserted", settledBy: { task: "t-done" } },
+            { claimId: "c-asserted", settledBy: { question: 1 } },
+          ],
+          proven: [
+            { claimId: "c-none", line: "missing" },
+            { claimId: "c-asserted", line: "inferred, not observed" },
+          ],
+          keep: ["c-none"],
+        }),
+      }),
+    ).toEqual([
+      "Dependencies resolve: the situation names no claim c-none",
+      "Dependencies resolve: the situation lists claim c-asserted as proven, but its basis is inferred, not observed",
+      "Inferred links are worked: inferred claim c-asserted is settled by task t-none, which is neither a ref in this plan nor an open task",
+      "Inferred links are worked: inferred claim c-asserted is settled by task t-running, which is neither a ref in this plan nor an open task",
+      "Inferred links are worked: inferred claim c-asserted is settled by task t-done, which is neither a ref in this plan nor an open task",
+      "Inferred links are worked: inferred claim c-asserted is settled by question 1, but this plan raises 0",
     ]);
-    expect(reasonsWith({ ...empty, cancelTasks: ["t-running"] })).toEqual([
-      "Inferred links are worked: the IC's situation has inferred claim c-asserted settled by task t-none, which is neither a ref in this plan nor an open task",
-      "Inferred links are worked: the IC's situation has inferred claim c-asserted settled by task t-running, which is neither a ref in this plan nor an open task",
-      "Inferred links are worked: the IC's situation has inferred claim c-asserted settled by reproduce task t-done, which is neither a ref in this plan nor an open task",
-    ]);
-    store.close();
-  });
-
-  it("Situation grounded: the IC's situation names claims the incident has and calls proven only what was observed", () => {
-    const { store, ctx } = seeded();
-    const grounded: CommandTurn = {
-      ...turn,
-      situation: {
-        changed: "the IC's",
-        hypothesis: "a.ts handles deletion",
-        proven: [
-          { claimId: "c-verified", line: "a.ts exists" },
-          {
-            claimId: "c-seen",
-            line: "a.ts:9 calls scrollTo, seen by a session",
-          },
-        ],
-        inferred: [{ claimId: "c-asserted", settledBy: { task: "probe" } }],
-        keep: ["c-verified"],
-      },
-    };
-    expect(validateCommand(grounded, ctx())).toEqual([]);
-    const ungrounded: CommandTurn = {
-      ...turn,
-      situation: {
-        changed: "the IC's",
-        hypothesis: "a.ts handles deletion",
-        proven: [
-          { claimId: "c-none", line: "missing" },
-          { claimId: "c-asserted", line: "inferred, not observed" },
-        ],
-        inferred: [{ claimId: "c-gone", settledBy: { task: "probe" } }],
-        keep: ["c-none"],
-      },
-    };
-    expect(validateCommand(ungrounded, ctx())).toEqual([
-      {
-        rule: "Situation grounded",
-        reason: "the situation names no claim c-none",
-      },
-      {
-        rule: "Situation grounded",
-        reason: "the situation names no claim c-gone",
-      },
-      {
-        rule: "Situation grounded",
-        reason:
-          "the situation lists claim c-asserted as proven, but its basis is inferred, not observed",
-      },
-    ]);
-    store.close();
   });
 
   it("Status is earned passes once every task is done and an observed claim exists, verified or not", () => {
@@ -1305,7 +984,6 @@ describe("validator", () => {
     ).toEqual({
       ok: true,
       plan: { ...empty, incidentStatus: "satisfied" },
-      warnings: [],
     });
     store.close();
   });
@@ -1365,53 +1043,10 @@ describe("validator", () => {
       },
     ]);
     const good = validateAndRecord(store, incident, empty, [fakeProvider]);
-    expect(good).toEqual({ ok: true, plan: empty, warnings: [] });
+    expect(good).toEqual({ ok: true, plan: empty });
     expect(
       store.listEvents("i1").filter((e) => e.type === "plan.rejected"),
     ).toHaveLength(2);
-    store.close();
-  });
-
-  it("Session work under a unit warns on a session task under the root, records plan.warned and applies the plan; a deterministic task under the root and session work under a unit draw nothing (R4-6)", () => {
-    const { store, incident } = seeded();
-    const plan: ActionPlan = {
-      ...empty,
-      createTasks: [
-        grepTask(),
-        investigateTask(),
-        investigateTask({
-          unit: "u-scroll",
-          inputs: { question: "what else moves it?" },
-        }),
-      ],
-      rationale: "read at command",
-    };
-    const verdict = validateAndRecord(store, incident, plan, [fakeProvider]);
-    expect(verdict).toEqual({
-      ok: true,
-      plan,
-      warnings: [
-        {
-          rule: "Session work under a unit",
-          reason:
-            'task "read the scroll handler" is session work (investigate) under i1-command, the root; it will run in a session of its own with no leader to judge it, so it belongs under a unit',
-        },
-      ],
-    });
-    const warned = store
-      .listEvents("i1")
-      .filter((e) => e.type === "plan.warned");
-    expect(warned.map((e) => e.payload)).toEqual([
-      {
-        rule: "Session work under a unit",
-        reason:
-          'task "read the scroll handler" is session work (investigate) under i1-command, the root; it will run in a session of its own with no leader to judge it, so it belongs under a unit',
-        rationale: "read at command",
-      },
-    ]);
-    expect(
-      store.listEvents("i1").filter((e) => e.type === "plan.rejected"),
-    ).toHaveLength(0);
     store.close();
   });
 });
@@ -1427,14 +1062,13 @@ describe("validator, a leader's assignments", () => {
   /**
    * The verdict on tasks the leader of u-scroll assigns. With `settled`, the seeded
    * running investigate has completed in 5 seconds, so 55 of the 60 the plan allotted the
-   * unit remain; without it the whole 60 is still bound. With `retried`, its first call was
-   * refused after 3 seconds and filed as a `task.usage` of its own (R4-7), so 52 remain.
+   * unit remain; without it the whole 60 is still bound.
    */
   const leaderVerdict = (
     tasks: TaskProposal[],
     unitOver: Partial<Unit> = {},
     budget?: { tokens?: number; seconds?: number },
-    { settled = false, retried = false } = {},
+    { settled = false } = {},
   ) => {
     const { store, ctx } = seeded(budget);
     if (settled)
@@ -1446,21 +1080,6 @@ describe("validator, a leader's assignments", () => {
           "dispatcher",
           "task.completed",
         );
-        if (retried)
-          store.record("i1", "task.usage", "dispatcher", {
-            taskId: "t-running",
-            usage: {
-              inputTokens: 50,
-              uncachedInputTokens: 50,
-              cacheWriteTokens: 0,
-              cacheReadTokens: 0,
-              outputTokens: 0,
-              seconds: 3,
-            },
-            model: "fake-small",
-            refused: { category: "reasoning_extraction", explanation: "" },
-            fallback: "fake-large",
-          });
         store.record("i1", "task.usage", "dispatcher", {
           taskId: "t-running",
           usage: {
@@ -1486,17 +1105,10 @@ describe("validator, a leader's assignments", () => {
   const hit = (verdict: ReturnType<typeof leaderVerdict>) =>
     verdict.ok ? [] : verdict.rejections.map((r) => [r.rule, r.reason]);
 
-  it("the base protocol's rules are named after the leader's own list, the way the planner's are keyed, and command holds Own unit alone (R4-10)", () => {
-    expect(baseUnitType.protocol.rules).toBe(BASE_RULES);
-    expect(BASE_RULES.map((r) => r.name)).toEqual([
-      "Own unit",
-      "Capability held",
-      "Budget within share",
-    ]);
-    expect(BASE_RULES.map((r) => r.name)).toEqual(
+  it("names its rules after the leader's own list, the way the planner's are keyed", () => {
+    expect(LEADER_RULE_CHECKS.map((r) => r.name)).toEqual(
       LEADER_RULES.map((line) => line.slice(0, line.indexOf(":"))),
     );
-    expect(icUnitType.protocol.rules).toEqual([OWN_UNIT_RULE]);
   });
 
   it("accepts a grep under the leader's own unit and an investigate the unit's equipment covers", () => {
@@ -1638,20 +1250,6 @@ describe("validator, a leader's assignments", () => {
       [
         "Budget within share",
         "the assignments ask 56 seconds of the 55 left in unit u-scroll's share (60 allotted by the plans, 5 spent or bound)",
-      ],
-    ]);
-    // A task refused and retried on the fallback files a `task.usage` per call, and both
-    // count against the share, as both count against the incident budget: 3 + 5 spent.
-    const both = { settled: true, retried: true };
-    expect(leaderVerdict([investigate(52)], held, undefined, both).ok).toBe(
-      true,
-    );
-    expect(
-      hit(leaderVerdict([investigate(53)], held, undefined, both)),
-    ).toEqual([
-      [
-        "Budget within share",
-        "the assignments ask 53 seconds of the 52 left in unit u-scroll's share (60 allotted by the plans, 8 spent or bound)",
       ],
     ]);
     // No plan task under the unit bounds tokens, so the unit's token share is zero (ruled

@@ -1,10 +1,4 @@
-import {
-  describeRefusedCall,
-  IC_ACTOR,
-  LEADER_ACTOR,
-  type RefusedCall,
-  reassignments,
-} from "./leader.js";
+import { LEADER_ACTOR } from "./leader.js";
 import {
   type Claim,
   type Event,
@@ -194,16 +188,6 @@ const taskIdOf = (e: Event): string =>
   str(e.payload.taskId) ||
   str((e.payload.mutation as { taskId?: unknown } | undefined)?.taskId);
 const session = (id: string): string => (id === "" ? "" : `  session ${id}`);
-/** The unit a `unit.created` event deployed from a saved config (R4-11), with the config's name; null for any other event or a unit filled by hand. */
-function configDeployed(e: Event): { unitId: string; config: string } | null {
-  if (mutationKind(e) !== "unit.create") return null;
-  const unit = (
-    e.payload.mutation as { unit?: { id?: unknown; config?: unknown } }
-  ).unit;
-  return typeof unit?.config === "string"
-    ? { unitId: str(unit.id), config: unit.config }
-    : null;
-}
 
 /** One cycle of the log: the event that opened it, the planner's drafts in it (one, or two after a correction), and everything else. */
 type Cycle = {
@@ -362,15 +346,8 @@ function cycles(events: readonly Event[]): Cycle[] {
 const isHandoffRelease = (e: Event): boolean =>
   e.type === "leader.released" && e.payload.handoff !== undefined;
 
-const modelOf = (leader: unknown): string =>
-  str((leader as { model?: unknown } | undefined)?.model) || "(no model)";
-
-/** A transfer of command as review lists it: its kind, the sessions, the context that triggered it and the document's length; a fallback (R4-7) names the models, who chose the new one and the refusals instead. */
+/** A transfer of command as review lists it: its kind, the sessions, the context that triggered it and the document's length. */
 function describeTransfer(e: Event): string {
-  if (e.payload.kind === "fallback") {
-    const refusals = (e.payload.refusals ?? []) as RefusedCall[];
-    return `command transferred (fallback): ${modelOf(e.payload.outgoing)} to ${modelOf(e.payload.incoming)}, ${e.payload.chosenBy === "answer" ? "named by the answer" : "the fallback"} after refusal on ${refusals.map(describeRefusedCall).join(" and on ") || "(unrecorded)"}`;
-  }
   const contextTokens = e.payload.contextTokens;
   const document = e.payload.document;
   const length = document === undefined ? 0 : JSON.stringify(document).length;
@@ -450,11 +427,7 @@ function icLines(
   let model: string | null = null;
   for (const e of turns) {
     if (e.type === "command.transferred") {
-      // A fallback hands over no document, so there is nothing evaluated.
-      lines.push(
-        `  ${describeTransfer(e)}`,
-        ...(e.payload.kind === "fallback" ? [] : describeEvaluation(e, events)),
-      );
+      lines.push(`  ${describeTransfer(e)}`, ...describeEvaluation(e, events));
       continue;
     }
     model = str(e.payload.model) || null;
@@ -473,14 +446,13 @@ function icLines(
         | {
             periodObjectives?: unknown;
             closeUnits?: unknown;
-            reportVerdicts?: unknown;
             incidentStatus?: unknown;
           }
         | undefined;
       move =
         e.payload.rejected === true
           ? "command turn rejected"
-          : `set period ${String(e.payload.cycle)}: ${list(turn?.periodObjectives).length} objective(s), ${list(turn?.closeUnits).length} close(s), ${list(turn?.reportVerdicts).length} verdict(s), ${str(turn?.incidentStatus)}`;
+          : `set period ${String(e.payload.cycle)}: ${list(turn?.periodObjectives).length} objective(s), ${list(turn?.closeUnits).length} close(s), ${str(turn?.incidentStatus)}`;
     } else {
       const verdict = str(e.payload.verdict);
       verdicts.set(verdict, (verdicts.get(verdict) ?? 0) + 1);
@@ -489,11 +461,6 @@ function icLines(
     lines.push(
       `  ic ${model ?? "(no model)"}: ${describeUsage(usage, turnCost)}  ${move}${session(str(e.payload.sessionId))}`,
     );
-    // The verdicts a command turn recorded, listed under it (R4-2).
-    if (e.type === "command.turned")
-      for (const v of cycle.events)
-        if (v.type === "report.reviewed")
-          lines.push(`  ${describeReportVerdict(v)}`);
   }
   for (const e of cycle.events)
     if (e.type === "command.rejected")
@@ -572,168 +539,33 @@ function describeRefusal(e: Event): string {
 }
 
 /**
- * Every call the API refused, per seat with its category, model and session: the IC's and
- * the initial IC's on `command.failed`, a leader's on `leader.failed`, a task session's on
- * `task.usage` (R4-7). A refused session is replaced, so each line is one call that was
- * paid for and answered nothing.
+ * Every call the API refused, per seat with its category and session: the IC's and the
+ * initial IC's on `command.failed`, a leader's on `leader.failed`. A refused session is
+ * replaced, so each line is one call that was paid for and answered nothing.
  */
 function refusalsLine(events: readonly Event[]): string {
   const refusals = events
     .filter(
       (e) =>
-        (e.type === "command.failed" ||
-          e.type === "leader.failed" ||
-          e.type === "task.usage") &&
+        (e.type === "command.failed" || e.type === "leader.failed") &&
         e.payload.refused !== undefined,
     )
     .map((e) => {
       const seat = str(e.payload.seat);
       const who =
-        e.type === "task.usage"
-          ? `task ${str(e.payload.taskId)}`
-          : seat === "leader"
-            ? `leader of ${str(e.payload.unitId)}`
-            : seat === "initial_ic"
-              ? "initial ic"
-              : "ic";
+        seat === "leader"
+          ? `leader of ${str(e.payload.unitId)}`
+          : seat === "initial_ic"
+            ? "initial ic"
+            : "ic";
       const category = str(
         (e.payload.refused as { category?: unknown }).category,
       );
-      const model = str(e.payload.model);
-      return `${who} ${category || "unstated"}${model === "" ? "" : ` on ${model}`} (session ${str(e.payload.sessionId) || "none"})`;
+      return `${who} ${category || "unstated"} (session ${str(e.payload.sessionId) || "none"})`;
     });
   return refusals.length === 0
     ? "refusals: none"
     : `refusals: ${refusals.length}: ${refusals.join(", ")}`;
-}
-
-/** One verdict on a report as `review` lists it (R4-2): the unit and report id, the verdict, its why, and for a revise or reassign its instructions. */
-function describeReportVerdict(e: Event): string {
-  const instructions = str(e.payload.instructions);
-  return `verdict on ${str(e.payload.unitId)}'s report ${str(e.payload.reportId)}: ${str(e.payload.verdict)}: ${clip(str(e.payload.why))}${instructions === "" ? "" : `; instructions: ${clip(instructions)}`}`;
-}
-
-const REPORT_VERDICT_KINDS = ["accepted", "revise", "reassign"] as const;
-
-/**
- * The IC's verdicts on the units' reports, counted by kind for the incident and for each
- * unit that got one (R4-2), the evidence for whether the IC sends work back or hands it on.
- */
-function reportVerdictLines(events: readonly Event[]): string[] {
-  const byUnit = new Map<string, Map<string, number>>();
-  const total = new Map<string, number>();
-  for (const e of events) {
-    if (e.type !== "report.reviewed") continue;
-    const verdict = str(e.payload.verdict);
-    const unit = byUnit.get(str(e.payload.unitId)) ?? new Map<string, number>();
-    unit.set(verdict, (unit.get(verdict) ?? 0) + 1);
-    byUnit.set(str(e.payload.unitId), unit);
-    total.set(verdict, (total.get(verdict) ?? 0) + 1);
-  }
-  const counts = (m: ReadonlyMap<string, number>) =>
-    REPORT_VERDICT_KINDS.map((k) => `${m.get(k) ?? 0} ${k}`).join(", ");
-  const all = [...total.values()].reduce((n, k) => n + k, 0);
-  if (all === 0) return ["report verdicts: none"];
-  return [
-    `report verdicts: ${all}: ${counts(total)}`,
-    ...[...byUnit].map(([unitId, m]) => `  ${unitId}: ${counts(m)}`),
-  ];
-}
-
-/** A report's `changed` lines, by what changed, from a `unit.reported` payload. */
-function changesOf(report: Event | undefined): string[] {
-  const r = report?.payload.report as { changed?: unknown } | undefined;
-  return list(r?.changed).map((c) => str((c as { what?: unknown }).what));
-}
-
-/**
- * Each revision the IC sent back (R4-3), from its verdict (the `report.reviewed` its
- * `unit.revised` names) to the unit's next report: what it cost, the unit's leader turns,
- * refused turns and tasks between the two, priced as the cycles price them, and what changed between
- * the report the IC reviewed and the one that answered it: the outcome, and the changes
- * the answer carries that the reviewed report did not. A revision still open (no report
- * after the brief) says so.
- */
-function revisionLines(
-  events: readonly Event[],
-  taskById: ReadonlyMap<string, Task>,
-): string[] {
-  const delivered = events.filter((e) => e.type === "unit.revised");
-  if (delivered.length === 0) return ["revisions: none"];
-  const reportById = new Map(
-    events.filter((e) => e.type === "unit.reported").map((e) => [e.id, e]),
-  );
-  const lines = [`revisions: ${delivered.length}`];
-  for (const d of delivered) {
-    const unitId = str(d.payload.unitId);
-    const reviewed = reportById.get(str(d.payload.reportId));
-    // The window opens at the verdict, not the delivery: a brief turn refused on the
-    // unit's model files `leader.failed` before `unit.revised` is written, and that call
-    // is the revision's too.
-    const start =
-      events.find((e) => e.id === str(d.payload.reviewedId))?.sequence ??
-      d.sequence;
-    const answer = events.find(
-      (e) =>
-        e.type === "unit.reported" &&
-        e.payload.unitId === unitId &&
-        e.sequence > start,
-    );
-    const end = answer?.sequence ?? Number.POSITIVE_INFINITY;
-    const totals = emptyTotals();
-    let turns = 0;
-    let tasksRan = 0;
-    for (const e of events) {
-      if (e.sequence <= start || e.sequence > end) continue;
-      if (
-        (e.type === "unit.continued" ||
-          e.type === "unit.reported" ||
-          e.type === "leader.failed") &&
-        e.payload.unitId === unitId &&
-        e.payload.writtenBy !== "runtime"
-      ) {
-        const usage = (e.payload.usage ?? {}) as Partial<Usage>;
-        add(totals, usage, costOf(usage, str(e.payload.model) || null));
-        turns += 1;
-      }
-      if (e.type === "task.usage") {
-        const task = taskById.get(taskIdOf(e));
-        if (task?.unitId !== unitId) continue;
-        const usage = (e.payload.usage ?? {}) as Partial<Usage>;
-        add(totals, usage, costOf(usage, str(e.payload.model) || task.model));
-        if (e.payload.refused === undefined) tasksRan += 1;
-      }
-    }
-    const before = new Set(changesOf(reviewed));
-    const added = changesOf(answer).filter((w) => !before.has(w));
-    const outcome = (e: Event | undefined) =>
-      str((e?.payload.report as { outcome?: unknown } | undefined)?.outcome) ||
-      "?";
-    const spend = `${turns} turn(s), ${tasksRan} task(s), in ${n(totals.inputTokens)}  out ${n(totals.outputTokens)}  ${totals.seconds.toFixed(1)} s  ${money(totals.cost)}`;
-    lines.push(
-      answer === undefined
-        ? `  ${unitId} revision ${String(d.payload.revision)}: brief delivered, not yet reported; ${spend}`
-        : `  ${unitId} revision ${String(d.payload.revision)}: ${spend}; ${outcome(reviewed)} → ${outcome(answer)}${answer.payload.writtenBy === "runtime" ? " (written by the runtime)" : ""}; changed since the reviewed report: ${added.map(clip).join("; ") || "nothing new"}`,
-    );
-  }
-  return lines;
-}
-
-/**
- * Each reassignment the IC recorded (R4-4), beside the revisions: the closed unit and its
- * objective, the cycle, the claims it carried, and where it stands: taken by which unit,
- * dropped by the IC (by the verdict or a later turn) and why, or still open for the next plan.
- */
-function reassignmentLines(events: readonly Event[]): string[] {
-  const all = reassignments(events);
-  if (all.length === 0) return ["reassignments: none"];
-  return [
-    `reassignments: ${all.length}`,
-    ...all.map(
-      (r) =>
-        `  ${r.id} from ${r.unitId} in cycle ${r.cycle}: ${r.claims.length} claim(s); ${r.dropped ? `dropped by the IC: ${clip(r.droppedWhy ?? "")}` : r.takenBy === null ? "open, taken by no unit yet" : `taken by ${r.takenBy}`}; instructions: ${clip(r.instructions)}`,
-    ),
-  ];
 }
 
 /** How much of the briefing the IC kept: the verdicts on its first accepted command turn that evaluated one, counted by kind. */
@@ -767,43 +599,6 @@ function briefingKept(events: readonly Event[]): string {
   return `briefing kept: ${count("accepted")} of ${verdicts.length} item(s) accepted, ${count("rewritten")} rewritten, ${count("discarded")} discarded`;
 }
 
-/**
- * The cycle's wall time beside what its tasks spent (R4-9): the cycle from the event that
- * opened it to its last event; the dispatch from the first `task.started` to the last task
- * ending or leader turn; the tasks' recorded seconds summed; and `parallel`, the sum over
- * the dispatch span, which is 1.0 when tasks ran one after another and higher when they
- * overlapped. Nothing when no task ran in the cycle.
- */
-function wallTimeLine(
-  cycle: Cycle,
-  taskSeconds: number,
-  tasks: number,
-): string | null {
-  if (tasks === 0) return null;
-  const at = (e: Event | undefined) =>
-    e === undefined ? Number.NaN : Date.parse(e.createdAt);
-  const all = [cycle.opened, ...cycle.proposals, ...cycle.events];
-  const cycleSpan = (at(all.at(-1)) - at(cycle.opened)) / 1000;
-  const started = cycle.events.find((e) => e.type === "task.started");
-  const ended = [...cycle.events]
-    .reverse()
-    .find(
-      (e) =>
-        OUTCOME_TYPES.has(e.type) ||
-        e.type === "unit.reported" ||
-        e.type === "unit.continued",
-    );
-  const dispatchSpan = (at(ended) - at(started)) / 1000;
-  const parallel =
-    Number.isFinite(dispatchSpan) && dispatchSpan > 0
-      ? `, parallel ${(taskSeconds / dispatchSpan).toFixed(2)}x`
-      : "";
-  const dispatch = Number.isFinite(dispatchSpan)
-    ? `, dispatch ${dispatchSpan.toFixed(1)} s`
-    : "";
-  return `  wall time: cycle ${cycleSpan.toFixed(1)} s${dispatch}; ${tasks} task(s) summing ${taskSeconds.toFixed(1)} s${parallel}`;
-}
-
 const OUTCOME_TYPES = new Set<Event["type"]>([
   "task.completed",
   "task.failed",
@@ -819,26 +614,6 @@ type RoleTotals = { role: string; model: string | null; totals: Totals };
  * bounded at list rates where it did not. Nothing here is judged; that is the
  * session-backed review capability's job.
  */
-/** The runtime tag (R4-12) as `events` and `review` print it: a null, from before the tag, is named. */
-export function describeRuntimeTag(runtime: string | null): string {
-  return runtime ?? "none recorded (written before the tag)";
-}
-
-/**
- * The runtimes an incident ran under (R4-12), each with the sequence range of the events
- * it wrote, in the order the log switches between them; a run on one build is one entry.
- */
-function runtimesLine(events: readonly Event[]): string {
-  const runs: { runtime: string | null; from: number; to: number }[] = [];
-  for (const e of events) {
-    const last = runs.at(-1);
-    if (last !== undefined && last.runtime === e.runtime) last.to = e.sequence;
-    else runs.push({ runtime: e.runtime, from: e.sequence, to: e.sequence });
-  }
-  if (runs.length === 0) return "runtimes: none";
-  return `runtimes: ${runs.length}: ${runs.map((r) => `${describeRuntimeTag(r.runtime)} (events ${r.from} to ${r.to})`).join(", ")}`;
-}
-
 export function renderReview(
   incident: Incident,
   events: readonly Event[],
@@ -869,7 +644,6 @@ export function renderReview(
   let sentUp = 0;
   let failedWithoutRunning = 0;
   const questions: string[] = [];
-  const fromConfigs: string[] = [];
 
   lines.push(
     `review of incident ${incident.id} [${incident.status}]  ${incident.objective}`,
@@ -909,10 +683,7 @@ export function renderReview(
       (e) => e.type === "plan.rejected" && e.actor !== LEADER_ACTOR,
     );
     const appliedEvent = cycle.events.find(
-      (e) =>
-        e.type === "plan.applied" &&
-        e.actor !== LEADER_ACTOR &&
-        e.actor !== IC_ACTOR,
+      (e) => e.type === "plan.applied" && e.actor !== LEADER_ACTOR,
     );
     const a = appliedEvent?.payload ?? {};
     let verdict: string;
@@ -991,28 +762,17 @@ export function renderReview(
       }
     }
     const ranInCycle = new Set<string>();
-    let taskSeconds = 0;
     for (const e of cycle.events) {
       if (e.type !== "task.usage") continue;
       const taskId = taskIdOf(e);
       ranInCycle.add(taskId);
       const task = taskById.get(taskId);
       const usage = (e.payload.usage ?? {}) as Partial<Usage>;
-      taskSeconds += usage.seconds ?? 0;
-      // A retry on the fallback (R4-7) records its model on the usage; the task's own is the plan's.
-      const model = str(e.payload.model) || task?.model || null;
+      const model = task?.model ?? null;
       const capability = task?.capability ?? "unknown";
       const taskCost = costOf(usage, model);
       add(roleTotals(capability, model), usage, taskCost);
       addCost(cost, taskCost);
-      // A call the API refused: priced, named by its category, and what followed it.
-      if (e.payload.refused !== undefined) {
-        const fallback = str(e.payload.fallback);
-        lines.push(
-          `  ${taskId} ${capability} ${model ?? "(no model)"}: ${describeUsage(usage, taskCost)}  refused${describeRefusal(e)}${fallback === "" ? "; no retry beyond the fallback" : `, retried on ${fallback}`}${session(str(e.payload.sessionId))}`,
-        );
-        continue;
-      }
       if (model === null) deterministicRan += 1;
       else sessionsRan += 1;
       const outcome = cycle.events.find(
@@ -1038,9 +798,8 @@ export function renderReview(
           : `  claims ${created}${inferred === undefined ? "" : ` (${inferred} inferred)`}`;
       const sessionId =
         str(outcome?.payload.sessionId) || (sessionByTask.get(taskId) ?? "");
-      const fellBack = str(outcome?.payload.fallbackFrom);
       lines.push(
-        `  ${taskId} ${capability}${model === null ? " (deterministic)" : ` ${model}`}: ${spend}  ${outcomeText}${fellBack === "" ? "" : ` (fallback from ${fellBack})`}${claimsText}${session(sessionId)}`,
+        `  ${taskId} ${capability}${model === null ? " (deterministic)" : ` ${model}`}: ${spend}  ${outcomeText}${claimsText}${session(sessionId)}`,
       );
       lines.push(...activityLines(cycle.events, taskId, model, cycle.number));
       if (outcome?.type === "task.failed")
@@ -1050,8 +809,6 @@ export function renderReview(
           `    insufficient: ${list(outcome.payload.needed).map(String).join("; ")}`,
         );
     }
-    const wall = wallTimeLine(cycle, taskSeconds, ranInCycle.size);
-    if (wall !== null) lines.push(wall);
     // A leader's turns: every one costs its own call on the unit's leader model; a turn
     // that filed a report is listed with the report's outcome. The turns' own tool calls
     // are filed under the unit with no task, so they are listed once per unit after its
@@ -1065,25 +822,12 @@ export function renderReview(
         const turnCost = costOf(usage, model);
         add(roleTotals("leader", model), usage, turnCost);
         addCost(cost, turnCost);
-        const fallback = str(e.payload.fallback);
         lines.push(
-          `  leader of ${str(e.payload.unitId)} ${model ?? "(no model)"}: ${describeUsage(usage, turnCost)}  turn failed${describeRefusal(e)}${fallback === "" ? "" : `, leader moved to ${fallback}`}${session(str(e.payload.sessionId))}`,
+          `  leader of ${str(e.payload.unitId)} ${model ?? "(no model)"}: ${describeUsage(usage, turnCost)}  turn failed${describeRefusal(e)}${session(str(e.payload.sessionId))}`,
         );
         continue;
       }
       if (e.type !== "unit.reported" && e.type !== "unit.continued") continue;
-      // A report the runtime wrote on the leader's behalf after two refusals (R4-7) is no
-      // turn and spent nothing; it is listed by who wrote it and why.
-      if (e.payload.writtenBy === "runtime") {
-        const unitId = str(e.payload.unitId);
-        const refusals = (e.payload.refusals ?? []) as RefusedCall[];
-        const move = `reported not_met${typeof e.payload.revision === "number" ? ` (revision ${e.payload.revision})` : ""} on the leader's behalf, picture changed, after refusal on ${refusals.map(describeRefusedCall).join(" and on ")}`;
-        const lines2 = reportsByUnit.get(unitId) ?? [];
-        lines2.push(`cycle ${cycle.number}: ${move} (written by the runtime)`);
-        reportsByUnit.set(unitId, lines2);
-        lines.push(`  runtime for ${unitId}: ${move}`);
-        continue;
-      }
       leaderTurns += 1;
       const unitId = str(e.payload.unitId);
       const model = str(e.payload.model) || null;
@@ -1096,7 +840,7 @@ export function renderReview(
         | undefined;
       const move =
         e.type === "unit.reported"
-          ? `reported ${str(report?.outcome)}${typeof e.payload.revision === "number" ? ` (revision ${e.payload.revision})` : ""}${report?.pictureChanged === true ? ", picture changed" : ""}, ${list(report?.changed).length} change(s)`
+          ? `reported ${str(report?.outcome)}${report?.pictureChanged === true ? ", picture changed" : ""}, ${list(report?.changed).length} change(s)`
           : "continued";
       if (e.type === "unit.reported") {
         const lines = reportsByUnit.get(unitId) ?? [];
@@ -1118,34 +862,6 @@ export function renderReview(
       turnedUnits.set(unitId, model);
     }
     for (const e of cycle.events) {
-      // A unit deployed from a saved config (R4-11) is named with the config it came from.
-      const deployed = configDeployed(e);
-      if (deployed !== null) {
-        fromConfigs.push(`${deployed.unitId} from ${deployed.config}`);
-        lines.push(
-          `  unit ${deployed.unitId} deployed from saved config ${deployed.config}`,
-        );
-      }
-      if (e.type === "plan.applied" && e.actor === IC_ACTOR)
-        lines.push(
-          `  IC assigned ${list(e.payload.tasks).length} task(s) under command: ${list(e.payload.tasks).map(String).join(", ")}`,
-        );
-      if (e.type === "unit.revised")
-        lines.push(
-          `  revision ${String(e.payload.revision)} briefed to the leader of ${str(e.payload.unitId)} on report ${str(e.payload.reportId)}: ${clip(str(e.payload.instructions))}${session(str(e.payload.sessionId))}`,
-        );
-      if (e.type === "unit.reassigned")
-        lines.push(
-          `  reassignment ${str(e.payload.reassignmentId)} ${e.payload.dropped === true ? "dropped" : "recorded"} from ${str(e.payload.unitId)} with ${list(e.payload.claims).length} claim(s)`,
-        );
-      if (e.type === "reassignment.taken")
-        lines.push(
-          `  reassignment ${str(e.payload.reassignmentId)} taken by ${str(e.payload.unitId)}`,
-        );
-      if (e.type === "reassignment.dropped")
-        lines.push(
-          `  reassignment ${str(e.payload.reassignmentId)} dropped by the IC: ${clip(str(e.payload.why))}`,
-        );
       if (e.actor !== LEADER_ACTOR) continue;
       if (e.type === "plan.applied") {
         const assigned = list(e.payload.tasks).length;
@@ -1237,16 +953,12 @@ export function renderReview(
       ? "ic verdicts: none"
       : `ic verdicts: ${reviews} review(s): ${["approve", "correct", "amend"].map((v) => `${verdicts.get(v) ?? 0} ${v}`).join(", ")}`,
   );
-  lines.push(...reportVerdictLines(events));
-  lines.push(...revisionLines(events, taskById));
-  lines.push(...reassignmentLines(events));
   lines.push(briefingKept(events));
   lines.push(refusalsLine(events));
   const transfers = events.filter((e) => e.type === "command.transferred");
   lines.push(
     `transfers of command: ${transfers.length}${transfers.length === 0 ? "" : ` (${transfers.map((e) => str(e.payload.kind) || "?").join(", ")})`}`,
   );
-  lines.push(runtimesLine(events));
   lines.push(
     `tasks: ${sessionsRan + deterministicRan} ran (${deterministicRan} deterministic, ${sessionsRan} sessions) of ${tasks.length} created${failedWithoutRunning === 0 ? "" : `, ${failedWithoutRunning} failed before running`}`,
   );
@@ -1257,9 +969,6 @@ export function renderReview(
   lines.push(`leader turns: ${leaderTurns} (${reported} reports)`);
   for (const [unitId, unitReports] of reportsByUnit)
     lines.push(`  ${unitId}: ${unitReports.join("; ")}`);
-  lines.push(
-    `units from saved configs: ${fromConfigs.length}${fromConfigs.length === 0 ? "" : ` (${fromConfigs.join(", ")})`}`,
-  );
   // Each declared config against what ran under it: members, their spend (a breakdown of
   // the task's, priced on the member's model), and the claims that cite a member.
   const configs = teamConfigs(events);

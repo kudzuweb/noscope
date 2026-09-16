@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { IC_ROLE, LEADER_ROLE, leaderRole } from "../src/leader.js";
 import { jsonSchemaFor, SessionResult } from "../src/models.js";
 import {
   SEAT_PLACES,
@@ -20,7 +21,6 @@ import {
   renderClaudeCodeArgs,
   TOOL_RESULT_CAP,
 } from "../src/providers/claude-code.js";
-import { IC_ROLE, LEADER_ROLE } from "../src/units/index.js";
 
 const stub = resolve("test/stub-claude");
 /** A stream captured 2026-09-15 from a Haiku session on Claude Code 2.1.272 that ran one Bash echo and one `pinger` subagent, paths normalized to /scratch. */
@@ -164,7 +164,7 @@ describe("claude code provider", () => {
     );
     expect(sessionSystemPrompt("ROLE", "ic")).toContain(SEAT_PLACES.ic);
     // The seat paragraphs: a task session answers insufficient; a leader runs its tasks and
-    // reports; the IC leads command and runs no task in its session (R4-6).
+    // reports; the IC leads command and, until R3-7, reports on its tasks like any leader.
     expect(SEAT_PLACES.task).toMatch(
       /^Your place: you are a resource assigned to one task inside one unit, under that unit's leader\./,
     );
@@ -179,9 +179,8 @@ describe("claude code provider", () => {
       /^Your place: you are the Incident Commander, the leader of the root unit, command/,
     );
     expect(SEAT_PLACES.ic).toContain(
-      "No task runs in your session and you take no leader turn",
+      "A task under command runs under you as under any leader",
     );
-    expect(SEAT_PLACES.ic).not.toContain("as under any leader");
     for (const term of [
       "Incident Commander (IC)",
       "initial IC",
@@ -207,11 +206,6 @@ describe("claude code provider", () => {
       "- Budget within share:",
     ])
       expect(LEADER_ROLE).toContain(line);
-    // R4-9: tasks in their own sessions start at once; dependsOn serializes.
-    expect(LEADER_ROLE).toContain(
-      "tasks in sessions of their own start at once when nothing they depend on is still open",
-    );
-    expect(LEADER_ROLE).toContain("dependsOn is what serializes tasks");
     // R3-5: the leader may send a team the task declares or ask for one, choosing its shape.
     expect(LEADER_ROLE).toContain("You may send a strike team");
     expect(LEADER_ROLE).toContain("requestStrikeTeam");
@@ -219,44 +213,31 @@ describe("claude code provider", () => {
     expect(SESSION_PREAMBLE).toContain(
       "whoever asks chooses the kind, model, tools and count and says why",
     );
-    const ic = IC_ROLE;
+    expect(leaderRole("leader")).toBe(LEADER_ROLE);
+    const ic = leaderRole("ic");
+    expect(ic).toBe(IC_ROLE);
     expect(ic).toMatch(
       /^Your role: Incident Commander, leader of command, the root unit/,
     );
     // The IC scopes, breaks down, equips and judges; its digging is assigned; a period ends
     // on reports or a change of picture; a not_met report informs; a discrepancy it cannot
-    // reconcile goes to Mauria; the situation is the IC's (R4-5); one review, one redraft.
+    // reconcile goes to Mauria; the situation stays the planner's; one review, one redraft.
     for (const line of [
       "You scope the incident, break it down, equip it and judge what comes back",
       "You do not dig",
       "A period ends when the units have reported or when one report changes the picture; you are never consulted per task",
       "is information for your decision and never a decision",
-      "No task runs in your session: a task under command is deterministic and runs in process, and a session-backed task placed under command runs in a session of its own",
-      "Your tools serve no turn",
-      "command files no report",
-      "You assign deterministic tasks under command in your command turn (assignTasks",
-      "session work is a unit's, never assigned by you",
-      "Command has no leader turn and no resource requests to raise",
+      "Your tools are for a task assigned under command, not for your turns",
       "answers is for the resource requests your change report lists, and nothing else",
       "satisfied is refused while any task is still open or before any claim is observed",
       "becomes a question for Mauria",
-      "You own the situation: you write it on every command turn, and it is the picture every seat works from",
-      "A link deferred is a decision recorded, not an omission",
-      "A reassignment updates the slice it concerns",
-      "as a suggestion of the tactics that work it",
+      "The situation in the plan is the planner's",
       "After a redraft you approve or amend, never correct again",
       "names the priority that chose between plans",
+      "A task under command runs under you as under any leader",
     ])
       expect(ic).toContain(line);
     expect(ic).not.toContain("the IC, who has more perspective");
-    // R4-6: nothing runs under the IC as under a leader; its assignments are on the command turn, not a leader turn under the leader rules.
-    for (const gone of [
-      "as under any leader",
-      "like any leader (assignTasks)",
-      "- Own unit:",
-      "resource requests, which are refused on command",
-    ])
-      expect(ic).not.toContain(gone);
     expect(claudeCodeProvider().models).toContain("claude-opus-5");
     for (const kind of [
       "retrievable_fact",

@@ -54,7 +54,6 @@ export const EventType = z.enum([
   "claim.rejected",
   "plan.proposed",
   "plan.rejected",
-  "plan.warned",
   "plan.applied",
   "budget.exceeded",
   "question.asked",
@@ -81,12 +80,6 @@ export const EventType = z.enum([
   "incident.briefed",
   "command.transferred",
   "leader.failed",
-  "report.reviewed",
-  "unit.revised",
-  "unit.reassigned",
-  "reassignment.taken",
-  "reassignment.dropped",
-  "config.saved",
 ]);
 
 export const Budget = z.object({
@@ -172,26 +165,15 @@ export const Leader = z.object({
   model: z.string().min(1),
 });
 
-/**
- * A unit is a type plus a config (R4-10): `type` names a registered unit type
- * (`src/units/`), whose form the unit's other fields fill and whose protocol runs it;
- * `base` is the led unit and `ic` is command, the root. `role` is the config's own role
- * text, null for the type's; `config` names the saved config the unit was deployed from
- * (R4-11), null when the plan filled the form itself.
- */
 export const Unit = z.object({
   id: z.string().min(1),
   incidentId: z.string().min(1),
   parentId: z.string().nullable(),
-  type: z.string().min(1),
   objective: z.string().min(1),
   leader: Leader,
   /** Built-in tool names and external equipment names the leader's session may use, declared as a capability declares them. */
   equipment: z.array(z.string()),
   bashAllowlist: z.array(z.string()),
-  role: z.string().min(1).nullable(),
-  /** The saved config the unit was deployed from (R4-11), null when its form was filled by hand. */
-  config: z.string().min(1).nullable(),
   /** The leader's session, once it has run; null until the unit first has a ready task. */
   sessionId: z.string().nullable(),
   status: UnitStatus,
@@ -290,8 +272,6 @@ export const Event = z
     actor: z.string().min(1),
     payload: z.record(z.string(), z.unknown()),
     createdAt: Timestamp,
-    /** The noscope commit the writing process was built from (R4-12); null on an event from before the tag. */
-    runtime: z.string().min(1).nullable(),
   })
   .refine((e) => (e.scope === "system") === (e.incidentId === null), {
     message:
@@ -315,38 +295,18 @@ export const Grant = z
       "a standing grant has no incident id and an incident grant has one",
   });
 
-/**
- * A saved unit config (R4-11): a type's form filled, less the objective and the parent,
- * kept under a name so a plan deploys it by name. `form` is the filled form as JSON keyed
- * by the type (the base form's leader, equipment, Bash allowlist and role today), so a
- * later type's config is saved the same way; `savedFrom` is the unit it was taken from.
- */
-export const UnitConfig = z.object({
-  name: z.string().min(1),
-  type: z.string().min(1),
-  form: z.record(z.string(), z.unknown()),
-  savedFrom: z.object({
-    incidentId: z.string().min(1),
-    unitId: z.string().min(1),
-  }),
-  savedAt: Timestamp,
-});
-
 // What the planner returns, one per cycle.
 
-/**
- * The base type's form (R4-10): the fields a led unit's config fills, as the planner
- * proposes them and as `src/units/base.ts` binds them. Declared here rather than beside
- * the type because `UnitProposal`, and so `ActionPlan`, extends it and this module imports
- * nothing. A saved config (R4-11) is this less the objective.
- */
-export const BaseUnitForm = z.object({
-  objective: z
+export const UnitProposal = z.object({
+  ref: z
     .string()
     .min(1)
-    .describe(
-      "What the unit is to establish; its leader reports against it, and the IC judges the report",
-    ),
+    .describe("A label the plan uses to refer to this new unit elsewhere"),
+  objective: z.string().min(1),
+  parent: z
+    .string()
+    .min(1)
+    .describe("An existing unit id, or the ref of a unit created in this plan"),
   leader: Leader.describe(
     "The provider and model of the unit's leader session, which runs the unit's tasks and reports against its objective",
   ),
@@ -358,58 +318,6 @@ export const BaseUnitForm = z.object({
   bashAllowlist: z
     .array(z.string())
     .describe("Commands the leader's read-only Bash may run"),
-  role: z
-    .string()
-    .min(1)
-    .optional()
-    .describe(
-      "The role text the leader's session reads in place of the type's own; omit it for the type's",
-    ),
-});
-
-/**
- * A new unit as the planner proposes it: the base form plus its place in the plan. With
- * `config` (R4-11) the proposal names a saved config and fills only the objective and the
- * parent; the config's leader, equipment, Bash allowlist and role fill the rest, and a
- * field given beside `config` overrides the config's. Without it the three are required,
- * which the validator's rule Config exists enforces (not the schema, so a draft missing
- * one is rejected and recorded rather than failing to parse), since the planner's schema
- * is one strict object.
- */
-export const UnitProposal = BaseUnitForm.partial({
-  leader: true,
-  equipment: true,
-  bashAllowlist: true,
-}).extend({
-  config: z
-    .string()
-    .min(1)
-    .optional()
-    .describe(
-      "The name of a saved unit config (section 8 lists them) whose leader, equipment, bashAllowlist and role fill this unit's form; give only objective and parent beside it, or a field to override the config's",
-    ),
-  ref: z
-    .string()
-    .min(1)
-    .describe("A label the plan uses to refer to this new unit elsewhere"),
-  parent: z
-    .string()
-    .min(1)
-    .describe("An existing unit id, or the ref of a unit created in this plan"),
-  type: z
-    .string()
-    .min(1)
-    .default("base")
-    .describe(
-      "The unit's type, whose form these fields fill and whose protocol runs it: base, the led unit, is the only type a plan may create",
-    ),
-  takes: z
-    .string()
-    .min(1)
-    .optional()
-    .describe(
-      "The id of an open reassignment this unit takes (R4-4): the slice of a unit the IC closed with a reassign verdict, whose instructions and claims the new unit's leader is oriented with; every open reassignment is taken by exactly one new unit",
-    ),
 });
 
 export const UnitClose = z.strictObject({
@@ -465,53 +373,24 @@ export const SopApplication = z.object({
   angles: z.array(z.string()),
 });
 
-/**
- * What settles an inferred link (R4-5): a task, by an open task's id or by the ref the IC
- * wants this period's plan to give the task that settles it; a reproduce task the same
- * way; or deferred, with why, which is a decision recorded rather than a link left out.
- */
+/** What settles an inferred link: a task (id in the incident, or ref in this plan), a question this plan raises (1-based position in questionsForHuman), or a reproduce task. */
 export const Settlement = z.union([
-  z.object({
-    task: z
-      .string()
-      .min(1)
-      .describe(
-        "An open task's id, or the ref the plan is to give the task that settles the link",
-      ),
-  }),
-  z.object({
-    reproduce: z
-      .string()
-      .min(1)
-      .describe(
-        "A reproduce task, by an open task's id or the ref the plan is to give it",
-      ),
-  }),
-  z.object({
-    deferred: z
-      .string()
-      .min(1)
-      .describe(
-        "Why this link is not worked this period: a decision recorded, not an omission",
-      ),
-  }),
+  z.object({ task: z.string().min(1) }),
+  z.object({ question: z.number().int().positive() }),
+  z.object({ reproduce: z.string().min(1) }),
 ]);
 
 /**
- * The IC's picture of the incident (R4-5; the planner's until then), written on every
- * command turn and read by every seat: what changed, the current explanation, the observed
- * claims it rests on, the inferred links and what settles each, and the claims to keep in
- * view. The planner drafts the tactics that work it and the validator holds the plan to
- * its inferred links. A reassignment is written into the slice it concerns rather than
- * listed apart.
+ * The planner's own picture, written each cycle and read back the next: what changed, the
+ * current explanation, the observed claims it rests on, the inferred links and what settles
+ * each, and the claims to keep in view. The rationale says why this plan; this says where
+ * the incident stands.
  */
 export const Situation = z.object({
   changed: z
     .string()
     .min(1)
-    .describe(
-      "What changed since your last turn, one paragraph; on the first turn, what the briefing established",
-    ),
+    .describe("What changed since the last cycle, one paragraph"),
   hypothesis: z
     .string()
     .min(1)
@@ -523,13 +402,11 @@ export const Situation = z.object({
         line: z.string().min(1).describe("The claim in one line"),
       }),
     )
-    .describe(
-      "The observed claims the hypothesis rests on; a claim with basis inferred is refused here",
-    ),
+    .describe("The observed claims the hypothesis rests on"),
   inferred: z
     .array(z.object({ claimId: z.string().min(1), settledBy: Settlement }))
     .describe(
-      "Every link the hypothesis needs that no claim observed, each with what settles it: a task this period's plan must carry (by an open task's id or the ref the plan is to give it), or deferred with why",
+      "Every link the hypothesis needs that no claim observed, each with what this plan does to settle it",
     ),
   keep: z
     .array(z.string())
@@ -550,11 +427,8 @@ export const ActionPlan = z.strictObject({
     ),
   applySops: z.array(SopApplication),
   incidentStatus: z.enum(["continue", "blocked", "satisfied", "failed"]),
-  rationale: z
-    .string()
-    .describe(
-      "Why this plan, one paragraph: how it works the IC's situation, and the priority that chose between plans",
-    ),
+  situation: Situation,
+  rationale: z.string().describe("Why this plan, one paragraph"),
   discrepancy: z
     .string()
     .min(1)
@@ -596,7 +470,7 @@ const LeaderReportFields = z.object({
   pictureChanged: z
     .boolean()
     .describe(
-      "Whether what the unit found changes the picture the incident is working from, so the IC should act before anything new starts",
+      "Whether what the unit found changes the picture the incident is working from, so the IC should act before the next unit runs",
     ),
   why: z
     .string()
@@ -612,7 +486,7 @@ const LeaderReportFields = z.object({
     .array(ResourceRequest)
     .optional()
     .describe(
-      "What you lack and cannot get inside your unit: permission, missing means, or something only a human knows; never a retrievable fact, which you assign a task for. Any request puts your unit in waiting until the IC or Mauria answers, and the report counts as picture-changing",
+      "What you lack and cannot get inside your unit: permission, missing means, or something only a human knows; never a retrievable fact, which you assign a task for. Any request puts your unit in waiting until the IC or Mauria answers, and the report counts as picture-changing; under command none is raised, since the IC raises its lacks in its command turn",
     ),
 });
 
@@ -725,50 +599,9 @@ export const BriefingVerdict = z.strictObject({
 });
 
 /**
- * The IC's verdict on one unit's report (R4-2), named by the report's event id as the
- * change report heads it: `accepted` closes the unit, its objective met on the work shown;
- * `revise` keeps the unit and sends the instructions back to its leader (R4-3); `reassign`
- * closes the unit and hands its slice to a unit of a different shape with the instructions
- * (R4-4). Instructions are what a revise or reassign is for, so they are required there and
- * refused on an accepted, enforced after parse since every turn schema is one strict
- * object.
- */
-export const ReportVerdict = z
-  .strictObject({
-    reportId: z
-      .string()
-      .min(1)
-      .describe("The report's event id, as the change report heads it"),
-    unitId: z.string().min(1).describe("The unit that reported"),
-    verdict: z.enum(["accepted", "revise", "reassign"]),
-    instructions: z
-      .string()
-      .describe(
-        "For revise: what is missing, for the same leader to finish; for reassign: what the unit found and did not find, for the unit that takes its slice; empty for accepted",
-      ),
-    why: z.string().min(1).describe("Why this verdict, from the work shown"),
-  })
-  .superRefine((v, ctx) => {
-    if (v.verdict === "accepted" && v.instructions !== "")
-      ctx.addIssue({
-        code: "custom",
-        path: ["instructions"],
-        message: "an accepted report takes no instructions",
-      });
-    if (v.verdict !== "accepted" && v.instructions.trim() === "")
-      ctx.addIssue({
-        code: "custom",
-        path: ["instructions"],
-        message: `a ${v.verdict} verdict says what to do in its instructions`,
-      });
-  });
-
-/**
- * The IC's command turn, at the top of each cycle: a verdict on each report the change
- * report lists, the situation (R4-5), the period's objectives and priorities, units to
- * close, answers to what units asked for, what only Mauria can supply, and whether the
- * incident continues. The planner then drafts the tactics against the period and the
- * situation, as a suggestion for the IC. Every turn schema is
+ * The IC's command turn, at the top of each cycle: the period's objectives and priorities,
+ * units to close, answers to what units asked for, what only Mauria can supply, and whether
+ * the incident continues. The planner then drafts against the period. Every turn schema is
  * one strict object: the structured-output API refuses a top-level oneOf/anyOf and accepts
  * keys a loose object does not name, so fields that vary by variant are optional and a
  * refinement enforces them after parse (verified on Claude Code 2.1.272, R3-5).
@@ -789,46 +622,12 @@ export const CommandTurn = z.strictObject({
   priorities: z
     .array(z.string().min(1))
     .describe("The incident's priorities, restated or revised for this period"),
-  reportVerdicts: z
-    .array(ReportVerdict)
-    .describe(
-      "One verdict per unit that reported, naming the unit and the event id of its last report the change report lists (an earlier report of the same unit is marked as answered through the last and takes none): accepted, revise or reassign, with instructions for the last two and a why for each",
-    ),
-  situation: Situation.describe(
-    "Your situation, the picture every seat works from this period (R4-5): what changed, the hypothesis, the observed claims it rests on, every inferred link with the task that settles it or deferred with why, and the claims to keep in view; a reassignment updates the slice it concerns",
-  ),
-  closeUnits: z
-    .array(UnitClose)
-    .describe(
-      "Units to close that did not report this period; a reported unit is closed by accepting or reassigning its report, never here",
-    ),
-  dropReassignments: z
-    .array(
-      z.strictObject({
-        id: z
-          .string()
-          .min(1)
-          .describe(
-            "An open reassignment's id, as the incident file lists it under your situation in section 10",
-          ),
-        why: z.string().min(1),
-      }),
-    )
-    .optional()
-    .describe(
-      "Open reassignments to drop rather than have a plan take (R4-4): each closes on this turn and no unit takes it",
-    ),
+  closeUnits: z.array(UnitClose),
   answers: z
     .array(ResourceAnswer)
     .default([])
     .describe(
       "The resource requests listed in the change report, each answered; nothing else goes here",
-    ),
-  assignTasks: z
-    .array(TaskProposal)
-    .default([])
-    .describe(
-      "Deterministic tasks to run under command this cycle (grep, read, check_path, git_history: no provider, no model), each naming the root unit as its unit; they run in this cycle's pass, and one that dependsOn a unit's task runs in the pass after that task completes, since the root runs first in each pass; their results open your next change report. Session work is a unit's: a task to a session-backed capability is refused here and belongs in a period objective for the planner to place under a unit",
     ),
   questionsForHuman: z.array(z.string().min(1)),
   capabilityRequests: z.array(
@@ -896,7 +695,7 @@ export const IncidentBriefing = z
       .string()
       .min(1)
       .describe(
-        "What sort of incident this is, in a few words, read from the objective's verb: determine, identify, explain or find, or a question (where, what, why), is a diagnosis (a bug hunt, a question about a codebase); build, change, fix or add is a build (a feature, a migration)",
+        "What sort of incident this is, in a few words: a bug hunt, a build, a question about a codebase, a migration",
       ),
     dominantProblem: z
       .string()
@@ -910,18 +709,16 @@ export const IncidentBriefing = z
     initialObjectives: z
       .array(z.string().min(1))
       .min(1)
-      .describe(
-        "Objectives for the first operational period, as you see them, scoped to the objective's verb: a diagnosis (determine, identify, explain, find, or a question: where, what, why) takes no fix objective, since the answer is the cause; a build (build, change, fix, add) takes one",
-      ),
+      .describe("Objectives for the first operational period, as you see them"),
     initialOrganization: z
       .array(z.string().min(1))
       .describe(
-        "Units sketched, one line each: what the unit is for and what model its leader should be on; no fix unit on a diagnosis",
+        "Units sketched, one line each: what the unit is for and what model its leader should be on",
       ),
     questionsForHuman: z
       .array(z.string().min(1))
       .describe(
-        "What only Mauria knows or may decide, that no tool could find and the objective does not already settle; on a diagnosis, no question about what the intended behavior should be; each blocks the incident until she answers",
+        "What only Mauria knows or may decide; each blocks the incident until she answers",
       ),
     hazards: z
       .array(z.string().min(1))
@@ -1171,8 +968,6 @@ export type Provenance = z.infer<typeof Provenance>;
 export type Claim = z.infer<typeof Claim>;
 export type Event = z.infer<typeof Event>;
 export type Grant = z.infer<typeof Grant>;
-export type UnitConfig = z.infer<typeof UnitConfig>;
-export type BaseUnitForm = z.infer<typeof BaseUnitForm>;
 export type UnitProposal = z.infer<typeof UnitProposal>;
 export type UnitClose = z.infer<typeof UnitClose>;
 export type TaskProposal = z.infer<typeof TaskProposal>;
@@ -1186,7 +981,6 @@ export type LeaderTurn = z.infer<typeof LeaderTurn>;
 export type Period = z.infer<typeof Period>;
 export type ResourceAnswer = z.infer<typeof ResourceAnswer>;
 export type CommandTurn = z.infer<typeof CommandTurn>;
-export type ReportVerdict = z.infer<typeof ReportVerdict>;
 export type BriefingVerdict = z.infer<typeof BriefingVerdict>;
 export type IncidentBriefing = z.infer<typeof IncidentBriefing>;
 export type ReviewTurn = z.infer<typeof ReviewTurn>;
@@ -1195,19 +989,6 @@ export type Settlement = z.infer<typeof Settlement>;
 export type Needed = z.infer<typeof Needed>;
 export type ClaimProposal = z.infer<typeof ClaimProposal>;
 export type SessionResult = z.infer<typeof SessionResult>;
-
-/** A key-sorted JSON serialization, so two values compare equal whatever their key order. */
-export function stable(value: unknown): string {
-  return JSON.stringify(value, (_k, v: unknown) =>
-    v !== null && typeof v === "object" && !Array.isArray(v)
-      ? Object.fromEntries(
-          Object.entries(v as Record<string, unknown>).sort(([a], [b]) =>
-            a.localeCompare(b),
-          ),
-        )
-      : v,
-  );
-}
 
 /**
  * The JSON Schema a provider receives for a structured output. Claude Code's --json-schema

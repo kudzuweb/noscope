@@ -15,7 +15,6 @@ import {
   type ActionPlan,
   type CommandTurn,
   IncidentBriefing,
-  jsonSchemaFor,
   type ReviewTurn,
 } from "../src/models.js";
 import { SEAT_PLACES, sessionSystemPrompt } from "../src/providers/base.js";
@@ -73,6 +72,13 @@ const empty: ActionPlan = {
   capabilityRequests: [],
   applySops: [],
   incidentStatus: "continue",
+  situation: {
+    changed: "test",
+    hypothesis: "test",
+    proven: [],
+    inferred: [],
+    keep: [],
+  },
   rationale: "scripted",
 };
 
@@ -103,18 +109,9 @@ const findIt: ActionPlan = {
 
 const command = (over: Partial<CommandTurn> = {}): CommandTurn => ({
   periodObjectives: ["find the handler"],
-  reportVerdicts: [],
-  situation: {
-    changed: "test",
-    hypothesis: "test",
-    proven: [],
-    inferred: [],
-    keep: [],
-  },
   priorities: [],
   closeUnits: [],
   answers: [],
-  assignTasks: [],
   questionsForHuman: [],
   capabilityRequests: [],
   grantRequests: [],
@@ -773,7 +770,7 @@ describe("the initial IC and the transfer of command", () => {
       text.slice(text.indexOf("# Your command turn")),
     ).toMatchInlineSnapshot(`
       "# Your command turn for operational period 1
-      First, evaluate the briefing you took command with: for each initial objective and each unit sketched, say in briefingEvaluation whether you accept it, rewrite it or discard it, and why; you are not bound by any of it, and a rewritten or discarded item costs nothing. Then set the period's objectives and priorities, answer each unit's last report the change report lists with a verdict (accepted, revise or reassign), write the situation every seat works from this period (what changed, the hypothesis, the observed claims it rests on, every inferred link settled by a task or deferred with why, the claims to keep in view; a reassignment written into the slice it concerns), close what is done, answer the resource requests you can, raise for Mauria what only she can supply, and say whether the incident continues."
+      First, evaluate the briefing you took command with: for each initial objective and each unit sketched, say in briefingEvaluation whether you accept it, rewrite it or discard it, and why; you are not bound by any of it, and a rewritten or discarded item costs nothing. Then set the period's objectives and priorities, close what is done, answer the resource requests you can, raise for Mauria what only she can supply, and say whether the incident continues."
     `);
     expect(text.startsWith("# Change report\n")).toBe(true);
   });
@@ -827,66 +824,6 @@ describe("the initial IC and the transfer of command", () => {
       `${SEAT_PLACES.initial_ic}\n\n${INITIAL_IC_ROLE}`,
     );
   });
-
-  it("the role scopes objectives, units and questions to the objective's verb (R4-8)", async () => {
-    expect(INITIAL_IC_ROLE).toContain(
-      "A check is one look at whether a thing exists, answers, or is where the objective says it is",
-    );
-    expect(INITIAL_IC_ROLE).toContain(
-      "An objective that asks to determine, identify, explain or find, or asks a question (where, what, why), is a diagnosis, answered by the cause or the place it names: it takes no fix objective, no fix unit and no question about what the intended behavior should be, because the answer is the cause",
-    );
-    expect(INITIAL_IC_ROLE).toContain(
-      "An objective that asks to build, change, fix or add is a build and takes those",
-    );
-    expect(INITIAL_IC_ROLE).toContain(
-      "ask only what no tool could find and the objective does not already settle",
-    );
-    const schema = JSON.stringify(jsonSchemaFor(IncidentBriefing));
-    expect(schema).toContain(
-      "takes no fix objective, since the answer is the cause",
-    );
-    expect(schema).toContain("no fix unit on a diagnosis");
-    expect(schema).toContain(
-      "on a diagnosis, no question about what the intended behavior should be",
-    );
-    const { incident } = scriptedIncident(new Store(":memory:"));
-    const findings = await gatherFindings(incident, tmpdir(), [fakeProvider]);
-    expect(renderSizeUpPrompt(incident, findings)).toContain(
-      "scoped to the objective's verb, questionsForHuman (only what no tool could find and the objective does not settle)",
-    );
-  });
-
-  it.skipIf(process.env.NOSCOPE_LIVE !== "1")(
-    "live: a Haiku initial IC sizes up a diagnostic objective on this checkout and proposes no fix (R4-8)",
-    { timeout: 400_000 },
-    async () => {
-      const { incident } = scriptedIncident(new Store(":memory:"));
-      const sized = await sizeUp(
-        {
-          ...incident,
-          objective:
-            "Determine why the Incident Commander runs on the model the briefing names rather than --initial-model, and identify the code path that sets the root unit's leader at transfer of command",
-          constraints: ["read only; the checkout is not to be changed"],
-        },
-        {
-          cwd: resolve("."),
-          model: "claude-haiku-4-5",
-          provider: "claude-code",
-          providers: [fakeProvider],
-        },
-      );
-      const live = IncidentBriefing.parse(sized.output);
-      const fix = /\bfix(es|ed|ing)?\b|\bimplement|\bremediat|\bpatch\b/i;
-      for (const objective of live.initialObjectives)
-        expect(objective).not.toMatch(fix);
-      for (const unit of live.initialOrganization)
-        expect(unit).not.toMatch(fix);
-      for (const question of live.questionsForHuman)
-        expect(question).not.toMatch(
-          /intended|should (it|the|deletion|focus)/i,
-        );
-    },
-  );
 
   it.skipIf(process.env.NOSCOPE_LIVE !== "1")(
     "live: a Haiku initial IC sizes up the noscope checkout read-only and returns a kind",

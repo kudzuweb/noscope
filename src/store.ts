@@ -20,11 +20,9 @@ import {
   TaskStatus,
   Timestamp,
   Unit,
-  UnitConfig,
   UnitStatus,
   type Usage,
 } from "./models.js";
-import { RUNTIME } from "./runtime-version.js";
 
 /** `$NOSCOPE_DB` when set, otherwise `~/.noscope/noscope.sqlite` (DESIGN.md Step 2). */
 export function resolveDbPath(env: NodeJS.ProcessEnv): string {
@@ -41,11 +39,10 @@ export function now(): string {
  * Bumped whenever a table changes shape. A file at an earlier version is migrated in place,
  * one step at a time (1: claims gain `basis`; 2: tasks gain `evidence_from_json`; 3: units
  * gain a leader and `purpose` becomes `objective`; 4: tasks gain `strike_team_json`; 5:
- * incidents gain `period_json` and every root unit's session is dropped; 6: units gain a
- * type and a role; 7: events gain a `runtime` tag; 8: units gain `config` and the
- * `unit_configs` table arrives); a file at a later version is refused.
+ * incidents gain `period_json` and every root unit's session is dropped); a file at a
+ * later version is refused.
  */
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 6;
 
 /**
  * The leader a unit recorded before units had one is read as: the planner's provider and
@@ -54,14 +51,12 @@ const SCHEMA_VERSION = 9;
  */
 const LEGACY_LEADER = { provider: "claude-code", model: "claude-opus-5" };
 
-/** Every current-state table with the column a snapshot orders it by. */
 const STATE_TABLES = [
-  ["incidents", "id"],
-  ["units", "id"],
-  ["tasks", "id"],
-  ["claims", "id"],
-  ["grants", "id"],
-  ["unit_configs", "name"],
+  "incidents",
+  "units",
+  "tasks",
+  "claims",
+  "grants",
 ] as const;
 
 const SCHEMA = `
@@ -82,13 +77,10 @@ CREATE TABLE IF NOT EXISTS units (
   id TEXT PRIMARY KEY,
   incident_id TEXT NOT NULL REFERENCES incidents(id),
   parent_id TEXT REFERENCES units(id),
-  type TEXT NOT NULL DEFAULT 'base',
   objective TEXT NOT NULL,
   leader_json TEXT NOT NULL,
   equipment_json TEXT NOT NULL DEFAULT '[]',
   bash_allowlist_json TEXT NOT NULL DEFAULT '[]',
-  role TEXT,
-  config TEXT,
   session_id TEXT,
   status TEXT NOT NULL,
   created_at TEXT NOT NULL,
@@ -138,7 +130,6 @@ CREATE TABLE IF NOT EXISTS events (
   actor TEXT NOT NULL,
   payload_json TEXT NOT NULL,
   created_at TEXT NOT NULL,
-  runtime TEXT,
   CHECK ((scope = 'incident' AND incident_id IS NOT NULL) OR (scope = 'system' AND incident_id IS NULL))
 );
 CREATE UNIQUE INDEX IF NOT EXISTS events_sequence ON events (COALESCE(incident_id, ''), sequence);
@@ -152,14 +143,6 @@ CREATE TABLE IF NOT EXISTS grants (
   granted_by TEXT NOT NULL,
   per_task INTEGER NOT NULL,
   created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS unit_configs (
-  name TEXT PRIMARY KEY,
-  type TEXT NOT NULL,
-  form_json TEXT NOT NULL,
-  saved_from_incident_id TEXT NOT NULL,
-  saved_from_unit_id TEXT NOT NULL,
-  saved_at TEXT NOT NULL
 );
 `;
 
@@ -197,26 +180,6 @@ function withLeader(value: unknown): unknown {
 }
 
 /**
- * A unit recorded before units named a type (schema version 6, R4-10) is read the way the
- * migration reads it: the root, the unit with no parent, was the IC's, so it is `ic`, and
- * every other unit was a led unit, `base`; neither carried a role text of its own.
- */
-function withType(value: unknown): unknown {
-  const unit = withLeader(value);
-  if (unit === null || typeof unit !== "object" || "type" in unit) return unit;
-  const { parentId } = unit as { parentId?: unknown };
-  return { type: parentId === null ? "ic" : "base", role: null, ...unit };
-}
-
-/** A unit recorded before units named the saved config they came from (schema version 8, R4-11) was filled by hand. */
-function withConfig(value: unknown): unknown {
-  const unit = withType(value);
-  if (unit === null || typeof unit !== "object" || "config" in unit)
-    return unit;
-  return { config: null, ...unit };
-}
-
-/**
  * The state change an event records. Every write names one; replay applies exactly that
  * and nothing else, so the tables are always rebuildable from the events (acceptance 7).
  */
@@ -248,7 +211,7 @@ export const Mutation = z.discriminatedUnion("kind", [
   }),
   z.object({
     kind: z.literal("unit.create"),
-    unit: z.preprocess(withConfig, Unit),
+    unit: z.preprocess(withLeader, Unit),
   }),
   z.object({
     kind: z.literal("unit.session"),
@@ -295,8 +258,6 @@ export const Mutation = z.discriminatedUnion("kind", [
     status: ClaimStatus,
   }),
   z.object({ kind: z.literal("grant.create"), grant: Grant }),
-  /** A unit config saved under its name (`config.saved`, R4-11): a system event, since a config outlives its incident. */
-  z.object({ kind: z.literal("config.save"), config: UnitConfig }),
 ]);
 export type Mutation = z.infer<typeof Mutation>;
 
@@ -326,12 +287,6 @@ export class Store {
             name: string;
           }[]
         ).some((c) => c.name === column);
-      // Version 7 events carried no runtime tag (R4-12). The column is added before any
-      // step that writes an event (step 5), since every write stamps it.
-      const addRuntime = () => {
-        if (!hasColumn("events", "runtime"))
-          this.db.exec("ALTER TABLE events ADD COLUMN runtime TEXT");
-      };
       const steps: Record<number, () => void> = {
         // Version 1 claims had no basis. Verified claims came from deterministic
         // equipment, so they were observed; a session's claim with no recorded basis is
@@ -390,7 +345,6 @@ export class Store {
         5: () => {
           if (!hasColumn("incidents", "period_json"))
             this.db.exec("ALTER TABLE incidents ADD COLUMN period_json TEXT");
-          addRuntime();
           const roots = this.db
             .prepare(
               "SELECT id, incident_id, session_id FROM units WHERE parent_id IS NULL AND session_id IS NOT NULL",
@@ -409,26 +363,6 @@ export class Store {
               },
               { kind: "unit.session", unitId: root.id, sessionId: null },
             );
-        },
-        // Version 6 units named no type (R4-10): the root was the IC's unit and every other
-        // a led one, and no unit carried a role text of its own.
-        6: () => {
-          if (!hasColumn("units", "type"))
-            this.db.exec(
-              "ALTER TABLE units ADD COLUMN type TEXT NOT NULL DEFAULT 'base'",
-            );
-          if (!hasColumn("units", "role"))
-            this.db.exec("ALTER TABLE units ADD COLUMN role TEXT");
-          this.db.exec("UPDATE units SET type = 'ic' WHERE parent_id IS NULL");
-        },
-        // Version 7 events carried no runtime tag; they read null, since what wrote them
-        // is not recorded.
-        7: addRuntime,
-        // Version 8 units named no saved config (R4-11): every form was filled by hand. The
-        // `unit_configs` table is created with the schema below, empty.
-        8: () => {
-          if (!hasColumn("units", "config"))
-            this.db.exec("ALTER TABLE units ADD COLUMN config TEXT");
         },
       };
       const missing = [...Array(SCHEMA_VERSION - version).keys()]
@@ -500,27 +434,6 @@ export class Store {
       "SELECT * FROM events WHERE incident_id IS ? ORDER BY sequence",
       incidentId,
     ).map(rowToEvent);
-  }
-
-  /** Every unit in the file, across incidents, in creation order: what a new unit's config is compared with (R4-11). */
-  listAllUnits(): Unit[] {
-    return this.all("SELECT * FROM units ORDER BY created_at, id").map(
-      rowToUnit,
-    );
-  }
-
-  /** The saved unit configs, by name (R4-11). */
-  listUnitConfigs(): UnitConfig[] {
-    return this.all("SELECT * FROM unit_configs ORDER BY name").map(
-      rowToUnitConfig,
-    );
-  }
-
-  getUnitConfig(name: string): UnitConfig | undefined {
-    const r = this.db
-      .prepare("SELECT * FROM unit_configs WHERE name = ?")
-      .get(name) as Row | undefined;
-    return r === undefined ? undefined : rowToUnitConfig(r);
   }
 
   /** Grants that apply to an incident: its own plus every standing grant; `null` for standing only. */
@@ -781,17 +694,6 @@ export class Store {
     );
   }
 
-  /** A unit config saved under its name (`config.saved`, R4-11), a system event: the config outlives the incident it was taken from, and a replay restores it before any incident. */
-  saveUnitConfig(config: UnitConfig, actor: string): void {
-    this.write(
-      null,
-      "config.saved",
-      actor,
-      {},
-      { kind: "config.save", config },
-    );
-  }
-
   /** An event with no state change of its own, such as plan.proposed or task.usage. */
   record(
     incidentId: string | null,
@@ -835,8 +737,8 @@ export class Store {
   /** Every current-state table as plain rows, for comparing two stores. */
   snapshot(): Record<string, Row[]> {
     const out: Record<string, Row[]> = {};
-    for (const [table, key] of STATE_TABLES)
-      out[table] = this.all(`SELECT * FROM ${table} ORDER BY ${key}`);
+    for (const table of STATE_TABLES)
+      out[table] = this.all(`SELECT * FROM ${table} ORDER BY id`);
     return out;
   }
 
@@ -876,7 +778,6 @@ export class Store {
             payload:
               checked === undefined ? extra : { ...extra, mutation: checked },
             createdAt: now(),
-            runtime: RUNTIME,
           }),
         );
       })
@@ -886,7 +787,7 @@ export class Store {
   private insertEvent(e: Event): void {
     this.db
       .prepare(
-        "INSERT INTO events (id, scope, incident_id, sequence, type, actor, payload_json, created_at, runtime) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO events (id, scope, incident_id, sequence, type, actor, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .run(
         e.id,
@@ -897,7 +798,6 @@ export class Store {
         e.actor,
         j(e.payload),
         e.createdAt,
-        e.runtime,
       );
   }
 
@@ -991,19 +891,16 @@ export class Store {
         owned(u.incidentId, `unit ${u.id}`);
         this.db
           .prepare(
-            "INSERT INTO units (id, incident_id, parent_id, type, objective, leader_json, equipment_json, bash_allowlist_json, role, config, session_id, status, created_at, closed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO units (id, incident_id, parent_id, objective, leader_json, equipment_json, bash_allowlist_json, session_id, status, created_at, closed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           )
           .run(
             u.id,
             u.incidentId,
             u.parentId,
-            u.type,
             u.objective,
             j(u.leader),
             j(u.equipment),
             j(u.bashAllowlist),
-            u.role,
-            u.config,
             u.sessionId,
             u.status,
             u.createdAt,
@@ -1159,26 +1056,6 @@ export class Store {
           );
         return;
       }
-      case "config.save": {
-        const c = m.config;
-        if (incidentId !== null)
-          throw new Error(
-            `config ${c.name} is saved as a system event, not under incident ${incidentId}`,
-          );
-        this.db
-          .prepare(
-            "INSERT INTO unit_configs (name, type, form_json, saved_from_incident_id, saved_from_unit_id, saved_at) VALUES (?, ?, ?, ?, ?, ?)",
-          )
-          .run(
-            c.name,
-            c.type,
-            j(c.form),
-            c.savedFrom.incidentId,
-            c.savedFrom.unitId,
-            c.savedAt,
-          );
-        return;
-      }
       default: {
         const exhaustive: never = m;
         throw new Error(`unknown mutation ${JSON.stringify(exhaustive)}`);
@@ -1209,13 +1086,10 @@ function rowToUnit(r: Row): Unit {
     id: r.id,
     incidentId: r.incident_id,
     parentId: nullable(r.parent_id),
-    type: r.type,
     objective: r.objective,
     leader: p(r.leader_json),
     equipment: p(r.equipment_json),
     bashAllowlist: p(r.bash_allowlist_json),
-    role: nullable(r.role),
-    config: nullable(r.config),
     sessionId: nullable(r.session_id),
     status: r.status,
     createdAt: r.created_at,
@@ -1271,7 +1145,6 @@ function rowToEvent(r: Row): Event {
     actor: r.actor,
     payload: p(r.payload_json),
     createdAt: r.created_at,
-    runtime: nullable(r.runtime),
   });
 }
 function rowToGrant(r: Row): Grant {
@@ -1285,19 +1158,6 @@ function rowToGrant(r: Row): Grant {
     grantedBy: r.granted_by,
     perTask: Number(r.per_task) === 1,
     createdAt: r.created_at,
-  });
-}
-
-function rowToUnitConfig(r: Row): UnitConfig {
-  return UnitConfig.parse({
-    name: r.name,
-    type: r.type,
-    form: p(r.form_json),
-    savedFrom: {
-      incidentId: r.saved_from_incident_id,
-      unitId: r.saved_from_unit_id,
-    },
-    savedAt: r.saved_at,
   });
 }
 

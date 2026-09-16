@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import type { Claim, Incident, Task, Unit } from "../src/models.js";
-import { RUNTIME } from "../src/runtime-version.js";
 import { now, resolveDbPath, Store, sumUsage } from "../src/store.js";
 
 function scripted(store: Store): void {
@@ -22,13 +21,10 @@ function scripted(store: Store): void {
     id: "u-command",
     incidentId: "i1",
     parentId: null,
-    type: "ic",
     objective: "command",
     leader: { provider: "claude-code", model: "claude-haiku-4-5" },
     equipment: [],
     bashAllowlist: [],
-    role: null,
-    config: null,
     sessionId: null,
     status: "active",
     createdAt: at,
@@ -38,13 +34,10 @@ function scripted(store: Store): void {
     id: "u1",
     incidentId: "i1",
     parentId: "u-command",
-    type: "base",
     objective: "delete-handler investigation",
     leader: { provider: "claude-code", model: "claude-haiku-4-5" },
     equipment: [],
     bashAllowlist: [],
-    role: null,
-    config: null,
     sessionId: null,
     status: "active",
     createdAt: at,
@@ -183,13 +176,10 @@ describe("store", () => {
       id: "u-orphan",
       incidentId: "i1",
       parentId: "no-such-unit",
-      type: "base",
       objective: "x",
       leader: { provider: "claude-code", model: "claude-haiku-4-5" },
       equipment: [],
       bashAllowlist: [],
-      role: null,
-      config: null,
       sessionId: null,
       status: "active",
       createdAt: now(),
@@ -313,13 +303,10 @@ describe("store", () => {
           id: "u-stray",
           incidentId: "i1",
           parentId: null,
-          type: "ic",
           objective: "p",
           leader: { provider: "claude-code", model: "claude-haiku-4-5" },
           equipment: [],
           bashAllowlist: [],
-          role: null,
-          config: null,
           sessionId: null,
           status: "active",
           createdAt: at,
@@ -516,13 +503,10 @@ describe("store", () => {
             id: "u2",
             incidentId: "i1",
             parentId: "u-command",
-            type: "base",
             objective: "a",
             leader: { provider: "claude-code", model: "claude-haiku-4-5" },
             equipment: [],
             bashAllowlist: [],
-            role: null,
-            config: null,
             sessionId: null,
             status: "active",
             createdAt: now(),
@@ -535,13 +519,10 @@ describe("store", () => {
             id: "u3",
             incidentId: "i1",
             parentId: "missing",
-            type: "base",
             objective: "b",
             leader: { provider: "claude-code", model: "claude-haiku-4-5" },
             equipment: [],
             bashAllowlist: [],
-            role: null,
-            config: null,
             sessionId: null,
             status: "active",
             createdAt: now(),
@@ -570,14 +551,14 @@ describe("store", () => {
     s1.db.pragma("user_version = 1");
     s1.close();
     const first = new Store(path);
-    expect(first.db.pragma("user_version", { simple: true })).toBe(9);
+    expect(first.db.pragma("user_version", { simple: true })).toBe(6);
     first.close();
     // A crash after the column was added but before the version was written: reopening finishes the job.
     const half = new Store(path);
     half.db.pragma("user_version = 1");
     half.close();
     const s2 = new Store(path);
-    expect(s2.db.pragma("user_version", { simple: true })).toBe(9);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(6);
     expect(
       s2
         .listClaims("i1")
@@ -605,7 +586,7 @@ describe("store", () => {
     s1.db.pragma("user_version = 2");
     s1.close();
     const s2 = new Store(path);
-    expect(s2.db.pragma("user_version", { simple: true })).toBe(9);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(6);
     expect(s2.listTasks("i1").map((t) => t.evidenceFrom)).toEqual([
       { claims: [], tasks: [] },
     ]);
@@ -626,7 +607,7 @@ describe("store", () => {
     s1.db.pragma("user_version = 3");
     s1.close();
     const s2 = new Store(path);
-    expect(s2.db.pragma("user_version", { simple: true })).toBe(9);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(6);
     expect(s2.listUnits("i1").map((u) => [u.id, u.objective])).toEqual([
       ["u-command", "command"],
       ["u1", "delete-handler investigation"],
@@ -643,13 +624,10 @@ describe("store", () => {
         id: "u2",
         incidentId: "i1",
         parentId: "u-command",
-        type: "base",
         objective: "new",
         leader: { provider: "claude-code", model: "claude-haiku-4-5" },
         equipment: ["Read"],
         bashAllowlist: ["ls"],
-        role: null,
-        config: null,
         sessionId: null,
         status: "active",
         createdAt: now(),
@@ -671,7 +649,7 @@ describe("store", () => {
     s1.db.pragma("user_version = 4");
     s1.close();
     const s2 = new Store(path);
-    expect(s2.db.pragma("user_version", { simple: true })).toBe(9);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(6);
     expect(s2.listTasks("i1").map((t) => t.strikeTeam)).toEqual([[]]);
     const team = {
       kind: "pinger",
@@ -721,13 +699,10 @@ describe("store", () => {
     s1.setUnitSession("i1", "u-command", "old-ic-session", "dispatcher");
     s1.setUnitSession("i1", "u1", "leader-session", "dispatcher");
     s1.db.exec("ALTER TABLE incidents DROP COLUMN period_json");
-    // A version 5 file has no runtime column either; the step that writes the release
-    // adds it first (R4-12).
-    s1.db.exec("ALTER TABLE events DROP COLUMN runtime");
     s1.db.pragma("user_version = 5");
     s1.close();
     const s2 = new Store(path);
-    expect(s2.db.pragma("user_version", { simple: true })).toBe(9);
+    expect(s2.db.pragma("user_version", { simple: true })).toBe(6);
     expect(s2.getIncident("i1")?.period).toBeUndefined();
     expect(s2.listUnits("i1").map((u) => [u.id, u.sessionId])).toEqual([
       ["u-command", null],
@@ -738,7 +713,6 @@ describe("store", () => {
     const released = s2.listEvents("i1").at(-1);
     expect(released?.type).toBe("leader.released");
     expect(released?.actor).toBe("migration");
-    expect(released?.runtime).toBe(RUNTIME);
     expect(released?.payload).toMatchObject({
       unitId: "u-command",
       released: "old-ic-session",
@@ -792,229 +766,6 @@ describe("store", () => {
     ]);
     rebuilt.close();
     s4.close();
-  });
-
-  it("migrates a version 6 file: the root reads as the ic type and every other unit as base, and a pre-R4-10 log replays the same", async () => {
-    const { mkdtempSync } = await import("node:fs");
-    const { tmpdir } = await import("node:os");
-    const path = `${mkdtempSync(`${tmpdir()}/noscope-`)}/v6.sqlite`;
-    const s1 = new Store(path);
-    scripted(s1);
-    s1.db.exec("ALTER TABLE units DROP COLUMN type");
-    s1.db.exec("ALTER TABLE units DROP COLUMN role");
-    s1.db.pragma("user_version = 6");
-    s1.close();
-    const s2 = new Store(path);
-    expect(s2.db.pragma("user_version", { simple: true })).toBe(9);
-    expect(s2.listUnits("i1").map((u) => [u.id, u.type, u.role])).toEqual([
-      ["u-command", "ic", null],
-      ["u1", "base", null],
-    ]);
-    // A unit.create recorded before units named a type replays as the migration reads it:
-    // the root is ic, the rest base, and neither carries a role of its own.
-    const events = s2.listEvents("i1").map((e) => {
-      const m = e.payload.mutation as
-        | { kind: string; unit?: Record<string, unknown> }
-        | undefined;
-      if (m === undefined || m.kind !== "unit.create" || m.unit === undefined)
-        return e;
-      const { type: _t, role: _r, ...unit } = m.unit;
-      return { ...e, payload: { ...e.payload, mutation: { ...m, unit } } };
-    });
-    const b = new Store(":memory:");
-    b.replay([...s2.listEvents(null), ...events]);
-    expect(b.snapshot()).toEqual(s2.snapshot());
-    expect(b.listUnits("i1").map((u) => [u.id, u.type])).toEqual([
-      ["u-command", "ic"],
-      ["u1", "base"],
-    ]);
-    // A unit written now round-trips its type and role through the row and the log.
-    s2.createUnit(
-      {
-        id: "u-role",
-        incidentId: "i1",
-        parentId: "u-command",
-        type: "base",
-        objective: "a unit with its own role text",
-        leader: { provider: "claude-code", model: "claude-haiku-4-5" },
-        equipment: [],
-        bashAllowlist: [],
-        role: "Your role: a reader.",
-        config: null,
-        sessionId: null,
-        status: "active",
-        createdAt: now(),
-        closedAt: null,
-      },
-      "runtime",
-    );
-    const own = s2.listUnits("i1").find((u) => u.id === "u-role");
-    expect([own?.type, own?.role]).toEqual(["base", "Your role: a reader."]);
-    const c = new Store(":memory:");
-    c.replay([...s2.listEvents(null), ...s2.listEvents("i1")]);
-    expect(c.snapshot()).toEqual(s2.snapshot());
-    b.close();
-    c.close();
-    s2.close();
-  });
-
-  it("stamps every event it writes with the runtime tag, and a replay keeps each event's own", () => {
-    const store = new Store(":memory:");
-    scripted(store);
-    store.record(null, "grant.given", "cli", { note: "a system event" });
-    const events = [...store.listEvents("i1"), ...store.listEvents(null)];
-    expect(events.length).toBeGreaterThan(5);
-    expect(RUNTIME).not.toBe("");
-    for (const e of events) expect(e.runtime).toBe(RUNTIME);
-    // A replay re-inserts each event as it was, so an event from another build keeps that
-    // build's tag: what reproduction (DESIGN.md Step 2) checks out.
-    const tagged = events.map((e, i) =>
-      i === 0 ? { ...e, runtime: "0123abcd" } : e,
-    );
-    const b = new Store(":memory:");
-    b.replay(tagged);
-    expect(b.snapshot()).toEqual(store.snapshot());
-    expect(
-      [...b.listEvents("i1"), ...b.listEvents(null)].map((e) => e.runtime),
-    ).toEqual(tagged.map((e) => e.runtime));
-    b.close();
-    store.close();
-  });
-
-  it("migrates a version 7 file: the events written before the tag read null, and those written after carry it", async () => {
-    const { mkdtempSync } = await import("node:fs");
-    const { tmpdir } = await import("node:os");
-    const path = `${mkdtempSync(`${tmpdir()}/noscope-`)}/v7.sqlite`;
-    const s1 = new Store(path);
-    scripted(s1);
-    const before = s1.listEvents("i1").length;
-    s1.db.exec("ALTER TABLE events DROP COLUMN runtime");
-    s1.db.pragma("user_version = 7");
-    s1.close();
-    const s2 = new Store(path);
-    expect(s2.db.pragma("user_version", { simple: true })).toBe(9);
-    expect(s2.listEvents("i1").map((e) => e.runtime)).toEqual(
-      Array(before).fill(null),
-    );
-    s2.record("i1", "plan.proposed", "planner", { rationale: "after" });
-    const after = s2.listEvents("i1");
-    expect(after.length).toBe(before + 1);
-    expect(after.at(-1)?.runtime).toBe(RUNTIME);
-    // The untagged events replay untagged: a rebuilt store says the same about them.
-    const b = new Store(":memory:");
-    b.replay([...s2.listEvents(null), ...after]);
-    expect(b.listEvents("i1").map((e) => e.runtime)).toEqual([
-      ...Array(before).fill(null),
-      RUNTIME,
-    ]);
-    b.close();
-    s2.close();
-  });
-
-  it("migrates a version 8 file: every unit reads as filled by hand, a pre-R4-11 log replays the same, and a saved config round-trips through the row and the log as a system event", async () => {
-    const { mkdtempSync } = await import("node:fs");
-    const { tmpdir } = await import("node:os");
-    const path = `${mkdtempSync(`${tmpdir()}/noscope-`)}/v8.sqlite`;
-    const s1 = new Store(path);
-    scripted(s1);
-    s1.db.exec("ALTER TABLE units DROP COLUMN config");
-    s1.db.exec("DROP TABLE unit_configs");
-    s1.db.pragma("user_version = 8");
-    s1.close();
-    const s2 = new Store(path);
-    expect(s2.db.pragma("user_version", { simple: true })).toBe(9);
-    expect(s2.listUnits("i1").map((u) => [u.id, u.config])).toEqual([
-      ["u-command", null],
-      ["u1", null],
-    ]);
-    expect(s2.listUnitConfigs()).toEqual([]);
-    // A unit.create recorded before units named a config replays as filled by hand.
-    const events = s2.listEvents("i1").map((e) => {
-      const m = e.payload.mutation as
-        | { kind: string; unit?: Record<string, unknown> }
-        | undefined;
-      if (m === undefined || m.kind !== "unit.create" || m.unit === undefined)
-        return e;
-      const { config: _c, ...unit } = m.unit;
-      return { ...e, payload: { ...e.payload, mutation: { ...m, unit } } };
-    });
-    const b = new Store(":memory:");
-    b.replay([...s2.listEvents(null), ...events]);
-    expect(b.snapshot()).toEqual(s2.snapshot());
-    // A config saved now is a system event with the config.save mutation, read back by
-    // name and restored by a replay before any incident's events.
-    s2.saveUnitConfig(
-      {
-        name: "reader",
-        type: "base",
-        form: {
-          leader: { provider: "claude-code", model: "claude-haiku-4-5" },
-          equipment: ["Read"],
-          bashAllowlist: ["ls"],
-          role: "Your role: a reader.",
-        },
-        savedFrom: { incidentId: "i1", unitId: "u1" },
-        savedAt: now(),
-      },
-      "cli",
-    );
-    const saved = s2.listEvents(null).find((e) => e.type === "config.saved");
-    expect(saved?.scope).toBe("system");
-    expect(saved?.payload.mutation).toMatchObject({
-      kind: "config.save",
-      config: { name: "reader", type: "base" },
-    });
-    expect(s2.getUnitConfig("reader")?.form).toEqual({
-      leader: { provider: "claude-code", model: "claude-haiku-4-5" },
-      equipment: ["Read"],
-      bashAllowlist: ["ls"],
-      role: "Your role: a reader.",
-    });
-    expect(() =>
-      s2.saveUnitConfig(
-        {
-          name: "reader",
-          type: "base",
-          form: {},
-          savedFrom: { incidentId: "i1", unitId: "u1" },
-          savedAt: now(),
-        },
-        "cli",
-      ),
-    ).toThrow(/UNIQUE/);
-    // A unit deployed from it carries the name through the row and the log.
-    s2.createUnit(
-      {
-        id: "u-from-reader",
-        incidentId: "i1",
-        parentId: "u-command",
-        type: "base",
-        objective: "deployed from the saved config",
-        leader: { provider: "claude-code", model: "claude-haiku-4-5" },
-        equipment: ["Read"],
-        bashAllowlist: ["ls"],
-        role: "Your role: a reader.",
-        config: "reader",
-        sessionId: null,
-        status: "active",
-        createdAt: now(),
-        closedAt: null,
-      },
-      "runtime",
-    );
-    expect(
-      s2.listUnits("i1").find((u) => u.id === "u-from-reader")?.config,
-    ).toBe("reader");
-    const c = new Store(":memory:");
-    c.replay([...s2.listEvents("i1"), ...s2.listEvents(null)]);
-    expect(c.snapshot()).toEqual(s2.snapshot());
-    expect(c.getUnitConfig("reader")?.savedFrom).toEqual({
-      incidentId: "i1",
-      unitId: "u1",
-    });
-    b.close();
-    c.close();
-    s2.close();
   });
 
   it("a unit waits and resumes through the unit.status mutation, and a waiting unit can still close", () => {

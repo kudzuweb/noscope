@@ -1,60 +1,41 @@
 import { type Capability, getCapability } from "./capabilities/index.js";
 import {
-  configReasons,
-  type OutfittedPlan,
-  type OutfittedUnit,
-  outfit,
-} from "./configs.js";
-import {
   BUILTIN_TOOLS,
   getExternalEquipment,
   isBuiltinTool,
   READ_ONLY_SESSION_COMMANDS,
 } from "./equipment/index.js";
 import {
-  icSituation,
+  holdsCapability,
   LEADER_ACTOR,
-  latestReports,
-  openReassignments,
+  LEADER_RULES,
   openRequests,
-  type Reassignment,
-  reportsAwaitingVerdict,
   requestTargetOf,
+  unitShare,
+  unitsOwingReport,
 } from "./leader.js";
-import {
-  type ActionPlan,
-  type Claim,
-  type CommandTurn,
-  type Event,
-  type Incident,
-  type Situation,
-  type StrikeTeam,
-  stable,
-  type Task,
-  type TaskProposal,
-  type Unit,
-  type UnitClose,
-  type UnitConfig,
-  type Usage,
+import type {
+  ActionPlan,
+  Claim,
+  CommandTurn,
+  Event,
+  Incident,
+  StrikeTeam,
+  Task,
+  TaskProposal,
+  Unit,
+  UnitProposal,
+  Usage,
 } from "./models.js";
-import { PLANNER_RULES, PLANNER_WARNINGS } from "./planner.js";
+import { PLANNER_RULES } from "./planner.js";
 import type { Provider } from "./providers/index.js";
 import { type Store, sumUsage } from "./store.js";
 import { STRIKE_MEMBER_MIN_TOKENS } from "./strike-team.js";
-import {
-  commandUnitOf,
-  getUnitType,
-  IC_TYPE,
-  listUnitTypes,
-  protocolOf,
-  revisedUnits,
-  unitsOwingReport,
-} from "./units/index.js";
 
 /** A rule's name is the text before the colon of the line the planner reads, so the two lists cannot drift. */
 type BeforeColon<S> = S extends `${infer Name}: ${string}` ? Name : never;
 export type RuleName = BeforeColon<(typeof PLANNER_RULES)[number]>;
-type WarningName = BeforeColon<(typeof PLANNER_WARNINGS)[number]>;
+export type LeaderRuleName = BeforeColon<(typeof LEADER_RULES)[number]>;
 
 export const SPAN_OF_CONTROL = 7;
 
@@ -68,35 +49,23 @@ export type ValidationContext = {
   usage: Usage;
   /** Units whose leader has a session and has not reported since one of the unit's tasks ended; such a unit cannot close yet. */
   owing: ReadonlySet<string>;
-  /** Units with a revise verdict not yet delivered to their leader (R4-3); a plan cannot close one, while the IC's own close is its decision (`validateCommand` blanks this). */
-  revised: ReadonlySet<string>;
-  /** The reassignments open (R4-4): recorded, not dropped, taken by no unit; a plan gives each to a new unit that names it in `takes`. */
-  reassignments: readonly Reassignment[];
-  /** The IC's situation (R4-5), from its last accepted command turn; a plan settles every inferred link in it. Null before the IC's first turn. */
-  situation: Situation | null;
   /** The incident's log, from which a unit's share of the budget is computed. */
   events: readonly Event[];
-  /** The saved unit configs (R4-11), which a new unit may name in `config`. */
-  configs: readonly UnitConfig[];
 };
 
 export type Rejection<R = RuleName> = { rule: R; reason: string };
 
-/** What the validator noticed and let through (R4-6): recorded as `plan.warned`, printed by `step`, read by the planner in section 9. */
-type Warning = { rule: WarningName; reason: string };
-
-/** A passing plan comes back outfitted (R4-11): every config a new unit named is filled in, and that is the plan to apply. */
 export type Verdict<R = RuleName> =
-  | { ok: true; plan: OutfittedPlan; warnings: Warning[] }
+  | { ok: true; plan: ActionPlan }
   | { ok: false; rejections: Rejection<R>[] };
 
-type Rule = (plan: OutfittedPlan, ctx: ValidationContext) => string[];
+type Rule = (plan: ActionPlan, ctx: ValidationContext) => string[];
 
 const OPEN_TASK = new Set(["pending", "ready", "running"]);
 const isOpen = (t: Task) => OPEN_TASK.has(t.status);
 
 const label = (t: TaskProposal) => `task "${t.objective}"`;
-const unitLabel = (u: OutfittedUnit) => `new unit ${u.ref}`;
+const unitLabel = (u: UnitProposal) => `new unit ${u.ref}`;
 
 /** Whether a provider by name serves a model: the reason it does not, or null. */
 function modelUnknown(
@@ -178,7 +147,7 @@ export function strikeTeamRejections(
 /** A plan's new tasks' strike teams under one rule. */
 function plannedStrikeTeams(
   rule: (typeof STRIKE_TEAM_RULES)[number],
-  plan: OutfittedPlan,
+  plan: ActionPlan,
   ctx: ValidationContext,
 ): string[] {
   return plan.createTasks.flatMap((t) =>
@@ -187,13 +156,26 @@ function plannedStrikeTeams(
 }
 
 /** The refs of tasks created in this plan, which other new tasks may name in dependsOn. */
-const taskRefs = (plan: OutfittedPlan): Set<string> =>
+const taskRefs = (plan: ActionPlan): Set<string> =>
   new Set(
     plan.createTasks.flatMap((t) => (t.ref === undefined ? [] : [t.ref])),
   );
 
+/** A key-sorted JSON serialization, so two values compare equal whatever their key order. */
+export function stable(value: unknown): string {
+  return JSON.stringify(value, (_k, v: unknown) =>
+    v !== null && typeof v === "object" && !Array.isArray(v)
+      ? Object.fromEntries(
+          Object.entries(v as Record<string, unknown>).sort(([a], [b]) =>
+            a.localeCompare(b),
+          ),
+        )
+      : v,
+  );
+}
+
 /** Ids a plan may refer to as a unit: every active unit, plus the refs of units created in this plan. */
-function activeUnits(plan: OutfittedPlan, ctx: ValidationContext): Set<string> {
+function activeUnits(plan: ActionPlan, ctx: ValidationContext): Set<string> {
   return new Set([
     ...ctx.units.filter((u) => u.status === "active").map((u) => u.id),
     ...plan.createUnits.map((u) => u.ref),
@@ -202,7 +184,7 @@ function activeUnits(plan: OutfittedPlan, ctx: ValidationContext): Set<string> {
 
 /** A check over each new task whose capability is registered; an unregistered one is Capabilities exist's to reject. */
 function perRegisteredTask(
-  plan: OutfittedPlan,
+  plan: ActionPlan,
   check: (task: TaskProposal, capability: Capability) => string[],
 ): string[] {
   return plan.createTasks.flatMap((t) => {
@@ -247,26 +229,6 @@ const CHECKS: Record<RuleName, Rule> = {
         .map((c) => `no unit ${c.unitId} to close`),
     ];
   },
-
-  "Type exists": (plan) => {
-    const plannable = listUnitTypes()
-      .filter((t) => t.plannable)
-      .map((t) => t.name);
-    return plan.createUnits.flatMap((u) => {
-      const type = getUnitType(u.type);
-      if (type === undefined)
-        return [`${unitLabel(u)} names no registered unit type ${u.type}`];
-      return type.plannable
-        ? []
-        : [
-            `${unitLabel(u)} names type ${u.type}, which a plan may not create; a plan may create ${plannable.join(", ")}`,
-          ];
-    });
-  },
-
-  // Checked before the other rules run, on the plan as proposed: a unit whose config
-  // cannot outfit it has no form for the rules below to read (`validatePlan`).
-  "Config exists": (plan, ctx) => configReasons(plan, ctx.configs),
 
   "No cycles": (plan, ctx) => {
     const reasons: string[] = [];
@@ -507,14 +469,20 @@ const CHECKS: Record<RuleName, Rule> = {
     const openTasks = new Set(ctx.tasks.filter(isOpen).map((t) => t.id));
     const cancelling = new Set(plan.cancelTasks);
     const reasons: string[] = [];
-    for (const link of ctx.situation?.inferred ?? []) {
+    for (const link of plan.situation.inferred) {
       const by = link.settledBy;
-      if ("deferred" in by) continue;
+      if ("question" in by) {
+        if (by.question > plan.questionsForHuman.length)
+          reasons.push(
+            `inferred claim ${link.claimId} is settled by question ${by.question}, but this plan raises ${plan.questionsForHuman.length}`,
+          );
+        continue;
+      }
       const task = "task" in by ? by.task : by.reproduce;
       if (refs.has(task) || (openTasks.has(task) && !cancelling.has(task)))
         continue;
       reasons.push(
-        `the IC's situation has inferred claim ${link.claimId} settled by ${"task" in by ? "task" : "reproduce task"} ${task}, which is neither a ref in this plan nor an open task`,
+        `inferred claim ${link.claimId} is settled by ${"task" in by ? "task" : "reproduce task"} ${task}, which is neither a ref in this plan nor an open task`,
       );
     }
     return reasons;
@@ -524,6 +492,23 @@ const CHECKS: Record<RuleName, Rule> = {
     const byId = new Map(ctx.tasks.map((t) => [t.id, t]));
     const refs = taskRefs(plan);
     const allClaims = new Set(ctx.claims.map((c) => c.id));
+    const observed = new Set(
+      ctx.claims.filter((c) => c.basis === "observed").map((c) => c.id),
+    );
+    const named = [
+      ...new Set([
+        ...plan.situation.proven.map((p) => p.claimId),
+        ...plan.situation.inferred.map((i) => i.claimId),
+        ...plan.situation.keep,
+      ]),
+    ];
+    const notProven = plan.situation.proven
+      .map((p) => p.claimId)
+      .filter((id) => allClaims.has(id) && !observed.has(id))
+      .map(
+        (id) =>
+          `the situation lists claim ${id} as proven, but its basis is inferred, not observed`,
+      );
     const referenced = plan.createTasks.flatMap((t) => [
       ...t.evidenceFrom.claims
         .filter((id) => !allClaims.has(id))
@@ -570,6 +555,10 @@ const CHECKS: Record<RuleName, Rule> = {
       ...repeated(plan.cancelTasks).map(
         (id) => `task ${id} is cancelled twice`,
       ),
+      ...named
+        .filter((id) => !allClaims.has(id))
+        .map((id) => `the situation names no claim ${id}`),
+      ...notProven,
       ...referenced,
     ];
   },
@@ -614,8 +603,8 @@ const CHECKS: Record<RuleName, Rule> = {
       if (unit === undefined) continue;
       if (unit.status === "closed")
         reasons.push(`unit ${c.unitId} is already closed`);
-      if (unit.type === IC_TYPE)
-        reasons.push(`unit ${c.unitId} is command and is never closed`);
+      if (unit.parentId === null)
+        reasons.push(`unit ${c.unitId} is the root and is never closed`);
       const running = ctx.tasks.filter(
         (t) =>
           t.unitId === c.unitId &&
@@ -629,10 +618,6 @@ const CHECKS: Record<RuleName, Rule> = {
       if (ctx.owing.has(c.unitId))
         reasons.push(
           `unit ${c.unitId}'s leader (session ${unit.sessionId}) has not reported since its last task ended`,
-        );
-      if (ctx.revised.has(c.unitId))
-        reasons.push(
-          `unit ${c.unitId} has a revision not yet delivered; its leader answers it first`,
         );
       const tasks = plan.createTasks.filter((t) => t.unit === c.unitId).length;
       const units = plan.createUnits.filter(
@@ -682,31 +667,6 @@ const CHECKS: Record<RuleName, Rule> = {
       reasons.push("satisfied with no observed claim");
     return reasons;
   },
-
-  "Reassignments taken": (plan, ctx) => {
-    // A failing incident owes no taker; a satisfied one still does, since the IC said
-    // the slice needed a different unit.
-    if (plan.incidentStatus === "failed") return [];
-    const open = new Map(ctx.reassignments.map((r) => [r.id, r]));
-    const takes = plan.createUnits.flatMap((u) =>
-      u.takes === undefined ? [] : [u.takes],
-    );
-    return [
-      ...plan.createUnits
-        .filter((u) => u.takes !== undefined && !open.has(u.takes))
-        .map(
-          (u) =>
-            `${unitLabel(u)} takes ${u.takes}, which is no open reassignment`,
-        ),
-      ...repeated(takes).map((id) => `reassignment ${id} is taken twice`),
-      ...[...open.values()]
-        .filter((r) => !takes.includes(r.id))
-        .map(
-          (r) =>
-            `reassignment ${r.id}, the slice of closed unit ${r.unitId}, is not taken: no new unit names it in takes`,
-        ),
-    ];
-  },
 };
 
 /** Every rule the design names, in the order the planner reads them; the checks are keyed by the planner's own rule names. */
@@ -715,39 +675,6 @@ export const RULES: readonly { name: RuleName; check: Rule }[] =
     const name = line.slice(0, line.indexOf(":")) as RuleName;
     return { name, check: CHECKS[name] };
   });
-
-/**
- * What a plan is warned on and applied with anyway (R4-6): session work under the root,
- * which runs in a session of its own with no leader turn after it, against the rule that
- * the IC's digging is assigned to a unit. The planner is told, not refused, since the
- * work still runs and a rejection cost run 003 its unit.
- */
-const WARNING_CHECKS: Record<WarningName, Rule> = {
-  "Session work under a unit": (plan, ctx) => {
-    const root = commandUnitOf(ctx.units);
-    if (root === undefined) return [];
-    return perRegisteredTask(plan, (t, capability) =>
-      capability.kind === "session" && t.unit === root.id
-        ? [
-            `${label(t)} is session work (${t.capability}) under ${root.id}, the root; it will run in a session of its own with no leader to judge it, so it belongs under a unit`,
-          ]
-        : [],
-    );
-  },
-};
-
-const WARNINGS: readonly { name: WarningName; check: Rule }[] =
-  PLANNER_WARNINGS.map((line) => {
-    const name = line.slice(0, line.indexOf(":")) as WarningName;
-    return { name, check: WARNING_CHECKS[name] };
-  });
-
-/** The warnings a plan draws, none when it is rejected, since only an applied plan's are recorded. */
-function warningsOf(plan: OutfittedPlan, ctx: ValidationContext): Warning[] {
-  return WARNINGS.flatMap(({ name, check }) =>
-    check(plan, ctx).map((reason) => ({ rule: name, reason })),
-  );
-}
 
 /**
  * The plan rules that read tasks, applied to a leader's assignments as to a plan's; the
@@ -766,23 +693,66 @@ const TASK_RULES: readonly RuleName[] = [
   "Model known",
 ];
 
-/**
- * A unit's type's rules on its leader's assignments (R4-10: Own unit for every type;
- * Capability held and Budget within share under the base protocol), each rejection keyed
- * by the rule's name as the role text lists it.
- */
-function typeRuleRejections(
+type LeaderRule = (
   tasks: readonly TaskProposal[],
   unit: Unit,
   ctx: ValidationContext,
-): Rejection<string>[] {
-  return protocolOf(unit).rules.flatMap((rule) =>
-    rule.check(tasks, unit, ctx).map((reason) => ({ rule: rule.name, reason })),
-  );
-}
+) => string[];
+
+const LEADER_CHECKS: Record<LeaderRuleName, LeaderRule> = {
+  "Own unit": (tasks, unit) =>
+    tasks
+      .filter((t) => t.unit !== unit.id)
+      .map(
+        (t) =>
+          `${label(t)} is under ${t.unit}, not the leader's own unit ${unit.id}`,
+      ),
+
+  "Capability held": (tasks, unit) =>
+    tasks.flatMap((t) => {
+      const capability = getCapability(t.capability);
+      if (capability === undefined) return [];
+      return holdsCapability(capability, unit, t.inputs)
+        ? []
+        : [
+            `${label(t)} needs ${t.capability}, whose equipment or Bash allowlist unit ${unit.id} does not hold`,
+          ];
+    }),
+
+  "Budget within share": (tasks, unit, ctx) => {
+    const { share, charged } = unitShare(unit, ctx.tasks, ctx.events);
+    const reasons: string[] = [];
+    for (const dimension of ["tokens", "seconds"] as const) {
+      const asked = tasks.reduce((n, t) => n + (t.budget[dimension] ?? 0), 0);
+      if (asked === 0) continue;
+      const allotted = share[dimension];
+      if (allotted === undefined) {
+        reasons.push(
+          `the assignments ask ${asked} ${dimension}, but no plan task under unit ${unit.id} bounds ${dimension}, so its share is zero`,
+        );
+        continue;
+      }
+      const left = allotted - charged[dimension];
+      if (asked > left)
+        reasons.push(
+          `the assignments ask ${asked} ${dimension} of the ${Math.max(0, left)} left in unit ${unit.id}'s share (${allotted} allotted by the plans, ${charged[dimension]} spent or bound)`,
+        );
+    }
+    return reasons;
+  },
+};
+
+/** The leader's own rules, in the order its role text lists them. */
+export const LEADER_RULE_CHECKS: readonly {
+  name: LeaderRuleName;
+  check: LeaderRule;
+}[] = LEADER_RULES.map((line) => {
+  const name = line.slice(0, line.indexOf(":")) as LeaderRuleName;
+  return { name, check: LEADER_CHECKS[name] };
+});
 
 /** A leader's assignments as the task rules see them: a plan that creates those tasks and nothing else. */
-function asPlan(tasks: readonly TaskProposal[]): OutfittedPlan {
+function asPlan(tasks: readonly TaskProposal[]): ActionPlan {
   return {
     createUnits: [],
     closeUnits: [],
@@ -793,32 +763,40 @@ function asPlan(tasks: readonly TaskProposal[]): OutfittedPlan {
     capabilityRequests: [],
     applySops: [],
     incidentStatus: "continue",
+    situation: {
+      changed: "(a leader's assignment)",
+      hypothesis: "(a leader's assignment)",
+      proven: [],
+      inferred: [],
+      keep: [],
+    },
     rationale: "",
   };
 }
 
 /**
- * A leader's assignments pass every task rule of a plan and its unit's type's rules, or are
+ * A leader's assignments pass every task rule of a plan and the leader's own rules, or are
  * refused whole (DESIGN.md Step 5): under its own unit, to capabilities the unit holds,
  * inside the unit's share, and, through the plan rules, span of control under that unit,
- * known models, read-only capabilities and the incident's remaining budget. A type's rule
- * names are the registered rules', so a rejection's rule is a string here.
+ * known models, read-only capabilities and the incident's remaining budget.
  */
 export function validateLeaderTasks(
   tasks: readonly TaskProposal[],
   unit: Unit,
   ctx: ValidationContext,
-): Verdict<string> {
+): Verdict<RuleName | LeaderRuleName> {
   const plan = asPlan(tasks);
-  const rejections: Rejection<string>[] = [
+  const rejections: Rejection<RuleName | LeaderRuleName>[] = [
     ...RULES.filter((r) => TASK_RULES.includes(r.name)).flatMap(
       ({ name, check }) =>
         check(plan, ctx).map((reason) => ({ rule: name, reason })),
     ),
-    ...typeRuleRejections(tasks, unit, ctx),
+    ...LEADER_RULE_CHECKS.flatMap(({ name, check }) =>
+      check(tasks, unit, ctx).map((reason) => ({ rule: name, reason })),
+    ),
   ];
   return rejections.length === 0
-    ? { ok: true, plan, warnings: [] }
+    ? { ok: true, plan }
     : { ok: false, rejections };
 }
 
@@ -833,7 +811,7 @@ export function validateLeaderTasksAndRecord(
   unit: Unit,
   tasks: readonly TaskProposal[],
   providers: readonly Provider[],
-): Verdict<string> {
+): Verdict<RuleName | LeaderRuleName> {
   const verdict = validateLeaderTasks(
     tasks,
     unit,
@@ -851,28 +829,16 @@ export function validateLeaderTasksAndRecord(
   return verdict;
 }
 
-/**
- * The whole plan passes every rule or is rejected whole, with every failing rule and its
- * reason; a passing plan carries its warnings and comes back outfitted (R4-11). Config
- * exists runs first, on the plan as proposed: a new unit whose config is not saved, or is
- * of another type, has no form for the other rules to read, so such a plan is rejected on
- * that rule alone and the rest run once the planner names a saved config.
- */
+/** The whole plan passes every rule or is rejected whole, with every failing rule and its reason. */
 export function validatePlan(
   plan: ActionPlan,
   ctx: ValidationContext,
 ): Verdict {
-  const unresolved = configReasons(plan, ctx.configs).map((reason) => ({
-    rule: "Config exists" as const,
-    reason,
-  }));
-  if (unresolved.length > 0) return { ok: false, rejections: unresolved };
-  const whole = outfit(plan, ctx.configs);
   const rejections = RULES.flatMap(({ name, check }) =>
-    check(whole, ctx).map((reason) => ({ rule: name, reason })),
+    check(plan, ctx).map((reason) => ({ rule: name, reason })),
   );
   return rejections.length === 0
-    ? { ok: true, plan: whole, warnings: warningsOf(whole, ctx) }
+    ? { ok: true, plan }
     : { ok: false, rejections };
 }
 
@@ -892,179 +858,31 @@ export function validationContext(
     providers,
     usage: sumUsage(events),
     owing: unitsOwingReport(units, tasks, events),
-    revised: new Set(revisedUnits(units, events).keys()),
-    reassignments: openReassignments(events),
-    situation: icSituation(events),
     events,
-    configs: store.listUnitConfigs(),
   };
 }
 
-/** The rules a command turn is held to: it closes units, assigns tasks under command and sets a status, and nothing else the other rules check. */
+/** The rules a command turn is held to: it closes units and sets a status, and nothing else the other rules check. */
 const COMMAND_RULES: readonly RuleName[] = [
   "Units exist",
   "Closing is clean",
   "Status is earned",
 ];
 
-/** The IC's own rules: an answer names a request a waiting unit raised; every report in the change report has one verdict; an assignment under command is deterministic; a drop names an open reassignment (R4-4); the situation names claims the incident has and calls proven only what was observed (R4-5). */
-type CommandRuleName =
-  | "Answers match"
-  | "Reports answered"
-  | "Deterministic only"
-  | "Drops match"
-  | "Situation grounded";
-
-/**
- * The IC's situation rests on the incident's claims (R4-5, the checks the plan's
- * situation passed under Dependencies resolve until then): every claim id in `proven`,
- * `inferred` and `keep` names a claim in the incident, and every `proven` claim has basis
- * `observed`, whichever task observed it. What settles each inferred link is the plan's
- * to answer (Inferred links are worked), not the turn's.
- */
-function situationGrounded(
-  situation: Situation,
-  claims: readonly Claim[],
-): string[] {
-  const allClaims = new Set(claims.map((c) => c.id));
-  const observed = new Set(
-    claims.filter((c) => c.basis === "observed").map((c) => c.id),
-  );
-  const named = [
-    ...new Set([
-      ...situation.proven.map((p) => p.claimId),
-      ...situation.inferred.map((i) => i.claimId),
-      ...situation.keep,
-    ]),
-  ];
-  return [
-    ...named
-      .filter((id) => !allClaims.has(id))
-      .map((id) => `the situation names no claim ${id}`),
-    ...situation.proven
-      .map((p) => p.claimId)
-      .filter((id) => allClaims.has(id) && !observed.has(id))
-      .map(
-        (id) =>
-          `the situation lists claim ${id} as proven, but its basis is inferred, not observed`,
-      ),
-  ];
-}
-
-/**
- * The units a command turn closes through its verdicts (R4-2): an accepted or reassigned
- * report closes its unit, with the verdict as the reason. A unit the turn also names in
- * `closeUnits` is left out here, so "Closing is clean" does not report it closed twice on
- * top of "Reports answered" naming the conflict.
- */
-export function verdictCloses(turn: CommandTurn): UnitClose[] {
-  const named = new Set(turn.closeUnits.map((c) => c.unitId));
-  const closes: UnitClose[] = [];
-  for (const v of turn.reportVerdicts) {
-    if (v.verdict === "revise" || named.has(v.unitId)) continue;
-    named.add(v.unitId);
-    closes.push({ unitId: v.unitId, reason: `${v.verdict}: ${v.why}` });
-  }
-  return closes;
-}
-
-/**
- * Every unit that reported since the IC's last accepted turn has exactly one verdict,
- * naming the unit and the event id of its last report in that window (an earlier report
- * of the same unit is listed and takes none), and no verdict names a report outside the
- * window or another unit; a reported unit is not in `closeUnits` as well: an accepted or
- * reassigned unit is closed by its verdict, and a revised one stays.
- */
-function reportsAnswered(
-  turn: CommandTurn,
-  window: readonly Event[],
-  latest: ReadonlyMap<string, Event>,
-): string[] {
-  const reasons: string[] = [];
-  const answered = new Set<string>();
-  const closing = new Set(turn.closeUnits.map((c) => c.unitId));
-  const awaiting = new Map([...latest.values()].map((e) => [e.id, e]));
-  for (const v of turn.reportVerdicts) {
-    const report = awaiting.get(v.reportId);
-    if (report === undefined) {
-      const earlier = window.find((e) => e.id === v.reportId);
-      const last =
-        earlier === undefined
-          ? undefined
-          : latest.get(String(earlier.payload.unitId));
-      reasons.push(
-        earlier === undefined || last === undefined
-          ? `no report ${v.reportId} awaits a verdict`
-          : `report ${v.reportId} is unit ${String(earlier.payload.unitId)}'s earlier report this window; its verdict answers report ${last.id}`,
-      );
-      continue;
-    }
-    if (report.payload.unitId !== v.unitId)
-      reasons.push(
-        `report ${v.reportId} is unit ${String(report.payload.unitId)}'s, not ${v.unitId}'s`,
-      );
-    if (answered.has(v.reportId))
-      reasons.push(`report ${v.reportId} has two verdicts`);
-    answered.add(v.reportId);
-    if (closing.has(v.unitId))
-      reasons.push(
-        v.verdict === "revise"
-          ? `unit ${v.unitId} is revised and in closeUnits; a revised unit stays`
-          : `unit ${v.unitId} is ${v.verdict} and in closeUnits; its verdict closes it`,
-      );
-  }
-  for (const [id, report] of awaiting)
-    if (!answered.has(id))
-      reasons.push(
-        `report ${id} of unit ${String(report.payload.unitId)} has no verdict`,
-      );
-  return reasons;
-}
+/** The one rule of the IC's own: an answer names a request a waiting unit raised. */
+export type CommandRuleName = "Answers match";
 
 /**
  * The IC's command turn is held to the rules that cover what it can do, closing units and
  * setting the incident's status, by checking it as a plan that creates nothing (DESIGN.md
- * Step 5), with the units its verdicts close folded into the plan's closes, and to four
- * rules of its own: every answer names a waiting unit and an open request that unit
- * raised, as the change report showed it; every report the change report listed has
- * exactly one verdict (R4-2); every task it assigns is deterministic (R4-6), since
- * session work is a unit's; every reassignment it drops is open (R4-4); and its situation
- * names claims the incident has and calls proven only what was observed (R4-5). Its assignments are the plan's tasks, so "Units exist" and
- * "Status is earned" see them (a turn that assigns work and declares `satisfied` is
- * refused as a plan would be), and they pass the other task rules as a leader's do, and
- * "Own unit" against the root. Returns the failing rules with their reasons; the caller
- * records `command.rejected` and ends the cycle.
+ * Step 5), and to one rule of its own: every answer names a waiting unit and an open
+ * request that unit raised, as the change report showed it. Returns the failing rules with
+ * their reasons; the caller records `command.rejected` and ends the cycle.
  */
 export function validateCommand(
   turn: CommandTurn,
   ctx: ValidationContext,
-): Rejection<string>[] {
-  const root = commandUnitOf(ctx.units);
-  const assignments: Rejection<string>[] =
-    turn.assignTasks.length === 0
-      ? []
-      : [
-          // "Units exist" runs once, over `commandAsPlan` below, so a bad unit is
-          // reported once.
-          ...RULES.filter(
-            (r) => TASK_RULES.includes(r.name) && r.name !== "Units exist",
-          ).flatMap(({ name, check }) =>
-            check(asPlan(turn.assignTasks), ctx).map((reason) => ({
-              rule: name,
-              reason,
-            })),
-          ),
-          ...(root === undefined
-            ? []
-            : typeRuleRejections(turn.assignTasks, root, ctx)),
-          ...perRegisteredTask(asPlan(turn.assignTasks), (t, capability) =>
-            capability.kind === "session"
-              ? [
-                  `${label(t)} runs ${t.capability}, a session; the IC assigns deterministic work only, and session work goes under a unit`,
-                ]
-              : [],
-          ).map((reason) => ({ rule: "Deterministic only" as const, reason })),
-        ];
+): Rejection<RuleName | CommandRuleName>[] {
   const answers: Rejection<CommandRuleName>[] = turn.answers.flatMap((a) => {
     const unit = ctx.units.find((u) => u.id === a.unitId);
     if (unit === undefined)
@@ -1103,78 +921,38 @@ export function validateCommand(
       reason: `unit ${unitId}'s request "${request}" is answered twice`,
     });
   }
-  const open = new Set(ctx.reassignments.map((r) => r.id));
-  const drops: Rejection<CommandRuleName>[] = [
-    ...(turn.dropReassignments ?? [])
-      .filter((d) => !open.has(d.id))
-      .map((d) => ({
-        rule: "Drops match" as const,
-        reason: `no open reassignment ${d.id} to drop`,
-      })),
-    ...repeated((turn.dropReassignments ?? []).map((d) => d.id)).map((id) => ({
-      rule: "Drops match" as const,
-      reason: `reassignment ${id} is dropped twice`,
-    })),
-  ];
-  const window = reportsAwaitingVerdict(ctx.events);
-  const latest = latestReports(ctx.events);
-  // Only a verdict that names a unit's last listed report closes anything; the rest are
-  // "Reports answered" rejections, not closes for "Units exist" to fail again.
-  const answering: CommandTurn = {
-    ...turn,
-    reportVerdicts: turn.reportVerdicts.filter(
-      (v) => latest.get(v.unitId)?.id === v.reportId,
-    ),
-  };
-  // The assignments are the plan's tasks, so "Units exist" sees their unit and "Status
-  // is earned" refuses `satisfied` beside them; the verdicts' closes are the plan's closes.
-  const commandAsPlan: OutfittedPlan = {
+  const asPlan: ActionPlan = {
     createUnits: [],
-    closeUnits: [...turn.closeUnits, ...verdictCloses(answering)],
-    createTasks: turn.assignTasks,
+    closeUnits: turn.closeUnits,
+    createTasks: [],
     cancelTasks: [],
     questionsForHuman: turn.questionsForHuman,
     grantRequests: turn.grantRequests,
     capabilityRequests: turn.capabilityRequests,
     applySops: [],
     incidentStatus: turn.incidentStatus,
+    situation: {
+      changed: "-",
+      hypothesis: "-",
+      proven: [],
+      inferred: [],
+      keep: [],
+    },
     rationale: turn.rationale,
   };
-  // The IC's own close of a revised unit is free: the close is its decision, and its
-  // verdict on the runtime's report for a unit whose brief was refused twice must be
-  // able to close the unit; the plan drafted in the verdict's cycle is not.
-  const commandCtx: ValidationContext = { ...ctx, revised: new Set() };
   return [
     ...RULES.filter(({ name }) => COMMAND_RULES.includes(name)).flatMap(
       ({ name, check }) =>
-        check(commandAsPlan, commandCtx).map((reason) => ({
-          rule: name,
-          reason,
-        })),
+        check(asPlan, ctx).map((reason) => ({ rule: name, reason })),
     ),
     ...answers,
-    ...drops,
-    ...situationGrounded(turn.situation, ctx.claims).map(
-      (reason): Rejection<CommandRuleName> => ({
-        rule: "Situation grounded",
-        reason,
-      }),
-    ),
-    ...reportsAnswered(turn, window, latest).map(
-      (reason): Rejection<CommandRuleName> => ({
-        rule: "Reports answered",
-        reason,
-      }),
-    ),
-    ...assignments,
   ];
 }
 
 /**
  * Validate a proposed plan against the store and record the verdict: one `plan.rejected`
- * event per failing rule, or one `plan.warned` per warning on a passing plan, each with
- * `rule` and `reason` as the planner's next input reads them (DESIGN.md Step 5). Applying
- * a passing plan is PR 11's.
+ * event per failing rule, with `rule` and `reason` as the planner's next input reads them
+ * (DESIGN.md Step 5). Applying a passing plan is PR 11's.
  */
 export function validateAndRecord(
   store: Store,
@@ -1187,21 +965,15 @@ export function validateAndRecord(
     plan,
     validationContext(store, incident, providers),
   );
-  store.batch(() => {
-    if (verdict.ok)
-      for (const w of verdict.warnings)
-        store.record(incident.id, "plan.warned", actor, {
-          rule: w.rule,
-          reason: w.reason,
-          rationale: plan.rationale,
-        });
-    else
+  if (!verdict.ok) {
+    store.batch(() => {
       for (const r of verdict.rejections)
         store.record(incident.id, "plan.rejected", actor, {
           rule: r.rule,
           reason: r.reason,
           rationale: plan.rationale,
         });
-  });
+    });
+  }
   return verdict;
 }

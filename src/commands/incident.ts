@@ -2,37 +2,20 @@ import { parseArgs } from "node:util";
 import { z } from "zod";
 import { recordActivity } from "../activity.js";
 import { listCapabilities } from "../capabilities/index.js";
-import {
-  describeForm,
-  formKey,
-  matchingConfig,
-  savedFormOf,
-  unsavedRepeats,
-} from "../configs.js";
 import { type Context, EXIT, type Handler } from "../context.js";
 import { dispatch } from "../dispatcher.js";
+import { READ_ONLY_SESSION_COMMANDS } from "../equipment/index.js";
 import {
   briefingOf,
   commandTurn,
   type Handoff,
   type HandoffOutcome,
-  IcRefused,
   pendingTransfer,
   prepareHandoff,
   recordTransfer,
-  renderReport,
-  reportWorkChars,
   reviewTurn,
 } from "../ic.js";
-import {
-  describeRefusedCall,
-  IC_MODEL,
-  IC_PROVIDER,
-  icSituation,
-  openReassignments,
-  openRequestsByUnit,
-  type RefusedCall,
-} from "../leader.js";
+import { IC_MODEL, IC_PROVIDER, openRequestsByUnit } from "../leader.js";
 import {
   type ActionPlan,
   Budget,
@@ -41,33 +24,26 @@ import {
   IncidentBriefing,
   type IncidentStatus,
   type Leader,
+  Situation,
   type StrikeTeam,
   type Unit,
 } from "../models.js";
-import { proposePlan, renderSituation } from "../planner.js";
+import { proposePlan } from "../planner.js";
 import { getProvider, SessionError } from "../providers/index.js";
-import { describeRuntimeTag, renderReview } from "../review.js";
+import { renderReview } from "../review.js";
 import {
   type Answered,
   answerRequest,
   applyCommand,
   applyPlan,
   holdsOn,
-  icModelHold,
-  icRefusalQuestionId,
   newQuestions,
   planDiff,
 } from "../runtime.js";
 import { INITIAL_MODEL, sizeUp } from "../size-up.js";
 import { cycleOf, now, resolveDbPath, Store, sumUsage } from "../store.js";
 import { describeStrikeTeam } from "../strike-team.js";
-import {
-  describeLeader,
-  lastReports as lastReportsOf,
-  lastVerdicts,
-  renderTree,
-} from "../tree.js";
-import { commandUnitOf, getUnitType, newCommandUnit } from "../units/index.js";
+import { renderTree } from "../tree.js";
 import {
   validateAndRecord,
   validateCommand,
@@ -180,14 +156,22 @@ export const create: Handler = async (args, ctx) => {
       createdAt: at,
       updatedAt: at,
     };
-    // The root unit is command, of the ic type (R4-10): its leader is the Incident
-    // Commander, on `--ic-model` or the default until the size-up's transfer of command
-    // routes it, and its form's defaults give it the read-only built-ins and nothing else.
-    const command = newCommandUnit(
-      id,
-      { provider: IC_PROVIDER, model: override ?? IC_MODEL },
-      at,
-    );
+    // The root unit's leader is the Incident Commander: on `--ic-model` or the default until
+    // the size-up's transfer of command routes it; it holds the read-only built-ins and
+    // nothing else.
+    const command: Unit = {
+      id: `${id}-command`,
+      incidentId: id,
+      parentId: null,
+      objective: "command: holds the objective and the current plan",
+      leader: { provider: IC_PROVIDER, model: override ?? IC_MODEL },
+      equipment: ["Read", "Grep", "Glob", "Bash"],
+      bashAllowlist: [...READ_ONLY_SESSION_COMMANDS],
+      sessionId: null,
+      status: "active",
+      createdAt: at,
+      closedAt: null,
+    };
     store.batch(() => {
       store.createIncident(incident, ACTOR);
       store.createUnit(command, "runtime");
@@ -390,7 +374,6 @@ function renderIncidentFile(
   store: Store,
   incident: Incident,
   capabilities: readonly string[],
-  env: NodeJS.ProcessEnv = {},
 ): string[] {
   const units = store.listUnits(incident.id);
   const tasks = store.listTasks(incident.id);
@@ -429,17 +412,6 @@ function renderIncidentFile(
     for (const p of incident.period.priorities) lines.push(`  - ${p}`);
     if (incident.period.priorities.length === 0) lines.push("  (none)");
   }
-  // The IC's situation from its last accepted command turn (R4-5), the picture every seat
-  // works from this period, with the reassignments still open under it.
-  lines.push("situation, the IC's:");
-  const situation = icSituation(events);
-  if (situation === null) lines.push("  (none)");
-  for (const line of renderSituation(
-    situation,
-    openReassignments(events),
-    "in the next plan",
-  ))
-    lines.push(`  ${line}`);
   const briefed = briefingOf(events);
   const transfer = events
     .filter(
@@ -461,7 +433,7 @@ function renderIncidentFile(
   lines.push(
     `budget: tokens ${incident.budget.tokens ?? "unlimited"}, seconds ${incident.budget.seconds ?? "unlimited"}; spent tokens ${usage.tokens}, seconds ${usage.seconds.toFixed(1)}${spent.costUsd === undefined ? "" : `, task cost $${spent.costUsd.toFixed(2)} at list price`}`,
   );
-  const root = commandUnitOf(units);
+  const root = units.find((u) => u.parentId === null);
   const transfers = events.filter(
     (e) => e.type === "command.transferred",
   ).length;
@@ -469,21 +441,10 @@ function renderIncidentFile(
     lines.push(
       `IC: ${root.leader.provider}/${root.leader.model}, session ${root.sessionId ?? "none yet"}; ${transfers} transfer(s) of command`,
     );
-  const modelChanges = describeModelChanges(events);
-  if (modelChanges.length > 0) {
-    lines.push("model changes:");
-    for (const change of modelChanges) lines.push(`  - ${change}`);
-  }
   lines.push("");
   lines.push(
     `units: ${units.filter((u) => u.status === "active").length} active, ${units.filter((u) => u.status === "waiting").length} waiting, ${units.filter((u) => u.status === "closed").length} closed`,
   );
-  const reportsByUnit = lastReportsOf(events);
-  const verdictsByUnit = lastVerdicts(events);
-  for (const u of units)
-    lines.push(
-      `  ${u.id} [${u.status}] ${u.objective} ${describeLeader(u, reportsByUnit, openRequestsByUnit(incident, events), verdictsByUnit)}`,
-    );
   lines.push(
     `tasks: ${tasks.filter((t) => t.status !== "completed" && t.status !== "cancelled" && t.status !== "failed").length} open, ${tasks.length} total`,
   );
@@ -499,18 +460,29 @@ function renderIncidentFile(
   for (const d of decisions)
     lines.push(`  - ${String(d.payload.rationale)} (${d.createdAt})`);
   if (decisions.length === 0) lines.push("  (none yet)");
-  // Each unit's last report with the work behind it, as the IC's change report showed it (R4-1).
-  const lastReports = new Map<string, Event>();
-  for (const e of events)
-    if (e.type === "unit.reported" && typeof e.payload.unitId === "string")
-      lastReports.set(e.payload.unitId, e);
-  lines.push("unit reports, the last of each unit, with the work behind it:");
-  const cap = reportWorkChars(env);
-  for (const u of units) {
-    const report = lastReports.get(u.id);
-    if (report !== undefined) lines.push(...renderReport(events, report, cap));
+  const last = Situation.safeParse(decisions.at(-1)?.payload.situation);
+  if (last.success) {
+    const s = last.data;
+    lines.push("situation, from the last plan:");
+    lines.push(`  changed: ${s.changed}`);
+    lines.push(`  hypothesis: ${s.hypothesis}`);
+    lines.push("  proven:");
+    for (const p of s.proven) lines.push(`    - ${p.claimId}: ${p.line}`);
+    if (s.proven.length === 0) lines.push("    (none)");
+    lines.push("  inferred:");
+    for (const i of s.inferred) {
+      const by = i.settledBy;
+      const settled =
+        "task" in by
+          ? `task ${by.task}`
+          : "question" in by
+            ? `question ${by.question} of that plan`
+            : `reproduce ${by.reproduce}`;
+      lines.push(`    - ${i.claimId}, settled by ${settled}`);
+    }
+    if (s.inferred.length === 0) lines.push("    (none)");
+    lines.push(`  keep: ${s.keep.join(", ") || "(none)"}`);
   }
-  if (lastReports.size === 0) lines.push("  (none yet)");
   const discrepancies = events.filter((e) => e.type === "picture.discrepancy");
   if (discrepancies.length > 0) {
     lines.push("discrepancies raised:");
@@ -550,45 +522,6 @@ function renderIncidentFile(
   return lines;
 }
 
-/**
- * Every change of a seat's model the log records (R4-7): each transfer of command that
- * changed the IC's model (the initial routing, a fallback by the runtime, or the model
- * Mauria's answer named), each unit leader that fell back after a refusal (`leader.failed`
- * carrying `fallback`), and each task retried on the fallback (`task.completed` or
- * `task.failed` carrying `fallbackFrom`).
- */
-function describeModelChanges(events: readonly Event[]): string[] {
-  const lines: string[] = [];
-  const modelOf = (leader: unknown): string =>
-    String((leader as { model?: unknown } | undefined)?.model ?? "?");
-  for (const e of events) {
-    if (e.type === "command.transferred") {
-      const from = modelOf(e.payload.outgoing);
-      const to = modelOf(e.payload.incoming);
-      if (e.payload.kind === "initial")
-        lines.push(
-          `IC on ${to}, chosen by ${String(e.payload.chosenBy)} (initial transfer from the size-up on ${from})`,
-        );
-      else if (e.payload.kind === "fallback")
-        lines.push(
-          `IC ${from} → ${to}, ${e.payload.chosenBy === "answer" ? "named by your answer" : "the fallback"} after ${(e.payload.refusals as RefusedCall[] | undefined)?.map((r) => `refusal on ${describeRefusedCall(r)}`).join(" and ") ?? String(e.payload.reason)}`,
-        );
-    }
-    if (e.type === "leader.failed" && typeof e.payload.fallback === "string")
-      lines.push(
-        `leader of ${String(e.payload.unitId)} ${String(e.payload.model)} → ${e.payload.fallback}, the fallback after refusal (${String((e.payload.refused as { category?: unknown } | undefined)?.category)}, session ${String(e.payload.sessionId)})`,
-      );
-    if (
-      (e.type === "task.completed" || e.type === "task.failed") &&
-      typeof e.payload.fallbackFrom === "string"
-    )
-      lines.push(
-        `task ${String(e.payload.taskId)} ${e.payload.fallbackFrom} → ${String(e.payload.model)}, the fallback after a refusal; ${e.type === "task.completed" ? "completed there" : "refused there too"}`,
-      );
-  }
-  return lines;
-}
-
 const registeredCapabilities = (): readonly string[] =>
   listCapabilities().map(
     (c) => `${c.name}: ${c.description} [${c.kind}, ${c.effect}]`,
@@ -603,7 +536,6 @@ export const show: Handler = async (args, ctx) => {
       store,
       incident,
       registeredCapabilities(),
-      ctx.env,
     ))
       ctx.io.out(line);
     return EXIT.ok;
@@ -624,16 +556,7 @@ export const events: Handler = async (args, ctx) => {
   try {
     const incident = requireIncident(store, args, ctx, "events");
     if (typeof incident === "number") return incident;
-    // The runtime tag (R4-12) is printed where it changes, so a log written by one build
-    // shows it once and a log spanning builds shows each switch.
-    let runtime: string | null | undefined;
-    for (const e of store.listEvents(incident.id)) {
-      if (e.runtime !== runtime) {
-        runtime = e.runtime;
-        ctx.io.out(`runtime: ${describeRuntimeTag(runtime)}`);
-      }
-      ctx.io.out(renderEvent(e));
-    }
+    for (const e of store.listEvents(incident.id)) ctx.io.out(renderEvent(e));
     return EXIT.ok;
   } finally {
     store.close();
@@ -662,54 +585,8 @@ export const tree: Handler = async (args, ctx) => {
   }
 };
 
-/**
- * The offer to save a repeated config (R4-11): after a plan is applied, each new unit
- * filled by hand is compared with every unit in the file, across incidents, and when the
- * same filled form has now appeared three times or more unsaved, and no saved config
- * matches it, `step` prints the offer with the command that saves it. Nothing is saved
- * here; one offer per distinct form, naming the first new unit that carries it.
- */
-function saveOffers(
-  store: Store,
-  incidentId: string,
-  created: readonly Unit[],
-): string[] {
-  const all = store.listAllUnits();
-  const configs = store.listUnitConfigs();
-  const offered = new Set<string>();
-  const lines: string[] = [];
-  for (const u of created) {
-    if (u.config !== null || !(getUnitType(u.type)?.plannable ?? false))
-      continue;
-    if (matchingConfig(configs, u) !== undefined) continue;
-    const form = savedFormOf(u);
-    const key = formKey(u.type, form);
-    if (offered.has(key)) continue;
-    const repeats = unsavedRepeats(all, u);
-    if (repeats < SAVE_OFFER_REPEATS) continue;
-    offered.add(key);
-    lines.push(
-      `  unit ${u.id}'s config (${u.type}: ${describeForm(form)}) has now been filled by hand ${repeats} times across this file's incidents and is not saved; to deploy it by name from the next plan on, save it: noscope config save ${incidentId} ${u.id} <name>`,
-    );
-  }
-  return lines;
-}
-
-/** How many times the same filled form appears unsaved before `step` offers to save it. */
-const SAVE_OFFER_REPEATS = 3;
-
 /** What one cycle came to: the incident's status afterwards, and a budget stop if the pass ended on one. */
 type CycleOutcome = { status: IncidentStatus; stopped: string | null };
-
-/** A new unit's seat as `step` prints it: the saved config it names (R4-11), the leader it gives, or both when a leader is given beside the config. */
-function proposalSeat(u: ActionPlan["createUnits"][number]): string {
-  return [
-    ...(u.config === undefined ? [] : [`config ${u.config}`]),
-    ...(u.leader === undefined
-      ? []
-      : [`leader ${u.leader.provider}/${u.leader.model}`]),
-  ].join(", ");
-}
 
 /** A plan as `step` prints it: what it creates, closes, cancels, asks and requests, and its status. */
 function printPlan(ctx: Context, plan: ActionPlan): void {
@@ -717,7 +594,7 @@ function printPlan(ctx: Context, plan: ActionPlan): void {
     ctx.io.out(`  discrepancy: ${plan.discrepancy}`);
   for (const u of plan.createUnits)
     ctx.io.out(
-      `  create unit ${u.ref} under ${u.parent} (${proposalSeat(u)}): ${u.objective}${u.takes === undefined ? "" : ` (takes reassignment ${u.takes})`}`,
+      `  create unit ${u.ref} under ${u.parent} (leader ${u.leader.provider}/${u.leader.model}): ${u.objective}`,
     );
   for (const c of plan.closeUnits)
     ctx.io.out(`  close unit ${c.unitId}: ${c.reason}`);
@@ -753,20 +630,6 @@ function printHandoff(ctx: Context, outcome: HandoffOutcome): Handoff | null {
   return null;
 }
 
-/** A fallback of the IC's model during the call just made (R4-7), as `step` prints it: the models and the refusal. */
-function printFallbacks(
-  ctx: Context,
-  store: Store,
-  incidentId: string,
-  since: number,
-): void {
-  for (const e of store.listEvents(incidentId).slice(since))
-    if (e.type === "command.transferred" && e.payload.kind === "fallback")
-      ctx.io.out(
-        `  command transferred to ${String((e.payload.incoming as { model?: unknown }).model)} (fallback): ${String(e.payload.reason)}`,
-      );
-}
-
 /**
  * One cycle, the eight steps of DESIGN.md's cycle: (1) the IC's briefing is rendered, (2)
  * the IC's command turn sets the period or ends the incident, (3) the planner drafts, (4)
@@ -797,7 +660,6 @@ async function cycle(
     pendingTransfer(store.listEvents(incident.id))?.payload.kind === "handoff"
       ? "handoff"
       : "briefing";
-  const sinceCommand = store.listEvents(incident.id).length;
   const command = await commandTurn(
     store,
     incident,
@@ -809,7 +671,6 @@ async function cycle(
   ctx.io.out(
     `IC command turn for period ${number} (session ${command.sessionId}): ${turn.rationale}`,
   );
-  printFallbacks(ctx, store, incident.id, sinceCommand);
   if (handoff !== null)
     ctx.io.out(
       `  command transferred from session ${handoff.outgoingSessionId} to session ${command.sessionId}`,
@@ -820,20 +681,10 @@ async function cycle(
     ctx.io.out(`  ${evaluating}: ${v.verdict} ${v.item}: ${v.why}`);
   for (const o of turn.periodObjectives) ctx.io.out(`  objective: ${o}`);
   for (const p of turn.priorities) ctx.io.out(`  priority: ${p}`);
-  ctx.io.out(`  situation changed: ${turn.situation.changed}`);
-  ctx.io.out(`  hypothesis: ${turn.situation.hypothesis}`);
-  for (const v of turn.reportVerdicts)
-    ctx.io.out(
-      `  verdict on ${v.unitId}'s report ${v.reportId}: ${v.verdict}: ${v.why}${v.instructions === "" ? "" : `; instructions: ${v.instructions}`}`,
-    );
   for (const c of turn.closeUnits)
     ctx.io.out(`  close unit ${c.unitId}: ${c.reason}`);
-  for (const d of turn.dropReassignments ?? [])
-    ctx.io.out(`  drop reassignment ${d.id}: ${d.why}`);
   for (const a of turn.answers)
     ctx.io.out(`  answer to ${a.unitId} (${a.request}): ${a.answer}`);
-  for (const t of turn.assignTasks)
-    ctx.io.out(`  assign under command: ${t.capability}: ${t.objective}`);
   for (const q of turn.questionsForHuman) ctx.io.out(`  ask: ${q}`);
   for (const r of turn.capabilityRequests)
     ctx.io.out(`  request capability: ${r.need} (${r.why})`);
@@ -872,22 +723,10 @@ async function cycle(
     command.record,
   );
   for (const id of commanded.closedUnits) ctx.io.out(`  unit ${id} closed`);
-  for (const r of commanded.reassignments)
-    ctx.io.out(
-      r.dropped
-        ? `  reassignment ${r.id} from unit ${r.unitId} dropped by the IC: ${r.instructions}`
-        : `  reassignment ${r.id} recorded from unit ${r.unitId} with ${r.claims.length} claim(s); the next plan gives it to a new unit`,
-    );
-  for (const id of commanded.cancelledTasks)
-    ctx.io.out(`  task ${id} cancelled`);
   for (const q of commanded.questions)
     ctx.io.out(`  question ${q.id}: ${q.text}`);
   for (const a of commanded.answered)
     for (const line of describeAnswered(a)) ctx.io.out(`  ${line}`);
-  for (const t of commanded.tasks)
-    ctx.io.out(
-      `  task ${t.id} [${t.status}] under ${t.unitId}: ${t.capability}: ${t.objective}`,
-    );
   if (commanded.incidentStatus !== "open") {
     ctx.io.out(`incident ${incident.id} is now ${commanded.incidentStatus}`);
     return { status: commanded.incidentStatus, stopped: null };
@@ -912,7 +751,6 @@ async function cycle(
       ctx,
       await prepareHandoff(store, current, icOptions),
     );
-    const sinceReview = store.listEvents(incident.id).length;
     const read = await reviewTurn(
       store,
       current,
@@ -923,7 +761,6 @@ async function cycle(
       before,
     );
     ctx.io.out(`IC review: ${read.output.verdict}: ${read.output.rationale}`);
-    printFallbacks(ctx, store, incident.id, sinceReview);
     if (before !== null)
       ctx.io.out(
         `  command transferred from session ${before.outgoingSessionId} to session ${read.sessionId}`,
@@ -966,21 +803,13 @@ async function cycle(
     return { status: incident.status, stopped: null };
   }
   ctx.io.out("plan approved");
-  for (const w of verdict.warnings)
-    ctx.io.out(`  warned, applied anyway: ${w.rule}: ${w.reason}`);
-  const applied = applyPlan(store, current, verdict.plan, "runtime", {
+  const applied = applyPlan(store, current, plan, "runtime", {
     verdict: review.output.verdict,
     corrections,
     diff: planDiff(draft.plan, plan),
   });
-  for (const u of applied.units) {
-    const takes = applied.taken.find((t) => t.unitId === u.id);
-    ctx.io.out(
-      `  unit ${u.id} created under ${u.parentId}${u.config === null ? "" : ` from saved config ${u.config}`}: ${u.objective}${takes === undefined ? "" : ` (takes reassignment ${takes.reassignmentId})`}`,
-    );
-  }
-  for (const line of saveOffers(store, incident.id, applied.units))
-    ctx.io.out(line);
+  for (const u of applied.units)
+    ctx.io.out(`  unit ${u.id} created under ${u.parentId}: ${u.objective}`);
   for (const id of applied.closedUnits) ctx.io.out(`  unit ${id} closed`);
   for (const t of applied.tasks)
     ctx.io.out(
@@ -1005,10 +834,15 @@ async function cycle(
     );
   for (const r of reports) {
     ctx.io.out(
-      `  unit ${r.unitId} reported ${r.report.outcome}${r.revision === undefined ? "" : ` (revision ${r.revision})`}${r.report.pictureChanged ? ", picture changed" : ""}: ${r.report.changed.map((c) => c.what).join("; ") || "nothing changed"}${r.report.why === undefined ? "" : `; why: ${r.report.why}`}${r.report.suggestion === undefined ? "" : `; suggestion: ${r.report.suggestion}`}`,
+      `  unit ${r.unitId} reported ${r.report.outcome}${r.report.pictureChanged ? ", picture changed" : ""}: ${r.report.changed.map((c) => c.what).join("; ") || "nothing changed"}${r.report.why === undefined ? "" : `; why: ${r.report.why}`}${r.report.suggestion === undefined ? "" : `; suggestion: ${r.report.suggestion}`}`,
     );
+    const root = r.unitId === `${incident.id}-command`;
     for (const q of r.report.resourceRequests ?? [])
-      ctx.io.out(`    waits on ${q.kind}: ${q.what} (${q.why})`);
+      ctx.io.out(
+        root
+          ? `    asked for ${q.kind}: ${q.what} (${q.why}); refused, command raises it in its command turn`
+          : `    waits on ${q.kind}: ${q.what} (${q.why})`,
+      );
   }
   for (const e of store.listEvents(incident.id).slice(before)) {
     if (e.type === "plan.applied" && e.actor === "leader")
@@ -1065,26 +899,6 @@ function reportFailure(ctx: Context, command: string, error: unknown): number {
 }
 
 /**
- * The IC refused on its model and on the fallback (R4-7): the incident is blocked on the
- * question naming both, which is in the record, so the command prints it and exits 0 as
- * it does when a plan's question blocks the incident.
- */
-function reportIcRefused(
-  ctx: Context,
-  incidentId: string,
-  error: IcRefused,
-): number {
-  ctx.io.out(
-    `incident ${incidentId} is now blocked: the IC was refused on ${error.refusals.map(describeRefusedCall).join(" and on ")}`,
-  );
-  ctx.io.out(`  question ${error.question.id}: ${error.question.text}`);
-  ctx.io.out(
-    `  answer with the model to resume the IC on: noscope incident answer ${incidentId} "<model>"`,
-  );
-  return EXIT.ok;
-}
-
-/**
  * One cycle, then stop. Exit 5 when the incident is not open, since only Mauria can move it
  * (`incident answer`); exit 1 when the provider could not run at all.
  */
@@ -1097,8 +911,6 @@ export const step: Handler = async (args, ctx) => {
     try {
       await cycle(store, incident, ctx);
     } catch (error) {
-      if (error instanceof IcRefused)
-        return reportIcRefused(ctx, incident.id, error);
       return reportFailure(ctx, "step", error);
     }
     return EXIT.ok;
@@ -1154,10 +966,6 @@ export const run: Handler = async (args, ctx) => {
       try {
         stopped = (await cycle(store, incident, ctx)).stopped;
       } catch (error) {
-        if (error instanceof IcRefused) {
-          ctx.io.out(`stopped after ${cycles} cycle(s): the IC was refused`);
-          return reportIcRefused(ctx, incident.id, error);
-        }
         ctx.io.out(`stopped after ${cycles} cycle(s): the cycle could not run`);
         return reportFailure(ctx, "run", error);
       }
@@ -1179,24 +987,13 @@ export const run: Handler = async (args, ctx) => {
   }
 };
 
-/** The model the answer names, when one of the provider's appears in it as a whole word; null otherwise. */
-function modelNamed(text: string, models: readonly string[]): string | null {
-  const words = text.split(/[^A-Za-z0-9.-]+/);
-  return models.find((m) => words.includes(m)) ?? null;
-}
-
 /**
  * Answer the oldest open question, the IC's, the planner's or a unit leader's (DESIGN.md
  * Step 7), through `answerRequest`: the answer is stored on the question, where the next
  * briefing reads it; a unit's question answered returns the unit to `active` once nothing
  * of its is open; the incident returns to `open` when a command turn or a plan had blocked
  * it and nothing of theirs still waits. A closed unit's question is skipped: nobody reads
- * its answer. While the IC is blocked on its refusals (R4-7), the answer goes to the
- * question those refusals raised, not to an older open question of a unit's, and one
- * naming a model the provider serves transfers command to it (`command.transferred` of
- * kind `fallback`, chosen by the answer) before the question is answered, so the incident
- * reopens on that model; an answer naming none is stored, the question is asked again,
- * and the incident stays blocked with a hint.
+ * its answer.
  */
 export const answer: Handler = async (args, ctx) => {
   const store = openStore(ctx);
@@ -1217,15 +1014,10 @@ export const answer: Handler = async (args, ctx) => {
       return EXIT.usage;
     }
     const closed = closedUnits(store, incident.id);
-    const events = store.listEvents(incident.id);
-    const hold = icModelHold(events);
-    const heldId = hold === null ? null : icRefusalQuestionId(events);
     const open = incident.questions.find(
       (q) =>
         q.answer === undefined &&
-        (heldId === null
-          ? q.unitId === undefined || !closed.has(q.unitId)
-          : q.id === heldId),
+        (q.unitId === undefined || !closed.has(q.unitId)),
     );
     if (open === undefined) {
       ctx.io.err(
@@ -1233,65 +1025,20 @@ export const answer: Handler = async (args, ctx) => {
       );
       return EXIT.cannotProceed;
     }
-    const icProvider = getProvider(IC_PROVIDER, ctx.env);
-    const model = hold === null ? null : modelNamed(text, icProvider.models);
-    const root = commandUnitOf(store.listUnits(incident.id));
-    let answered: Answered | undefined;
-    store.batch(() => {
-      if (hold !== null && model !== null && root !== undefined)
-        recordTransfer(
-          store,
-          incident.id,
-          {
-            kind: "fallback",
-            unitId: root.id,
-            outgoingSessionId: hold.at(-1)?.sessionId ?? root.sessionId ?? "",
-            outgoing: root.leader,
-            incomingSessionId: null,
-            incoming: { ...root.leader, model },
-            document: null,
-            chosenBy: "answer",
-            reason: `answer ${open.id} named ${model} after refusals on ${hold.map(describeRefusedCall).join(" and on ")}`,
-            refusals: [...hold],
-          },
-          ACTOR,
-        );
-      answered = answerRequest(
-        store,
-        incident,
-        { kind: "question", id: open.id },
-        text,
-        ACTOR,
-      );
-      // No model named: the question stands, asked again, so the next answer can name one.
-      if (hold !== null && model === null) {
-        const current = store.getIncident(incident.id) ?? incident;
-        const again = newQuestions(current, [open.text]);
-        store.setIncidentQuestions(
-          incident.id,
-          [...current.questions, ...again],
-          ACTOR,
-          "question.asked",
-          { questions: again, icRefusals: hold },
-        );
-      }
-    });
+    const answered = answerRequest(
+      store,
+      incident,
+      { kind: "question", id: open.id },
+      text,
+      ACTOR,
+    );
     ctx.io.out(`answered ${open.id}: ${open.text}`);
-    if (hold !== null && model !== null)
-      ctx.io.out(
-        `command transferred to ${IC_PROVIDER}/${model}, named by your answer`,
-      );
-    if (answered !== undefined)
-      for (const line of describeAnswered(
-        answered,
-        store.getIncident(incident.id) ?? incident,
-        store.listEvents(incident.id),
-      ))
-        ctx.io.out(line);
-    if (hold !== null && model === null)
-      ctx.io.out(
-        `  the answer names no model ${IC_PROVIDER} serves; the question is asked again: answer with one of ${icProvider.models.join(", ")}`,
-      );
+    for (const line of describeAnswered(
+      answered,
+      incident,
+      store.listEvents(incident.id),
+    ))
+      ctx.io.out(line);
     return EXIT.ok;
   } finally {
     store.close();

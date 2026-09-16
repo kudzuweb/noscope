@@ -1,164 +1,239 @@
 import {
+  type Capability,
+  renderTaskResult,
+  resolveEquipment,
+} from "./capabilities/index.js";
+import { READ_ONLY_SESSION_COMMANDS } from "./equipment/index.js";
+
+import {
+  type Budget,
   type CapabilityRequest,
   type Event,
+  type Incident,
+  jsonSchemaFor,
+  LeaderTurn,
   type Question,
-  Situation,
+  type Situation,
+  type StrikeTeam,
+  type Task,
+  type Unit,
+  type Usage,
 } from "./models.js";
-import type { Refusal } from "./providers/index.js";
+import { type SessionRequest, sessionSystemPrompt } from "./providers/index.js";
+import { describeStrikeTeam } from "./strike-team.js";
+import { renderHierarchy, renderPeriod } from "./tree.js";
 
 // A unit's leader is a persistent session: created when the unit first has a ready task,
 // resumed for every task that runs inside it and for every turn, demobilized when the unit
-// closes. What a leader of any type shares is here: the log's windows and records (reports,
-// verdicts, reassignments, requests, the IC's situation), the refusal fallback and the
-// actors. The led unit's own protocol, its role text, rules, turns and prompts, is
-// `src/units/base.ts`; the IC's is `src/units/ic.ts` and `src/ic.ts` (DESIGN.md Step 6).
+// closes. The root unit's leader is the Incident Commander; its session is built here like
+// any leader's, and its own turns, the command turn and the review, live in ic.ts
+// (DESIGN.md Step 6).
 
 /** The root unit's leader when nothing routes it: an incident created with `--no-size-up`, or a briefing that names a model the provider does not serve; `incident create --ic-model` overrides both the default and the briefing. */
 export const IC_MODEL = "claude-opus-5";
 export const IC_PROVIDER = "claude-code";
 
-/**
- * The model a refused seat is retried on, once (R4-7; DESIGN.md Step 6): the IC's
- * replacement session, a unit leader's, or a task's own retry. `NOSCOPE_IC_FALLBACK_MODEL`
- * overrides the default, `claude-opus-4-8`; refused when it names a model the provider
- * does not serve, so a misspelt override fails the retry loudly rather than the API.
- */
-const IC_FALLBACK_MODEL = "claude-opus-4-8";
-
-export function fallbackModel(
-  env: NodeJS.ProcessEnv = {},
-  provider: { name: string; models: readonly string[] },
-): string {
-  const raw = env.NOSCOPE_IC_FALLBACK_MODEL;
-  const model = raw === undefined || raw === "" ? IC_FALLBACK_MODEL : raw;
-  if (!provider.models.includes(model))
-    throw new Error(
-      `NOSCOPE_IC_FALLBACK_MODEL ${model} is not a model ${provider.name} serves (${provider.models.join(", ")})`,
-    );
-  return model;
-}
-
-/** One call the API refused, as a transfer, a report or a question names it: the seat's model, its session and the refusal. */
-export type RefusedCall = {
-  model: string;
-  sessionId: string | null;
-  refused: Refusal;
-};
-
-/** A refused call in one clause: the model, the category, the session. */
-export function describeRefusedCall(call: RefusedCall): string {
-  return `${call.model} (${call.refused.category}${call.sessionId === null ? "" : `, session ${call.sessionId}`})`;
-}
+/** A turn is one structured call with no task of its own; it gets the planner's bound. */
+const LEADER_TURN_SECONDS = 300;
 
 /** The actor on what a leader's turn changes: the tasks it assigns (`plan.applied`), a refused assignment (`plan.rejected`). */
 export const LEADER_ACTOR = "leader";
 
-/** The actor on the deterministic tasks the IC assigns under command in its command turn (`plan.applied`, R4-6). */
-export const IC_ACTOR = "ic";
+/**
+ * The rules the validator holds a leader's assignments to beyond a plan's task rules, stated
+ * so the leader does not assign what will be refused (DESIGN.md Step 5). The name before
+ * the colon keys the check in `src/validator.ts`, as the planner's rules do.
+ */
+export const LEADER_RULES = [
+  "Own unit: every task you assign names your own unit as its unit; no new units, no tasks under another unit.",
+  "Capability held: every task names a registered capability; a session-backed one needs no equipment or Bash command beyond your unit's, and one that picks its equipment per task picks equipment your unit holds.",
+  "Budget within share: your assignments fit inside what the plans allotted your unit's tasks, per dimension; the unit's spend and its open tasks' bounds count against it, and a dimension no plan task under your unit bounds has a share of zero, so an assignment may not bound it.",
+] as const;
+
+/** The role text as a unit leader reads it; the IC reads `IC_ROLE`. */
+export const LEADER_ROLE = `Your role: unit leader. You own your unit's objective and direct its tasks, in order, until you can report against it.
+
+Report what changed, not what you did: each item in changed is something now true that was not, naming the claim ids it rests on; a change with no claims behind it is a claim of its own and counts for less. Outcome met means the unit's objective is established by observed claims; not_met means it cannot be met as set, and then why and suggestion are required, because the IC, who has more perspective, decides what happens next; progress means the unit has more to run or more to say. Set pictureChanged, and report rather than continue, the moment an outcome changes the picture the incident is working from: the IC acts on it before the next unit runs.
+
+A lack is resolved by the nearest seat that can. A retrievable fact is yours to get: assign a task for it in assignTasks, under your own unit, to a capability your unit holds, inside your unit's budget, and it runs in this pass; a task of yours that came back insufficient for a retrievable fact is yours to resolve the same way. Permission, missing means and something only a human knows go up as resourceRequests on your report, each with what and why: your unit then waits until Mauria answers, its pending tasks stay pending, the other units keep running, and the report counts as picture-changing so the IC sees it at once. Assignments are checked by the validator's rules on tasks and by these:
+${LEADER_RULES.map((r) => `- ${r}`).join("\n")}
+
+You cannot change the organization above or beside you: no new units, no tasks outside your unit, no budget beyond your unit's, no change to the incident's objective. What you lack and cannot get goes in your report.
+
+You may send a strike team: several subagents of one kind and model on one task, each a session of its own with a prompt and tools you choose. A task may declare its team already; otherwise ask for one in your turn with requestStrikeTeam, choosing the kind, its model, its tools, its prompt and how many to send, and saying why. No kind exists by default. The runtime declares the team on your next task, defines the kinds for the call that runs it, and records every member; a claim that rests on a member's finding cites the member's agentId.
+
+discrepancy is for one thing only: the update you received describes a different problem from the one you have been working, as if you believed you were fighting a fire and the update describes a hurricane. Say what differs. A different detail, a wrong line number, a claim you disagree with, is not a discrepancy; it goes in your report or your next task.`;
 
 /**
- * A reassignment (R4-4): the slice of a unit the IC closed with a reassign verdict, as
- * `unit.reassigned` records it: its id, the report and unit the verdict answered, that
- * unit's objective, the IC's instructions and why, the claims the unit's tasks produced
- * (by id), the cycle, whether the slice was dropped (by the verdict, instructions
- * beginning `drop:`, or by a later command turn's `dropReassignments`,
- * `reassignment.dropped`) and why, and the unit that took it (`reassignment.taken`), when
- * one has.
+ * The role text as the Incident Commander reads it (R3-7): it scopes, breaks down, equips and
+ * judges; its digging is assigned; its first act on taking command from a briefing is to
+ * evaluate it (R3-8); a period ends when units report or the picture changes; a not_met
+ * report is information for its decision; a discrepancy it cannot reconcile goes to Mauria;
+ * the situation stays the planner's. Fixed at the root session's first call.
  */
-export type Reassignment = {
-  id: string;
-  reportId: string;
-  unitId: string;
-  objective: string;
-  instructions: string;
-  why: string;
-  claims: string[];
-  cycle: number;
-  dropped: boolean;
-  droppedWhy: string | null;
-  takenBy: string | null;
-};
+export const IC_ROLE = `Your role: Incident Commander, leader of command, the root unit, and Mauria's delegate on this incident. You scope the incident, break it down, equip it and judge what comes back. You do not dig: a fact is retrieved by a task under a unit, never with your own tools, so what you want known becomes a period objective for the planner to task. Your tools are for a task assigned under command, not for your turns: a session with tools is tempted to keep reading instead of deciding, and a turn is decided from the file in front of you.
 
-/** Whether a reassign verdict's instructions drop the slice rather than hand it on (R4-4). */
-export function dropsSlice(instructions: string): boolean {
-  return /^drop:/i.test(instructions.trim());
+You take command from a briefing: the initial IC's, written from a size-up on a cheaper model, or an outgoing IC's handoff document. Your first act on taking command is to evaluate it, item by item: say what you accept, rewrite or discard and why, then set the period. Nothing in a briefing binds you; it is what another session saw and thought, and your judgment is why you hold the seat.
+
+Each operational period opens with a change report and the incident file, and you answer with a command turn: the period's objectives (what this period must establish, from the incident objective, the constraints, the priorities and the units' reports), the priorities restated or revised, the units to close, answers, and what only Mauria can supply: a question for what only she knows or may decide, a capability request for means that do not exist yet, a grant request for permission. answers is for the resource requests your change report lists, and nothing else; a report's why or suggestion is answered through the period objectives. Set incidentStatus to satisfied only when the period objectives and the incident objective are met by the units' reports, resting on observed claims; satisfied is refused while any task is still open or before any claim is observed, so when a task is left, continue and let the planner cancel or finish it. failed when the objectives cannot be met; blocked when you have raised something for Mauria; continue otherwise. A unit's not_met report, with its why and suggestion, is information for your decision and never a decision: you decide what happens to that unit and its objective, and you may close it, re-task it through the period objectives, or ask Mauria.
+
+When the status is continue, the planner drafts an action plan against your objectives and you review it once: approve it as drafted; correct it, with text the planner redrafts against, once; or amend it, returning the whole plan as you want it applied. After a redraft you approve or amend, never correct again. The situation in the plan is the planner's; leave it as written unless you amend the plan, and then carry it over. The plan's rationale names the priority that chose between plans; hold the draft to that and to the period objectives, not to your taste.
+
+A period ends when the units have reported or when one report changes the picture; you are never consulted per task. A task under command runs under you as under any leader, and after it you continue or report the same way: report what changed, not what you did. You assign tasks under command like any leader (assignTasks): a retrievable fact a task under command lacked is yours to get that way, and the other three kinds of lack you raise in your command turn, never as a leader's resource requests, which are refused on command. Assignments are checked by the validator's rules on tasks and by these:
+${LEADER_RULES.map((r) => `- ${r}`).join("\n")}
+
+discrepancy is for one thing only: the update you received describes a different problem from the one you have been commanding, as if you believed you were fighting a fire and the update describes a hurricane. Say what differs. A discrepancy raised below you that the incident file cannot reconcile becomes a question for Mauria in your command turn. A different detail, a wrong line number, a claim you disagree with, is not a discrepancy.`;
+
+/** The role text per seat: a unit's leader reads `LEADER_ROLE`, the root's leader reads `IC_ROLE`. */
+export function leaderRole(seat: "leader" | "ic"): string {
+  return seat === "leader" ? LEADER_ROLE : IC_ROLE;
 }
 
-function reassignmentOf(e: Event): Reassignment {
-  return {
-    id: String(e.payload.reassignmentId ?? ""),
-    reportId: String(e.payload.reportId ?? ""),
-    unitId: String(e.payload.unitId ?? ""),
-    objective: String(e.payload.objective ?? ""),
-    instructions: String(e.payload.instructions ?? ""),
-    why: String(e.payload.why ?? ""),
-    claims: Array.isArray(e.payload.claims) ? e.payload.claims.map(String) : [],
-    cycle: typeof e.payload.cycle === "number" ? e.payload.cycle : 0,
-    dropped: e.payload.dropped === true,
-    droppedWhy:
-      e.payload.dropped === true ? String(e.payload.instructions ?? "") : null,
-    takenBy: null,
-  };
+export const LEADER_TURN_SCHEMA = jsonSchemaFor(LeaderTurn);
+
+/** The sentence a turn prompt ends with when the unit has nothing left to run; the leader is asked for its report. */
+const NO_TASKS_REMAIN =
+  "No ready tasks remain in your unit. File your report against the unit's objective.";
+
+/** What a continuing leader is told about asking for a team on the task that runs next. */
+const STRIKE_TEAM_OFFER =
+  "To send a strike team on it, set requestStrikeTeam: each kind with its model, tools, prompt, count and why; the kinds are defined for the call that runs the task.";
+
+/**
+ * Whether a task runs inside its unit's leader session: a session-backed capability on the
+ * leader's provider and model whose equipment and Bash allowlist the leader already holds
+ * (`default` covers every built-in tool). A capability that picks one piece of external
+ * equipment per task (`equipmentSelect`) never does, since the leader's session attaches
+ * all of its equipment. Anything else runs in a session of its own, or in process, and its
+ * result reaches the leader on its next turn.
+ */
+export function runsInsideLeader(
+  capability: Capability,
+  task: Task,
+  unit: Unit,
+): boolean {
+  if (capability.kind !== "session") return false;
+  if (capability.session.equipmentSelect !== undefined) return false;
+  if (
+    task.provider !== unit.leader.provider ||
+    task.model !== unit.leader.model
+  )
+    return false;
+  return holdsCapability(capability, unit, task.inputs);
 }
 
-/** Every reassignment the log records, in order, each with the unit that took it when one has, or the IC's later drop of it (R4-4). */
-export function reassignments(events: readonly Event[]): Reassignment[] {
-  const all: Reassignment[] = [];
-  const byId = new Map<string, Reassignment>();
-  for (const e of events) {
-    if (e.type === "unit.reassigned") {
-      const r = reassignmentOf(e);
-      all.push(r);
-      byId.set(r.id, r);
+/**
+ * Whether a unit holds a capability, so its leader may assign a task to it (the validator's
+ * "Capability held"): a deterministic one always, since it composes in-process equipment
+ * and needs no session tool; a session-backed one when its equipment and Bash allowlist are
+ * within the unit's (`default` covers every built-in), and, when it picks one piece of
+ * equipment per task, when the task's pick is held.
+ */
+export function holdsCapability(
+  capability: Capability,
+  unit: Unit,
+  inputs: Record<string, unknown>,
+): boolean {
+  if (capability.kind !== "session") return true;
+  const held = new Set(unit.equipment);
+  const builtins = resolveEquipment(capability.equipment).tools;
+  const covered = (name: string) =>
+    held.has(name) || (held.has("default") && builtins.includes(name));
+  const select = capability.session.equipmentSelect;
+  const needed =
+    select === undefined
+      ? capability.equipment
+      : [String(inputs[select] ?? "")];
+  if (!needed.every(covered)) return false;
+  // A read-only allowlist is held whenever the unit holds Bash and every entry the capability
+  // asks for is on the session list: the list bounds what a plan may declare, and in print
+  // mode Claude Code permits read-only commands beyond the allowlist anyway (DESIGN.md
+  // Reference, 2026-09-15), so a unit declared with a subset still runs the capability inside
+  // its leader, under the unit's own allowlist.
+  const wanted = capability.session.bashAllowlist ?? [];
+  if (wanted.length === 0) return true;
+  if (!unit.equipment.includes("Bash") && !unit.equipment.includes("default"))
+    return false;
+  const readOnly = new Set<string>(READ_ONLY_SESSION_COMMANDS);
+  return wanted.every((c) => readOnly.has(c));
+}
+
+/** The tasks a leader assigned, from `plan.applied` events with the leader as actor. */
+function leaderAssignedTasks(events: readonly Event[]): Set<string> {
+  const ids = new Set<string>();
+  for (const e of events)
+    if (e.type === "plan.applied" && e.actor === LEADER_ACTOR)
+      for (const id of (e.payload.tasks as unknown[] | undefined) ?? [])
+        if (typeof id === "string") ids.add(id);
+  return ids;
+}
+
+/**
+ * A unit's budget, which it has only through its tasks: the share is what the plans
+ * allotted the unit's tasks, per dimension, undefined where no plan task under the unit
+ * bounds it (which the validator reads as zero for an assignment that bounds that
+ * dimension, ruled 2026-09-15); charged against it is what the unit's ended tasks spent
+ * and what its open tasks are bound to, the leader's own assignments included. A leader
+ * assigns inside the difference (the validator's "Budget within share").
+ */
+export function unitShare(
+  unit: Unit,
+  tasks: readonly Task[],
+  events: readonly Event[],
+): { share: Budget; charged: { tokens: number; seconds: number } } {
+  const assigned = leaderAssignedTasks(events);
+  const spent = new Map<string, Usage>();
+  for (const e of events)
+    if (e.type === "task.usage" && typeof e.payload.taskId === "string")
+      spent.set(e.payload.taskId, e.payload.usage as Usage);
+  const share: Budget = {};
+  const charged = { tokens: 0, seconds: 0 };
+  for (const t of tasks) {
+    if (t.unitId !== unit.id || t.status === "cancelled") continue;
+    if (!assigned.has(t.id)) {
+      if (t.budget.tokens !== undefined)
+        share.tokens = (share.tokens ?? 0) + t.budget.tokens;
+      if (t.budget.seconds !== undefined)
+        share.seconds = (share.seconds ?? 0) + t.budget.seconds;
     }
-    if (e.type === "reassignment.taken") {
-      const r = byId.get(String(e.payload.reassignmentId ?? ""));
-      if (r !== undefined) r.takenBy = String(e.payload.unitId ?? "");
-    }
-    if (e.type === "reassignment.dropped") {
-      const r = byId.get(String(e.payload.reassignmentId ?? ""));
-      if (r !== undefined) {
-        r.dropped = true;
-        r.droppedWhy = String(e.payload.why ?? "");
-      }
+    const usage = spent.get(t.id);
+    if (t.status === "completed" || t.status === "failed") {
+      charged.tokens += (usage?.inputTokens ?? 0) + (usage?.outputTokens ?? 0);
+      charged.seconds += usage?.seconds ?? 0;
+    } else {
+      charged.tokens += t.budget.tokens ?? 0;
+      charged.seconds += t.budget.seconds ?? 0;
     }
   }
-  return all;
+  return { share, charged };
 }
 
 /**
- * The reassignments a plan must give to a new unit (R4-4): recorded, not dropped by the
- * verdict or by a later command turn, and taken by no unit yet. The planner's section 10
- * lists their ids under the IC's situation (R4-5) and the validator's "Reassignments
- * taken" requires each to be named in a new unit's `takes`.
+ * Units returned to `active` since their leader's last turn (`unit.resumed` after the last
+ * `unit.reported` or `unit.continued`): dispatch opens such a unit's pass with a turn
+ * carrying the answers, before any task, so the leader reads them before it runs.
  */
-export function openReassignments(events: readonly Event[]): Reassignment[] {
-  return reassignments(events).filter((r) => !r.dropped && r.takenBy === null);
-}
-
-/** The reassignment a unit took, whose instructions and claims open its leader's orientation (R4-4); null for a unit created without one. */
-export function reassignmentTakenBy(
+export function resumedUnits(
+  units: readonly Unit[],
   events: readonly Event[],
-  unitId: string,
-): Reassignment | null {
-  return reassignments(events).find((r) => r.takenBy === unitId) ?? null;
-}
-
-/**
- * Which revision a unit's next report is (R4-3): the number of revise verdicts the IC has
- * given the unit, counted from `report.reviewed`, so the report answering the first revise
- * carries `revision: 1`; 0 before any, and then no `revision` is written on the report.
- */
-export function revisionOf(events: readonly Event[], unitId: string): number {
-  let n = 0;
-  for (const e of events)
-    if (
-      e.type === "report.reviewed" &&
-      e.payload.unitId === unitId &&
-      e.payload.verdict === "revise"
-    )
-      n += 1;
-  return n;
+): Set<string> {
+  const lastTurn = new Map<string, number>();
+  const lastResume = new Map<string, number>();
+  for (const e of events) {
+    if (typeof e.payload.unitId !== "string") continue;
+    if (e.type === "unit.reported" || e.type === "unit.continued")
+      lastTurn.set(e.payload.unitId, e.sequence);
+    if (e.type === "unit.resumed") lastResume.set(e.payload.unitId, e.sequence);
+  }
+  return new Set(
+    units
+      .filter(
+        (u) =>
+          u.status === "active" &&
+          (lastResume.get(u.id) ?? -1) > (lastTurn.get(u.id) ?? -1),
+      )
+      .map((u) => u.id),
+  );
 }
 
 /** One request a unit still waits on: its kind, the text the IC answers it by (`request` on a `ResourceAnswer`), why, and for a question its id. */
@@ -311,57 +386,190 @@ export function answeredRequestsOf(
 }
 
 /**
- * The reports in the IC's verdict window (R4-2): every `unit.reported` after the last
- * accepted `command.turned`, in log order. A rejected turn answered nothing, so its
- * window's reports carry over to the retry's change report. Command files no report
- * (R4-6), and a report the runtime wrote for a refused unit (R4-7) is one of these like
- * any leader's. The change report lists them all; the verdicts answer `latestReports`.
+ * Units whose leader owes a report: one of the unit's tasks ended after its last report.
+ * Dispatch asks such a unit for a report even when it has nothing left to run (the turn
+ * creates the session if none exists), and the validator refuses to close it until it has
+ * (DESIGN.md Step 5).
  */
-export function reportsAwaitingVerdict(events: readonly Event[]): Event[] {
-  return eventsSinceLastCommand(events).filter(
-    (e) => e.type === "unit.reported",
+export function unitsOwingReport(
+  units: readonly Unit[],
+  tasks: readonly Task[],
+  events: readonly Event[],
+): Set<string> {
+  const unitOfTask = new Map(tasks.map((t) => [t.id, t.unitId]));
+  const lastReport = new Map<string, number>();
+  const lastEnded = new Map<string, number>();
+  for (const e of events) {
+    if (e.type === "unit.reported" && typeof e.payload.unitId === "string")
+      lastReport.set(e.payload.unitId, e.sequence);
+    if (e.type === "task.completed" || e.type === "task.failed") {
+      const taskId = (e.payload.mutation as { taskId?: unknown } | undefined)
+        ?.taskId;
+      const unitId =
+        typeof taskId === "string" ? unitOfTask.get(taskId) : undefined;
+      if (unitId !== undefined) lastEnded.set(unitId, e.sequence);
+    }
+  }
+  return new Set(
+    units
+      .filter(
+        (u) =>
+          u.status === "active" &&
+          (lastEnded.get(u.id) ?? -1) > (lastReport.get(u.id) ?? -1),
+      )
+      .map((u) => u.id),
   );
 }
 
 /**
- * Everything after the IC's last accepted `command.turned`: the window its verdicts
- * answer and, with no leader turn on the root (R4-6), the window the tasks under command
- * are judged in. A rejected turn does not move it, so what a rejected turn saw is listed
- * again for the retry.
+ * What a leader reads on its first call, before the first task's brief or result: the
+ * incident, the situation, the hierarchy, and its own unit. When the call is a task's brief,
+ * which already carries the incident, the situation and the hierarchy, only the unit's own
+ * lines are added.
  */
-export function eventsSinceLastCommand(events: readonly Event[]): Event[] {
-  let since = -1;
-  for (const e of events)
-    if (e.type === "command.turned" && e.payload.rejected !== true)
-      since = e.sequence;
-  return events.filter((e) => e.sequence > since);
+export function renderLeaderOrientation(
+  incident: Incident,
+  situation: Situation | null,
+  unit: Unit,
+  units: readonly Unit[],
+  beforeBrief = false,
+): string[] {
+  const list = (items: readonly string[]) =>
+    items.length === 0 ? "  (none)" : items.map((i) => `  - ${i}`).join("\n");
+  const own = [
+    `You lead unit ${unit.id}. Your unit's objective: ${unit.objective}`,
+    `Your equipment: ${unit.equipment.join(", ") || "none"}; Bash allowlist: ${unit.bashAllowlist.join(", ") || "none"}`,
+  ];
+  return beforeBrief
+    ? own
+    : [
+        `Incident objective: ${incident.objective}`,
+        ...renderPeriod(incident.period),
+        `Current hypothesis: ${situation?.hypothesis ?? "(none yet)"}`,
+        "Established so far:",
+        list((situation?.proven ?? []).map((p) => `${p.claimId}: ${p.line}`)),
+        "",
+        ...renderHierarchy(unit, units),
+        ...own,
+      ];
+}
+
+/** How a task ended, for the leader's next turn: completed inside the leader's session or elsewhere, or failed. */
+export type TaskEnding =
+  | { task: Task; status: "completed"; inside: boolean }
+  | { task: Task; status: "failed"; reason: string };
+
+/**
+ * Why the leader is asked for a move: a task ended, its unit resumed with the answers to its
+ * requests, or nothing (the unit owes a report from an earlier pass).
+ */
+export type TurnCause =
+  | TaskEnding
+  | { status: "answered"; answers: readonly string[] }
+  | null;
+
+/** What a task that came back insufficient needed, each with its kind; empty for any other result. */
+function insufficiencyOf(task: Task): { kind: string; what: string }[] {
+  const result = task.result as {
+    outcome?: unknown;
+    needed?: { kind: string; what: string }[];
+  } | null;
+  return result?.outcome === "insufficient" ? (result.needed ?? []) : [];
+}
+
+/** How the leader resolves what a task lacked: a retrievable fact by assigning, the rest by a resource request on its report. */
+const RESOLVE_LACKS =
+  "A retrievable fact is yours to get: assign a task for it under your unit (assignTasks) and continue. Permission, missing means and something only a human knows go up as resourceRequests on your report.";
+
+/**
+ * The user message of a turn: what the last task came to (its insufficiency, when it came
+ * back insufficient, with what the leader does about each kind; none when the unit owes a
+ * report from an earlier pass; the answers when the unit resumed), any assignment the
+ * validator refused since the last turn, then how many ready tasks remain, which runs next
+ * and the team it declares if any, and what the leader is asked for.
+ */
+export function renderTurnPrompt(
+  cause: TurnCause,
+  remaining: number,
+  next: Task | null = null,
+  rejections: readonly string[] = [],
+): string {
+  const came: string[] = [];
+  if (cause === null)
+    came.push("Your unit has not reported since its last task ended.");
+  else if (cause.status === "answered")
+    came.push(
+      "Your unit's resource requests were answered and it is active again:",
+      ...cause.answers.map((a) => `  - ${a}`),
+    );
+  else if (cause.status === "failed")
+    came.push(
+      `Task ${cause.task.id} (${cause.task.capability}) failed: ${cause.reason}`,
+    );
+  else {
+    const needed = insufficiencyOf(cause.task);
+    if (needed.length > 0)
+      came.push(
+        `Task ${cause.task.id} (${cause.task.capability}) came back insufficient${cause.inside ? " in this session" : ""}. It needed:`,
+        ...needed.map((n) => `  - ${n.kind}: ${n.what}`),
+        RESOLVE_LACKS,
+      );
+    else if (cause.inside)
+      came.push(
+        `Task ${cause.task.id} (${cause.task.capability}) completed in this session; its result is recorded.`,
+      );
+    else
+      came.push(
+        `Task ${cause.task.id} (${cause.task.capability}) completed. Its result:\n  ${renderTaskResult(cause.task)}`,
+      );
+  }
+  if (rejections.length > 0)
+    came.push(
+      "",
+      "Refused on your last turn, and nothing from it was created or raised:",
+      ...rejections.map((r) => `  - ${r}`),
+    );
+  return [
+    ...came,
+    "",
+    remaining === 0
+      ? NO_TASKS_REMAIN
+      : `${remaining} ready task(s) remain in your unit. Your next move: continue to the next, or report now if the picture changed.`,
+    ...(remaining === 0 || next === null
+      ? []
+      : [
+          `Next: task ${next.id} (${next.capability}): ${next.objective}${next.strikeTeam.length === 0 ? "" : `; it declares a strike team: ${next.strikeTeam.map(describeStrikeTeam).join("; ")}`}`,
+          STRIKE_TEAM_OFFER,
+        ]),
+  ].join("\n");
 }
 
 /**
- * The IC's situation (R4-5): the one on its last accepted `command.turned`, which every
- * seat works from until the next turn; null before the IC's first accepted turn (and on a
- * log written before R4-5, whose situations rode on `plan.applied`). A rejected turn's is
- * skipped, as its period is.
+ * A call on the unit's leader session: the leader's model, equipment and allowlist, the
+ * seat's system prompt (kept from the first call when the session is resumed), the unit's
+ * session to resume once it has one, and, when the call runs a task that declares one, the
+ * task's strike team, defined for this call alone.
  */
-export function icSituation(events: readonly Event[]): Situation | null {
-  let last: unknown;
-  for (const e of events)
-    if (e.type === "command.turned" && e.payload.rejected !== true)
-      last = (e.payload.turn as { situation?: unknown } | undefined)?.situation;
-  const parsed = Situation.safeParse(last);
-  return parsed.success ? parsed.data : null;
-}
-
-/**
- * The report each unit's verdict answers, by unit: its last `unit.reported` in the window.
- * A unit can file two in one pass (R4-9: its leader's report, then the runtime's `not_met`
- * when a later task of its is refused twice), and the IC decides on the last; the earlier
- * one is listed for the record and takes no verdict of its own. The validator's "Reports
- * answered" requires one verdict per unit here, naming this report, and none outside.
- */
-export function latestReports(events: readonly Event[]): Map<string, Event> {
-  const latest = new Map<string, Event>();
-  for (const e of reportsAwaitingVerdict(events))
-    if (typeof e.payload.unitId === "string") latest.set(e.payload.unitId, e);
-  return latest;
+export function leaderRequest(
+  unit: Unit,
+  prompt: string,
+  outputSchema: Record<string, unknown>,
+  cwd: string,
+  timeoutSeconds = LEADER_TURN_SECONDS,
+  strikeTeam: readonly StrikeTeam[] = [],
+): SessionRequest {
+  const seat = unit.parentId === null ? "ic" : "leader";
+  return {
+    model: unit.leader.model,
+    systemPrompt: sessionSystemPrompt(leaderRole(seat), seat),
+    prompt,
+    ...resolveEquipment(unit.equipment),
+    bashAllowlist: unit.bashAllowlist,
+    cwd,
+    addDirs: [],
+    outputSchema,
+    timeoutSeconds,
+    ...(unit.sessionId === null ? {} : { resume: unit.sessionId }),
+    ...(strikeTeam.length === 0 ? {} : { strikeTeam }),
+  };
 }

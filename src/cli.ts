@@ -1,5 +1,4 @@
 import { createRequire } from "node:module";
-import * as config from "./commands/config.js";
 import * as incident from "./commands/incident.js";
 import { type Context, EXIT, type Handler } from "./context.js";
 
@@ -9,7 +8,7 @@ const require = createRequire(import.meta.url);
 export const VERSION: string = require("../package.json").version;
 
 export type Command = {
-  group: "incident" | "config" | "top";
+  group: "incident" | "top";
   name: string;
   usage: string;
   summary: string;
@@ -111,31 +110,6 @@ export const COMMANDS: readonly Command[] = [
     arrives: "after v0",
   },
   {
-    group: "config",
-    name: "save",
-    usage: "config save <incident> <unit-id> <name>",
-    summary:
-      "Save a unit's filled form (its type, leader, equipment, Bash allowlist and role text) under a name a plan deploys it by",
-    arrives: "R4-11",
-    handler: config.save,
-  },
-  {
-    group: "config",
-    name: "list",
-    usage: "config list",
-    summary: "List the saved unit configs with their fields",
-    arrives: "R4-11",
-    handler: config.list,
-  },
-  {
-    group: "config",
-    name: "show",
-    usage: "config show <name>",
-    summary: "Print one saved unit config in full",
-    arrives: "R4-11",
-    handler: config.show,
-  },
-  {
     group: "top",
     name: "grant",
     usage: "grant standing <capability>",
@@ -170,7 +144,7 @@ export function helpText(): string {
 
 function notYetImplemented(command: Command): Handler {
   const label =
-    command.group === "top" ? command.name : `${command.group} ${command.name}`;
+    command.group === "incident" ? `incident ${command.name}` : command.name;
   return async (_args, ctx) => {
     ctx.io.err(
       `noscope ${label}: not yet implemented, arrives ${command.arrives}`,
@@ -181,8 +155,8 @@ function notYetImplemented(command: Command): Handler {
 
 function findCommand(words: readonly string[]): Command | undefined {
   const [first, second] = words;
-  if (first === "incident" || first === "config")
-    return COMMANDS.find((c) => c.group === first && c.name === second);
+  if (first === "incident")
+    return COMMANDS.find((c) => c.group === "incident" && c.name === second);
   return COMMANDS.find((c) => c.group === "top" && c.name === first);
 }
 
@@ -214,8 +188,7 @@ export async function run(
     argv.some((a) => a === "--help" || a === "-h") ||
     words.length === 0 ||
     words[0] === "help" ||
-    ((words[0] === "incident" || words[0] === "config") &&
-      (words.length === 1 || words[1] === "help"));
+    (words[0] === "incident" && (words.length === 1 || words[1] === "help"));
   if (wantsHelp) {
     io.out(helpText());
     return EXIT.ok;
@@ -228,6 +201,6 @@ export async function run(
     io.err(helpText());
     return EXIT.usage;
   }
-  const rest = afterCommandWords(argv, command.group === "top" ? 1 : 2);
+  const rest = afterCommandWords(argv, command.group === "incident" ? 2 : 1);
   return (command.handler ?? notYetImplemented(command))(rest, ctx);
 }

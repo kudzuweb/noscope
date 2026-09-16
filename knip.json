@@ -5,7 +5,6 @@
     "src/models.ts",
     "src/equipment/index.ts",
     "src/capabilities/index.ts",
-    "src/units/index.ts",
     "src/planner.ts",
     "test/**/*.test.ts"
   ],

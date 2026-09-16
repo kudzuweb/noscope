@@ -9,10 +9,7 @@ have to zoom in, not even to one-shot. `DESIGN.md` is the design. `BUILD-PLAN.md
 
 `CLAUDE.md` orients a Claude pointed at the repository: the framework in a paragraph, install, use, what to read next.
 
-Layout: `src/` is the runtime (`src/units/` registers the unit types, `base` and `ic`,
-each a form and a protocol; `src/configs.ts` the saved unit configs a plan deploys by
-name; `src/capabilities/` the capabilities), `test/` its vitest
-tests, `bin/noscope.mjs` the launcher that
+Layout: `src/` is the runtime, `test/` its vitest tests, `bin/noscope.mjs` the launcher that
 loads the built `dist/`; `biome.json`, `knip.json`, `tsconfig.json` and `tsconfig.typecheck.json`
 configure lint, unused-code detection, the build and the typecheck that includes tests.
 
@@ -22,7 +19,7 @@ configure lint, unused-code detection, the build and the typecheck that includes
 
 `docs/instructions-only-run.md` reads the session that built round 3 the way `incident review` reads a run, so the runtime and plain instructions can be compared on the same terms.
 
-`docs/first-incident.md` is the record of the first live run: the answer the runtime produced, the run cycle by cycle, the acceptance criteria checked against it, and the second, third and fourth runs that measured rounds 2, 3 and 4 beside it.
+`docs/first-incident.md` is the record of the first live run: the answer the runtime produced, the run cycle by cycle, the acceptance criteria checked against it, and the second run that measured round 2 beside it.
 
 `docs/architecture.html` is the flow diagram: the pieces, one cycle in order, what a session receives and returns, a claim's life, where the loop waits on Mauria, the tree changing shape. Opens straight from disk.
 
@@ -46,28 +43,13 @@ subagent transcripts (default `~/.claude`).
 a fresh one (default 120000): the context of the last message of the IC's last call, in
 tokens, not the call's summed input; the IC is never compacted, so this is what keeps it
 below Claude Code's limit.
-`NOSCOPE_REPORT_WORK_CHARS` is the size, in characters, at which each task's block under a
-unit's report in the IC's change report (and in `incident show`) is clipped, the task id
-left as the pointer to the full record (default 1500).
-`NOSCOPE_IC_FALLBACK_MODEL` is the model a seat the API refused is retried on, once
-(default `claude-opus-4-8`): the IC's replacement session, a unit leader's, or a task's own
-retry; refused on it too, a unit reports `not_met` for the IC to decide and the IC's own
-refusal blocks the incident on a question that `incident answer <id> "<model>"` resolves.
-`NOSCOPE_PARALLEL` is how many units run their passes at once (default 3; a positive whole
-number): units with no `dependsOn` between their tasks run concurrently, and inside a unit
-the tasks in sessions of their own start together; set it to 1 for one unit at a time.
 `NOSCOPE_LIVE=1` also runs the live tests, which call the real binary: a Haiku session, a
 Haiku leader sending a two-member `pinger` strike team, a Haiku initial IC sizing up this
-checkout read-only and one sizing up a diagnostic objective on it, and a
+checkout read-only, and a
 `reproduce` session that drives Playwright's MCP server, which needs Playwright's Chromium
 installed (`npx playwright install chromium`) and network access for
 `npx --yes @playwright/mcp@latest`.
 
-`pnpm build` compiles `src/` into `dist/` and then writes `dist/runtime-version.json`, the
-commit the build ran at (`-dirty` when a tracked file differed from it, `unknown` with no
-git or no checkout); every event the runtime writes carries it as its `runtime` tag, so a
-seat's briefing can be re-rendered later by checking that commit out (R4-12; DESIGN.md
-Step 2). Rebuild after every pull, since `bin/noscope.mjs` runs `dist/` as it stands.
 `pnpm check` runs lint (biome), typecheck, tests (vitest), unused-code detection (knip) and
 the build, which is what CI runs on every pull request. Every command in the design's
 command list is known to the binary; exit codes are the table in `DESIGN.md` Step 7.
