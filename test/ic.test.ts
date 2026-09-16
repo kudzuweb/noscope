@@ -256,7 +256,7 @@ describe("the IC above the planner", () => {
       "  task 001-t01 [ready] under 001-u02: grep: find delete",
       "  ran 001-t01 (grep): completed; evidence: 1 match in 1 file",
       "  unit 001-u02 reported progress: nothing changed",
-      "claims: 0 asserted (0 observed); evidence: 1 deterministic result(s)",
+      "claims: 0 from sessions, 0 observed; evidence: 1 deterministic result(s)",
     ]);
     // The calls in order: the IC's command turn on a fresh session, the draft, the review
     // resumed on the IC's session, then the find unit's leader.

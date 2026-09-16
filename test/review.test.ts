@@ -224,7 +224,7 @@ describe("incident review", () => {
       "tasks: 2 ran (1 deterministic, 1 sessions) of 2 created",
     );
     expect(text).toContain(
-      "claims: 1 asserted (1 observed, 0 inferred), 0 rejected; evidence: 1 deterministic result(s)",
+      "claims: 1 from sessions, 1 observed, 0 inferred, 0 rejected; evidence: 1 deterministic result(s)",
     );
     expect(text).toContain("questions: none");
     expect(h.out.at(-1)).toBe("cost: $0.16");
@@ -433,7 +433,7 @@ describe("incident review", () => {
       "tasks: 4 ran (0 deterministic, 4 sessions) of 5 created, 1 failed before running",
     );
     expect(text).toContain(
-      "claims: 0 asserted (0 observed, 0 inferred), 0 rejected; evidence: 0 deterministic result(s)",
+      "claims: 0 from sessions, 0 observed, 0 inferred, 0 rejected; evidence: 0 deterministic result(s)",
     );
     expect(text).toContain("  asked in cycle 2: does it happen every time?");
     expect(text).toContain("  answered at 2026-09-13T13:17:00.000Z: yes");

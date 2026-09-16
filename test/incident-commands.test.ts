@@ -107,7 +107,7 @@ describe("incident commands", () => {
     );
     expect(text).toContain("units: 1 active, 0 waiting, 0 closed");
     expect(text).toContain(
-      "claims: 0 asserted (0 observed, 0 inferred), 0 rejected",
+      "claims: 0 from sessions, 0 observed, 0 inferred, 0 rejected",
     );
     expect(text).toContain("evidence: 0 deterministic result(s)");
     for (const section of [

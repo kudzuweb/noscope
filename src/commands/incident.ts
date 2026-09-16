@@ -400,7 +400,7 @@ function renderIncidentFile(
     tokens: spent.inputTokens + spent.outputTokens,
     seconds: spent.seconds,
   };
-  const asserted = claims.filter(isSessionClaim);
+  const sessionClaims = claims.filter(isSessionClaim);
   const evidence = tasks.filter(isEvidence);
   const decisions = events.filter(
     (e) => e.type === "plan.applied" && typeof e.payload.rationale === "string",
@@ -493,9 +493,9 @@ function renderIncidentFile(
     `tasks: ${tasks.filter((t) => t.status !== "completed" && t.status !== "cancelled" && t.status !== "failed").length} open, ${tasks.length} total`,
   );
   lines.push(
-    `claims: ${asserted.length} asserted (${asserted.filter((c) => c.basis === "observed").length} observed, ${asserted.filter((c) => c.basis === "inferred").length} inferred), ${asserted.filter((c) => c.status === "rejected").length} rejected`,
+    `claims: ${sessionClaims.length} from sessions, ${sessionClaims.filter((c) => c.basis === "observed").length} observed, ${sessionClaims.filter((c) => c.basis === "inferred").length} inferred, ${sessionClaims.filter((c) => c.status === "rejected").length} rejected`,
   );
-  for (const c of asserted)
+  for (const c of sessionClaims)
     lines.push(
       `  [${c.basis}] ${c.subject} ${c.predicate} ${clip(JSON.stringify(c.object))}`,
     );
@@ -1169,7 +1169,7 @@ async function cycle(
   else if (ran.length === 0) ctx.io.out("  nothing ready to run");
   const claims = store.listClaims(incident.id).filter(isSessionClaim);
   ctx.io.out(
-    `claims: ${claims.length} asserted (${claims.filter((c) => c.basis === "observed").length} observed); evidence: ${store.listTasks(incident.id).filter(isEvidence).length} deterministic result(s)`,
+    `claims: ${claims.length} from sessions, ${claims.filter((c) => c.basis === "observed").length} observed; evidence: ${store.listTasks(incident.id).filter(isEvidence).length} deterministic result(s)`,
   );
   return { status: "open", stopped };
 }

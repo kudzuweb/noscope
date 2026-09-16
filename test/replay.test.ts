@@ -67,7 +67,7 @@ describe("replay of run 004's record (R5-1)", () => {
       };
       expect(await run(["incident", "review", "001"], ctx)).toBe(EXIT.ok);
       expect(out).toContain(
-        "claims: 54 asserted (44 observed, 10 inferred), 0 rejected; evidence: 4 deterministic result(s)",
+        "claims: 54 from sessions, 44 observed, 10 inferred, 0 rejected; evidence: 4 deterministic result(s)",
       );
       expect(
         out.filter((l) => / \(deterministic\): .* evidence /.test(l)),

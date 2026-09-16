@@ -1182,11 +1182,12 @@ with its reasons.
 
 The verifier turns a session's result into claims; a deterministic run's output is evidence
 and never a claim (round 5, R5-1). A deterministic capability's output, parsed through its
-schema, is recorded whole as the task's result on `task.completed`, with the effective
+schema, is recorded whole as the task's result on `task.completed`, and the effective
 inputs the run used (as parsed, defaults applied, every path field resolved against the
-incident's working directory, `paths` per capability) on the task, so the record says
-exactly what ran; no `claim.*` event is written for it, and the dispatcher's pass summary
-prints its `measure`. A session-backed capability's result becomes `asserted` claims with
+incident's working directory, `paths` per capability) are written on that event's payload
+as `inputs`, the evidence's provenance, so the record says exactly what ran where the
+task row holds the inputs as the plan wrote them; no `claim.*` event is written for it,
+and the dispatcher's pass summary prints its `measure`. A session-backed capability's result becomes `asserted` claims with
 the session id as provenance; a session names the basis of each of its claims, and a
 result without one does not fit the schema. A claim that rests on attached evidence names
 the deterministic tasks it cites (`cites` on the proposal, carried into the provenance),

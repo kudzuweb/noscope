@@ -136,6 +136,15 @@ describe("dispatcher", () => {
       taskId: "t1",
       result: { matches: [{ file: "a.txt", line: 2 }] },
     });
+    // The effective inputs, the evidence's provenance, ride on the event.
+    expect(completed?.payload.inputs).toEqual({
+      root: tree,
+      pattern: "delete",
+      glob: "*",
+      ignoreCase: false,
+      exclude: ["node_modules", ".git"],
+      maxMatches: 500,
+    });
     expect(types.filter((t) => t === "task.started")).toHaveLength(2);
     expect(types.filter((t) => t === "task.usage")).toHaveLength(2);
     for (const e of store
@@ -3553,7 +3562,7 @@ describe("incident step", () => {
       "  task 001-t01 [ready] under 001-u02: grep: find delete",
       "  ran 001-t01 (grep): completed; evidence: 1 match in 1 file",
       "  unit 001-u02 reported progress: nothing changed",
-      "claims: 0 asserted (0 observed); evidence: 1 deterministic result(s)",
+      "claims: 0 from sessions, 0 observed; evidence: 1 deterministic result(s)",
     ]);
     out.length = 0;
     const bad: ActionPlan = {
@@ -3627,7 +3636,7 @@ describe("incident step", () => {
     }
     expect(out).toContain("  ran 001-t02 (investigate): completed; 1 claim(s)");
     expect(out.at(-1)).toBe(
-      "claims: 1 asserted (1 observed); evidence: 1 deterministic result(s)",
+      "claims: 1 from sessions, 1 observed; evidence: 1 deterministic result(s)",
     );
     const s1 = new Store(db);
     expect(

@@ -4478,7 +4478,7 @@ Not exactly to spec, with reasons:
   counts open tasks alone. DESIGN.md's Vocabulary says a new item carries no id and a
   carried one keeps the id the file lists.
 
-## R5-1: Evidence is not a claim (#PR, merged 2026-09-16)
+## R5-1: Evidence is not a claim (#60, merged 2026-09-16)
 
 R5-1 of the round 5 plan, the first row: a deterministic task's output is evidence, kept
 whole under the task id and never turned into claims. The evidence behind it is run 004
@@ -4531,8 +4531,9 @@ block (which rendered the result's text whole under the cap before) and in a rep
 work block; a deterministic task's block has no claims line; `claimsUnder` reads session
 claims only, so the three-then-by-id listing for a wide grep is gone. `src/review.ts`: a
 task line ends `evidence <measure>` for a deterministic task and `claims N (M inferred)`
-for a session, and the totals line reads `claims: 54 asserted (44 observed, 10 inferred),
-0 rejected; evidence: 4 deterministic result(s)`. `src/commands/incident.ts`: `show`
+for a session, and the totals line reads `claims: 54 from sessions, 44 observed, 10 inferred, 0
+rejected; evidence: 4 deterministic result(s)` (every claim is a session's; `rejected` is
+a status label counted within that set, not beside it). `src/commands/incident.ts`: `show`
 prints the claims counted by basis, one line each with its basis, then `evidence: N
 deterministic result(s)` with one line per task, and `step` ends with the same counts.
 The session preamble (`src/providers/base.ts`) defines a claim as a session's statement
@@ -4553,8 +4554,8 @@ matches. `test/replay.test.ts` is the replay acceptance, run when `NOSCOPE_REPLA
 names a copy of run 004's record (the record is not in the repository, and the test copies
 the copy before opening it, since opening migrates in place): the file lists 54 claims,
 all asserted, and evidence lines for `001-t01` (74 matches), `001-t02` (80), `001-t03` (10
-commits) and `001-t08` (5), and `incident review` prints `claims: 54 asserted (44
-observed, 10 inferred), 0 rejected; evidence: 4 deterministic result(s)` with four
+commits) and `001-t08` (5), and `incident review` prints `claims: 54 from sessions, 44
+observed, 10 inferred, 0 rejected; evidence: 4 deterministic result(s)` with four
 deterministic task lines carrying a measure. Verified against a copy of
 `~/.noscope/fourth-run.sqlite` on 2026-09-15. The fixtures changed with the design:
 `reportedUnit` in `test/fixtures/models.ts` has its grep as evidence and its observed
@@ -4586,11 +4587,12 @@ hands a leader a deterministic result whole, which R5-4 owns); the situation is 
 
 Not exactly to spec, with reasons:
 
-- The acceptance says run 004's file renders "8 evidence lines"; the record has five
-  deterministic tasks, of which four completed (`001-t01`, `001-t02`, `001-t03`, `001-t08`)
-  and one failed (`001-t05`, the TipTap grep on a missing root, no output), so the file
-  renders four evidence lines and the test asserts four. A failed task has no evidence to
-  measure; its failure stays in the change report and the review as before.
+- The acceptance as first written said run 004's file renders "8 evidence lines", a
+  miscount; the record has five deterministic tasks, of which four completed (`001-t01`,
+  `001-t02`, `001-t03`, `001-t08`) and one failed (`001-t05`, the TipTap grep on a missing
+  root, no output), so the file renders four evidence lines, the test asserts four and the
+  plan now says four. A failed task has no evidence to measure; its failure stays in the
+  change report and the review as before.
 - A claim's citation is `cites` on the session's claim proposal and `cites` in the
   provenance, rather than an entry in the claim's free-text `evidence` list, so the
   verifier can check it against `evidenceFrom.tasks` and a renderer can print it; the

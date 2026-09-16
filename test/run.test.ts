@@ -111,7 +111,7 @@ describe("incident run", () => {
       "period priorities:\n  (none)\nsituation, the IC's:\n  picture: stub picture\n  assessment: on_track: stub: nothing tested yet\n  changed: stub: nothing yet\n  evidence (only a claim for, observed, proves a part of the picture):\n    (none)\n  open items, each worked by a task in the next plan naming its id in settles, or deferred by the IC:\n    (none)\n  reassignments open, each taken by a new unit in the next plan naming its id in takes: (none)",
     );
     expect(shown.out.join("\n")).toContain(
-      `claims: 1 asserted (1 observed, 0 inferred), 0 rejected\n  [observed] ${join(tree, "a.txt")}:2 handles "deletion"\nevidence: 1 deterministic result(s)\n  001-t01 (grep): 1 match in 1 file`,
+      `claims: 1 from sessions, 1 observed, 0 inferred, 0 rejected\n  [observed] ${join(tree, "a.txt")}:2 handles "deletion"\nevidence: 1 deterministic result(s)\n  001-t01 (grep): 1 match in 1 file`,
     );
     const claims = store.listClaims("001");
     expect(claims).toHaveLength(1);

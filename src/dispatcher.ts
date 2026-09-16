@@ -202,6 +202,8 @@ type Outcome = {
   activity?: SessionActivity;
   /** The task's model, and the one it was retried on after a refusal (R4-7), when the run fell back. */
   fallback?: { from: string; to: string };
+  /** A deterministic run's effective inputs (defaults applied, paths absolute), the evidence's provenance on `task.completed` (R5-1). */
+  inputs?: Record<string, unknown>;
   record: () => Claim[];
 };
 
@@ -290,7 +292,9 @@ async function runTask(
         seconds: (Date.now() - started) / 1000,
         costUsd: 0,
       },
-      // The output is evidence, recorded whole on task.completed and never a claim (R5-1).
+      // The output is evidence, recorded whole on task.completed with the inputs that
+      // ran as its provenance, and never a claim (R5-1).
+      inputs: run.inputs,
       record: () => [],
     };
   }
@@ -817,6 +821,7 @@ async function runOne(
             ...(outcome.sessionId === undefined
               ? {}
               : { sessionId: outcome.sessionId }),
+            ...(outcome.inputs === undefined ? {} : { inputs: outcome.inputs }),
             ...(outcome.fallback === undefined
               ? {}
               : {

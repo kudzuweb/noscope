@@ -1323,9 +1323,9 @@ export function renderReview(
   lines.push(...table(rows, 2));
   lines.push("");
 
-  const asserted = claims.filter(isSessionClaim);
+  const sessionClaims = claims.filter(isSessionClaim);
   const byBasis = (basis: string) =>
-    asserted.filter((c) => c.basis === basis).length;
+    sessionClaims.filter((c) => c.basis === basis).length;
   const drafts = runCycles.reduce((n, c) => n + c.proposals.length, 0);
   lines.push(
     `plans: ${drafts} drafted in ${runCycles.length} cycle(s), ${applied} applied, ${rejectedPlans} rejected (${ruleLines} rule lines); redrafts: ${redrafts.get("rule") ?? 0} after a rule, ${redrafts.get("correction") ?? 0} after a correction`,
@@ -1407,7 +1407,7 @@ export function renderReview(
     `tool calls: ${toolCalls.length} (${inSubagents} by subagents), subagents: ${events.filter((e) => e.type === "subagent.ran").length}`,
   );
   lines.push(
-    `claims: ${asserted.length} asserted (${byBasis("observed")} observed, ${byBasis("inferred")} inferred), ${asserted.filter((c) => c.status === "rejected").length} rejected; evidence: ${evidenceRecorded} deterministic result(s)`,
+    `claims: ${sessionClaims.length} from sessions, ${byBasis("observed")} observed, ${byBasis("inferred")} inferred, ${sessionClaims.filter((c) => c.status === "rejected").length} rejected; evidence: ${evidenceRecorded} deterministic result(s)`,
   );
   lines.push(questions.length === 0 ? "questions: none" : "questions:");
   for (const q of questions) lines.push(`  ${q}`);
