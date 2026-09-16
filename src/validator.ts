@@ -1117,7 +1117,8 @@ function reportsAnswered(
  * raised, as the change report showed it; every report the change report listed has
  * exactly one verdict (R4-2); every task it assigns is deterministic (R4-6), since
  * session work is a unit's; every reassignment it drops is open (R4-4); and its situation
- * names claims the incident has and carries only open items the last picture lists (R5-2). Its assignments are the plan's tasks, so "Units exist" and
+ * names claims the incident has, carries only open items the last picture lists, and its
+ * assignments settle only those (R5-2). Its assignments are the plan's tasks, so "Units exist" and
  * "Status is earned" see them (a turn that assigns work and declares `satisfied` is
  * refused as a plan would be), and they pass the other task rules as a leader's do, and
  * "Own unit" against the root. Returns the failing rules with their reasons; the caller
@@ -1242,7 +1243,19 @@ export function validateCommand(
     ),
     ...answers,
     ...drops,
-    ...situationGrounded(turn.situation, ctx.claims, ctx.situation).map(
+    ...[
+      ...situationGrounded(turn.situation, ctx.claims, ctx.situation),
+      // A task under command may settle an open item it carries by id (R5-2); its
+      // `settles` is recorded on `plan.applied`, so it is held to the last picture here.
+      ...turn.assignTasks.flatMap((t) =>
+        (t.settles ?? [])
+          .filter((id) => !openItemIds(ctx.situation).has(id))
+          .map(
+            (id) =>
+              `${label(t)} settles ${id}, which is not an open item of the situation`,
+          ),
+      ),
+    ].map(
       (reason): Rejection<CommandRuleName> => ({
         rule: "Situation grounded",
         reason,

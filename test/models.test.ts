@@ -532,6 +532,23 @@ describe("contracts", () => {
     expect(
       TaskProposal.parse(plan.createTasks[0] ?? {}).settles,
     ).toBeUndefined();
+    // A leader's assignments carry no settles: the open items are the IC's, which a
+    // leader never sees (PR 58).
+    const leaderSchema = jsonSchemaFor(LeaderTurn) as {
+      properties: {
+        assignTasks: { items: { properties: Record<string, unknown> } };
+      };
+    };
+    expect(
+      leaderSchema.properties.assignTasks.items.properties,
+    ).not.toHaveProperty("settles");
+    expect(
+      LeaderTurn.parse({
+        kind: "continue",
+        report: null,
+        assignTasks: [{ ...plan.createTasks[0], settles: ["i1-o01"] }],
+      }).assignTasks?.[0],
+    ).not.toHaveProperty("settles");
   });
 
   it("a leader's turn is a report or a continue; a not_met report says why and what to do, and a discrepancy rides on either", () => {

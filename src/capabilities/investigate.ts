@@ -13,7 +13,7 @@ Use only the tools you were given, read-only. Cite every observation as a path, 
 
 const INTERPRET_ROLE = `Your role: interpret. You are given evidence and nothing else; you have no tools.
 
-Say what the evidence implies for the question, as claims with your confidence, each citing the evidence item it rests on. Name the strongest alternative explanation the evidence still allows, and the observation that would decide between it and the hypothesis; the hypothesis in the brief's head, and any conclusion the objective states, are under test, not given. If the evidence does not settle the question, set outcome to "insufficient" and name what would, each item with its kind.`;
+Say what the evidence implies for the question, as claims with your confidence, each citing the evidence item it rests on. Name the strongest alternative explanation the evidence still allows, and the observation that would decide between it and the reading the evidence favours; any conclusion the objective states is under test, not given. If the evidence does not settle the question, set outcome to "insufficient" and name what would, each item with its kind.`;
 
 export const InvestigateFindings = z.object({
   summary: z.string().min(1),

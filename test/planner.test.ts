@@ -375,6 +375,7 @@ describe("planner", () => {
       "dispatcher",
     );
     s.task({ id: "t-next", capability: "reproduce", status: "running" });
+    s.task({ id: "t-past", capability: "grep", status: "completed" });
     const picture = situation({
       picture: "focus() scrolls the resting selection",
       evidence: [
@@ -406,7 +407,10 @@ describe("planner", () => {
     store.record("i1", "plan.applied", "runtime", {
       rationale: "narrow in",
       tasks: ["t-next"],
-      settles: [{ taskId: "t-next", openItemId: "i1-o01" }],
+      settles: [
+        { taskId: "t-next", openItemId: "i1-o01" },
+        { taskId: "t-past", openItemId: "i1-o03" },
+      ],
       // A plan's situation, as the log carried one before R4-5, is not read.
       situation: { ...picture, picture: "the planner's, ignored" },
     });
@@ -423,7 +427,7 @@ describe("planner", () => {
         "open items, each worked by a task in this plan naming its id in settles, or deferred by the IC:",
         "  - i1-o01: whether focus() scrolls; settled by: a reproduce; worked by task t-next (running)",
         "  - i1-o02: the bundle mapping; settled by: a trace; deferred: no browser this period",
-        "  - i1-o03: where the caret rests; settled by: a read; unworked",
+        "  - i1-o03: where the caret rests; settled by: a read; was worked by task t-past (completed); needs a task or a deferral",
         openLine,
       ].join("\n"),
     );
@@ -450,6 +454,50 @@ describe("planner", () => {
     expect(again).toContain(
       "reassignments open, each taken by a new unit in this plan naming its id in takes: i1-r01 from unit i1-u02",
     );
+    store.close();
+  });
+
+  it("section 10 says so when the last accepted turn's situation is in R4-5's shape, rather than printing the seed or (none) (PR 58)", () => {
+    const store = new Store(":memory:");
+    scriptedIncident(store, "i1", AT);
+    const incident = store.getIncident("i1");
+    if (incident === undefined) throw new Error("no incident");
+    store.record("i1", "incident.briefed", "initial_ic", {
+      briefing: {
+        kind: "diagnosis",
+        dominantProblem: "the seed",
+        obviouslyNeeded: [{ what: "a browser", checked: false }],
+        initialObjectives: ["find it"],
+        initialOrganization: [],
+        questionsForHuman: [],
+        hazards: [],
+        incomingCommander: {
+          provider: "claude-code",
+          model: "claude-sonnet-5",
+          why: "judgment",
+        },
+      },
+    });
+    store.record("i1", "command.turned", "runtime", {
+      cycle: 1,
+      turn: {
+        situation: {
+          changed: "old",
+          hypothesis: "old shape",
+          proven: [],
+          inferred: [],
+          keep: [],
+        },
+      },
+    });
+    const text = renderPlannerInput(store, incident, [fakeProvider]);
+    expect(text.split("## 10. The IC's situation\n")[1]).toBe(
+      [
+        "  (the last command turn's situation is in a shape from before R5-2)",
+        "reassignments open, each taken by a new unit in this plan naming its id in takes: (none)",
+      ].join("\n"),
+    );
+    expect(text).not.toContain("the seed");
     store.close();
   });
 
@@ -723,7 +771,7 @@ describe("planner", () => {
         (nothing warned)
 
       ## 10. The IC's situation
-        (none)
+        (the last command turn's situation is in a shape from before R5-2)
       reassignments open, each taken by a new unit in this plan naming its id in takes: (none)"
     `);
   });

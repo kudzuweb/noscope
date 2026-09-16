@@ -1439,6 +1439,22 @@ describe("validator", () => {
         ],
       }),
     };
+    // The IC's own assignments settle only items the last picture lists (PR 58).
+    expect(
+      validateCommand(
+        {
+          ...turn,
+          assignTasks: [grepTask({ settles: ["i1-o01", "i1-o05"] })],
+        },
+        ctx(),
+      ),
+    ).toEqual([
+      {
+        rule: "Situation grounded",
+        reason:
+          'task "find scrollTo calls" settles i1-o05, which is not an open item of the situation',
+      },
+    ]);
     expect(validateCommand(ungrounded, ctx())).toEqual([
       {
         rule: "Situation grounded",

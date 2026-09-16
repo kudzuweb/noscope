@@ -4269,7 +4269,7 @@ Not exactly to spec, with reasons:
   in the cause's transaction, so a database written by this runtime cannot hold one, and a
   database from before the tag is a replay concern the plan does not ask for.
 
-## R5-2: The situation is a living picture (#PR, merged 2026-09-16)
+## R5-2: The situation is a living picture (#58, merged 2026-09-16)
 
 R5-2 of the round 5 plan, ruled by Mauria in review on 2026-09-15 (22:41: the situation is
 the understanding of reality the incident has, from the size-up on; reading and trying
@@ -4460,3 +4460,20 @@ Not exactly to spec, with reasons:
   fresh session after the refusals is oriented with the unit's last leader-written picture.
 - `briefingOf` moved from `src/ic.ts` to `src/leader.ts` (`test/size-up.test.ts` imports it
   from there now); `src/commands/incident.ts` follows.
+- Review of PR 58 (correctness, 2026-09-16), applied before merge: `icSituation` fell
+  back to the briefing's seed whenever the last accepted turn's situation failed to parse,
+  so a log written under R4-5's shape (run 004's) showed the seed with its unworked items;
+  it now returns null once an accepted turn exists, and `show` and section 10 print "(the
+  last command turn's situation is in a shape from before R5-2)" (`situationPredatesShape`,
+  `SITUATION_PREDATES_SHAPE` in `src/leader.ts`). A leader's `assignTasks` schema carried
+  `settles`, whose description names a section the leader never sees; `TurnFields` uses
+  `TaskProposal.omit({ settles: true })`. A verdict's `why` reaches the unit in the revise
+  brief and the reassign orientation, so its description carries the guard ("it says what
+  the work showed and never what you think the answer is") and the IC role says the why
+  flows down with the instructions. The IC's command `settles` was recorded unchecked;
+  `validateCommand` rejects, under Situation grounded, a `settles` naming an id the last
+  picture does not list. The interpret role no longer names "the hypothesis in the
+  brief's head". Section 10 and `show` print an item whose only workers have ended as
+  "was worked by task X (completed); needs a task or a deferral", since the validator
+  counts open tasks alone. DESIGN.md's Vocabulary says a new item carries no id and a
+  carried one keeps the id the file lists.

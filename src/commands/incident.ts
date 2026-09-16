@@ -34,6 +34,8 @@ import {
   openReassignments,
   openRequestsByUnit,
   type RefusedCall,
+  SITUATION_PREDATES_SHAPE,
+  situationPredatesShape,
 } from "../leader.js";
 import {
   type ActionPlan,
@@ -429,7 +431,10 @@ function renderIncidentFile(
   // briefing, with the reassignments still open under it.
   lines.push("situation, the IC's:");
   const situation = icSituation(events);
-  if (situation === null) lines.push("  (none)");
+  if (situation === null)
+    lines.push(
+      `  ${situationPredatesShape(events) ? SITUATION_PREDATES_SHAPE : "(none)"}`,
+    );
   for (const line of renderSituation(
     situation,
     openReassignments(events),

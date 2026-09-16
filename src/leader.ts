@@ -432,20 +432,37 @@ function situationOn(e: Event): Situation | null {
   return parsed.success ? parsed.data : null;
 }
 
+/** The IC's last accepted `command.turned`, or null before its first. */
+function lastAcceptedTurn(events: readonly Event[]): Event | null {
+  let last: Event | null = null;
+  for (const e of events)
+    if (e.type === "command.turned" && e.payload.rejected !== true) last = e;
+  return last;
+}
+
 /**
  * The IC's situation (R5-2; R4-5 until then): the one on its last accepted
  * `command.turned`, which the planner reads until the next turn; before the IC's first
- * accepted turn, the picture seeded from the briefing; null with neither (a log written
- * before R4-5, or an incident created without a size-up and not yet commanded). A
- * rejected turn's is skipped, as its period is.
+ * accepted turn, the picture seeded from the briefing; null with neither (an incident
+ * created without a size-up and not yet commanded), and null when the last accepted turn
+ * carries a situation in a shape from before R5-2 (`situationPredatesShape` says so, and
+ * the renderers print it), never the seed in its place. A rejected turn's is skipped, as
+ * its period is.
  */
 export function icSituation(events: readonly Event[]): Situation | null {
-  let last: Situation | null = null;
-  for (const e of events)
-    if (e.type === "command.turned" && e.payload.rejected !== true)
-      last = situationOn(e);
-  return last ?? seededSituation(events);
+  const last = lastAcceptedTurn(events);
+  return last === null ? seededSituation(events) : situationOn(last);
 }
+
+/** Whether the IC's last accepted turn carries a situation that no longer parses (a log written under R4-5's shape), which `show` and section 10 say rather than print "(none)". */
+export function situationPredatesShape(events: readonly Event[]): boolean {
+  const last = lastAcceptedTurn(events);
+  return last !== null && situationOn(last) === null;
+}
+
+/** The line the file prints where the IC's situation would be when the log's last turn predates the current shape (R5-2). */
+export const SITUATION_PREDATES_SHAPE =
+  "(the last command turn's situation is in a shape from before R5-2)";
 
 /**
  * The situation as the runtime records it (R5-2): every open item numbered. An item that

@@ -703,10 +703,10 @@ export const LeaderReport = LeaderReportFields.superRefine((r, ctx) => {
     });
 });
 
-/** The fields both kinds of turn carry: tasks the leader assigns under its unit, and a discrepancy. A strike team is declared on a task by whoever defines it (R5-4), so a turn carries no request for one. */
+/** The fields both kinds of turn carry: tasks the leader assigns under its unit (without `settles`, which names the IC's open items a leader never sees; R5-2), and a discrepancy. A strike team is declared on a task by whoever defines it (R5-4), so a turn carries no request for one. */
 const TurnFields = {
   assignTasks: z
-    .array(TaskProposal)
+    .array(TaskProposal.omit({ settles: true }))
     .optional()
     .describe(
       "Tasks to assign under your own unit, to capabilities your unit holds, inside your unit's budget: how you get a retrievable fact yourself, without waiting for the next plan. Each names your unit id as its unit and runs in a session of its own or in process; a strike team for one of them goes in that task's own strikeTeam field. They are checked by the validator's rules and run in this pass on a continue, next pass on a report",
@@ -810,7 +810,12 @@ export const ReportVerdict = z
       .describe(
         "For revise: what is missing, for the same leader to finish; for reassign: what the unit found and did not find, for the unit that takes its slice; empty for accepted. Never what you think the answer is: a unit reads its objective and the evidence, not your picture",
       ),
-    why: z.string().min(1).describe("Why this verdict, from the work shown"),
+    why: z
+      .string()
+      .min(1)
+      .describe(
+        "Why this verdict, from the work shown; it reaches the unit's leader with the instructions, so it says what the work showed and never what you think the answer is",
+      ),
   })
   .superRefine((v, ctx) => {
     if (v.verdict === "accepted" && v.instructions !== "")

@@ -11,7 +11,9 @@ import {
   openReassignments,
   openRequestsByUnit,
   type Reassignment,
+  SITUATION_PREDATES_SHAPE,
   settledBy,
+  situationPredatesShape,
 } from "./leader.js";
 import {
   ActionPlan,
@@ -224,12 +226,19 @@ export function renderSituation(
   if (s === null) return [openLine];
   const basis = basisOf(claims);
   const status = new Map(tasks.map((t) => [t.id, t.status]));
+  // An item is worked only by an open task (the validator's rule); a task that ended
+  // without the IC letting the item go leaves it needing a task or a deferral.
+  const OPEN = new Set(["pending", "ready", "running"]);
   const state = (item: Situation["open"][number]) => {
     if (item.deferred !== undefined) return `deferred: ${item.deferred}`;
     const by = item.id === undefined ? [] : (worked.get(item.id) ?? []);
+    const named = (ids: readonly string[]) =>
+      ids.map((id) => `task ${id} (${status.get(id) ?? "unknown"})`).join(", ");
+    const open = by.filter((id) => OPEN.has(status.get(id) ?? ""));
+    if (open.length > 0) return `worked by ${named(open)}`;
     return by.length === 0
       ? "unworked"
-      : `worked by ${by.map((id) => `task ${id} (${status.get(id) ?? "unknown"})`).join(", ")}`;
+      : `was worked by ${named(by)}; needs a task or a deferral`;
   };
   return [
     `picture: ${s.picture}`,
@@ -596,7 +605,11 @@ export function renderPlannerInput(
     ...bullets(warnings, "(nothing warned)"),
     "",
     "## 10. The IC's situation",
-    ...(situation === null ? ["  (none)"] : []),
+    ...(situation === null
+      ? [
+          `  ${situationPredatesShape(events) ? SITUATION_PREDATES_SHAPE : "(none)"}`,
+        ]
+      : []),
     ...renderSituation(
       situation,
       openReassignments(events),
