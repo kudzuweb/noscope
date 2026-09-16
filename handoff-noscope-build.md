@@ -100,6 +100,13 @@ this session's scratchpad `/private/tmp/claude-501/-Users-mauriaparker-Documents
 a successor recreates any it needs with `git worktree add -b <branch> <path> origin/<branch>`
 and `pnpm install --frozen-lockfile`.
 
+Notes for the next round, Mauria's, 2026-09-16:
+
+| Note | Detail |
+|---|---|
+| A deployable rebase unit (00:56) | "we might need a deployable rebase unit added to each incident so tasks can be parallelized further to gain speed": a saved unit config (R4-11's mechanism) whose job is integration, taking the branches other units produce, rebasing and resolving them against the trunk and verifying the result, so the working units never wait on each other's merges. Round 5 built eight rows in parallel and paid a rebase per merge; the same shape inside an incident is what this unit would absorb. A round 6 candidate; carry it into run 005's write-up. |
+| Two-wave parallel builds (00:54) | Build the rows that rewrite shared files first, merge them, then the rule and text rows on top; cuts the rebases from one per merge to about three. For the orchestrator, not the runtime. |
+
 ## 4. NEXT STEPS, IN ORDER
 
 1. (done) Every row of round 4 merged, the run written up (#52).
