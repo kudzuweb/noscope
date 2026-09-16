@@ -5064,3 +5064,93 @@ Not exactly to spec, with reasons:
   (`renderBriefingBody`, `renderCommandBriefing` and `commandTurn`'s prompt; new
   `lastCallOn`, `describeCall`, `sectionsChangedBy`, `renderChangedFile`,
   `BriefingOptions`), `test/stub-claude` (one knob).
+
+## R5-12: Fifth run (#PR, merged 2026-09-16)
+
+R5-12 of the round 5 plan, the last row: the first incident's objective run live a fifth
+time with every code row of round 5 merged (PRs 53 to 62 on `round-5`, the runtime tag
+`ef5ad67` on every event), on `~/.noscope/fifth-run.sqlite`, from roughdraftplus at
+6a996e8 with the scratch document restored before `create`, run 003's objective,
+constraints and priority, and no `--ic-model`, so the IC ran on Sonnet 5 by R5-6's
+default. Stepped by hand by the orchestrating session, one detached `step` per cycle,
+2026-09-16 02:00 to 02:57 CDT, unattended: the size-up proposed no question and nothing
+else asked for an operator. Written up under "## Fifth run" in `docs/first-incident.md`
+in the fourth run's form: the run, the answer and how it was reached, the measures beside
+runs 001 to 004 with two new rows (evidence beside claims; leader turns beside endings
+that needed no turn) and a per-seat account beside runs 003 and 004, the IC's ten calls
+with what each cost and decided, the wall time per cycle with the critical path beside
+the summed seconds, the models the planner chose with their `modelWhy` read from the
+`plan.proposed` events, the round-5 rows step by step, which rows earned their keep, and
+what the run found as candidates for round 6. Docs only; no code changed.
+
+The acceptance holds in part. Run 005 reached `satisfied` in five cycles with the same
+code path named as runs 001 to 004 (the bare `.focus()` at `PageCard.tsx:1884` scrolling
+a selection that already sat near the document end), with the reproduce's claims better
+than run 004's (the instrumented `scrollTop` stack, `001-c026`; the capture-phase focus
+reading before React's handler, `001-c071` and `001-c072`; the animation frame's
+scheduling stack, `001-c074`; no sourcemap by three routes, `001-c063` to `001-c068`),
+and the code trace's weaker on one link: the origin from the bundle to `deleteComment`
+was graded inferred at 0.7 where run 004 had raised it to 0.95 by a token-for-token body
+comparison that no task in run 005 made. The cost and time targets were missed: $9.52
+against run 003's $4.86 (95 percent over), and 55.0 minutes from the first command turn
+against 29 (90 percent over; 57.9 from `create`). Where they went: five periods for run
+003's one dispatch, because `relatedUnits` in the dispatcher serialized the two units of
+period 1 and the two of period 2 (each dependent task related its whole unit) and every
+report's `pictureChanged` halted the pass, so each period ran one wave and cost a command
+turn, a planner call and a review; the IC's ten Sonnet 5 calls cost $2.94 (none refused;
+the handoff ran live at 128,967 tokens on the fourth command turn, $0.60 for the document
+and $0.29 for the successor's review), the planner's four Opus 5 calls $1.80, eight
+sessions $4.01 (four Sonnet reproduces $1.63, one Sonnet investigate $0.91, three
+interprets $1.47), five leader turns $0.59, the size-up $0.19; the seats' seconds summed
+to 3,371 against 3,474 of wall from `create`, so almost nothing overlapped. 96 claims, all
+from sessions, 52 observed and 44 inferred, beside 6 evidence lines; 365 events; 14 of 15
+tasks ran, one cancelled by the plan, none failed; 14 endings needed no turn.
+
+Which rows earned their keep, in the write-up's words: R5-6 (Sonnet on every reproduce,
+investigate and leader, Opus only on interprets with a why, the IC on Sonnet 5 with no
+refusal in ten calls), R5-4 and R5-5 (eight sessions of their own, leaders' contexts of
+11k to 21k, five turns for $0.59 against run 004's six for $2.37), R5-1 (six evidence
+lines; the planner's largest input 38k against run 004's 56k) and R5-2 (an assessment per
+turn, a stance reversed on finer evidence, an open item deferred with a why at the close).
+R5-7 did its half and the dispatcher undid it (1.40x possible against 0.76x measured in
+period 2). R5-3, R5-8 and R5-10 had no occasion (no rule broken, no question proposed, no
+task failed). R5-11 did not: the changed sections were most of the file every period, and
+the handoff came on the fourth command turn.
+
+Docs travelling with the change: `DESIGN.md`'s Reference rows on the IC's context and
+handoff (reached live, with the turn-by-turn contexts), on the refusal (not seen on Sonnet
+5 in ten calls), and on the resumed call's cache reads (five of eight resumed IC calls read;
+the handoff turn wrote 139k); the Model choices rows for the planner (nothing has tried a
+smaller model in the seat), the IC, unit leaders and the three session capabilities; the
+Speed section's measured factors and the IC's context under R5-11. `CLAUDE.md`'s
+read-only paragraph (the fifth run's outcome on the default) and its "What to read next"
+row (five runs); `README.md`'s line on `docs/first-incident.md`. `docs/architecture.html`
+is unchanged: its dispatcher node says related units keep tree order, which is what the
+run showed the cost of, and nothing on the page is contradicted.
+
+Not exactly to spec, with reasons:
+
+- The plan's row asks for the leader calls per unit; the measures row gives them beside
+  the endings that needed no turn, since R5-5's review line prints both and the pair is
+  the comparison with run 004 (six turns, every session ending calling its leader).
+- The models table is read from the `plan.proposed` events rather than from `incident
+  review`, which does not list `modelWhy` (R5-6's record says so); no code was added for
+  it, since the row is docs only.
+- The R5-11 finding's figures are derived, not measured: the briefing prompts are not in
+  the log, so each briefing's size is the session's `contextTokens` less the previous
+  call's context and its retained answer (the turn JSON's characters over four, since the
+  billed output is mostly reasoning the session does not keep), and the whole file's size
+  is bounded by the planner's context at the same cycle. The write-up says so and labels
+  the comparison a bound.
+- Two findings rest on reading the record against the code rather than on anything the
+  run printed: that `renderTaskResult` (`src/capabilities/session.ts`) attaches a result's
+  observations and not its claims, which is why the final statement never saw the
+  scheduling stack `001-t11` had captured in a claim's object; and that `unitShare`
+  (`src/units/base.ts`) charges billed input including cache reads, which is why the code
+  unit's leader was refused with 1,457,269 spent against 56,000 allotted. Both were read on
+  2026-09-16 at `ef5ad67`.
+- Mauria's two notes for round 6 (a rebase unit per incident; two-wave parallel builds)
+  are carried into the findings as the orchestrating session relayed them, dated
+  2026-09-16 00:54 to 00:56 CDT; they are not in the run's record and the write-up says so.
+- The write-up counts eleven build rows rather than the plan's "twelve", since the round
+  5 table has no R5-9 and R5-12 is the run itself.
