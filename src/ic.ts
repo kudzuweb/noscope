@@ -49,10 +49,11 @@ import { fallbackTransferred, newQuestions } from "./runtime.js";
 import { cycleOf, type Store } from "./store.js";
 import { commandUnitOf, leaderRequest } from "./units/index.js";
 
-// The Incident Commander is the root unit's leader: one persistent session, briefed with
-// the full incident file at the top of every cycle, that sets the operational period and
-// reviews the planner's draft once, after the validator has passed it (DESIGN.md Step 4;
-// R5-3). The runtime is the Planning
+// The Incident Commander is the root unit's leader: one persistent session, briefed at
+// the top of every cycle with the change report and the incident file (whole on the
+// session's first call, its changed sections after; R5-11), that sets the operational
+// period and reviews the planner's draft once, after the validator has passed it
+// (DESIGN.md Step 4; R5-3). The runtime is the Planning
 // Section's bookkeeping around it: it renders the briefing, records every turn, and never
 // consults the IC per task. The session is never compacted (every session runs with
 // `DISABLE_COMPACT=1`), so when its context reaches the handoff threshold the runtime
@@ -878,20 +879,25 @@ function transferToEvaluate(
 
 /**
  * The IC's last call on a session, the point its copy of the file is dated from: the last
- * `command.turned` (rejected or not), `plan.reviewed` or `command.failed` that ran on it,
- * each of which carried the file or came after a call that did; null when the session has
+ * `command.turned` (rejected or not) or `plan.reviewed` that ran on it, or a
+ * `command.failed` on it that carries `usage`, since then the model read the briefing and
+ * answered outside its schema; a failure with no usage (the call died before the model
+ * read anything) dates nothing, and the call before it does. Null when the session has
  * taken none, so a session the log does not know is briefed whole.
  */
 function lastCallOn(events: readonly Event[], sessionId: string): Event | null {
   let last: Event | null = null;
-  for (const e of events)
+  for (const e of events) {
+    if (e.payload.sessionId !== sessionId) continue;
     if (
-      (e.type === "command.turned" ||
-        e.type === "plan.reviewed" ||
-        e.type === "command.failed") &&
-      e.payload.sessionId === sessionId
+      e.type === "command.turned" ||
+      e.type === "plan.reviewed" ||
+      (e.type === "command.failed" &&
+        e.payload.usage !== undefined &&
+        e.payload.usage !== null)
     )
       last = e;
+  }
   return last;
 }
 
@@ -901,7 +907,7 @@ function describeCall(e: Event): string {
   if (e.type === "command.turned")
     return `your command turn for period ${period}`;
   if (e.type === "plan.reviewed")
-    return `your review of period ${period}'s ${e.payload.redraft === true ? "redraft" : "draft"}`;
+    return `your review of period ${period}'s draft`;
   return `your failed ${str(e.payload.turn)} turn`;
 }
 
@@ -913,12 +919,16 @@ function describeCall(e: Event): string {
  * file every cycle regardless. Section 9's rule texts are fixed; what changes is what was
  * rejected and warned, which is the planner's, never a leader's. A session starting or
  * being released changes no line of the tree, which names leaders by model; a leader's
- * fallback (`leader.failed`) and a transfer of command do.
+ * fallback (`leader.failed`) and a transfer of command do. Section 1's budget line
+ * changes with every usage any seat records, which matters only when the incident bounds
+ * its budget (`budgeted`); an unlimited budget's line reads the same whatever was spent.
  */
-function sectionsChangedBy(e: Event): number[] {
+function sectionsChangedBy(e: Event, budgeted: boolean): number[] {
   const changed: number[] = [];
   const t = e.type;
+  const spent = typeof e.payload.usage === "object" && e.payload.usage !== null;
   if (
+    (budgeted && spent) ||
     t === "incident.blocked" ||
     t === "incident.closed" ||
     t === "question.asked" ||
@@ -946,12 +956,21 @@ function sectionsChangedBy(e: Event): number[] {
     t === "leader.failed" ||
     t === "command.transferred" ||
     t === "unit.reassigned" ||
-    t === "reassignment.taken"
+    t === "reassignment.taken" ||
+    // A waiting unit's "waiting on" line reads its open requests, so a partial answer
+    // changes it before the unit resumes.
+    t === "question.answered" ||
+    t === "grant.given" ||
+    t === "capability.answered"
   )
     changed.push(3);
-  if (t === "task.completed") changed.push(4);
-  if (t === "task.insufficient") changed.push(5);
-  if (t === "unit.reported") changed.push(6);
+  // Sections 4 to 6 and section 9's rejected and warned lines are windowed on the last
+  // plan applied by the planner, so a plan applied empties them whatever ran after it.
+  const applied =
+    t === "plan.applied" && e.actor !== LEADER_ACTOR && e.actor !== IC_ACTOR;
+  if (t === "task.completed" || applied) changed.push(4);
+  if (t === "task.insufficient" || applied) changed.push(5);
+  if (t === "unit.reported" || applied) changed.push(6);
   if (
     t === "task.created" ||
     t === "task.ready" ||
@@ -963,8 +982,9 @@ function sectionsChangedBy(e: Event): number[] {
   )
     changed.push(7);
   if (
-    (t === "plan.rejected" || t === "plan.warned") &&
-    e.actor !== LEADER_ACTOR
+    ((t === "plan.rejected" || t === "plan.warned") &&
+      e.actor !== LEADER_ACTOR) ||
+    applied
   )
     changed.push(9);
   if (
@@ -992,10 +1012,13 @@ function renderChangedFile(
   since: Event,
 ): string {
   const events = store.listEvents(incident.id);
+  const budgeted =
+    incident.budget.tokens !== undefined ||
+    incident.budget.seconds !== undefined;
   const changed = new Set(
     events
       .filter((e) => e.sequence > since.sequence)
-      .flatMap(sectionsChangedBy),
+      .flatMap((e) => sectionsChangedBy(e, budgeted)),
   );
   const call = describeCall(since);
   if (changed.size === 0)

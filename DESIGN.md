@@ -473,18 +473,23 @@ fixed at its first call, so everything that changes goes in the user message. It
 is the change report since the IC last acted, then the incident file, then the ask. On a
 session's first call the file comes whole, rendered as the planner reads it; on a resumed
 call it comes as the sections that changed since the session's last call (R5-11: the
-last `command.turned`, rejected or not, `plan.reviewed` or `command.failed` on that
-session, each of which carried the file or followed a call that did), under a heading
+last `command.turned`, rejected or not, or `plan.reviewed` on that session, or a
+`command.failed` on it that carries usage, since then the model read the briefing and
+answered outside its schema; a failure with no usage dates nothing), under a heading
 that names the call and lists the sections left out as unchanged, since the session
 holds what it read and run 004's IC reached a 170k context in three periods reading the
 whole file every turn. Which sections changed is read from the events after that call:
 the command picture on a question, capability request, grant, budget stop or status
-change; the claims on a claim landing, and then only the claims created since; the unit
-tree on a unit created, closed, waiting, resumed, reporting, judged, reassigned or taking
-a reassignment, a leader's fallback or a transfer of command; sections 4 to 7 on the
-task and report events they list; section 9 on a plan rejected or warned (the planner's,
-not a leader's), and then without its fixed rule texts; the situation on an accepted
-command turn or a reassignment recorded, taken or dropped. Section 8 is fixed for a run
+change, and on any usage recorded when the incident bounds its budget, since the budget
+line reads the spend; the claims on a claim landing, and then only the claims created
+since; the unit tree on a unit created, closed, waiting, resumed, reporting, judged,
+reassigned or taking a reassignment, a leader's fallback, a transfer of command, or an
+answer to a request, since a waiting unit's line names what it still waits on; sections
+4 to 6 on the task and report events they list and on every plan the planner had
+applied, since their windows open at that plan and empty with it; section 7 on any task
+event; section 9 on a plan rejected or warned (the planner's, not a leader's) or applied,
+and then without its fixed rule texts; the situation on an accepted command turn or a
+reassignment recorded, taken or dropped. Section 8 is fixed for a run
 (a config saved by `config save` is a system event outside the incident's log, so it
 reaches the IC whole on its next fresh session); when nothing changed the heading says
 so and no section follows. The whole file comes again only on a fresh session: the

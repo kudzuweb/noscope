@@ -4996,11 +4996,22 @@ the second to the third.
 Not exactly to spec, with reasons:
 
 - The window a resumed briefing is dated from is the session's last call of any kind, a
-  rejected command turn and a failed call included, not the IC's last accepted turn:
-  the session read the file on that call and holds it, and dating from the last accepted
-  turn would send a retry after a rejection the whole previous period's changes again.
-  A refused fresh session, or a failed call that got no session id, is not put on the
+  rejected command turn and a failed call the model answered included, not the IC's last
+  accepted turn: the session read the file on that call and holds it, and dating from
+  the last accepted turn would send a retry after a rejection the whole previous
+  period's changes again. A `command.failed` with no usage (the call died before the
+  model read anything) dates nothing and the call before it does (PR 59's review). A
+  refused fresh session, or a failed call that got no session id, is not put on the
   unit, so the next call is fresh and reads the file whole.
+- From PR 59's review, applied before merge: section 1 is marked changed on any usage
+  recorded when the incident bounds its budget, since its budget line reads the spend
+  (an unlimited budget's line reads the same whatever was spent); sections 4 to 6 and
+  9 are marked on every plan the planner had applied, since their windows open at that
+  plan and empty with it, so a plan that ran nothing no longer leaves the IC told those
+  lists are as it read them; the unit tree is marked on an answer to a request, since a
+  waiting unit's line names what it still waits on; the IC role text says the file
+  comes as its changed sections after the session's first turn; `describeCall` no longer
+  reads a `redraft` flag `plan.reviewed` stopped carrying at R5-3.
 - Section 8 is never listed as changed: capabilities and models are fixed for a run, and
   a config saved by `config save` is a system event outside the incident's log (verified
   in `src/store.ts`), so a resumed IC does not see a config saved mid-incident until its

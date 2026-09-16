@@ -1420,6 +1420,60 @@ describe("the IC above the planner", () => {
     store.close();
   });
 
+  it("a resumed briefing is dated from the session's last answered call, and a bounded budget marks the command picture changed on any spend (R5-11, PR 59)", () => {
+    const store = new Store(":memory:");
+    const s = scriptedIncident(store);
+    store.record("i1", "command.turned", "runtime", {
+      unitId: "i1-command",
+      sessionId: "s1",
+      cycle: 1,
+      turn: {},
+    });
+    const brief = (incident = s.incident) =>
+      renderCommandBriefing(store, incident, [fakeProvider], { resumed: "s1" });
+    expect(brief()).toContain(
+      "\n# Incident file: nothing in it changed since your command turn for period 1; it is as you read it\n",
+    );
+    // Spend changes the budget line only when the incident bounds its budget.
+    store.record("i1", "task.usage", "dispatcher", {
+      taskId: "t1",
+      usage: { inputTokens: 40, outputTokens: 2, seconds: 3 },
+    });
+    expect(brief()).toContain("nothing in it changed since your command turn");
+    const bounded = brief({ ...s.incident, budget: { tokens: 1000 } });
+    expect(bounded).toContain(
+      "# Incident file: the sections that changed since your command turn for period 1\nThe sections not shown are as you read them: 2. Claims; 3. Unit tree; 4. Tasks completed since the last cycle; 5. Tasks that came back insufficient since the last cycle; 6. Unit reports since the last cycle; 7. Open tasks; 8. Capabilities and models; 9. Rules the validator applies; 10. The IC's situation.\n\n## 1. Command picture\n",
+    );
+    expect(bounded).toContain("budget remaining: tokens 958");
+    // A failed call that got no answer dates nothing; one the model answered does.
+    store.record("i1", "command.failed", "runtime", {
+      unitId: "i1-command",
+      sessionId: "s1",
+      turn: "command",
+      cycle: 2,
+      reason: "claude exited 1",
+    });
+    expect(brief()).toContain("since your command turn for period 1");
+    store.record("i1", "command.failed", "runtime", {
+      unitId: "i1-command",
+      sessionId: "s1",
+      turn: "command",
+      cycle: 2,
+      reason: "the answer did not fit its schema",
+      usage: { inputTokens: 500, outputTokens: 20, seconds: 4 },
+    });
+    expect(brief({ ...s.incident, budget: { tokens: 1000 } })).toContain(
+      "\n# Incident file: nothing in it changed since your failed command turn; it is as you read it\n",
+    );
+    // A session the log does not know is briefed whole.
+    expect(
+      renderCommandBriefing(store, s.incident, [fakeProvider], {
+        resumed: "s9",
+      }),
+    ).toContain("\n# Incident file\n\n## 1. Command picture\n");
+    store.close();
+  });
+
   it("the change report carries the work behind each report: the unit's tasks since its previous report, their claims, and its tool calls by count (R4-1)", () => {
     const store = new Store(":memory:");
     const s = scriptedIncident(store);
@@ -2190,8 +2244,8 @@ describe("the IC above the planner", () => {
     const [first = 0, second = 0, third = 0] = turns;
     // The first turn read the whole file; the second the sections the first cycle
     // changed; the third, after a cycle whose verdict closed the unit and whose plan
-    // created nothing and ran nothing, the change report and one line saying the file
-    // is as it read it.
+    // created nothing and ran nothing, the four sections the applied plan's window
+    // emptied, each "(none)", and a line naming the six as it read them.
     expect(second).toBeLessThan(first);
     expect(third).toBeLessThan(second);
     const prompts = h
@@ -2205,7 +2259,28 @@ describe("the IC above the planner", () => {
       "\n# Incident file: the sections that changed since your review of period 1's draft\n",
     );
     expect(prompts[2]).toContain(
-      "\n# Incident file: nothing in it changed since your review of period 2's draft; it is as you read it\n",
+      [
+        "# Incident file: the sections that changed since your review of period 2's draft",
+        "The sections not shown are as you read them: 1. Command picture; 2. Claims; 3. Unit tree; 7. Open tasks; 8. Capabilities and models; 10. The IC's situation.",
+        "",
+        "## 4. Tasks completed since the last cycle",
+        "  (none)",
+        "",
+        "## 5. Tasks that came back insufficient since the last cycle",
+        "  (none)",
+        "",
+        "## 6. Unit reports since the last cycle",
+        "  (none)",
+        "",
+        "## 9. Rules the validator applies",
+        "  (the rules, and what is warned on, as you read them)",
+        "rejected last cycle:",
+        "  (nothing rejected)",
+        "warned last cycle:",
+        "  (nothing warned)",
+        "",
+        "# Your command turn for operational period 3",
+      ].join("\n"),
     );
   });
 

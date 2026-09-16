@@ -351,25 +351,27 @@ describe("the IC handoff at the context threshold", () => {
     expect(second?.prompt).toContain(
       [
         "# Incident file: the sections that changed since your review of period 1's draft",
-        "The sections not shown are as you read them: 1. Command picture; 5. Tasks that came back insufficient since the last cycle; 8. Capabilities and models; 9. Rules the validator applies; 10. The IC's situation.",
+        "The sections not shown are as you read them: 1. Command picture; 8. Capabilities and models; 10. The IC's situation.",
         "",
         "## 2. Claims",
         "  (the claims created since your review of period 1's draft; the rest as you read them)",
         "  - 001-c001: ",
       ].join("\n"),
     );
+    // Sections 4 to 6 and 9 are windowed on the applied plan, so they are shown after
+    // every plan applied; 9 without its fixed rule texts.
     for (const heading of [
       "## 3. Unit tree",
       "## 4. Tasks completed since the last cycle",
+      "## 5. Tasks that came back insufficient since the last cycle",
       "## 6. Unit reports since the last cycle",
       "## 7. Open tasks",
+      "## 9. Rules the validator applies\n  (the rules, and what is warned on, as you read them)\nrejected last cycle:",
     ])
       expect(second?.prompt).toContain(`\n${heading}\n`);
     for (const gone of [
       "## 1. Command picture",
-      "## 5. Tasks that came back",
       "## 8. Capabilities and models",
-      "## 9. Rules the validator applies",
       "## 10. The IC's situation",
       "Capabilities exist:",
     ])
