@@ -1048,6 +1048,8 @@ async function cycle(
     );
   for (const id of commanded.cancelledTasks)
     ctx.io.out(`  task ${id} cancelled`);
+  for (const s of commanded.settled)
+    ctx.io.out(`  task ${s.taskId} cancelled: ${s.reason}`);
   for (const q of commanded.questions)
     ctx.io.out(`  question ${q.id}: ${q.text}`);
   for (const a of commanded.answered)
@@ -1094,6 +1096,8 @@ async function cycle(
       `  task ${t.id} [${t.status}] under ${t.unitId}: ${t.capability}: ${t.objective}`,
     );
   for (const id of applied.cancelledTasks) ctx.io.out(`  task ${id} cancelled`);
+  for (const s of applied.settled)
+    ctx.io.out(`  task ${s.taskId} cancelled: ${s.reason}`);
   for (const q of applied.questions)
     ctx.io.out(`  question ${q.id}: ${q.text}`);
   if (applied.incidentStatus !== "open") {
@@ -1108,7 +1112,7 @@ async function cycle(
   );
   for (const r of ran)
     ctx.io.out(
-      `  ran ${r.taskId} (${r.capability}): ${r.status}${r.reason === undefined ? "" : `, ${r.reason}`}; ${r.claims} claim(s)`,
+      `  ran ${r.taskId} (${r.capability}): ${r.status}${r.reason === undefined ? "" : `, ${r.reason}`}; ${r.claims} claim(s)${r.settled === undefined || r.settled.length === 0 ? "" : `; cancelled because they waited on it: ${r.settled.join(", ")}`}`,
     );
   for (const r of reports) {
     ctx.io.out(

@@ -429,6 +429,100 @@ describe("planner", () => {
     store.close();
   });
 
+  it("section 4 lists every task that will never complete since the last cycle with the tasks cancelled because they waited on it, a failure with its reason and a cancelled root on its own (R5-10)", () => {
+    const store = new Store(":memory:");
+    const s = scriptedIncident(store, "i1", AT);
+    s.addUnit({ id: "u-code", objective: "read the code" });
+    s.task({
+      id: "t-grep",
+      unitId: "u-code",
+      capability: "grep",
+      objective: "grep the package",
+      status: "failed",
+    });
+    s.task({
+      id: "t-inv",
+      unitId: "u-code",
+      capability: "investigate",
+      objective: "read the matches",
+      dependsOn: ["t-grep"],
+      status: "cancelled",
+    });
+    s.task({
+      id: "t-old",
+      unitId: "u-code",
+      capability: "grep",
+      objective: "the first grep",
+      status: "cancelled",
+    });
+    s.task({
+      id: "t-after",
+      unitId: "u-code",
+      capability: "read",
+      objective: "read what the first grep found",
+      dependsOn: ["t-old"],
+      status: "cancelled",
+    });
+    store.setTaskStatus("i1", "t-grep", "failed", "dispatcher", "task.failed", {
+      extra: { reason: "ENOENT: no such file or directory" },
+    });
+    store.setTaskStatus(
+      "i1",
+      "t-inv",
+      "cancelled",
+      "dispatcher",
+      "task.cancelled",
+      {
+        extra: {
+          because: "t-grep",
+          reason:
+            "depends on t-grep, which failed: ENOENT: no such file or directory",
+        },
+      },
+    );
+    store.setTaskStatus(
+      "i1",
+      "t-old",
+      "cancelled",
+      "runtime",
+      "task.cancelled",
+      {
+        extra: { rationale: "re-cut" },
+      },
+    );
+    store.setTaskStatus(
+      "i1",
+      "t-after",
+      "cancelled",
+      "runtime",
+      "task.cancelled",
+      {
+        extra: {
+          because: "t-old",
+          reason: "depends on t-old, which was cancelled by the plan",
+        },
+      },
+    );
+    const text = renderPlannerInput(store, s.incident, [fakeProvider]);
+    expect(
+      text.slice(
+        text.indexOf("failed or cancelled since the last cycle"),
+        text.indexOf("## 5."),
+      ),
+    ).toBe(
+      [
+        "failed or cancelled since the last cycle, each with the tasks cancelled because they waited on it; nothing waits on a task that will never complete:",
+        '  - t-grep (grep, under u-code): objective "grep the package"; failed: ENOENT: no such file or directory; cancelled because they waited on it: t-inv (investigate, under u-code)',
+        "  - t-old (grep, under u-code) was cancelled; cancelled because they waited on it: t-after (read, under u-code)",
+        "",
+        "",
+      ].join("\n"),
+    );
+    // A cancelled task is not open: section 7 no longer lists it.
+    expect(text).not.toContain("t-inv [cancelled]");
+    store.close();
+  });
+
   it("renders the incident file as the ten sections in the design's order, the IC's situation last", () => {
     const store = new Store(":memory:");
     cycledIncident(store);
@@ -476,6 +570,8 @@ describe("planner", () => {
 
       ## 4. Tasks completed since the last cycle
         - t-grep (grep, under u-scroll): objective "find scrollTo calls"; inputs {"root":"src","pattern":"scrollTo"}; expected "every call site"; criteria ["each match cited"]; result {"matches":1}; claims c-verified
+      failed or cancelled since the last cycle, each with the tasks cancelled because they waited on it; nothing waits on a task that will never complete:
+        (none)
 
       ## 5. Tasks that came back insufficient since the last cycle
         - t-interp (interpret): "say why the view scrolls" needed human_knowledge: which scroll position is wanted

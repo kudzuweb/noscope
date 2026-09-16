@@ -15,6 +15,7 @@ import {
   type RefusedCall,
   reassignmentTakenBy,
   revisionOf,
+  settledBy,
 } from "../leader.js";
 import {
   BaseUnitForm,
@@ -118,7 +119,7 @@ export const BASE_RULES = [
 export const LEADER_RULES = BASE_RULES.map((r) => r.text);
 
 /** The role text as a unit leader reads it; the IC reads `IC_ROLE`. */
-export const LEADER_ROLE = `Your role: unit leader. You own your unit's objective and direct its tasks until you can report against it. You direct and never do: no task runs in this session and you hold no tools, since a leader busy on a task cannot answer for its unit. Every session task runs in a session of its own and every deterministic task in process; tasks start at once when nothing they depend on is still open, dependsOn is what serializes them, a task with none waits for nothing, and each reaches you as a line when it ends, with the claims it produced by id.
+export const LEADER_ROLE = `Your role: unit leader. You own your unit's objective and direct its tasks until you can report against it. You direct and never do: no task runs in this session and you hold no tools, since a leader busy on a task cannot answer for its unit. Every session task runs in a session of its own and every deterministic task in process; tasks start at once when nothing they depend on is still open, dependsOn is what serializes them, a task with none waits for nothing, and each reaches you as a line when it ends, with the claims it produced by id. A task that fails settles what waited on it: the runtime cancels every task that depended on it, names them to you with the failure, and nothing of yours waits on a task that will never complete; assign the work again in a form that can run, or report.
 
 Report what changed, not what you did: each item in changed is something now true that was not, naming the claim ids it rests on; a change with no claims behind it is a claim of its own and counts for less. Outcome met means the unit's objective is established by observed claims; not_met means it cannot be met as set, and then why and suggestion are required, because the IC, who has more perspective, decides what happens next; progress means the unit has more to run or more to say. Set pictureChanged, and report rather than continue, the moment an outcome changes the picture the incident is working from: the IC acts on it before anything new starts.
 
@@ -331,11 +332,15 @@ export function revisedUnits(
 }
 
 /**
- * Units whose leader owes a report: one of the unit's tasks ended after its last report.
- * Dispatch asks such a unit for a report even when it has nothing left to run (the turn
- * creates the session if none exists), and the validator refuses to close it until it has
- * (DESIGN.md Step 5). A unit whose type files no report (command: it takes no leader
- * turn, and the IC judges its tasks' results at its command turn, R4-6) never owes one.
+ * Units whose leader owes a report: one of the unit's tasks ended after its last report,
+ * completed, failed, or cancelled because a task it waited on will never complete (R5-10:
+ * a cascade the leader never chose, so the unit reports on it rather than sitting idle; a
+ * cancellation by the plan or by a reassign verdict is a decision above the unit and owes
+ * nothing). Dispatch asks such a unit for a report even when it has nothing left to run
+ * (the turn creates the session if none exists), and the validator refuses to close it
+ * until it has (DESIGN.md Step 5). A unit whose type files no report (command: it takes
+ * no leader turn, and the IC judges its tasks' results at its command turn, R4-6) never
+ * owes one.
  */
 export function unitsOwingReport(
   units: readonly Unit[],
@@ -348,7 +353,11 @@ export function unitsOwingReport(
   for (const e of events) {
     if (e.type === "unit.reported" && typeof e.payload.unitId === "string")
       lastReport.set(e.payload.unitId, e.sequence);
-    if (e.type === "task.completed" || e.type === "task.failed") {
+    if (
+      e.type === "task.completed" ||
+      e.type === "task.failed" ||
+      (e.type === "task.cancelled" && typeof e.payload.because === "string")
+    ) {
       const taskId = (e.payload.mutation as { taskId?: unknown } | undefined)
         ?.taskId;
       const unitId =
@@ -447,11 +456,14 @@ export type TurnCause =
   | { status: "owing" };
 
 /**
- * The endings a unit's leader has not heard: tasks of the unit that completed or failed
- * after the leader's last turn (`unit.reported` or `unit.continued`). A report the runtime
- * wrote on the leader's behalf after two refusals (`writtenBy: "runtime"`, R4-7) is not a
- * turn and moves nothing. Empty when every ending reached a turn. A completed task's
- * ending carries the claims it produced, from the store.
+ * The endings a unit's leader has not heard: tasks of the unit that completed, failed or
+ * were cancelled because a task they waited on will never complete (R5-10) after the
+ * leader's last turn (`unit.reported` or `unit.continued`). A report the runtime wrote on
+ * the leader's behalf after two refusals (`writtenBy: "runtime"`, R4-7) is not a turn and
+ * moves nothing. Empty when every ending reached a turn. A completed task's ending carries
+ * the claims it produced, from the store. A failed task carries the tasks settled because
+ * of it, so a cancellation whose root is a failure listed here is not listed again on its
+ * own.
  */
 export function endedSinceLastTurn(
   unit: Unit,
@@ -468,10 +480,14 @@ export function endedSinceLastTurn(
       e.payload.writtenBy !== "runtime"
     )
       lastTurn = e.sequence;
+  const settled = settledBy(events);
   const ended: TaskEnding[] = [];
   for (const e of events) {
     if (e.sequence <= lastTurn) continue;
-    if (e.type !== "task.completed" && e.type !== "task.failed") continue;
+    const cascaded =
+      e.type === "task.cancelled" && typeof e.payload.because === "string";
+    if (e.type !== "task.completed" && e.type !== "task.failed" && !cascaded)
+      continue;
     const taskId = (e.payload.mutation as { taskId?: unknown } | undefined)
       ?.taskId;
     const task = typeof taskId === "string" ? byId.get(taskId) : undefined;
@@ -483,10 +499,27 @@ export function endedSinceLastTurn(
             status: "completed",
             claims: claims.filter((c) => c.provenance.taskId === task.id),
           }
-        : { task, status: "failed", reason: String(e.payload.reason ?? "") },
+        : e.type === "task.failed"
+          ? {
+              task,
+              status: "failed",
+              reason: String(e.payload.reason ?? ""),
+              settled: (settled.get(task.id) ?? []).map((s) => s.taskId),
+            }
+          : {
+              task,
+              status: "cancelled",
+              because: String(e.payload.because),
+              reason: String(e.payload.reason ?? ""),
+            },
     );
   }
-  return ended;
+  const failedHere = new Set(
+    ended.filter((x) => x.status === "failed").map((x) => x.task.id),
+  );
+  return ended.filter(
+    (x) => x.status !== "cancelled" || !failedHere.has(x.because),
+  );
 }
 
 /** What a task that came back insufficient needed, each with its kind; empty for any other result. */
@@ -554,7 +587,8 @@ function claimsLine(task: Task, claims: readonly Claim[]): string {
 
 /**
  * How one ending reads to the leader (R5-4: a line, never the work): a failure with its
- * reason; an insufficiency with what it needed and what the leader does about each kind;
+ * reason and the tasks cancelled because they waited on it (R5-10); a cancellation with
+ * the task it waited on and why; an insufficiency with what it needed and what the leader does about each kind;
  * a completion with a session's gist or a deterministic result's size, then its claims by
  * id. The result itself stays in the task record, which a task the leader assigns reads
  * through `evidenceFrom`.
@@ -562,7 +596,13 @@ function claimsLine(task: Task, claims: readonly Claim[]): string {
 function renderEnding(ending: TaskEnding): string[] {
   const { task } = ending;
   if (ending.status === "failed")
-    return [`Task ${task.id} (${task.capability}) failed: ${ending.reason}`];
+    return [
+      `Task ${task.id} (${task.capability}) failed: ${ending.reason}${ending.settled.length === 0 ? "" : ` Cancelled because they waited on it: ${ending.settled.join(", ")}; nothing of yours waits on it now.`}`,
+    ];
+  if (ending.status === "cancelled")
+    return [
+      `Task ${task.id} (${task.capability}) was cancelled: ${ending.reason}.`,
+    ];
   const needed = insufficiencyOf(task);
   if (needed.length > 0)
     return [

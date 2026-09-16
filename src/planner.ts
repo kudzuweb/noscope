@@ -10,6 +10,7 @@ import {
   openReassignments,
   openRequestsByUnit,
   type Reassignment,
+  settledBy,
 } from "./leader.js";
 import {
   ActionPlan,
@@ -288,6 +289,41 @@ export function renderPlannerInput(
       return `${t.id} (${t.capability}, under ${t.unitId}): objective "${t.objective}"; inputs ${clip(t.inputs)}; expected "${t.expectedOutput || "(per schema)"}"; criteria ${JSON.stringify(t.completionCriteria)}; result ${resultForPlanner(t)}; claims ${evidence.join(", ") || "none"}`;
     });
 
+  // A task that will never complete, with what was cancelled because it waited on it
+  // (R5-10): every failure since the last cycle, with its reason, and every cascade whose
+  // root was cancelled rather than failed (by the last plan, or with a reassigned unit).
+  const settled = settledBy(recent);
+  const failedIds = recent
+    .filter((e) => e.type === "task.failed")
+    .map((e) => (e.payload.mutation as { taskId?: string } | undefined)?.taskId)
+    .filter((id): id is string => typeof id === "string");
+  const under = (id: string) => {
+    const t = taskById.get(id);
+    return t === undefined ? id : `${id} (${t.capability}, under ${t.unitId})`;
+  };
+  const cascade = (id: string) => {
+    const list = settled.get(id) ?? [];
+    return list.length === 0
+      ? ""
+      : `; cancelled because they waited on it: ${list.map((x) => under(x.taskId)).join(", ")}`;
+  };
+  const neverCompleting = [
+    ...failedIds.map((id) => {
+      const reason = String(
+        recent.find(
+          (e) =>
+            e.type === "task.failed" &&
+            (e.payload.mutation as { taskId?: string } | undefined)?.taskId ===
+              id,
+        )?.payload.reason ?? "",
+      );
+      return `${under(id)}: objective "${taskById.get(id)?.objective ?? "?"}"; failed: ${reason}${cascade(id)}`;
+    }),
+    ...[...settled.keys()]
+      .filter((id) => !failedIds.includes(id))
+      .map((id) => `${under(id)} was cancelled${cascade(id)}`),
+  ];
+
   // A retrievable fact a task lacked is its unit leader's to get, so it is not the
   // planner's; the other kinds are shown here and reach the planner again as the leader's
   // resource requests in section 6.
@@ -504,6 +540,8 @@ export function renderPlannerInput(
     "",
     "## 4. Tasks completed since the last cycle",
     ...bullets(completed),
+    "failed or cancelled since the last cycle, each with the tasks cancelled because they waited on it; nothing waits on a task that will never complete:",
+    ...bullets(neverCompleting),
     "",
     "## 5. Tasks that came back insufficient since the last cycle",
     ...bullets(insufficient),

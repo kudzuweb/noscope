@@ -643,6 +643,62 @@ describe("incident review", () => {
     expect(none).toContain("runtimes: none");
   });
 
+  it("lists the tasks cancelled because they waited on a failed task under its failure (R5-10)", () => {
+    const usage = {
+      inputTokens: 0,
+      outputTokens: 0,
+      seconds: 0.004,
+      costUsd: 0,
+    };
+    const lines = renderReview(
+      { ...incident, status: "open" },
+      [
+        event(1, "plan.proposed", { usage, model: "claude-opus-5" }),
+        event(2, "plan.applied", {
+          units: [],
+          closedUnits: [],
+          tasks: ["t1", "t2", "t3"],
+          cancelledTasks: [],
+          incidentStatus: "continue",
+        }),
+        event(3, "task.started", {
+          mutation: { kind: "task.status", taskId: "t1", status: "running" },
+        }),
+        event(4, "task.failed", {
+          reason: "ENOENT: no such file or directory",
+          mutation: { kind: "task.status", taskId: "t1", status: "failed" },
+        }),
+        event(5, "task.usage", { taskId: "t1", usage }),
+        event(6, "task.cancelled", {
+          because: "t1",
+          reason:
+            "depends on t1, which failed: ENOENT: no such file or directory",
+          mutation: { kind: "task.status", taskId: "t2", status: "cancelled" },
+        }),
+        event(7, "task.cancelled", {
+          because: "t1",
+          reason:
+            "depends on t2, cancelled because t1 failed: ENOENT: no such file or directory",
+          mutation: { kind: "task.status", taskId: "t3", status: "cancelled" },
+        }),
+      ],
+      [
+        task("t1", "grep", null),
+        task("t2", "read", null),
+        task("t3", "read", null),
+      ],
+      [],
+    );
+    const at = lines.findIndex((l) =>
+      l.startsWith("  t1 grep (deterministic)"),
+    );
+    expect(lines.slice(at, at + 3)).toEqual([
+      "  t1 grep (deterministic): 0.0 s  failed",
+      "    failed: ENOENT: no such file or directory",
+      "    cancelled because they waited on it: t2, t3",
+    ]);
+  });
+
   it("names the runtimes a log was written under, in order, with each one's event range and the untagged events named (R4-12)", () => {
     const tagged = (sequence: number, runtime: string | null): Event => ({
       ...event(sequence, "plan.proposed", { rationale: "r" }),

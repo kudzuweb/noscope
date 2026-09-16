@@ -154,6 +154,63 @@ describe("apply and tree", () => {
     ]);
   });
 
+  it("a plan's cancel settles the tasks that waited on the cancelled one, transitively, in the plan's transaction, each recorded with the cause (R5-10)", () => {
+    const { store, apply } = fresh();
+    apply({
+      ...empty,
+      createTasks: [
+        grepTask("i1-command", "first", { ref: "first" }),
+        grepTask("i1-command", "second", {
+          ref: "second",
+          dependsOn: ["first"],
+        }),
+        grepTask("i1-command", "third", { dependsOn: ["second"] }),
+        grepTask("i1-command", "apart"),
+      ],
+    });
+    const applied = apply({ ...empty, cancelTasks: ["i1-t01"] });
+    expect(applied.cancelledTasks).toEqual(["i1-t01"]);
+    expect(applied.settled).toEqual([
+      {
+        taskId: "i1-t02",
+        because: "i1-t01",
+        reason: "depends on i1-t01, which was cancelled by the plan",
+      },
+      {
+        taskId: "i1-t03",
+        because: "i1-t01",
+        reason:
+          "depends on i1-t02, cancelled because i1-t01 was cancelled by the plan",
+      },
+    ]);
+    expect(store.listTasks("i1").map((t) => [t.id, t.status])).toEqual([
+      ["i1-t01", "cancelled"],
+      ["i1-t02", "cancelled"],
+      ["i1-t03", "cancelled"],
+      ["i1-t04", "ready"],
+    ]);
+    const events = store.listEvents("i1");
+    const cancelled = events.filter((e) => e.type === "task.cancelled");
+    expect(cancelled.map((e) => e.payload.because)).toEqual([
+      undefined,
+      "i1-t01",
+      "i1-t01",
+    ]);
+    expect(cancelled[0]?.payload).toEqual({
+      rationale: "test",
+      mutation: expect.objectContaining({ taskId: "i1-t01" }),
+    });
+    // The cascade sits between the plan's cancel and plan.applied, in one transaction.
+    const types = events.map((e) => e.type);
+    expect(types.slice(types.indexOf("task.cancelled"))).toEqual([
+      "task.cancelled",
+      "task.cancelled",
+      "task.cancelled",
+      "plan.applied",
+    ]);
+    store.close();
+  });
+
   it("a task's declared strike team lands on the task row and is recorded as the plan's declaration", () => {
     const { store, apply } = fresh();
     const team = {

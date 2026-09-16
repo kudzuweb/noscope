@@ -105,6 +105,29 @@ function reassignmentOf(e: Event): Reassignment {
   };
 }
 
+/** A task cancelled because what it waited on will never complete (R5-10): the task, the failed or cancelled task at the root of the chain (`because`), and the reason as the event carries it, naming the task it waited on directly. */
+export type Settled = { taskId: string; because: string; reason: string };
+
+/** The tasks cancelled because a failed or cancelled task will never complete (R5-10), keyed by that task's id, in the order they were cancelled: every `task.cancelled` carrying `because`. */
+export function settledBy(events: readonly Event[]): Map<string, Settled[]> {
+  const settled = new Map<string, Settled[]>();
+  for (const e of events) {
+    if (e.type !== "task.cancelled" || typeof e.payload.because !== "string")
+      continue;
+    const taskId = (e.payload.mutation as { taskId?: unknown } | undefined)
+      ?.taskId;
+    if (typeof taskId !== "string") continue;
+    const list = settled.get(e.payload.because) ?? [];
+    list.push({
+      taskId,
+      because: e.payload.because,
+      reason: String(e.payload.reason ?? ""),
+    });
+    settled.set(e.payload.because, list);
+  }
+  return settled;
+}
+
 /** Every reassignment the log records, in order, each with the unit that took it when one has, or the IC's later drop of it (R4-4). */
 export function reassignments(events: readonly Event[]): Reassignment[] {
   const all: Reassignment[] = [];

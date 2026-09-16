@@ -26,7 +26,11 @@ import {
   type SessionActivity,
   SessionError,
 } from "./providers/index.js";
-import { applyLeaderTasks, raiseResourceRequests } from "./runtime.js";
+import {
+  applyLeaderTasks,
+  cancelDependents,
+  raiseResourceRequests,
+} from "./runtime.js";
 import { type Store, sumUsage } from "./store.js";
 import { unitsInTreeOrder } from "./tree.js";
 import {
@@ -42,13 +46,14 @@ import {
 import { validateLeaderTasksAndRecord } from "./validator.js";
 import { recordClaims, recordSessionResult } from "./verifier.js";
 
-/** What one task's run came to, for the step's printout. */
+/** What one task's run came to, for the step's printout; a failure names the tasks cancelled because they waited on it (R5-10). */
 type Ran = {
   taskId: string;
   capability: string;
   status: "completed" | "failed";
   claims: number;
   reason?: string;
+  settled?: string[];
 };
 
 /**
@@ -70,7 +75,7 @@ export type DispatchOptions = {
   providers?: readonly Provider[];
 };
 
-/** Ready means every dependency is completed (DESIGN.md Step 6). */
+/** Ready means every dependency is completed (DESIGN.md Step 6); a dependency that failed or was cancelled settled the task when it did (R5-10, `cancelDependents`), so a pending task here waits only on tasks that can still complete. */
 function dependenciesMet(task: Task, tasks: readonly Task[]): boolean {
   return task.dependsOn.every(
     (id) => tasks.find((t) => t.id === id)?.status === "completed",
@@ -163,17 +168,25 @@ function budgetRoom(
 /**
  * Every pass runs in one process and lands every run before it returns, so a task still
  * `running` when a pass starts was left by a pass that died mid-run; it is failed with that
- * reason rather than skipped forever, and the planner can reissue it.
+ * reason rather than skipped forever, its dependents settled with it (R5-10), and the
+ * planner can reissue them.
  */
 function failInterrupted(store: Store, incident: Incident, actor: string) {
-  for (const t of store.listTasks(incident.id))
-    if (t.status === "running")
-      store.setTaskStatus(incident.id, t.id, "failed", actor, "task.failed", {
-        extra: {
-          reason: "left running by a pass that did not finish",
-          interrupted: true,
-        },
-      });
+  const reason = "left running by a pass that did not finish";
+  store.batch(() => {
+    for (const t of store.listTasks(incident.id))
+      if (t.status === "running") {
+        store.setTaskStatus(incident.id, t.id, "failed", actor, "task.failed", {
+          extra: { reason, interrupted: true },
+        });
+        cancelDependents(
+          store,
+          incident.id,
+          { id: t.id, what: `failed: ${reason}` },
+          actor,
+        );
+      }
+  });
 }
 
 /**
@@ -599,24 +612,39 @@ export async function dispatch(
       let run: Promise<Landed>;
       if (capability === undefined) {
         const reason = `no capability named ${next.capability}`;
-        store.setTaskStatus(
-          incident.id,
-          next.id,
-          "failed",
-          actor,
-          "task.failed",
-          {
-            extra: { reason },
-          },
-        );
+        let settled: string[] = [];
+        store.batch(() => {
+          store.setTaskStatus(
+            incident.id,
+            next.id,
+            "failed",
+            actor,
+            "task.failed",
+            {
+              extra: { reason },
+            },
+          );
+          settled = cancelDependents(
+            store,
+            incident.id,
+            { id: next.id, what: `failed: ${reason}` },
+            actor,
+          ).map((s) => s.taskId);
+        });
         ran.push({
           taskId: next.id,
           capability: next.capability,
           status: "failed",
           claims: 0,
           reason,
+          ...(settled.length === 0 ? {} : { settled }),
         });
-        run = Promise.resolve({ task: next, status: "failed", reason });
+        run = Promise.resolve({
+          task: next,
+          status: "failed",
+          reason,
+          settled,
+        });
       } else {
         if (room.room === "none") {
           inFlight.delete(next.id);
@@ -732,9 +760,10 @@ export async function dispatch(
 /**
  * One task's run and its record: the outcome with its claims, `task.completed` and
  * `task.usage` in one transaction, or `task.failed` with the reason and the usage the run
- * still spent, the session's activity filed under the task either way. The landed ending
- * carries the claims, and the refusals when the task's session was refused on both
- * models (R4-7: the unit reports, not its leader).
+ * still spent, and in the same transaction every pending task that waited on it cancelled
+ * with `because` naming it (R5-10, `cancelDependents`), the session's activity filed under
+ * the task either way. The landed ending carries the claims, and the refusals when the
+ * task's session was refused on both models (R4-7: the unit reports, not its leader).
  */
 async function runOne(
   ctx: PassContext,
@@ -818,6 +847,7 @@ async function runOne(
             // A deterministic run costs nothing; a session that failed before answering cost something unknown.
             ...(capability.kind === "deterministic" ? { costUsd: 0 } : {}),
           };
+    let settled: string[] = [];
     store.batch(() => {
       if (error instanceof SessionError && error.sessionId !== null)
         recordActivity(store, incident.id, actor, error.activity, {
@@ -864,6 +894,12 @@ async function runOne(
             }
           : {}),
       });
+      settled = cancelDependents(
+        store,
+        incident.id,
+        { id: next.id, what: `failed: ${reason}` },
+        actor,
+      ).map((s) => s.taskId);
     });
     ran.push({
       taskId: next.id,
@@ -871,11 +907,13 @@ async function runOne(
       status: "failed",
       claims: 0,
       reason,
+      ...(settled.length === 0 ? {} : { settled }),
     });
     return {
       task: next,
       status: "failed",
       reason,
+      settled,
       ...(error instanceof TaskRefused ? { refusals: error.refusals } : {}),
     };
   }

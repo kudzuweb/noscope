@@ -4,6 +4,7 @@ import {
   LEADER_ACTOR,
   type RefusedCall,
   reassignments,
+  settledBy,
 } from "./leader.js";
 import {
   type Claim,
@@ -1036,6 +1037,7 @@ export function renderReview(
     const claimsByTask = new Map<string, Map<string, number>>();
     const inferredByTask = new Map<string, number>();
     const sessionByTask = new Map<string, string>();
+    const settledByTask = settledBy(cycle.events);
     for (const e of cycle.events) {
       if (mutationKind(e) === "claim.create") {
         const claim = (e.payload.mutation as { claim?: Claim }).claim;
@@ -1110,8 +1112,14 @@ export function renderReview(
         `  ${taskId} ${capability}${model === null ? " (deterministic)" : ` ${model}`}: ${spend}  ${outcomeText}${fellBack === "" ? "" : ` (fallback from ${fellBack})`}${claimsText}${session(sessionId)}`,
       );
       lines.push(...activityLines(cycle.events, taskId, model, cycle.number));
-      if (outcome?.type === "task.failed")
+      if (outcome?.type === "task.failed") {
         lines.push(`    failed: ${str(outcome.payload.reason)}`);
+        const settled = settledByTask.get(taskId);
+        if (settled !== undefined)
+          lines.push(
+            `    cancelled because they waited on it: ${settled.map((s) => s.taskId).join(", ")}`,
+          );
+      }
       if (outcome?.type === "task.insufficient")
         lines.push(
           `    insufficient: ${list(outcome.payload.needed).map(String).join("; ")}`,
