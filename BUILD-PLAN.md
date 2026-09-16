@@ -919,3 +919,175 @@ situation) were ruled in review on 2026-09-15 and are in R4-7 and R4-5. Ruled in
 review: the planner's job after round 4 is the tactics only, drafted as a suggestion for
 the IC. The one raised with R4-10 (whether the root stays a unit) was ruled the same day:
 the root stays, as a unit of the `ic` type.
+## Round 5: a model is called only when a model is needed
+Derived from run 004's write-up in `docs/first-incident.md` ("## Fourth run", its
+"What the run found in the runtime") and Mauria's rulings of 2026-09-15 (22:21 to 22:38
+CDT): the system is to work as well as possible, and where round 4's logic is wrong the
+fix is a rewrite, not a rule bolted on; code is cheap and bad logic is expensive. Run 003
+reached the same answer as run 004 for $4.86 and 29 minutes against $15.96 and 35, with a
+Sonnet 5 IC, Sonnet task sessions and 24 claims. Every row below keeps what round 4 added
+(verdicts, revise and reassign, the IC's situation, the fallback, unit types and configs,
+the runtime tag) and changes the logic that made run 004 slow and expensive. Nine PRs in
+dependency order, each mergeable on its own; the last reruns the first incident.
+
+What round 5 changes, in one paragraph. A model is called when a decision needs a model,
+never for process. The unit leader directs and never does: it assigns deterministic tasks,
+which the runtime runs in process, and session tasks, which run in sessions of their own,
+at once when independent; it is called only on a decision. Deterministic output is
+evidence, retrievable by task id, and never a claim. The IC's situation is the IC's own
+statements, with ids the runtime assigns. The validator checks a draft before the IC reads
+it. The planner picks the smallest model that fits and the IC's review holds it to that;
+the IC runs on Sonnet 5 unless told otherwise. The briefing's questions go to the IC, not to
+Mauria, and the IC decides which reach her.
+
+| PR  | Title | Depends on | Delivers, in one line |
+|---|---|---|---|
+| R5-1 | Evidence is not a claim | none | A deterministic task's output is evidence kept by task id and attached through `evidenceFrom`, never promoted to claims; the incident file renders it as a count with the id; claims come from seats only. |
+| R5-2 | The situation is the IC's own statements | none | An inferred link is text the IC writes, given an id by the runtime when the turn is applied; the plan's tasks and later claims settle a link by that id; a first turn needs no claims. |
+| R5-3 | Validate before review | none | The validator checks the planner's draft before the IC sees it; a rule break goes back to the planner with no IC call; the IC reviews valid drafts for substance; a mechanical correction the IC names is a patch the runtime applies with no redraft and no re-review. |
+| R5-4 | The leader directs and never does | none | No task runs inside a leader's session; every session task runs in a session of its own, at once when independent and in order when dependent; the leader's equipment for tasks goes and its context stays the objective, the brief and one line per ending. |
+| R5-5 | A leader is called only on a decision | R5-4 | After a completed ending the next ready task starts on its own; the leader is called on an insufficient or failed ending, a revise brief, a result it asked to be consulted on, or when nothing is ready and a report is due. |
+| R5-6 | Smallest model that fits | none | The planner's rule and the IC's review hold every session task and leader to the smallest model its kind of work needs, with a why for any upgrade; `create` puts the IC on Sonnet 5 unless `--ic-model` says otherwise, recording the briefing's recommendation without following it. |
+| R5-7 | Independent work runs together | none | The planner's rule text and the IC's review put units that do not depend on each other in the same period, so code reading never waits behind a reproduce it does not need. |
+| R5-8 | The IC gates the briefing's questions | R5-2 | The initial IC's questions do not block the incident; they reach the IC's first turn as proposals, and only a question the IC raises reaches Mauria. |
+| R5-9 | Fifth run | all | The first incident rerun with everything above, measured beside runs 001 to 004; the target is run 003's cost and time or better with run 004's evidence. |
+
+R5-1 to R5-4, R5-6 and R5-7 can run in parallel; R5-5 after R5-4; R5-8 after R5-2.
+### R5-1: Evidence is not a claim
+Scope: a deterministic run's output (a grep's matches, a read's text, a git history) is
+recorded on `task.completed` as it is today and stops being turned into claims: the
+`claim.verified` events a deterministic task produced (154 of run 004's 216 claims came
+from two greps) are no longer written; the task's result is evidence, addressed by task
+id. `evidenceFrom.tasks` attaches a deterministic task's full result to a session brief
+as it does now, and a session that cites a grep match in a claim names the task id in the
+claim's provenance. The incident file's claims section lists claims only, and a new
+evidence line per deterministic task gives its capability, a count (matches, lines,
+commits) and the task id. The change report's "tasks under command" block and a report's
+work block render a deterministic result the same way. A claim's basis `observed` still
+gates as before; a session's claim about what a grep showed is `observed` when the task's
+evidence is attached, `inferred` otherwise. `incident review` counts evidence beside
+claims. Run 003's 24 claims and run 004's 54 asserted ones are the shape the file should
+have. DESIGN.md Vocabulary (claim, evidence), Step 2, Step 4 and Step 7 follow.
+
+Acceptance: a run test on the stub where a grep under a unit produces evidence and no
+claim, the investigate that names it in `evidenceFrom` asserts an `observed` claim with the
+task id in its provenance, and the file shows one evidence line and the claim; a replay
+test on run 004's database renders its file with 54 claims and 8 evidence lines.
+### R5-2: The situation is the IC's own statements
+Scope: `Situation.inferred` entries are text the IC writes (the link, and what would
+settle it), and the runtime assigns each an id (`<incident>-l01`) when the command turn is
+applied, recording `link.stated`; the IC carries a link forward by its id, marks it
+`settled` naming the claims that settle it or `deferred` with a why, and drops it; the
+rule "Situation grounded" checks `proven` claims exist with basis observed and that a
+`settled` link names existing claims, and no longer requires an id on an inferred link;
+the rule "Inferred links are worked" holds the plan to settling every open link by id or
+ref. The first turn writes links from the briefing with no claims in the file (run 004's
+first turn was rejected for inventing four claim ids). The planner's section 10 renders
+each link with its id. `incident show` prints the links with their state. DESIGN.md Step 4
+and Step 5 follow.
+
+Acceptance: a models test for the text form; a validator test that a first-turn situation
+with two text links passes and a plan settling both by ref passes, one leaving one
+unsettled and undeferred is rejected; a run test on the stub where the IC states a link,
+the plan settles it, and the next turn marks it settled by the claim's id.
+### R5-3: Validate before review
+Scope: in `cycle`, the planner's draft is validated before the IC's review turn; a draft
+that breaks a rule is recorded `plan.rejected` and the planner redrafts with the reasons,
+up to two redrafts, with no IC call in between; the IC reviews only a valid draft, for
+substance. The IC's `correct` verdict carries the edits as a list of patches (a task's
+field and its new value, a task to add, a task to cancel) that the runtime applies and
+re-validates, with no redraft and no second review; `amend` stays for a rewrite. Run 004's
+one-line `correct` cost $2.84 and 168 seconds through a redraft and a re-review on a 114k
+context. `incident review` counts redrafts by cause (rule, correction). DESIGN.md Step 4
+(the cycle's order) and Step 5 follow, and the IC role's review paragraph.
+
+Acceptance: a run test on the stub where the planner's first draft breaks "Dependencies
+resolve", the second passes, and the IC is called once; a test where the IC's `correct`
+patches one `dependsOn` and the plan is applied with no further planner or IC call.
+### R5-4: The leader directs and never does
+Scope: `runsInsideLeader`, the inside-task chain and the leader's tool equipment for
+tasks are removed from the base protocol and the dispatcher; every session task runs in a
+session of its own through `buildSessionRequest`, independent tasks starting at once under
+the R4-9 cap and dependent ones in order; a deterministic task the leader assigns runs in
+process as it does today and its result reaches the leader as an ending. The leader's
+session holds the orientation, the revise brief and one line per ending; a task's tool
+results never enter it (run 004's code leader grew from 34k to 100k context from three
+inside investigates and paid for it on every turn, and could not be called for 494
+seconds). The `ic` type's root pass is unchanged. `BaseUnitForm.equipment` becomes the
+equipment the unit's tasks may use, not the leader's session's; `holdsCapability` decides
+whether a task may run under the unit, not where. DESIGN.md Vocabulary (unit leader),
+Step 3, Step 6 and the ICS mapping row for a unit follow.
+
+Acceptance: a dispatcher test that two independent investigates under one unit run in two
+sessions at once and the leader's session is not resumed until an ending needs it; a test
+that a leader session's context after three endings carries no tool results.
+### R5-5: A leader is called only on a decision
+Scope: the base protocol's `ending` hook starts the next ready task without a leader turn
+when the ending is `completed` and the leader did not ask to be consulted on it; the
+leader is called on an `insufficient` or `failed` ending, on a revise brief, on an ending
+the leader flagged `consult` when it assigned or last saw the task, and when nothing is
+ready and the unit owes a report; the endings it was not called for ride on its next turn
+as R4-9's unheard list does. Run 004's four continue turns produced 74 output tokens each
+for $1.81. `unit.continued` is recorded by the runtime with `writtenBy: "runtime"` when a
+task starts without a turn, so the log still shows the unit's progress. DESIGN.md Step 6
+follows.
+
+Acceptance: a run test on the stub with a chain of three completed tasks where the leader
+is called once, at the report; a test where a failed ending calls it at once.
+### R5-6: Smallest model that fits
+Scope: the planner's rule text gains "Smallest model that fits": a session task or a
+unit's leader names the smallest model its kind of work needs (recording, reproducing and
+reading are Haiku or Sonnet work; weighing evidence to a conclusion may take Opus), and a
+plan that names a larger model says why in the proposal's `modelWhy`; the validator warns
+on an Opus session task with no why; the IC's review prompt asks it to refuse a draft that
+upgrades a model without a reason. `incident create` puts the IC on `claude-sonnet-5`
+unless `--ic-model` names another, and the briefing's `incomingCommander` is recorded as
+its recommendation without being followed (run 003's Sonnet IC did the same work as run
+004's Opus one for $1.28 against $5.83). DESIGN.md Model choices, Step 4 and Step 5, the
+README and CLAUDE.md follow.
+
+Acceptance: the planner snapshot shows the rule; a validator test warns on an unexplained
+Opus task; a run test on the stub where `create` with no `--ic-model` transfers command to
+Sonnet 5 and records the briefing's recommendation.
+### R5-7: Independent work runs together
+Scope: the planner's rule text says that units and tasks with no dependency between them
+run in the same period, and that a code reading does not wait behind a reproduce it does
+not need (run 004's code unit sat idle for the 278 seconds of the reproduce, then ran its
+readings one after another); the IC's review prompt asks whether the draft serializes
+independent work; `incident review`'s wall-time line names the period's critical path
+(the longest chain of dependent tasks) beside the summed seconds, so the parallel factor
+is read against what was possible.
+
+Acceptance: the planner snapshot shows the rule; a review test on a log with two
+independent units prints the critical path.
+### R5-8: The IC gates the briefing's questions
+Scope: `IncidentBriefing.questionsForHuman` no longer blocks the incident at `create`; the
+questions are rendered into the IC's first briefing as the initial IC's proposals, and the
+IC's first turn answers each with accept (it becomes a question the IC raises, which
+blocks), discard with a why, or answer from the objective; only a question the IC raises
+reaches Mauria. Run 004's size-up asked two intended-behavior questions on a diagnostic
+objective, which R4-8's role text did not prevent and the operator answered as out of
+scope; run 003's did the same. DESIGN.md Step 4 and Step 7 follow.
+
+Acceptance: a run test on the stub where the briefing carries one question, the IC
+discards it, and the incident is never blocked; one where the IC accepts it and the
+incident blocks on it.
+### R5-9: Fifth run
+Scope: the first incident's objective run a fifth time from the same roughdraftplus
+working directory at commit 6a996e8, with the scratch document restored, the same
+constraints and priority as runs 003 and 004, and the IC on Sonnet 5 by R5-6's default;
+`incident review` recorded beside runs 001 to 004 in `docs/first-incident.md` under a
+"Fifth run" section with the same measures, the evidence count beside the claim count, the
+leader calls per unit, the critical path per period beside the wall time, and the models
+the planner chose with their whys.
+
+Acceptance: run 005 reaches `satisfied` with the same code path named; cost at or below
+run 003's $4.86 and wall time below 29 minutes, with the reproduce's and the code trace's
+claims as good as run 004's; the write-up says which of the nine rows earned its keep and
+which did not.
+### Round 5 open questions
+
+| Question | Blocks |
+|---|---|
+| Whether a session task may still ask the leader for a strike team (R3-5), given the leader no longer runs tasks; the least change is that the task's own session declares the strike team from its brief and the leader's `requestStrikeTeam` goes. | R5-4's scope; decide at its build. |
+| Whether the size-up should run at all on an objective whose verb makes it a diagnosis, or whether the IC's first turn could start from the objective alone; run 004's size-up cost $0.20 and 95 seconds and its objectives were rewritten by the IC anyway. | Nothing in this round; a candidate for round 6 after run 005 shows what the briefing is worth to a Sonnet IC. |
