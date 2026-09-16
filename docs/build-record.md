@@ -3696,3 +3696,107 @@ Not exactly to spec, with reasons:
   The warning's reason also offers the rationale as the third way out, so a planner does
   not attach unread evidence to silence it, and `possible` is written as an upper bound on
   `parallel` rather than a value it could reach.
+
+## R5-6: Smallest model that fits (#PR, merged 2026-09-16)
+
+R5-6 of the round 5 plan, ruled by Mauria on 2026-09-15: Sonnet 5 for the IC, and the
+smallest model that fits for everything the planner names. The evidence is run 004
+(`docs/first-incident.md`, "Fourth run"): its planner put every session and both unit
+leaders on Opus 5 with no reason in any rationale, the reproduce cost $1.85 for the same
+shape of work run 003's did on Sonnet 5 for $0.59 (37 tool calls in 278 s against 34 in
+268), the two Opus leaders' six turns cost $2.37 against run 003's five Sonnet turns at
+$0.94, and run 003's Sonnet IC did the same work as run 004's Opus one for $1.28 against
+$5.83; nothing in the planner's rules or the IC's review had asked for fit ("Model known"
+requires only a served model). Built in two commits: the rule, then the default.
+
+The rule (`src/planner.ts`): `PLANNER_WARNINGS` gains "Smallest model that fits": a task
+to a session-backed capability, and a new unit's leader, names the smallest model its kind
+of work needs; recording, reproducing and reading are Haiku or Sonnet work, and so is a
+leader that directs such tasks; weighing evidence to a conclusion may take Opus; a task or
+leader on an Opus or Fable model says why in `modelWhy`, in terms of the work and not the
+model, and one with no why is warned on. It renders in section 9 under "warned on, and
+applied anyway", so the planner reads it on every draft. `TaskProposal` and `UnitProposal`
+(`src/models.ts`) gain the optional `modelWhy` with a description saying when it is
+required in substance; a leader's `assignTasks` share `TaskProposal` and so may carry it,
+though a leader's assignments draw no warnings (as before R5-6). The validator
+(`src/validator.ts`): `WARNING_CHECKS["Smallest model that fits"]` warns on a session task
+whose model matches `/opus|fable/` with no `modelWhy`, and on a new unit whose outfitted
+leader's model does with no `modelWhy`, unless the leader came from the saved config the
+unit names (the config's leader model equals the unit's), since that leader is Mauria's
+choice (R4-11); the tier is told by name because that is how Claude Code's list is
+tiered (`DESIGN.md` Model choices: Opus and Fable at 2.5x to 5x Sonnet 5 per token). The
+warning records `plan.warned` and the plan applies, like R4-6's. The IC's review prompt
+(`renderReviewPrompt` in `src/ic.ts`) ends with `REVIEW_MODELS_ASK`, its own line so R5-7's
+review sentence merges beside it: hold every session task and every new unit's leader to
+the smallest model that fits; a task or leader on an Opus or Fable model with no
+`modelWhy`, or with one the work does not bear out, is an unreasoned upgrade; do not
+approve the draft as drafted, correct or amend it to the smaller model. Both the draft's
+and the redraft's review carry it.
+
+The default (`src/leader.ts`, `src/commands/incident.ts`): `IC_MODEL` is
+`claude-sonnet-5`. `create` puts the root unit's leader on `--ic-model` or the default when
+it creates the unit, and the size-up's transfer confirms it: `command.transferred` (kind
+`initial`) carries `incoming` as the unit's leader, `chosenBy` `--ic-model` or `the
+default`, and `reason` "the briefing recommended <provider>/<model>: <why>", with ", which
+claude-code does not serve" after the model when the provider does not serve it; the
+briefing's `incomingCommander` is never followed. The `served` branch that routed the IC
+by the briefing (R3-8) is gone. `INITIAL_IC_ROLE` (`src/size-up.ts`) says a narrow read is
+Haiku's or Sonnet's, and that the recommendation is recorded on the transfer for the IC to
+read and does not route it. `renderTransfer` prints the recommendation and "your model:
+…, chosen by the default (the briefing recommended …)" as before, so the IC's first turn
+sees both. `incident show` and `incident review` print the transfer as they did.
+
+Docs: DESIGN.md's Vocabulary row for the briefing and the ICS mapping row for the initial
+IC say the transfer puts the IC on `--ic-model` or the default and records the
+recommendation; Step 4's schema comments carry `modelWhy` on `createUnits` and
+`createTasks` and the new comment on `incomingCommander`; Step 4's review paragraph
+carries the models line; Step 5 has the second warning's row; Step 7's `create` row and
+the Model choices rows for the IC, unit leaders and `investigate`, `interpret`,
+`reproduce` follow. `docs/architecture.html`'s size-up node, IC node, plan step and
+validate step follow. The README's environment paragraph names the IC's default and the
+planner's rule; CLAUDE.md's `create` row no longer tells the reader to pass `--ic-model
+claude-sonnet-5`, and its read-only paragraph says why the default is Sonnet 5.
+
+Tests: `test/validator.test.ts` warns on an Opus investigate and an Opus leader with no
+`modelWhy` in one plan and draws nothing for the same with a why, for a Sonnet task, for a
+Sonnet leader, or for a leader filled from a saved Opus config (a fake provider extended
+with `fake-opus-9`, so the tier check runs against a name); the planner snapshot
+(`test/planner.test.ts`) shows the rule; `test/units.test.ts` lists `modelWhy` on the unit
+proposal's schema; `test/ic.test.ts` asserts the review line is the last line of both the
+draft's and the redraft's review prompt; `test/size-up.test.ts`'s fixture briefing now
+recommends `claude-opus-5`, and `create` with no `--ic-model` transfers command to Sonnet 5
+with `chosenBy: "the default"` and the recommendation in `reason`, `--ic-model
+claude-opus-4-8` overrides it with the same reason, an unserved recommendation is
+recorded as unserved, `--no-size-up` and a failed size-up leave the IC on Sonnet 5, and the
+inline snapshot of the IC's first briefing shows the recorded recommendation beside the
+model chosen. The tests that echoed the IC's default (`handoff`, `ic`, `review`, `run`,
+`runtime`, `incident-commands`) expect Sonnet 5; `test/refusal.test.ts` creates its
+incidents with `--ic-model claude-opus-5`, since the refusal it scripts is Opus 5's.
+`pnpm check` exits 0 (299 tests, 6 skipped).
+
+Files rewritten, for the merge: none whole. `src/commands/incident.ts` `create`'s
+transfer block (about 25 lines replaced by 8), `src/validator.ts` (the tier constant and
+one warning check added), `src/planner.ts` (one warning line added), `src/models.ts` (two
+optional fields), `src/ic.ts` (one constant and one line in `renderReviewPrompt`),
+`src/leader.ts` (`IC_MODEL` and its comment), `src/size-up.ts` (two sentences of the role
+text). R5-7 also adds a `PLANNER_WARNINGS` or `PLANNER_RULES` line and a review sentence;
+both of R5-6's are their own array elements.
+
+Not exactly to spec, with reasons:
+
+- The rule is a warning, not a rule: the block says the validator warns, and the planner
+  reads warnings in the same section 9 as rules, so "the planner's rule text gains" is met
+  by a `PLANNER_WARNINGS` entry; a rejection would cost a redraft for a judgment the IC is
+  placed to make in its review.
+- The warning covers a new unit's Opus leader as well as an Opus session task; the block's
+  acceptance names the task, its rule text names both, and run 004's leader turns were
+  $1.43 of the difference.
+- A leader filled from a saved config draws no warning even on Opus: the config is Mauria's
+  saved choice (R4-11), and warning on it every deployment would tell the planner to
+  second-guess a form it was told to deploy by name.
+- The tier is a name test (`/opus|fable/`) rather than a price lookup: `review.ts`'s list
+  rates are for costing and name the same models, and a name test needs no table to stay
+  current when the provider's list changes.
+- A briefing recommending a model the provider does not serve is no longer a fallback
+  case: the IC is on the default either way, and the reason says the recommendation was
+  unserved so the record still shows it.
