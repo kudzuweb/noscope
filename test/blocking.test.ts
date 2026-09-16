@@ -165,7 +165,9 @@ describe("blocking channels", () => {
     expect(h.out).toContain(
       "  task 001-t02 [ready] under 001-command: grep: find the scroll handler's source",
     );
-    expect(h.out).toContain("  ran 001-t02 (grep): completed; 1 claim(s)");
+    expect(h.out).toContain(
+      "  ran 001-t02 (grep): completed; evidence: 1 match in 1 file",
+    );
   });
 
   it("a grant request holds the block after the question is answered, and a closed incident takes no answer", {

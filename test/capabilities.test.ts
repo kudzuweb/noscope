@@ -5,21 +5,18 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
-  getCapability,
   listCapabilities,
   runDeterministic,
 } from "../src/capabilities/index.js";
 import { defineCapability } from "../src/capabilities/registry.js";
 import { EXIT, run } from "../src/cli.js";
-import type { Task } from "../src/models.js";
-import { now, Store } from "../src/store.js";
-import { recordClaims } from "../src/verifier.js";
+import { measureEvidence } from "../src/evidence.js";
 
 const tree = resolve("test/fixtures/tree");
 const ctx = { taskId: "t1", incidentId: "i1", cwd: tree };
 
 describe("deterministic capabilities", () => {
-  it("registers the four v0 deterministic capabilities as read-only producers of verified claims", () => {
+  it("registers the four v0 deterministic capabilities as read-only producers of evidence, and the session ones of claims (R5-1)", () => {
     const names = listCapabilities()
       .filter((c) => c.kind === "deterministic")
       .map((c) => c.name);
@@ -28,68 +25,50 @@ describe("deterministic capabilities", () => {
     );
     for (const c of listCapabilities()) {
       expect(c.effect).toBe("read_only");
-      if (c.kind === "deterministic")
-        expect(c.produces).toBe("verified_claims");
-      else expect(c.produces).toBe("asserted_claims");
+      if (c.kind === "deterministic") expect(c.produces).toBe("evidence");
+      else expect(c.produces).toBe("claims");
     }
   });
 
-  it("check_path states existence as a claim either way", async () => {
+  it("check_path returns existence as evidence either way, measured as what the path is", async () => {
     const yes = await runDeterministic(
       "check_path",
       { path: join(tree, "a.txt") },
       ctx,
     );
     expect(yes.output).toMatchObject({ exists: true, kind: "file" });
-    expect(yes.claims).toMatchObject([
-      { predicate: "exists", object: true, confidence: 1 },
-      { predicate: "is_a", object: "file", confidence: 1 },
-    ]);
+    expect(measureEvidence("check_path", yes.output)).toBe("exists, a file");
     const no = await runDeterministic(
       "check_path",
       { path: join(tree, "nope.txt") },
       ctx,
     );
     expect(no.output).toMatchObject({ exists: false, kind: "missing" });
-    expect(no.claims).toMatchObject([{ predicate: "exists", object: false }]);
-    expect(no.claims).toHaveLength(1);
+    expect(measureEvidence("check_path", no.output)).toBe("does not exist");
+    expect(Object.keys(no)).toEqual(["output", "inputs"]);
   });
 
-  it("grep records one claim per match and a verified absence when there is none", async () => {
+  it("grep returns its matches as evidence, measured as matches in files, and the absence of any as no matches", async () => {
     const hits = await runDeterministic(
       "grep",
       { root: tree, pattern: "delete" },
       ctx,
     );
-    const at = `${join(tree, "a.txt")}:2`;
-    expect(hits.claims).toEqual([
-      {
-        subject: at,
-        predicate: "matches",
-        object: { pattern: "delete", text: "the delete handler lives here" },
-        confidence: 1,
-        evidence: [at],
-      },
-    ]);
+    expect(hits.output).toEqual({
+      root: tree,
+      matches: [
+        { file: "a.txt", line: 2, text: "the delete handler lives here" },
+      ],
+      truncated: false,
+    });
+    expect(measureEvidence("grep", hits.output)).toBe("1 match in 1 file");
     const none = await runDeterministic(
       "grep",
       { root: tree, pattern: "zzz-not-here", glob: "*.md" },
       ctx,
     );
-    expect(none.claims).toEqual([
-      {
-        subject: tree,
-        predicate: "has_no_match_for",
-        object: {
-          pattern: "zzz-not-here",
-          glob: "*.md",
-          ignoreCase: false,
-          exclude: ["node_modules", ".git"],
-        },
-        confidence: 1,
-        evidence: [tree],
-      },
-    ]);
+    expect(none.output).toEqual({ root: tree, matches: [], truncated: false });
+    expect(measureEvidence("grep", none.output)).toBe("no matches");
     expect(none.inputs).toEqual({
       root: tree,
       pattern: "zzz-not-here",
@@ -98,33 +77,49 @@ describe("deterministic capabilities", () => {
       exclude: ["node_modules", ".git"],
       maxMatches: 500,
     });
+    expect(
+      measureEvidence("grep", {
+        root: tree,
+        matches: [
+          { file: "a", line: 1, text: "" },
+          { file: "a", line: 2, text: "" },
+          { file: "b", line: 1, text: "" },
+        ],
+        truncated: true,
+      }),
+    ).toBe("3 matches in 2 files, truncated");
   });
 
   it("relative path inputs resolve against the incident's cwd, never the process cwd", async () => {
     const yes = await runDeterministic("check_path", { path: "a.txt" }, ctx);
-    expect(yes.output).toMatchObject({ exists: true, kind: "file" });
-    expect(yes.claims[0]?.subject).toBe(join(tree, "a.txt"));
+    expect(yes.output).toMatchObject({
+      exists: true,
+      kind: "file",
+      path: join(tree, "a.txt"),
+    });
     expect(yes.inputs).toEqual({ path: join(tree, "a.txt") });
     const hits = await runDeterministic(
       "grep",
       { root: "sub", pattern: "nothing" },
       ctx,
     );
-    expect(hits.claims.map((c) => c.subject)).toEqual([
-      `${join(tree, "sub", "b.md")}:1`,
-    ]);
+    expect(hits.output).toMatchObject({
+      root: join(tree, "sub"),
+      matches: [{ file: "b.md", line: 1 }],
+    });
   });
 
-  it("read and git_history produce facts with evidence", async () => {
+  it("read and git_history return their output as evidence, measured in lines and in commits", async () => {
     const r = await runDeterministic(
       "read",
       { path: join(tree, "sub", "b.md") },
       ctx,
     );
-    expect(r.claims[0]).toMatchObject({
-      predicate: "content",
-      object: { text: "nothing to see\n", truncated: false },
+    expect(r.output).toMatchObject({
+      text: "nothing to see\n",
+      truncated: false,
     });
+    expect(measureEvidence("read", r.output)).toBe("2 lines");
     const dir = mkdtempSync(join(tmpdir(), "noscope-git-"));
     const git = (...args: string[]) =>
       execFileSync("git", args, { cwd: dir, stdio: "pipe" });
@@ -141,18 +136,24 @@ describe("deterministic capabilities", () => {
       branch: "main",
       detached: false,
       changes: [{ status: "??", path: "y", from: null }],
+      commits: [{ subject: "Only commit" }],
     });
-    expect(h.claims.map((c) => [c.predicate, c.subject])).toEqual([
-      ["on_branch", dir],
-      ["working_tree_changes", dir],
-      ["recent_commits", dir],
-    ]);
-    expect(h.claims[1]?.object).toEqual([
-      { status: "??", path: "y", from: null },
-    ]);
+    expect(measureEvidence("git_history", h.output)).toBe(
+      "1 commit, 1 working-tree change, on main",
+    );
   });
 
-  it("refuses a capability that declares unknown equipment or a built-in for deterministic use", () => {
+  it("measures a result its capability's schema no longer fits, or from a capability the registry lacks, as lines of JSON", () => {
+    expect(measureEvidence("grep", { not: "a grep output" })).toBe(
+      "3 line(s) of JSON",
+    );
+    expect(measureEvidence("gone", null)).toBe("0 line(s) of JSON");
+    expect(measureEvidence("investigate", { outcome: "answered" })).toBe(
+      "3 line(s) of JSON",
+    );
+  });
+
+  it("refuses a capability that declares unknown equipment or a built-in for deterministic use, or a run with no measure", () => {
     expect(() =>
       defineCapability({
         name: "bad1",
@@ -161,7 +162,8 @@ describe("deterministic capabilities", () => {
         input: z.object({}),
         output: z.object({}),
         effect: "read_only",
-        run: async () => ({ output: {}, claims: [] }),
+        run: async () => ({}),
+        measure: () => "nothing",
       }),
     ).toThrow(/unknown equipment/);
     expect(() =>
@@ -172,7 +174,8 @@ describe("deterministic capabilities", () => {
         input: z.object({}),
         output: z.object({}),
         effect: "read_only",
-        run: async () => ({ output: {}, claims: [] }),
+        run: async () => ({}),
+        measure: () => "nothing",
       }),
     ).toThrow(/exists only inside a session/);
     expect(() =>
@@ -186,110 +189,18 @@ describe("deterministic capabilities", () => {
         effect: "read_only",
       }),
     ).toThrow(/exactly one/);
-  });
-
-  it("the verifier records a deterministic capability's claims as verified with capability and inputs as provenance", async () => {
-    const store = new Store(":memory:");
-    const at = now();
-    store.createIncident(
-      {
-        id: "i1",
-        objective: "o",
-        constraints: [],
-        priorities: [],
-        budget: {},
-        questions: [],
-        capabilityRequests: [],
-        status: "open",
-        createdAt: at,
-        updatedAt: at,
-      },
-      "cli",
-    );
-    store.createUnit(
-      {
-        id: "u",
-        incidentId: "i1",
-        parentId: null,
-        type: "ic",
-        objective: "command",
-        leader: { provider: "claude-code", model: "claude-haiku-4-5" },
+    expect(() =>
+      // @ts-expect-error a deterministic capability says how its output is counted
+      defineCapability({
+        name: "bad4",
+        description: "x",
         equipment: [],
-        bashAllowlist: [],
-        role: null,
-        config: null,
-        sessionId: null,
-        status: "active",
-        createdAt: at,
-        closedAt: null,
-      },
-      "runtime",
-    );
-    const task: Task = {
-      id: "t1",
-      incidentId: "i1",
-      unitId: "u",
-      capability: "grep",
-      objective: "find delete",
-      inputs: { root: tree, pattern: "delete" },
-      expectedOutput: "",
-      completionCriteria: [],
-      evidenceRequired: [],
-      dependsOn: [],
-      evidenceFrom: { claims: [], tasks: [] },
-      provider: null,
-      model: null,
-      instructions: "",
-      budget: {},
-      strikeTeam: [],
-      status: "running",
-      result: null,
-      createdAt: at,
-      completedAt: null,
-    };
-    store.createTask(task, "planner");
-    const capability = getCapability("grep");
-    if (capability === undefined) throw new Error("grep is registered");
-    const result = await runDeterministic("grep", task.inputs, {
-      taskId: task.id,
-      incidentId: task.incidentId,
-      cwd: tree,
-    });
-    const claims = recordClaims(store, task, capability, result.claims, {
-      inputs: result.inputs,
-    });
-    expect(claims).toHaveLength(1);
-    const stored = store.listClaims("i1");
-    expect(stored[0]).toMatchObject({
-      status: "verified",
-      basis: "observed",
-      subject: `${join(tree, "a.txt")}:2`,
-      provenance: {
-        capability: "grep",
-        taskId: "t1",
-        inputs: {
-          root: tree,
-          pattern: "delete",
-          glob: "*",
-          ignoreCase: false,
-          exclude: ["node_modules", ".git"],
-          maxMatches: 500,
-        },
-      },
-    });
-    expect(stored[0]?.provenance.sessionId).toBeUndefined();
-    expect(store.listEvents("i1").map((e) => e.type)).toContain(
-      "claim.verified",
-    );
-    expect(() =>
-      recordClaims(store, task, capability, result.claims, { sessionId: "s" }),
-    ).toThrow(/inputs that ran/);
-    const read = getCapability("read");
-    if (read === undefined) throw new Error("read is registered");
-    expect(() =>
-      recordClaims(store, task, read, result.claims, { inputs: {} }),
-    ).toThrow(/ran grep, not read/);
-    store.close();
+        input: z.object({}),
+        output: z.object({}),
+        effect: "read_only",
+        run: async () => ({}),
+      }),
+    ).toThrow(/measure/);
   });
 
   it("incident show lists the registered capabilities", async () => {

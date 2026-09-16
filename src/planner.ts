@@ -3,6 +3,7 @@ import { recordActivity } from "./activity.js";
 import { listCapabilities } from "./capabilities/index.js";
 import { describeForm } from "./configs.js";
 import { READ_ONLY_SESSION_COMMANDS } from "./equipment/index.js";
+import { isEvidence, isSessionClaim, measureEvidence } from "./evidence.js";
 import {
   IC_ACTOR,
   icSituation,
@@ -48,7 +49,7 @@ export const PLANNER_SYSTEM_PROMPT = `You are the Planning Section of noscope, a
 
 An incident is any objective Mauria asks to have pursued; it does not mean something went wrong. Around it a temporary organization of units is built and torn down when it is done. Each operational period the Incident Commander sets the period's objectives and priorities; you draft an action plan against them; a validator checks your draft against its rules first, and a draft that breaks one comes back to you with the reasons for a redraft, with no IC call between; the IC reviews a valid draft once, for substance, approving it, correcting it with patches the runtime applies to your draft, or amending it; a correction or amendment that breaks a rule comes back to you the same way, and the plan is then applied without a second review; the units then run their tasks under their leaders, and their results come back to you as claims and reports.
 
-The terms: a unit is a box in the incident's tree that owns a slice of the problem, with an objective and a leader, a session on the provider and model the unit names that directs the unit's tasks and reports against the objective; a task is one assignment, owned by one unit, bound to one capability; a capability is the assignable thing, deterministic or session-backed; a claim is a statement with a status and a basis. A leader directs and never does: every session task runs in a session of its own and every deterministic task in process, and each result reaches the leader as a line with its claims by id. The status names the source and gates nothing: verified means deterministic equipment produced it, asserted means a session did. The basis says whether it was seen: observed means seen in code, in output or in a browser, inferred means reasoned to from what was seen. An observed claim counts as proven whichever source produced it.
+The terms: a unit is a box in the incident's tree that owns a slice of the problem, with an objective and a leader, a session on the provider and model the unit names that directs the unit's tasks and reports against the objective; a task is one assignment, owned by one unit, bound to one capability; a capability is the assignable thing, deterministic or session-backed; a claim is a statement a session asserted, with a basis; evidence is a deterministic task's output (a grep's matches, a read's text, a git history), kept whole under the task's id and never a claim. A leader directs and never does: every session task runs in a session of its own and every deterministic task in process, and each result reaches the leader as a line, a session's with its claims by id and a deterministic task's with its evidence measured. Section 2 lists every claim, then one line per piece of evidence with its capability, a count and the task id: a task that needs the evidence names the id in evidenceFrom.tasks and the runtime attaches it whole, and a claim the session makes about it cites the id. The basis says whether it was seen: observed means seen in code, in output, in a browser or in evidence attached to the brief, inferred means reasoned to from what was seen. Only an observed claim counts as proven.
 
 You propose structure only. You do not run tools, you do not write, and you never mark your own conclusions true. Read the incident file that follows, in its ten sections, and return one action plan: the tactics for this period, drafted as a suggestion for the IC, who reviews it. Section 10 is the IC's situation, which you alone read in full: the picture of reality the incident holds, the claims for and against it by id (only a claim marked for with basis observed proves a part of it), the open items (what is not yet known, each with an id and what would settle it, and whether a task already works it or the IC deferred it), the IC's assessment and what its last turn changed. Your plan works the open items: every open item the IC did not defer is settled by a task in this plan naming the item's id in settles, or by an open task that already works it and this plan does not cancel; your rationale says how. The assessment is your signal: on_track and priors_updated extend the units that exist; tactics_change means the IC wants the units redrawn, so close what no longer fits and cut new units for the shape the picture now calls for. No unit ever reads the IC's picture: a unit sees its objective, the period objectives and the evidence its tasks name, so write a unit's objective and a task's brief as what to establish, never as what the IC believes. A reassignment the IC wrote into its situation is the slice of a unit the IC closed with a reassign verdict, with what that unit found and did not find and what the unit that takes the slice is to establish; section 10 ends with the ids of the reassignments still open, and every one is taken by exactly one new unit in this plan, of the shape the situation calls for, naming the id in takes; its leader is oriented with the IC's instructions and the closed unit's claims, so the new unit starts from what was found.
 
@@ -135,7 +136,7 @@ function describeInputs(schema: z.ZodType): string {
 }
 
 function claimLine(c: Claim): string {
-  const source = `from ${c.provenance.capability} task ${c.provenance.taskId}${c.provenance.sessionId === undefined ? "" : `, session ${c.provenance.sessionId}`}`;
+  const source = `from ${c.provenance.capability} task ${c.provenance.taskId}${c.provenance.sessionId === undefined ? "" : `, session ${c.provenance.sessionId}`}${c.provenance.cites === undefined ? "" : `, citing ${c.provenance.cites.join(", ")}`}`;
   return `${c.id}: ${c.subject} ${c.predicate} ${clip(c.object)} (${c.status}, ${c.basis}; confidence ${c.confidence ?? "n/a"}; evidence ${c.evidence.join(", ") || "none"}) [${source}]`;
 }
 
@@ -314,10 +315,15 @@ export function renderPlannerInput(
     .map((id) => taskById.get(id))
     .filter((t): t is Task => t !== undefined)
     .map((t) => {
-      const evidence = claims
-        .filter((c) => c.provenance.taskId === t.id)
-        .map((c) => c.id);
-      return `${t.id} (${t.capability}, under ${t.unitId}): objective "${t.objective}"; inputs ${clip(t.inputs)}; expected "${t.expectedOutput || "(per schema)"}"; criteria ${JSON.stringify(t.completionCriteria)}; result ${resultForPlanner(t)}; claims ${evidence.join(", ") || "none"}`;
+      const produced = isEvidence(t)
+        ? `evidence: ${measureEvidence(t.capability, t.result)}, attached whole to a task naming ${t.id} in evidenceFrom.tasks`
+        : `result ${resultForPlanner(t)}; claims ${
+            claims
+              .filter((c) => c.provenance.taskId === t.id)
+              .map((c) => c.id)
+              .join(", ") || "none"
+          }`;
+      return `${t.id} (${t.capability}, under ${t.unitId}): objective "${t.objective}"; inputs ${clip(t.inputs)}; expected "${t.expectedOutput || "(per schema)"}"; criteria ${JSON.stringify(t.completionCriteria)}; ${produced}`;
     });
 
   // A task that will never complete, with what was cancelled because it waited on it
@@ -448,57 +454,16 @@ export function renderPlannerInput(
         `budget stopped the last pass before ${String(e.payload.taskId)}: ${String(e.payload.reason)}`,
     );
 
-  // A claim with a capability's summarized predicate is shown in full only in the cycle
-  // after it lands, or when the IC's situation names it as evidence; the rest collapse to
-  // one line per task. Its other predicates (a verified absence, say) stay in full.
+  // Claims are a session's; a deterministic task's output is evidence, one line per task
+  // with its measure, read whole only by a task that names the id in evidenceFrom (R5-1).
   const situation = icSituation(events);
-  const named = new Set(situation?.evidence.map((e) => e.claimId) ?? []);
-  const fresh = new Set(
-    recent
-      .map(
-        (e) =>
-          e.payload.mutation as
-            | { kind?: string; claim?: { id?: string } }
-            | undefined,
-      )
-      .filter((m) => m?.kind === "claim.create")
-      .map((m) => m?.claim?.id)
-      .filter((id): id is string => typeof id === "string"),
-  );
-  const summarizing = new Map(
-    listCapabilities()
-      .filter((c) => c.summarize !== null)
-      .map((c) => [c.name, c.summarize]),
-  );
-  const collapsed = new Map<string, Claim[]>();
-  const claimLines: string[] = [];
-  for (const c of claims) {
-    if (
-      summarizing.get(c.provenance.capability) === c.predicate &&
-      !fresh.has(c.id) &&
-      !named.has(c.id)
-    ) {
-      const group = collapsed.get(c.provenance.taskId) ?? [];
-      group.push(c);
-      collapsed.set(c.provenance.taskId, group);
-    } else claimLines.push(claimLine(c));
-  }
-  for (const [taskId, group] of collapsed) {
-    const t = taskById.get(taskId);
-    const files = new Map<string, number>();
-    for (const c of group) {
-      const file = c.subject.replace(/:\d+(-\d+)?$/, "");
-      files.set(file, (files.get(file) ?? 0) + 1);
-    }
-    const byCount = [...files].sort((a, b) => b[1] - a[1]);
-    const shown = byCount
-      .slice(0, 10)
-      .map(([file, n]) => `${file} (${n})`)
-      .join(", ");
-    claimLines.push(
-      `task ${taskId} (${t?.capability ?? "?"} ${clip(t?.inputs)}): ${group.length} claims across ${files.size} file(s): ${shown}${byCount.length > 10 ? `, and ${byCount.length - 10} more` : ""}`,
+  const claimLines = claims.filter(isSessionClaim).map(claimLine);
+  const evidenceLines = tasks
+    .filter(isEvidence)
+    .map(
+      (t) =>
+        `${t.id} (${t.capability} ${clip(t.inputs)}): ${measureEvidence(t.capability, t.result)}`,
     );
-  }
 
   const lines: string[] = [
     "# Incident file",
@@ -560,8 +525,11 @@ export function renderPlannerInput(
         .map((r) => `${r.need} → ${r.answer}`),
     ),
     "",
-    "## 2. Claims",
+    "## 2. Claims and evidence",
+    "claims:",
     ...bullets(claimLines),
+    "evidence, each attached whole to a task that names its id in evidenceFrom.tasks:",
+    ...bullets(evidenceLines),
     "",
     "## 3. Unit tree",
     ...unitTree(units, events, openRequestsByUnit(incident, events)),

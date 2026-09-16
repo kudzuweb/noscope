@@ -1,3 +1,4 @@
+import { isSessionClaim, measureEvidence } from "./evidence.js";
 import {
   describeRefusedCall,
   IC_ACTOR,
@@ -926,6 +927,7 @@ export function renderReview(
   const redrafts = new Map<string, number>();
   let sessionsRan = 0;
   let deterministicRan = 0;
+  let evidenceRecorded = 0;
   let leaderTurns = 0;
   const verdicts = new Map<string, number>();
   const reportsByUnit = new Map<string, string[]>();
@@ -1044,7 +1046,8 @@ export function renderReview(
       );
     }
 
-    // Claims entered this cycle, by the task that entered them; a session's id rides on its claims.
+    // Claims sessions asserted this cycle, by the task that entered them, with the
+    // session id that rides on them; a deterministic task's ending is its evidence (R5-1).
     const claimsByTask = new Map<string, Map<string, number>>();
     const inferredByTask = new Map<string, number>();
     const sessionByTask = new Map<string, string>();
@@ -1052,10 +1055,10 @@ export function renderReview(
     for (const e of cycle.events) {
       if (mutationKind(e) === "claim.create") {
         const claim = (e.payload.mutation as { claim?: Claim }).claim;
-        if (claim === undefined) continue;
-        const byStatus = claimsByTask.get(claim.provenance.taskId) ?? new Map();
-        byStatus.set(claim.status, (byStatus.get(claim.status) ?? 0) + 1);
-        claimsByTask.set(claim.provenance.taskId, byStatus);
+        if (claim === undefined || !isSessionClaim(claim)) continue;
+        const byBasis = claimsByTask.get(claim.provenance.taskId) ?? new Map();
+        byBasis.set(claim.basis, (byBasis.get(claim.basis) ?? 0) + 1);
+        claimsByTask.set(claim.provenance.taskId, byBasis);
         if (claim.basis === "inferred")
           inferredByTask.set(
             claim.provenance.taskId,
@@ -1108,19 +1111,28 @@ export function renderReview(
           : describeUsage(usage, taskCost);
       const created = [
         ...(claimsByTask.get(taskId) ?? new Map<string, number>()),
-      ]
-        .map(([status, count]) => `${count} ${status}`)
-        .join(", ");
+      ].reduce((sum, [, count]) => sum + count, 0);
       const inferred = inferredByTask.get(taskId);
-      const claimsText =
-        created === ""
-          ? ""
-          : `  claims ${created}${inferred === undefined ? "" : ` (${inferred} inferred)`}`;
+      const evidence =
+        model === null && outcome?.type === "task.completed"
+          ? measureEvidence(
+              capability,
+              (outcome.payload.mutation as { result?: unknown } | undefined)
+                ?.result,
+            )
+          : null;
+      if (evidence !== null) evidenceRecorded += 1;
+      const producedText =
+        evidence !== null
+          ? `  evidence ${evidence}`
+          : created === 0
+            ? ""
+            : `  claims ${created}${inferred === undefined ? "" : ` (${inferred} inferred)`}`;
       const sessionId =
         str(outcome?.payload.sessionId) || (sessionByTask.get(taskId) ?? "");
       const fellBack = str(outcome?.payload.fallbackFrom);
       lines.push(
-        `  ${taskId} ${capability}${model === null ? " (deterministic)" : ` ${model}`}: ${spend}  ${outcomeText}${fellBack === "" ? "" : ` (fallback from ${fellBack})`}${claimsText}${session(sessionId)}`,
+        `  ${taskId} ${capability}${model === null ? " (deterministic)" : ` ${model}`}: ${spend}  ${outcomeText}${fellBack === "" ? "" : ` (fallback from ${fellBack})`}${producedText}${session(sessionId)}`,
       );
       lines.push(...activityLines(cycle.events, taskId, model, cycle.number));
       if (outcome?.type === "task.failed") {
@@ -1311,8 +1323,9 @@ export function renderReview(
   lines.push(...table(rows, 2));
   lines.push("");
 
-  const byStatus = (status: string) =>
-    claims.filter((c) => c.status === status).length;
+  const asserted = claims.filter(isSessionClaim);
+  const byBasis = (basis: string) =>
+    asserted.filter((c) => c.basis === basis).length;
   const drafts = runCycles.reduce((n, c) => n + c.proposals.length, 0);
   lines.push(
     `plans: ${drafts} drafted in ${runCycles.length} cycle(s), ${applied} applied, ${rejectedPlans} rejected (${ruleLines} rule lines); redrafts: ${redrafts.get("rule") ?? 0} after a rule, ${redrafts.get("correction") ?? 0} after a correction`,
@@ -1394,7 +1407,7 @@ export function renderReview(
     `tool calls: ${toolCalls.length} (${inSubagents} by subagents), subagents: ${events.filter((e) => e.type === "subagent.ran").length}`,
   );
   lines.push(
-    `claims: ${byStatus("verified")} verified, ${byStatus("asserted")} asserted, ${byStatus("rejected")} rejected`,
+    `claims: ${asserted.length} asserted (${byBasis("observed")} observed, ${byBasis("inferred")} inferred), ${asserted.filter((c) => c.status === "rejected").length} rejected; evidence: ${evidenceRecorded} deterministic result(s)`,
   );
   lines.push(questions.length === 0 ? "questions: none" : "questions:");
   for (const q of questions) lines.push(`  ${q}`);

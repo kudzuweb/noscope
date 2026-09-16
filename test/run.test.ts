@@ -5,7 +5,11 @@ import { describe, expect, it } from "vitest";
 import { EXIT, run } from "../src/cli.js";
 import type { ActionPlan, TaskProposal } from "../src/models.js";
 import { Store } from "../src/store.js";
-import { unitProposal } from "./fixtures/models.js";
+import {
+  citingOutput,
+  readsEvidence,
+  unitProposal,
+} from "./fixtures/models.js";
 
 const tree = resolve("test/fixtures/tree");
 const stub = resolve("test/stub-claude");
@@ -68,26 +72,34 @@ function harness(plans: ActionPlan[]) {
 
 // Each test drives several stub sessions through the CLI; slow on a CI runner.
 describe("incident run", () => {
-  it("repeats step until the incident is satisfied, with a verified claim naming the code path", {
+  it("repeats step until the incident is satisfied, with an observed claim naming the code path that cites the grep's evidence (R5-1)", {
     timeout: 60_000,
   }, async () => {
     const h = harness([
       findIt,
       {
         ...empty,
+        createTasks: [readsEvidence("001-u02", "001-t01")],
+        rationale: "read the match",
+      },
+      {
+        ...empty,
         incidentStatus: "satisfied",
         rationale: "the handler is at a.txt:2",
       },
     ]);
+    h.ctx.env.NOSCOPE_STUB_OUTPUT = JSON.stringify(
+      citingOutput("001-t01", `${join(tree, "a.txt")}:2`),
+    );
     await run(
       ["incident", "create", "--no-size-up", "where is the delete handler"],
       h.ctx,
     );
     expect(await run(["incident", "run", "001"], h.ctx)).toBe(EXIT.ok);
     expect(h.out[1]).toBe("--- cycle 1 ---");
-    expect(h.out).toContain("--- cycle 2 ---");
+    expect(h.out).toContain("--- cycle 3 ---");
     expect(h.out.at(-1)).toBe(
-      "stopped after 2 cycle(s): incident 001 is satisfied",
+      "stopped after 3 cycle(s): incident 001 is satisfied",
     );
     const store = h.store();
     expect(store.getIncident("001")?.status).toBe("satisfied");
@@ -98,13 +110,17 @@ describe("incident run", () => {
     expect(shown.out.join("\n")).toContain(
       "period priorities:\n  (none)\nsituation, the IC's:\n  picture: stub picture\n  assessment: on_track: stub: nothing tested yet\n  changed: stub: nothing yet\n  evidence (only a claim for, observed, proves a part of the picture):\n    (none)\n  open items, each worked by a task in the next plan naming its id in settles, or deferred by the IC:\n    (none)\n  reassignments open, each taken by a new unit in the next plan naming its id in takes: (none)",
     );
+    expect(shown.out.join("\n")).toContain(
+      `claims: 1 asserted (1 observed, 0 inferred), 0 rejected\n  [observed] ${join(tree, "a.txt")}:2 handles "deletion"\nevidence: 1 deterministic result(s)\n  001-t01 (grep): 1 match in 1 file`,
+    );
     const claims = store.listClaims("001");
     expect(claims).toHaveLength(1);
     expect(claims[0]).toMatchObject({
-      status: "verified",
+      status: "asserted",
       basis: "observed",
       subject: `${join(tree, "a.txt")}:2`,
-      predicate: "matches",
+      predicate: "handles",
+      provenance: { taskId: "001-t02", cites: ["001-t01"] },
     });
     const closed = store
       .listEvents("001")

@@ -6,6 +6,7 @@ import {
   runDeterministic,
   runSession,
 } from "./capabilities/index.js";
+import { measureEvidence } from "./evidence.js";
 import {
   describeRefusedCall,
   fallbackModel,
@@ -44,14 +45,15 @@ import {
   type Turned,
 } from "./units/index.js";
 import { validateLeaderTasksAndRecord } from "./validator.js";
-import { recordClaims, recordSessionResult } from "./verifier.js";
+import { recordSessionResult } from "./verifier.js";
 
 /** What one task's run came to, for the step's printout; a failure names the tasks cancelled because they waited on it (R5-10). */
 type Ran = {
   taskId: string;
   capability: string;
   status: "completed" | "failed";
-  claims: number;
+  /** What the run left behind: a session's claim count, or a deterministic task's evidence measured (R5-1). */
+  produced: string;
   reason?: string;
   settled?: string[];
 };
@@ -253,8 +255,9 @@ function briefContext(
 }
 
 /**
- * Run one task: a deterministic capability in process; a session-backed one in a session
- * of its own, whatever its unit's leader holds (R5-4: the leader directs and never does).
+ * Run one task: a deterministic capability in process, its output the task's evidence
+ * (R5-1); a session-backed one in a session of its own, whatever its unit's leader holds
+ * (R5-4: the leader directs and never does).
  * A session call the API refused is retried once, in a fresh session on the fallback model
  * (R4-7): the refused call is filed on the task (`task.usage` with the refusal, the model
  * and the fallback, so the budget counts what it spent, plus its activity), and the
@@ -287,10 +290,8 @@ async function runTask(
         seconds: (Date.now() - started) / 1000,
         costUsd: 0,
       },
-      record: () =>
-        recordClaims(store, task, capability, run.claims, {
-          inputs: run.inputs,
-        }),
+      // The output is evidence, recorded whole on task.completed and never a claim (R5-1).
+      record: () => [],
     };
   }
   if (task.provider === null)
@@ -641,7 +642,7 @@ export async function dispatch(
           taskId: next.id,
           capability: next.capability,
           status: "failed",
-          claims: 0,
+          produced: "nothing",
           reason,
           ...(settled.length === 0
             ? {}
@@ -837,7 +838,10 @@ async function runOne(
       taskId: next.id,
       capability: next.capability,
       status: "completed",
-      claims: claims.length,
+      produced:
+        capability.kind === "deterministic"
+          ? `evidence: ${measureEvidence(capability.name, outcome.result)}`
+          : `${claims.length} claim(s)`,
     });
     return { task: next, status: "completed", claims };
   } catch (error) {
@@ -913,7 +917,7 @@ async function runOne(
       taskId: next.id,
       capability: next.capability,
       status: "failed",
-      claims: 0,
+      produced: "nothing",
       reason,
       ...(settled.length === 0
         ? {}

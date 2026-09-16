@@ -38,11 +38,11 @@ async function withStubOutput<T>(output: unknown, fn: () => Promise<T>) {
 }
 
 describe("session capabilities", () => {
-  it("registers investigate with the read-only built-ins and interpret with no equipment, both producing asserted claims", () => {
+  it("registers investigate with the read-only built-ins and interpret with no equipment, both producing claims", () => {
     const investigate = sessionCapability("investigate");
     expect(investigate.equipment).toEqual(["Read", "Grep", "Glob", "Bash"]);
     expect(investigate.session.bashAllowlist).toContain("find");
-    expect(investigate.produces).toBe("asserted_claims");
+    expect(investigate.produces).toBe("claims");
     const interpret = sessionCapability("interpret");
     expect(interpret.equipment).toEqual([]);
     expect(interpret.session.bashAllowlist).toBeUndefined();
@@ -95,14 +95,14 @@ describe("session capabilities", () => {
         subject: "/repo/a.ts:1",
         predicate: "matches",
         object: { pattern: "delete" },
-        status: "verified",
+        status: "asserted",
         basis: "observed",
         confidence: 1,
         evidence: ["/repo/a.ts:1"],
         provenance: {
-          capability: "grep",
+          capability: "investigate",
           taskId: "t-seed",
-          inputs: { root: "/repo", pattern: "delete" },
+          sessionId: "s-seed",
         },
         createdAt: "2026-09-13T06:00:00.000Z",
       },

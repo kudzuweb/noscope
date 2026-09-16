@@ -48,7 +48,8 @@ defineCapability({
   input: z.object({}),
   output: z.object({}),
   effect: "writes_local",
-  run: async () => ({ output: {}, claims: [] }),
+  run: async () => ({}),
+  measure: () => "a note",
 });
 
 const empty: ActionPlan = {
@@ -113,11 +114,12 @@ function investigateTask(over: Partial<TaskProposal> = {}): TaskProposal {
 /**
  * An incident with an active unit u-scroll and a closed unit u-done; under u-scroll one
  * completed grep, one running investigate and one failed grep; an inferred and an observed
- * asserted claim, and a verified claim unless `verifiedClaim` is false.
+ * asserted claim, and an observed claim citing the grep's evidence unless `citedClaim` is
+ * false.
  */
 function seeded(
   budget: { tokens?: number; seconds?: number } = {},
-  { verifiedClaim = true } = {},
+  { citedClaim = true } = {},
 ) {
   const store = new Store(":memory:");
   const s = scriptedIncident(store, "i1", AT);
@@ -192,19 +194,24 @@ function seeded(
     },
     "verifier",
   );
-  if (verifiedClaim)
+  if (citedClaim)
     store.createClaim(
       {
-        id: "c-verified",
+        id: "c-cited",
         incidentId: "i1",
         subject: "/repo/src/a.ts",
         predicate: "exists",
         object: true,
-        status: "verified",
+        status: "asserted",
         basis: "observed",
         confidence: 1,
         evidence: [],
-        provenance: { capability: "check_path", taskId: "t-done", inputs: {} },
+        provenance: {
+          capability: "investigate",
+          taskId: "t-running",
+          sessionId: "s",
+          cites: ["t-done"],
+        },
         createdAt: AT,
       },
       "verifier",
@@ -1222,7 +1229,7 @@ describe("validator", () => {
           interpretTask({
             dependsOn: ["probe"],
             evidenceFrom: {
-              claims: ["c-verified"],
+              claims: ["c-cited"],
               tasks: ["probe", "t-done"],
             },
           }),
@@ -1249,7 +1256,7 @@ describe("validator", () => {
         ...empty,
         createTasks: [
           interpretTask({
-            evidenceFrom: { claims: ["c-verified"], tasks: [] },
+            evidenceFrom: { claims: ["c-cited"], tasks: [] },
           }),
           interpretTask({
             evidenceFrom: { claims: ["c-asserted"], tasks: [] },
@@ -1384,7 +1391,7 @@ describe("validator", () => {
       ...turn,
       situation: situation({
         evidence: [
-          { claimId: "c-verified", stance: "for" },
+          { claimId: "c-cited", stance: "for" },
           { claimId: "c-seen", stance: "for" },
           { claimId: "c-asserted", stance: "against" },
         ],
@@ -1477,8 +1484,8 @@ describe("validator", () => {
     store.close();
   });
 
-  it("Status is earned passes once every task is done and an observed claim exists, verified or not", () => {
-    const { store, ctx } = seeded({}, { verifiedClaim: false });
+  it("Status is earned passes once every task is done and an observed claim exists", () => {
+    const { store, ctx } = seeded({}, { citedClaim: false });
     store.setTaskStatus(
       "i1",
       "t-running",
@@ -1498,7 +1505,7 @@ describe("validator", () => {
   });
 
   it("Status is earned refuses satisfied when every claim is inferred", () => {
-    const { store, ctx } = seeded({}, { verifiedClaim: false });
+    const { store, ctx } = seeded({}, { citedClaim: false });
     store.setTaskStatus(
       "i1",
       "t-running",

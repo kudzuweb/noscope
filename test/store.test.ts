@@ -90,9 +90,9 @@ function scripted(store: Store): void {
     confidence: 0.8,
     evidence: ["src/a.ts:12"],
     provenance: {
-      capability: "grep",
+      capability: "investigate",
       taskId: "t1",
-      inputs: { pattern: "delete" },
+      sessionId: "s1",
     },
     createdAt: at,
   };
@@ -337,7 +337,7 @@ describe("store", () => {
     store.close();
   });
 
-  it("refuses a claim created rejected, or verified without deterministic provenance", () => {
+  it("refuses a claim created rejected or verified, or asserted without a session (R5-1)", () => {
     const store = new Store(":memory:");
     scripted(store);
     const base = {
@@ -357,6 +357,16 @@ describe("store", () => {
           ...base,
           status: "verified",
           basis: "observed",
+          provenance: { capability: "grep", taskId: "t1", inputs: {} },
+        },
+        "verifier",
+      ),
+    ).toThrow(/created verified/);
+    expect(() =>
+      store.createClaim(
+        {
+          ...base,
+          status: "rejected",
           provenance: {
             capability: "investigate",
             taskId: "t1",
@@ -365,23 +375,23 @@ describe("store", () => {
         },
         "verifier",
       ),
-    ).toThrow(/deterministic provenance/);
+    ).toThrow(/created rejected/);
     expect(() =>
       store.createClaim(
         {
           ...base,
-          status: "rejected",
-          provenance: { capability: "grep", taskId: "t1", inputs: {} },
+          status: "asserted",
+          provenance: { capability: "investigate", taskId: "t1" },
         },
         "verifier",
       ),
-    ).toThrow(/created rejected/);
+    ).toThrow(/without the session/);
     store.createClaim(
       {
         ...base,
-        status: "verified",
+        status: "asserted",
         basis: "observed",
-        provenance: { capability: "grep", taskId: "t1", inputs: {} },
+        provenance: { capability: "investigate", taskId: "t1", sessionId: "x" },
       },
       "verifier",
     );
@@ -401,7 +411,7 @@ describe("store", () => {
       basis: "inferred",
       confidence: null,
       evidence: [],
-      provenance: { capability: "grep", taskId: "t1" },
+      provenance: { capability: "investigate", taskId: "t1", sessionId: "s" },
       createdAt: now(),
     } as unknown as Claim;
     store.createClaim(claim, "verifier");

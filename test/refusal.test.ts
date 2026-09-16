@@ -923,7 +923,7 @@ describe("a refusal replaces the session", () => {
         taskId: "t-inv",
         capability: "investigate",
         status: "completed",
-        claims: 0,
+        produced: "0 claim(s)",
       },
     ]);
     expect(pictureChanged).toBeNull();
@@ -1131,7 +1131,8 @@ describe("a refusal replaces the session", () => {
       "tasks under command, ended with no leader to report them:",
     );
     expect(at).toBeGreaterThan(-1);
-    expect(report.slice(at + 4, at + 7)).toEqual([
+    // A grep under command precedes it with two lines, its heading and its evidence (R5-1).
+    expect(report.slice(at + 3, at + 6)).toEqual([
       "  - task t-inv (investigate, claude-haiku-4-5): run investigate",
       "      claims: none",
       "      failed: refused on claude-haiku-4-5 (reasoning_extraction, session stub-session-1) and then on the fallback claude-opus-4-8 (reasoning_extraction, session stub-session-2)",

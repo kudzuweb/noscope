@@ -21,12 +21,18 @@ export const TaskStatus = z.enum([
   "failed",
   "cancelled",
 ]);
-/** Where a claim came from: a session (asserted) or deterministic equipment (verified). A label; nothing gates on it. */
+/**
+ * A label for the claim's standing; nothing gates on it. Every claim enters `asserted`, by a
+ * session; `rejected` is in the enum and nothing sets it yet. `verified` is read from records
+ * written before R5-1, when a deterministic task's output was written as claims; it is no
+ * longer produced, since deterministic output is evidence, not a claim (DESIGN.md Step 6).
+ */
 export const ClaimStatus = z.enum(["asserted", "verified", "rejected"]);
 /** How a claim was reached: seen in code, output or a browser, or inferred from what was seen. The validator keys on this. */
 export const ClaimBasis = z.enum(["observed", "inferred"]);
 export const Effect = z.enum(["read_only", "writes_local", "writes_external"]);
-export const Produces = z.enum(["verified_claims", "asserted_claims"]);
+/** What a capability's run yields: a deterministic one evidence, addressed by task id; a session-backed one claims. */
+export const Produces = z.enum(["evidence", "claims"]);
 export const GrantScope = z.enum(["incident", "standing"]);
 export const NeededKind = z.enum([
   "retrievable_fact",
@@ -260,8 +266,11 @@ export const Task = z.object({
 export const Provenance = z.object({
   capability: z.string().min(1),
   taskId: z.string().min(1),
+  /** The effective inputs of a deterministic run, on claims written before R5-1 only. */
   inputs: z.record(z.string(), z.unknown()).optional(),
   sessionId: z.string().optional(),
+  /** The deterministic tasks whose evidence the claim rests on, by id (R5-1), when it cites any; the claim is observed only when every one was attached to the session's brief. */
+  cites: z.array(z.string()).optional(),
 });
 
 export const Claim = z.object({
@@ -1247,11 +1256,17 @@ export const ClaimProposal = z.object({
   basis: ClaimBasis.optional(),
 });
 
-/** A session's claim must say how it was reached; a deterministic capability's claims are observed by construction. */
+/** A session's claim says how it was reached and which attached evidence it rests on. */
 export const SessionClaimProposal = ClaimProposal.extend({
   basis: ClaimBasis.describe(
-    "observed: seen in code or output; inferred: reasoned from what was seen",
+    "observed: seen in code or output, or read in evidence attached to the brief; inferred: reasoned from what was seen",
   ),
+  cites: z
+    .array(z.string())
+    .default([])
+    .describe(
+      "Task ids of the attached results (a grep, a read, a git history) this claim rests on; a claim about what attached evidence showed cites its task id, and is inferred if it cites evidence the brief did not carry",
+    ),
 });
 
 /**

@@ -715,17 +715,13 @@ export class Store {
     this.write(incidentId, type, actor, options.extra ?? {}, mutation);
   }
 
-  /** A claim enters asserted or verified, never rejected; verified on entry means deterministic provenance (DESIGN.md Step 6). */
+  /** A claim enters asserted, by a session, and never verified or rejected: deterministic output is evidence, not a claim (R5-1; DESIGN.md Step 6). A replay still applies the verified claims an earlier record wrote. */
   createClaim(claim: Claim, actor: string): void {
-    if (claim.status === "rejected")
-      throw new Error(`claim ${claim.id} cannot be created rejected`);
-    if (
-      claim.status === "verified" &&
-      (claim.provenance.inputs === undefined ||
-        claim.provenance.sessionId !== undefined)
-    )
+    if (claim.status !== "asserted")
+      throw new Error(`claim ${claim.id} cannot be created ${claim.status}`);
+    if (claim.provenance.sessionId === undefined)
       throw new Error(
-        `claim ${claim.id} cannot enter verified without deterministic provenance`,
+        `claim ${claim.id} cannot enter without the session that asserted it`,
       );
     this.write(
       claim.incidentId,

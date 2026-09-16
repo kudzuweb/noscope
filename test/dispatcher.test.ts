@@ -55,8 +55,9 @@ defineCapability({
   effect: "read_only",
   run: async () => {
     await new Promise((r) => setTimeout(r, 500));
-    return { output: { done: true }, claims: [] };
+    return { done: true };
   },
+  measure: () => "done",
 });
 
 async function withStubOutput<T>(output: unknown, fn: () => Promise<T>) {
@@ -69,7 +70,7 @@ async function withStubOutput<T>(output: unknown, fn: () => Promise<T>) {
 }
 
 describe("dispatcher", () => {
-  it("runs ready tasks in order, records verified claims for a deterministic task, and runs a task whose dependency completes in the same pass", async () => {
+  it("runs ready tasks in order, records a deterministic task's output as evidence and no claim (R5-1), and runs a task whose dependency completes in the same pass", async () => {
     const store = new Store(":memory:");
     const { incident, task } = scriptedIncident(store);
     task({
@@ -97,12 +98,17 @@ describe("dispatcher", () => {
     const { ran, stopped } = await dispatch(store, incident, stubbed);
     expect(stopped).toBeNull();
     expect(ran).toEqual([
-      { taskId: "t1", capability: "grep", status: "completed", claims: 1 },
+      {
+        taskId: "t1",
+        capability: "grep",
+        status: "completed",
+        produced: "evidence: 1 match in 1 file",
+      },
       {
         taskId: "t2",
         capability: "check_path",
         status: "completed",
-        claims: 2,
+        produced: "evidence: exists, a file",
       },
     ]);
     const tasks = store.listTasks("i1");
@@ -111,14 +117,25 @@ describe("dispatcher", () => {
       ["t2", "completed"],
       ["t3", "pending"],
     ]);
-    expect(tasks[0]?.result).toMatchObject({ truncated: false });
-    const claims = store.listClaims("i1");
-    expect(claims.every((c) => c.status === "verified")).toBe(true);
-    expect(claims[0]).toMatchObject({
-      subject: `${join(tree, "a.txt")}:2`,
-      provenance: { taskId: "t1", inputs: { root: tree, pattern: "delete" } },
+    // The grep's output is the evidence, whole on the task and on task.completed.
+    expect(tasks[0]?.result).toEqual({
+      root: tree,
+      matches: [
+        { file: "a.txt", line: 2, text: "the delete handler lives here" },
+      ],
+      truncated: false,
     });
+    expect(store.listClaims("i1")).toEqual([]);
     const types = store.listEvents("i1").map((e) => e.type);
+    expect(types).not.toContain("claim.verified");
+    expect(types).not.toContain("claim.asserted");
+    const completed = store
+      .listEvents("i1")
+      .find((e) => e.type === "task.completed");
+    expect(completed?.payload.mutation).toMatchObject({
+      taskId: "t1",
+      result: { matches: [{ file: "a.txt", line: 2 }] },
+    });
     expect(types.filter((t) => t === "task.started")).toHaveLength(2);
     expect(types.filter((t) => t === "task.usage")).toHaveLength(2);
     for (const e of store
@@ -128,9 +145,6 @@ describe("dispatcher", () => {
     expect(types.filter((t) => t === "task.ready")).toHaveLength(1);
     expect(types.indexOf("task.ready")).toBeLessThan(
       types.lastIndexOf("task.started"),
-    );
-    expect(types.indexOf("claim.verified")).toBeLessThan(
-      types.indexOf("task.completed"),
     );
     store.close();
   });
@@ -151,7 +165,7 @@ describe("dispatcher", () => {
         taskId: "t-slow",
         capability: "slow_probe",
         status: "failed",
-        claims: 0,
+        produced: "nothing",
         reason: "exceeded its time bound of 0.1s",
       },
     ]);
@@ -213,7 +227,7 @@ describe("dispatcher", () => {
         taskId: "t-inv",
         capability: "investigate",
         status: "completed",
-        claims: 1,
+        produced: "1 claim(s)",
       },
     ]);
     expect(store.listClaims("i1")[0]).toMatchObject({
@@ -400,14 +414,14 @@ describe("dispatcher", () => {
         subject: "/repo/a.ts:1",
         predicate: "matches",
         object: { pattern: "delete" },
-        status: "verified",
+        status: "asserted",
         basis: "observed",
         confidence: 1,
         evidence: ["/repo/a.ts:1"],
         provenance: {
-          capability: "grep",
+          capability: "investigate",
           taskId: "t-seed",
-          inputs: { root: "/repo", pattern: "delete" },
+          sessionId: "s-seed",
         },
         createdAt: "2026-09-13T06:00:00.000Z",
       },
@@ -645,75 +659,85 @@ describe("dispatcher, from the review", () => {
     store.close();
   });
 
-  it("a matching deterministic claim leaves an asserted claim's status alone: status is a label, not a verdict", async () => {
+  it("a session's claim citing evidence keeps its basis only when the evidence was attached: a cited grep in evidenceFrom keeps observed, one the brief did not carry enters inferred (R5-1)", async () => {
     const store = new Store(":memory:");
-    const { incident, task } = scriptedIncident(store);
-    const subject = `${join(tree, "a.txt")}:2`;
-    store.createClaim(
-      {
-        id: "c-guess",
-        incidentId: "i1",
-        subject,
-        predicate: "matches",
-        object: { pattern: "delete", text: "the delete handler lives here" },
-        status: "asserted",
-        basis: "inferred",
-        confidence: 0.6,
-        evidence: [],
-        provenance: {
-          capability: "investigate",
-          taskId: "t-earlier",
-          sessionId: "s",
-        },
-        createdAt: incident.createdAt,
-      },
-      "verifier",
-    );
-    store.createClaim(
-      {
-        id: "c-other",
-        incidentId: "i1",
-        subject,
-        predicate: "matches",
-        object: { pattern: "delete", text: "something else" },
-        status: "asserted",
-        basis: "inferred",
-        confidence: 0.6,
-        evidence: [],
-        provenance: {
-          capability: "investigate",
-          taskId: "t-earlier",
-          sessionId: "s",
-        },
-        createdAt: incident.createdAt,
-      },
-      "verifier",
-    );
+    const { incident, led, task } = scriptedIncident(store);
+    const unit = led();
+    for (const id of ["t-grep", "t-other"])
+      task({
+        id,
+        unitId: unit.id,
+        capability: "grep",
+        inputs: { root: ".", pattern: "delete" },
+        status: "ready",
+      });
     task({
-      id: "t-grep",
-      capability: "grep",
-      inputs: { root: ".", pattern: "delete" },
-      status: "ready",
+      id: "t-inv",
+      unitId: unit.id,
+      capability: "investigate",
+      inputs: { question: "what does the match mean?" },
+      dependsOn: ["t-grep", "t-other"],
+      evidenceFrom: { claims: [], tasks: ["t-grep"] },
+      provider: "claude-code",
+      model: "claude-haiku-4-5",
+      budget: { seconds: 30 },
+      status: "pending",
     });
-    await dispatch(store, incident, stubbed);
-    const claims = store.listClaims("i1");
-    const match = claims.find(
-      (c) =>
-        c.status === "verified" &&
-        c.subject === subject &&
-        c.predicate === "matches",
+    const claim = (subject: string, cites: string[]) => ({
+      subject,
+      predicate: "handles",
+      object: "deletion",
+      confidence: 0.95,
+      evidence: [subject],
+      basis: "observed",
+      cites,
+    });
+    await withStubOutput(
+      {
+        outcome: "answered",
+        claims: [
+          claim("/repo/a.ts:2", ["t-grep"]),
+          claim("/repo/a.ts:3", ["t-grep", "t-other"]),
+          claim("/repo/a.ts:4", []),
+        ],
+        findings: { summary: "the handler", observations: [] },
+        needed: [],
+      },
+      () =>
+        dispatch(store, incident, {
+          cwd: tree,
+          env: { NOSCOPE_CLAUDE_BIN: stub },
+        }),
     );
-    expect(match?.provenance.taskId).toBe("t-grep");
-    expect(claims.find((c) => c.id === "c-guess")?.status).toBe("asserted");
-    expect(claims.find((c) => c.id === "c-other")?.status).toBe("asserted");
-    const statusChanges = store
-      .listEvents("i1")
-      .filter(
-        (e) =>
-          (e.payload.mutation as { kind?: string } | undefined)?.kind ===
-          "claim.status",
-      );
-    expect(statusChanges).toEqual([]);
+    expect(
+      store
+        .listTasks("i1")
+        .map((t) => [t.id, t.status, t.result !== null])
+        .sort(),
+    ).toEqual([
+      ["t-grep", "completed", true],
+      ["t-inv", "completed", true],
+      ["t-other", "completed", true],
+    ]);
+    // The greps wrote no claims; the investigate's three are the incident's claims, and
+    // each names the evidence it cites in its provenance.
+    const claims = store.listClaims("i1");
+    expect(
+      claims.map((c) => [c.subject, c.status, c.basis, c.provenance.cites]),
+    ).toEqual([
+      ["/repo/a.ts:2", "asserted", "observed", ["t-grep"]],
+      ["/repo/a.ts:3", "asserted", "inferred", ["t-grep", "t-other"]],
+      ["/repo/a.ts:4", "asserted", "observed", undefined],
+    ]);
+    expect(claims[0]?.provenance).toEqual({
+      capability: "investigate",
+      taskId: "t-inv",
+      sessionId: "stub-session",
+      cites: ["t-grep"],
+    });
+    const types = store.listEvents("i1").map((e) => e.type);
+    expect(types.filter((t) => t === "claim.asserted")).toHaveLength(3);
+    expect(types).not.toContain("claim.verified");
     store.close();
   });
 });
@@ -722,23 +746,13 @@ describe("dispatcher, interrupted and malformed runs", () => {
   it("fails a task left running by an earlier pass, names a schema failure in one sentence, and treats a bound past the timer's limit as none", async () => {
     defineCapability({
       name: "bad_confidence",
-      description: "returns a claim the schema refuses",
+      description: "returns an output its own schema refuses",
       equipment: [],
       input: z.object({}),
-      output: z.object({}),
+      output: z.object({ confidence: z.number().max(1) }),
       effect: "read_only",
-      run: async () => ({
-        output: {},
-        claims: [
-          {
-            subject: "/x",
-            predicate: "p",
-            object: 1,
-            confidence: 2,
-            evidence: [],
-          },
-        ],
-      }),
+      run: async () => ({ confidence: 2 }),
+      measure: () => "one confidence",
     });
     const store = new Store(":memory:");
     const { incident, task } = scriptedIncident(store);
@@ -894,7 +908,7 @@ describe("dispatcher, unit leaders", () => {
       "Equipment your unit's tasks may use: Read, Grep, Glob, Bash; Bash allowlist: ",
     );
     expect(calls[0]?.prompt).toContain(
-      "Task t-grep (grep) completed; its result, 1 match(es), is recorded under its id; claims (1 observed, 0 inferred): i1-c001",
+      "Task t-grep (grep) completed; its evidence, 1 match in 1 file, is recorded under its id for a task naming it in evidenceFrom.tasks.",
     );
     expect(calls[0]?.prompt).not.toContain("the delete handler lives here");
     expect(calls[0]?.prompt).toContain(
@@ -1590,7 +1604,7 @@ describe("dispatcher, unit leaders", () => {
         taskId: "t-grep",
         capability: "grep",
         status: "failed",
-        claims: 0,
+        produced: "nothing",
         reason: expect.stringMatching(/ENOENT/),
         settled: ["t-inv", "t-read"],
       },
@@ -1841,7 +1855,7 @@ describe("dispatcher, lacks at the leader", () => {
       "Task t-inv (investigate) came back insufficient. It needed:\n  - retrievable_fact: where delete is mentioned\nA retrievable fact is yours to get: assign a task for it under your unit (assignTasks) and continue.",
     );
     expect(calls[2]?.prompt).toContain(
-      "Task i1-t02 (grep) completed; its result, 1 match(es), is recorded under its id; claims (1 observed, 0 inferred): i1-c001",
+      "Task i1-t02 (grep) completed; its evidence, 1 match in 1 file, is recorded under its id for a task naming it in evidenceFrom.tasks.",
     );
     // The second investigate ran in a session of its own with the grep's result attached
     // in full, which the leader's own session never held.
@@ -2381,14 +2395,10 @@ describe("dispatcher, lacks at the leader", () => {
       "tasks under command, ended with no leader to report them:",
     );
     expect(at).toBeGreaterThan(report.indexOf("unit reports:"));
-    expect(report.slice(at + 1, at + 7)).toEqual([
+    // A deterministic result reaches the IC as its evidence line, never as text (R5-1).
+    expect(report.slice(at + 1, at + 6)).toEqual([
       "  - task t-grep (grep): run grep",
-      expect.stringMatching(
-        /^ {6}claims: i1-c001: .*a\.txt:2 matches \(observed, confidence 1\.00\)$/,
-      ),
-      expect.stringMatching(
-        /^ {6}completed; result: \{"root":".*","matches":\[\{"file":"a\.txt","line":2,"text":"the delete handler lives here"\}\],"truncated":false\}$/,
-      ),
+      "      completed; evidence: 1 match in 1 file, attached whole to a task naming t-grep in evidenceFrom.tasks",
       "  - task t-inv (investigate, claude-haiku-4-5): run investigate",
       "      claims: none",
       "      completed, answered; summary: PageCard.tsx:1884 focuses",
@@ -3479,7 +3489,7 @@ describe("dispatcher, revise (R4-3)", () => {
 
 describe("incident step", () => {
   // Several stub sessions through the CLI; slow on a CI runner.
-  it("runs one cycle with the stub planner: plan, verdict, apply, dispatch, claims; then refuses a closed incident", {
+  it("runs one cycle with the stub planner: plan, verdict, apply, dispatch, evidence; an investigate naming the grep in evidenceFrom asserts an observed claim citing it and the file lists the claim and one evidence line (R5-1); then refuses a closed incident", {
     timeout: 60_000,
   }, async () => {
     const db = `${mkdtempSync(join(tmpdir(), "noscope-step-"))}/db.sqlite`;
@@ -3541,9 +3551,9 @@ describe("incident step", () => {
       "plan approved",
       "  unit 001-u02 created under 001-command: locate the handler",
       "  task 001-t01 [ready] under 001-u02: grep: find delete",
-      "  ran 001-t01 (grep): completed; 1 claim(s)",
+      "  ran 001-t01 (grep): completed; evidence: 1 match in 1 file",
       "  unit 001-u02 reported progress: nothing changed",
-      "claims: 1 verified, 0 asserted",
+      "claims: 0 asserted (0 observed); evidence: 1 deterministic result(s)",
     ]);
     out.length = 0;
     const bad: ActionPlan = {
@@ -3565,6 +3575,77 @@ describe("incident step", () => {
     expect(out.filter((l) => l === "plan rejected:")).toHaveLength(3);
     expect(out.some((l) => l.startsWith("IC review"))).toBe(false);
     out.length = 0;
+    // The grep's evidence reaches a session only through evidenceFrom; the session's claim
+    // about it cites the task and enters observed.
+    const readIt: ActionPlan = {
+      ...plan,
+      createUnits: [],
+      createTasks: [
+        {
+          unit: "001-u02",
+          capability: "investigate",
+          objective: "say what the match is",
+          inputs: { question: "which line handles delete?" },
+          expectedOutput: "the line",
+          completionCriteria: [],
+          evidenceRequired: [],
+          dependsOn: [],
+          evidenceFrom: { claims: [], tasks: ["001-t01"] },
+          instructions: "",
+          provider: "claude-code",
+          model: "claude-haiku-4-5",
+          budget: { seconds: 30 },
+        },
+      ],
+      rationale: "read the match",
+    };
+    const cited = {
+      outcome: "answered",
+      claims: [
+        {
+          subject: `${join(tree, "a.txt")}:2`,
+          predicate: "handles",
+          object: "deletion",
+          confidence: 0.95,
+          evidence: ["a.txt:2"],
+          basis: "observed",
+          cites: ["001-t01"],
+        },
+      ],
+      findings: { summary: "a.txt:2 is the handler", observations: [] },
+      needed: [],
+    };
+    process.env.NOSCOPE_STUB_PLAN = JSON.stringify(readIt);
+    try {
+      expect(
+        await withStubOutput(cited, () =>
+          run(["incident", "step", "001"], ctx),
+        ),
+      ).toBe(EXIT.ok);
+    } finally {
+      delete process.env.NOSCOPE_STUB_PLAN;
+    }
+    expect(out).toContain("  ran 001-t02 (investigate): completed; 1 claim(s)");
+    expect(out.at(-1)).toBe(
+      "claims: 1 asserted (1 observed); evidence: 1 deterministic result(s)",
+    );
+    const s1 = new Store(db);
+    expect(
+      s1.listClaims("001").map((c) => [c.id, c.basis, c.provenance]),
+    ).toEqual([
+      [
+        "001-c001",
+        "observed",
+        {
+          capability: "investigate",
+          taskId: "001-t02",
+          sessionId: "stub-session",
+          cites: ["001-t01"],
+        },
+      ],
+    ]);
+    s1.close();
+    out.length = 0;
     const done: ActionPlan = {
       ...plan,
       createUnits: [],
@@ -3572,10 +3653,32 @@ describe("incident step", () => {
       incidentStatus: "satisfied",
       rationale: "found it",
     };
-    expect(
-      await withStubOutput(done, () => run(["incident", "step", "001"], ctx)),
-    ).toBe(EXIT.ok);
+    const log = join(mkdtempSync(join(tmpdir(), "noscope-step-")), "calls");
+    process.env.NOSCOPE_STUB_CALLS = log;
+    try {
+      expect(
+        await withStubOutput(done, () => run(["incident", "step", "001"], ctx)),
+      ).toBe(EXIT.ok);
+    } finally {
+      delete process.env.NOSCOPE_STUB_CALLS;
+    }
     expect(out.at(-1)).toBe("incident 001 is now satisfied");
+    // The incident file the planner read: the claim, then one evidence line for the grep.
+    const planner = readFileSync(log, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l) as { kind: string; prompt: string })
+      .find((c) => c.kind === "planner");
+    const file = planner?.prompt ?? "";
+    const section = file.slice(
+      file.indexOf("## 2. Claims and evidence"),
+      file.indexOf("## 3. Unit tree"),
+    );
+    expect(section.split("\n").filter((l) => l.startsWith("  - "))).toEqual([
+      `  - 001-c001: ${join(tree, "a.txt")}:2 handles "deletion" (asserted, observed; confidence 0.95; evidence a.txt:2) [from investigate task 001-t02, session stub-session, citing 001-t01]`,
+      '  - 001-t01 (grep {"root":".","pattern":"delete"}): 1 match in 1 file',
+    ]);
+    expect(section).not.toContain("a.txt:2 matches");
     expect(await run(["incident", "step", "001"], ctx)).toBe(
       EXIT.cannotProceed,
     );
