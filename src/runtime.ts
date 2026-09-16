@@ -3,6 +3,7 @@ import {
   dropsSlice,
   IC_ACTOR,
   LEADER_ACTOR,
+  numberOpenItems,
   openRequestsByUnit,
   type Reassignment,
   type RefusedCall,
@@ -22,6 +23,7 @@ import {
   type PlanPatch,
   type Question,
   type ResourceRequest,
+  type Situation,
   stable,
   type Task,
   type TaskProposal,
@@ -288,6 +290,23 @@ function buildTasks(
     createdAt: at,
     completedAt: null,
   }));
+}
+
+/**
+ * Which open items of the IC's situation each new task settles (R5-2), paired by position
+ * with the rows `buildTasks` made from the same proposals, for `plan.applied` to record;
+ * `openItemsWorked` reads it back.
+ */
+function settlesOf(
+  proposals: readonly TaskProposal[],
+  tasks: readonly Task[],
+): { taskId: string; openItemId: string }[] {
+  return proposals.flatMap((p, i) =>
+    (p.settles ?? []).flatMap((openItemId) => {
+      const task = tasks[i];
+      return task === undefined ? [] : [{ taskId: task.id, openItemId }];
+    }),
+  );
 }
 
 /**
@@ -607,7 +626,8 @@ export function answerRequest(
  * Apply a validated action plan in one transaction: units created (a unit that `takes` a
  * reassignment recorded as `reassignment.taken` after its `unit.created`, R4-4) and closed,
  * tasks created and cancelled, questions and requests recorded, the incident's status set,
- * then `plan.applied` (DESIGN.md Step 4). The validator has already passed the plan; this
+ * then `plan.applied`, carrying which open item of the IC's situation each new task
+ * settles (R5-2) (DESIGN.md Step 4). The validator has already passed the plan; this
  * trusts it and only writes, each new unit's form filled from the config it names
  * (R4-11) and the config's name recorded on the unit. The incident is read from the store, not the argument, so a
  * stale caller cannot overwrite questions; only an open incident takes a plan.
@@ -728,6 +748,7 @@ export function applyPlan(
       closedUnits: plan.closeUnits.map((c) => c.unitId),
       tasks: tasks.map((t) => t.id),
       cancelledTasks: plan.cancelTasks,
+      settles: settlesOf(plan.createTasks, tasks),
       incidentStatus,
       ...(review === undefined ? {} : review),
     });
@@ -744,7 +765,7 @@ export function applyPlan(
   };
 }
 
-/** What applying a command turn changed: the units closed (by `closeUnits` and by verdict), the reassignments recorded and the tasks cancelled by reassign verdicts (R4-4) with the tasks settled because they waited on one of those (R5-10), the questions raised, the requests answered, the tasks assigned under command, the period set and the incident's status. */
+/** What applying a command turn changed: the units closed (by `closeUnits` and by verdict), the reassignments recorded and the tasks cancelled by reassign verdicts (R4-4) with the tasks settled because they waited on one of those (R5-10), the questions raised, the requests answered, the tasks assigned under command, the period set, the situation as recorded with its open items numbered (R5-2) and the incident's status. */
 export type Commanded = {
   closedUnits: string[];
   reassignments: Reassignment[];
@@ -754,6 +775,7 @@ export type Commanded = {
   answered: Answered[];
   tasks: Task[];
   period: Period;
+  situation: Situation;
   incidentStatus: IncidentStatus;
 };
 
@@ -795,7 +817,7 @@ function reassignmentsOf(
 
 /**
  * Apply the IC's validated command turn in one transaction: `command.turned` first, carrying
- * the turn, the call's provenance (`extra`: unit, session, model, usage) and the period as
+ * the turn with its situation's open items numbered (R5-2), the call's provenance (`extra`: unit, session, model, usage) and the period as
  * its mutation, so it opens the cycle in the log; then `record`, which files the call
  * itself; then one `report.reviewed` per verdict (the report's event id, the unit, the
  * verdict, the instructions and the why, with the cycle, actor `ic`; R4-2), one
@@ -817,7 +839,7 @@ function reassignmentsOf(
 export function applyCommand(
   store: Store,
   incidentRef: Pick<Incident, "id">,
-  turn: CommandTurn,
+  proposed: CommandTurn,
   cycle: number,
   extra: Record<string, unknown>,
   record: () => void = () => {},
@@ -830,6 +852,16 @@ export function applyCommand(
     throw new Error(
       `incident ${incident.id} is ${incident.status}; a command turn applies only to an open incident`,
     );
+  // The turn is recorded with its situation's open items numbered (R5-2): a new item
+  // takes the next id the incident has not issued, a carried one keeps its own.
+  const turn: CommandTurn = {
+    ...proposed,
+    situation: numberOpenItems(
+      proposed.situation,
+      incident.id,
+      store.listEvents(incident.id),
+    ),
+  };
   const questions = newQuestions(incident, turn.questionsForHuman);
   const incidentStatus = statusAfter(turn);
   const period: Period = {
@@ -965,6 +997,7 @@ export function applyCommand(
         unitId: root.id,
         sessionId: session,
         tasks: tasks.map((t) => t.id),
+        settles: settlesOf(turn.assignTasks, tasks),
       });
     }
   });
@@ -977,6 +1010,7 @@ export function applyCommand(
     answered,
     tasks,
     period,
+    situation: turn.situation,
     incidentStatus,
   };
 }

@@ -4268,3 +4268,212 @@ Not exactly to spec, with reasons:
 - No sweep at dispatch start for dependents stranded before this PR: the cascade is written
   in the cause's transaction, so a database written by this runtime cannot hold one, and a
   database from before the tag is a replay concern the plan does not ask for.
+
+## R5-2: The situation is a living picture (#58, merged 2026-09-16)
+
+R5-2 of the round 5 plan, ruled by Mauria in review on 2026-09-15 (22:41: the situation is
+the understanding of reality the incident has, from the size-up on; reading and trying
+things either shows progress or adjusts it, then priors are updated and tactics may
+change; each unit leader has a version for its unit that it reports up; 22:53:
+observations flow up and only objectives and evidence flow down). Built on R4-5 (the IC
+owns the situation) and R4-10 (the base and ic types), in one commit of code, tests and
+docs and one of this entry.
+
+The shape (`src/models.ts`): `Situation` is `{ picture, evidence, open, assessment,
+changed }`. `picture` is what the incident now believes is going on, in prose, edited from
+the one section 10 shows; `evidence` is `SituationEvidence[]`, a claim id with a stance
+`for` or `against`; `open` is `OpenItem[]`, each `what` and `settledBy` in prose, an `id`
+only when carried forward from the last picture (described as "never write an id the file
+does not list"), and `deferred` with a why when the IC decides not to work it this period;
+`assessment` is `{ kind: on_track | priors_updated | tactics_change, why }`; `changed` is
+what the turn changed. `UnitSituation` is a unit leader's slice, `{ picture, evidence,
+open, changed }` with `open` items of `what` and `settledBy` alone (an id and a deferral
+are the IC's), and `LeaderReport` gains `situation: UnitSituation`, required. `Settlement`
+and R4-5's `hypothesis`, `proven`, `inferred` and `keep` are gone; the old shape no longer
+parses. `TaskProposal` gains `settles`, optional, the open items of the IC's situation the
+task works, by id. `ReportVerdict.instructions`' description ends "never what you think
+the answer is: a unit reads its objective and the evidence, not your picture", and
+`CommandTurn.situation`'s says the picture is edited from section 10, seeded from the
+briefing on the first turn, read in full by the planner and by no unit.
+
+The seed and the ids (`src/leader.ts`): `briefingOf` moves here from `src/ic.ts` (the
+seed needs it and `ic.ts` imports `leader.ts`). `seededSituation` (private) builds the
+first picture from the briefing: the dominant problem is the picture, with the checked
+needs' findings appended as one sentence; each unchecked need is an open item ("whether
+<need> is in place; the size-up did not check it", settled by "a check of it"), numbered
+`<incident>-o01` on; the evidence is empty; the assessment is `on_track` with "seeded from
+the initial IC's briefing; no report has tested it yet". `icSituation` returns the last
+accepted `command.turned`'s situation, else the seed, else null (an incident created with
+`--no-size-up` and not yet commanded, or a log from before R4-5). `numberOpenItems` gives
+every id-less open item the next number after every id the incident has issued (the seed's
+and every `command.turned`'s, accepted or rejected, so a number is never reused), and
+`applyCommand` (`src/runtime.ts`) records the turn with its situation numbered and returns
+it on `Commanded.situation`. `openItemsWorked` reads every `plan.applied`'s `settles`
+(`[{ taskId, openItemId }]`, written by `applyPlan` from the plan's `createTasks` and by
+`applyCommand` from the IC's `assignTasks`, paired by position through `settlesOf`) into a
+map of item id to task ids; `openItemIds` is the ids the current picture lists;
+`unitSituation` is a unit's last leader-written report's slice (a report the runtime wrote
+after two refusals is skipped).
+
+The rules (`src/validator.ts`): "Open items are worked" replaces "Inferred links are
+worked" in `PLANNER_RULES` and `CHECKS`: every open item of the IC's situation that
+carries an id and is not deferred is named in `settles` by a task in this plan, or is
+worked by an open task recorded on an earlier `plan.applied` that this plan does not
+cancel (a completed task no longer works an item the IC still lists); a `settles` naming an
+id the situation does not list is rejected under the same rule. `ValidationContext` gains
+`worked` (`openItemsWorked(events)`). "Situation grounded" now checks that every
+`evidence` claim id exists, that every open item carrying an id names one of the last
+picture's (`ctx.situation`, the seed on the first turn), and that no id is carried twice;
+a first turn with two open items and no claims passes. Nothing gates the picture on basis
+any more; the rendering says each evidence claim's basis beside its stance, and the rule
+text says only a claim `for, observed` proves a part of the picture.
+
+The planner (`src/planner.ts`): section 10 is rendered by `renderSituation(s, open
+reassignments, taker, claims, worked, tasks)` as `picture:`, `assessment: <kind>: <why>`,
+`changed:`, `evidence (only a claim for, observed, proves a part of the picture):` with
+`<id>: <stance>, <basis>` per claim (`basis unknown` for an id the store lacks), `open
+items, each worked by a task in this plan naming its id in settles, or deferred by the
+IC:` with `<id>: <what>; settled by: <prose>; <state>` per item, the state `worked by task
+<id> (<status>)`, `deferred: <why>` or `unworked`, then the open-reassignments line as
+before; "(none)" only when there is neither a turn nor a briefing. The claim collapse
+keeps in full what `evidence` names (it read `proven` and `keep`). The system prompt's
+section 10 paragraph says the planner alone reads the situation in full, what each part
+is, that the plan works the open items through `settles`, that the assessment is its
+signal (`tactics_change` redraws the units), and that a unit's objective and a task's
+brief are written as what to establish, never as what the IC believes; the interpret
+sentence says the runtime attaches nothing of the IC's picture to a brief; the rationale
+works the open items.
+
+Observations flow up and only objectives and evidence flow down. `BriefContext`
+(`src/capabilities/session.ts`) loses `situation`, `renderTaskBrief` renders the
+objective, the period, the hierarchy, the task and the evidence named in `evidenceFrom`,
+and the dispatcher's `briefContext` no longer reads `icSituation`. `renderLeaderOrientation`
+(`src/units/base.ts`) takes the unit's own last picture (`unitSituation`) in place of the
+IC's situation and renders it as "Your unit's last picture of its slice: …", its evidence,
+its open items and what last changed, after the reassignment lines; `LEADER_ROLE` gains a
+paragraph on the report's situation and on never reading the IC's picture; the runtime's
+refusal report carries a situation saying nothing was established. `renderChangeReport`
+(`src/ic.ts`) renders each unit's slice under its report line, before the work
+(`renderReportSituation`: "its picture of its slice:", evidence, open, changed), so the IC
+folds slices into the whole on its verdict; the command turn's ask says to edit the
+situation from section 10, fold each unit's slice in, carry or add open items, assess, and
+that instructions say what is missing or found, never the answer. `IC_ROLE`
+(`src/units/ic.ts`) rewrites its situation paragraph in Mauria's words: the understanding
+of reality from the size-up on, seeded and edited, never written from nothing; what each
+field is; a first turn with no claims has an empty evidence and its unknowns as open items
+(run 004's first turn was rejected for inventing claim ids); the assessment's three kinds
+and which the planner reads as the signal to redraw; no unit ever reads it, what a
+leader's orientation, a task's brief and a verdict's instructions carry instead, and why
+(a misconception at the top must not propagate down, and a unit that tests evidence rather
+than a hypothesis is what corrects one); the review paragraph adds refusing a unit
+objective or task brief that states what the IC believes. The preamble's situation-report
+line and the leader's place (`src/providers/base.ts`) say the same.
+
+The surface: `incident show` prints the picture, the assessment, what changed, the
+evidence with bases and the open items with their state under the period through the same
+`renderSituation`; `step` prints `picture:` and `assessment:` after `situation changed:`;
+`incident review` prints `assessment: <kind>: <why>` under every accepted command turn,
+before its verdicts (`src/review.ts`), so a run reads as a story of priors held, updated
+or overturned. The stub fills the new default situation on a command turn that carries
+none and a default slice picture on a report turn that carries none
+(`withReportSituation`), so every scripted turn keeps its meaning. DESIGN.md's Vocabulary
+(the Situation row rewritten; the Incident file and Cycle rows), the ICS mapping rows for
+the Planning Section, the unit's situation report and the Situation Unit, Step 2 (the
+replay recipe's orientation), Step 3 (the brief), Step 4 (the `CommandTurn` sketch,
+`command.turned`, sections 2, 6 and 10, the `ActionPlan` sketch, the planner's paragraph),
+Step 5 (the two rule rows), Step 6 (the orientation, the report, the observed-basis
+sentence), Step 7 (`show` and `review`) and the Situation Unit open question follow;
+`docs/architecture.html`'s IC, planner, leader, session, briefing, command-turn, plan,
+brief and claim-placement nodes follow; CLAUDE.md's IC paragraph follows. README
+enumerates none of it.
+
+Files rewritten, for the merge order: `Situation` and its neighbours in `src/models.ts`;
+the situation readers at the end of `src/leader.ts` (and `briefingOf` moved in);
+`renderSituation` and the section-10 paragraph in `src/planner.ts`; the two rules and
+`situationGrounded` in `src/validator.ts`; `renderLeaderOrientation` in `src/units/base.ts`;
+the situation paragraph of `IC_ROLE` in `src/units/ic.ts`; the command ask in `src/ic.ts`.
+Touched lightly: `src/runtime.ts` (`settlesOf`, `numberOpenItems` in `applyCommand`,
+`settles` on two `plan.applied`s, `Commanded.situation`), `src/capabilities/session.ts`
+and `src/dispatcher.ts` (the situation removed from the brief), `src/commands/incident.ts`
+(`show` and `step`), `src/review.ts` (the assessment line), `src/providers/base.ts` (two
+sentences), `test/stub-claude`, `test/fixtures/models.ts` (`situation()` and
+`unitSituation()` builders; `reportedUnit`'s report carries a slice).
+
+Tests: models tests for the new shape (the three assessment kinds, an item with and without
+an id, a deferral, the refusals, the old shape refused, `settles` on a proposal, a report
+without `situation` refused, a unit's open item stripped of an id); validator tests that a
+first-turn situation with two open items and no claims passes, that evidence naming missing
+claims, an invented open-item id and a doubled id are each rejected with one reason, that a
+plan settling both items passes, that one leaving one unsettled and undeferred is
+rejected, that a `settles` naming an unlisted item is rejected, that an open task recorded
+as working an item counts until the plan cancels it, and that a completed one does not;
+planner tests for section 10's rendering with each item's state and for the seed from a
+briefing (the checked need in the picture, the unchecked one as `i1-o01`); a run test on
+the stub (`test/ic.test.ts`) where a unit reports a slice picture with one open item, the
+change report carries it, the IC folds it in with `priors_updated` and the runtime numbers
+the item `001-o01`, the draft leaving it unworked is rejected with the reason, the next
+carries it by id and names it in `settles`, `plan.applied` records the pair, `show` prints
+the picture, the assessment and the item as `worked by task 001-t02 (ready)`, `review`
+prints the three assessments, and no leader or task call's prompt contains a line of the
+IC's picture or assessment; a dispatcher test that a task's brief carries the objective and
+the evidence and none of the IC's picture, open item or assessment, and one that a fresh
+leader session's orientation carries its own unit's last picture and none of the IC's;
+the session-brief test, the change-report and `show` pins with the slice under the
+report, the `step` and `review` pins, the providers' role lines, and the planner and
+size-up snapshots (the command ask) follow. `pnpm check` exits 0.
+
+Not exactly to spec, with reasons:
+
+- A plan task names the open items it settles (`TaskProposal.settles`), rather than the
+  IC naming a task ref on each item as R4-5's `settledBy` did: the block says the runtime's
+  ids exist "so a plan's task or a later claim can name what it settles", and the IC
+  writing refs for the planner to use is the IC drafting tactics (run 004's resubmitted
+  turn did exactly that). The IC writes what is unknown and what would settle it in prose;
+  the planner links. A claim naming what it settles is not built: a session's claim schema
+  is R5-1's ground, and the task-level link is what the rule needs.
+- `settles` is recorded on `plan.applied` and not on the `tasks` table: a column would be a
+  schema version and a migration for a link the log already holds, in the house style of
+  reassignments (read from `unit.reassigned` and `reassignment.taken`); `openItemsWorked`
+  reads it back. A leader's `assignTasks` carries no `settles` (a leader never reads the
+  IC's items), and `applyLeaderTasks` records none.
+- An open item carried forward names its id: the block says the ids are "bookkeeping the
+  IC never writes", which is read as the IC never inventing one; a carried id is read from
+  the file as `keep` read claim ids and `dropReassignments` reads reassignment ids, and
+  "Situation grounded" refuses an id the last picture does not list. Matching items across
+  turns by their prose instead would have been guesswork.
+- The seed's assessment is `on_track` with a why saying nothing has tested it, since
+  `Situation` requires one and a fourth kind for "not yet assessed" would have reached the
+  IC's schema; the seed is rendered exactly as an IC's picture is, so the first turn edits
+  the same shape it writes.
+- "Situation grounded" no longer gates any claim on basis: there is no `proven` list to
+  gate, and an inferred claim marked `for` is honest evidence the rendering labels
+  `inferred`. The block's "a claim marked for the picture with basis observed is the only
+  way `picture` is called proven" is carried by the rule text, the rendering's heading and
+  the role text, not by a rejection.
+- The unit's `open` items carry no id and no deferral (`OpenItem.omit({ id, deferred })`):
+  numbering and deferring are the IC's, and a leader that wrote an id would be naming
+  something it cannot see.
+- `HandoffDocument.hypothesis` is untouched: it is the outgoing IC's note to its
+  successor, not a seat's view of the situation, and R5-11 owns the handoff's shape.
+- The runtime's `not_met` report for a unit refused twice carries a situation saying
+  nothing was established, so the schema stays required; `unitSituation` skips it, so a
+  fresh session after the refusals is oriented with the unit's last leader-written picture.
+- `briefingOf` moved from `src/ic.ts` to `src/leader.ts` (`test/size-up.test.ts` imports it
+  from there now); `src/commands/incident.ts` follows.
+- Review of PR 58 (correctness, 2026-09-16), applied before merge: `icSituation` fell
+  back to the briefing's seed whenever the last accepted turn's situation failed to parse,
+  so a log written under R4-5's shape (run 004's) showed the seed with its unworked items;
+  it now returns null once an accepted turn exists, and `show` and section 10 print "(the
+  last command turn's situation is in a shape from before R5-2)" (`situationPredatesShape`,
+  `SITUATION_PREDATES_SHAPE` in `src/leader.ts`). A leader's `assignTasks` schema carried
+  `settles`, whose description names a section the leader never sees; `TurnFields` uses
+  `TaskProposal.omit({ settles: true })`. A verdict's `why` reaches the unit in the revise
+  brief and the reassign orientation, so its description carries the guard ("it says what
+  the work showed and never what you think the answer is") and the IC role says the why
+  flows down with the instructions. The IC's command `settles` was recorded unchecked;
+  `validateCommand` rejects, under Situation grounded, a `settles` naming an id the last
+  picture does not list. The interpret role no longer names "the hypothesis in the
+  brief's head". Section 10 and `show` print an item whose only workers have ended as
+  "was worked by task X (completed); needs a task or a deferral", since the validator
+  counts open tasks alone. DESIGN.md's Vocabulary says a new item carries no id and a
+  carried one keeps the id the file lists.

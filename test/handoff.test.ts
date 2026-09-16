@@ -20,7 +20,11 @@ import {
   jsonSchemaFor,
 } from "../src/models.js";
 import { Store } from "../src/store.js";
-import { scriptedIncident, unitProposal } from "./fixtures/models.js";
+import {
+  scriptedIncident,
+  situation,
+  unitProposal,
+} from "./fixtures/models.js";
 
 const tree = resolve("test/fixtures/tree");
 const stub = resolve("test/stub-claude");
@@ -82,13 +86,7 @@ const findIt: ActionPlan = {
 const command = (over: Partial<CommandTurn> = {}): CommandTurn => ({
   periodObjectives: ["find the handler"],
   reportVerdicts: [],
-  situation: {
-    changed: "test",
-    hypothesis: "test",
-    proven: [],
-    inferred: [],
-    keep: [],
-  },
+  situation: situation(),
   priorities: ["observation over reading"],
   closeUnits: [],
   answers: [],

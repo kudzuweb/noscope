@@ -3,9 +3,11 @@ import type {
   Event,
   Incident,
   Leader,
+  Situation,
   Task,
   Unit,
   UnitProposal,
+  UnitSituation,
 } from "../../src/models.js";
 import type { Provider } from "../../src/providers/index.js";
 import { now, type Store } from "../../src/store.js";
@@ -27,6 +29,31 @@ const STUB_LEADER: Leader = {
 
 /** A leader on the fake provider, for plans validated against it. */
 export const FAKE_LEADER: Leader = { provider: "fake", model: "fake-small" };
+
+/** An IC's situation (R5-2) with a picture and nothing else, each field overridable. */
+export function situation(over: Partial<Situation> = {}): Situation {
+  return {
+    picture: "test picture",
+    evidence: [],
+    open: [],
+    assessment: { kind: "on_track", why: "test" },
+    changed: "test",
+    ...over,
+  };
+}
+
+/** A unit's slice picture (R5-2) for a scripted report, each field overridable. */
+export function unitSituation(
+  over: Partial<UnitSituation> = {},
+): UnitSituation {
+  return {
+    picture: "test slice picture",
+    evidence: [],
+    open: [],
+    changed: "test",
+    ...over,
+  };
+}
 
 /** A new unit for a plan: objective, parent, and a leader with no equipment unless given. */
 export function unitProposal(
@@ -255,6 +282,13 @@ export function reportedUnit(
         },
       ],
       pictureChanged: false,
+      situation: unitSituation({
+        picture: `${summary}; the handler at a.ts:2 resets the view`,
+        evidence: [
+          { claimId: `${unitId}-c-grep`, stance: "for" },
+          { claimId: `${unitId}-c-inv`, stance: "for" },
+        ],
+      }),
     },
     usage: {
       inputTokens: 100,

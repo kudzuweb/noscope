@@ -35,6 +35,7 @@ import {
   FAKE_LEADER,
   fakeProvider,
   scriptedIncident,
+  situation,
   unitProposal,
 } from "./fixtures/models.js";
 
@@ -67,13 +68,7 @@ const turn: CommandTurn = {
   periodObjectives: ["finish"],
   priorities: [],
   reportVerdicts: [],
-  situation: {
-    changed: "test",
-    hypothesis: "test",
-    proven: [],
-    inferred: [],
-    keep: [],
-  },
+  situation: situation(),
   closeUnits: [],
   answers: [],
   assignTasks: [],
@@ -1267,19 +1262,12 @@ describe("validator", () => {
     ]);
   });
 
-  it("Inferred links are worked: every inferred link in the IC's situation is settled by a ref in this plan, an open task, a reproduce task the same way, or deferred with a why; a link left unsettled rejects the plan", () => {
+  it("Open items are worked: every open item the IC did not defer is named in settles by a task in this plan or worked by an open task; an item left neither worked nor deferred rejects the plan, and a settles names only a listed item (R5-2)", () => {
     const { store, ctx } = seeded();
-    const situation = (inferred: Situation["inferred"]): Situation => ({
-      changed: "the IC's",
-      hypothesis: "a.ts handles deletion",
-      proven: [{ claimId: "c-seen", line: "a.ts:9 calls scrollTo" }],
-      inferred,
-      keep: [],
-    });
-    const turned = (inferred: Situation["inferred"]) =>
+    const turned = (open: Situation["open"]) =>
       store.record("i1", "command.turned", "runtime", {
         cycle: 1,
-        turn: { ...turn, situation: situation(inferred) },
+        turn: { ...turn, situation: situation({ open }) },
       });
     const reasonsWith = (plan: ActionPlan) => {
       const verdict = validatePlan(plan, ctx());
@@ -1287,79 +1275,186 @@ describe("validator", () => {
         ? []
         : verdict.rejections.map((r) => `${r.rule}: ${r.reason}`);
     };
-    // No situation yet: nothing to settle.
+    // No situation yet: nothing to work.
     expect(reasonsWith(empty)).toEqual([]);
     turned([
-      { claimId: "c-asserted", settledBy: { task: "probe" } },
-      { claimId: "c-asserted", settledBy: { task: "t-running" } },
-      { claimId: "c-asserted", settledBy: { reproduce: "probe" } },
+      { id: "i1-o01", what: "whether a.ts scrolls", settledBy: "a reproduce" },
+      { id: "i1-o02", what: "where the caret rests", settledBy: "a read" },
       {
-        claimId: "c-asserted",
-        settledBy: { deferred: "the browser is not available this period" },
+        id: "i1-o03",
+        what: "the bundle mapping",
+        settledBy: "a trace",
+        deferred: "no source map this period",
       },
     ]);
+    // A plan settling both open items passes; the deferred one needs nothing.
     expect(
-      reasonsWith({ ...empty, createTasks: [grepTask({ ref: "probe" })] }),
+      reasonsWith({
+        ...empty,
+        createTasks: [
+          grepTask({ ref: "probe", settles: ["i1-o01", "i1-o02"] }),
+        ],
+      }),
     ).toEqual([]);
+    // One left unsettled and undeferred rejects the plan, once per item.
+    expect(
+      reasonsWith({
+        ...empty,
+        createTasks: [grepTask({ ref: "probe", settles: ["i1-o01"] })],
+      }),
+    ).toEqual([
+      "Open items are worked: the IC's open item i1-o02 (where the caret rests) is worked by no task in this plan and by no open task, and the IC did not defer it",
+    ]);
+    // A settles naming an item the situation does not list is refused.
+    expect(
+      reasonsWith({
+        ...empty,
+        createTasks: [
+          grepTask({ ref: "probe", settles: ["i1-o01", "i1-o02", "i1-o09"] }),
+        ],
+      }),
+    ).toEqual([
+      'Open items are worked: task "find scrollTo calls" settles i1-o09, which is not an open item of the IC\'s situation',
+    ]);
     // A rejected turn's situation is not the IC's; the last accepted one stands.
     store.record("i1", "command.turned", "runtime", {
       cycle: 2,
       rejected: true,
       turn: {
         ...turn,
-        situation: situation([
-          { claimId: "c-asserted", settledBy: { task: "never" } },
-        ]),
+        situation: situation({
+          open: [{ id: "i1-o04", what: "never", settledBy: "never" }],
+        }),
       },
     });
     expect(
-      reasonsWith({ ...empty, createTasks: [grepTask({ ref: "probe" })] }),
+      reasonsWith({
+        ...empty,
+        createTasks: [
+          grepTask({ ref: "probe", settles: ["i1-o01", "i1-o02"] }),
+        ],
+      }),
     ).toEqual([]);
-    turned([
-      { claimId: "c-asserted", settledBy: { task: "t-none" } },
-      { claimId: "c-asserted", settledBy: { task: "t-running" } },
-      { claimId: "c-asserted", settledBy: { reproduce: "t-done" } },
+    // An open task recorded as working an item counts, unless this plan cancels it.
+    store.record("i1", "plan.applied", "runtime", {
+      tasks: ["t-running"],
+      settles: [{ taskId: "t-running", openItemId: "i1-o01" }],
+    });
+    expect(
+      reasonsWith({
+        ...empty,
+        createTasks: [grepTask({ ref: "probe", settles: ["i1-o02"] })],
+      }),
+    ).toEqual([]);
+    expect(
+      reasonsWith({
+        ...empty,
+        cancelTasks: ["t-running"],
+        createTasks: [grepTask({ ref: "probe", settles: ["i1-o02"] })],
+      }),
+    ).toEqual([
+      "Open items are worked: the IC's open item i1-o01 (whether a.ts scrolls) is worked by no task in this plan and by no open task, and the IC did not defer it",
     ]);
+    // A completed task no longer works an item the IC still lists.
+    store.record("i1", "plan.applied", "runtime", {
+      tasks: ["t-done"],
+      settles: [{ taskId: "t-done", openItemId: "i1-o02" }],
+    });
     expect(reasonsWith({ ...empty, cancelTasks: ["t-running"] })).toEqual([
-      "Inferred links are worked: the IC's situation has inferred claim c-asserted settled by task t-none, which is neither a ref in this plan nor an open task",
-      "Inferred links are worked: the IC's situation has inferred claim c-asserted settled by task t-running, which is neither a ref in this plan nor an open task",
-      "Inferred links are worked: the IC's situation has inferred claim c-asserted settled by reproduce task t-done, which is neither a ref in this plan nor an open task",
+      "Open items are worked: the IC's open item i1-o01 (whether a.ts scrolls) is worked by no task in this plan and by no open task, and the IC did not defer it",
+      "Open items are worked: the IC's open item i1-o02 (where the caret rests) is worked by no task in this plan and by no open task, and the IC did not defer it",
     ]);
     store.close();
   });
 
-  it("Situation grounded: the IC's situation names claims the incident has and calls proven only what was observed", () => {
+  it("Situation grounded: a first-turn situation with open items and no claims passes; evidence names claims the incident has, and a carried open item names one of the last picture's, once (R5-2)", () => {
     const { store, ctx } = seeded();
+    // The first turn: two open items, no evidence, no ids (the runtime numbers them).
+    const first: CommandTurn = {
+      ...turn,
+      situation: situation({
+        open: [
+          { what: "whether a.ts scrolls", settledBy: "a reproduce" },
+          { what: "where the caret rests", settledBy: "a read" },
+        ],
+      }),
+    };
+    expect(validateCommand(first, ctx())).toEqual([]);
     const grounded: CommandTurn = {
       ...turn,
-      situation: {
-        changed: "the IC's",
-        hypothesis: "a.ts handles deletion",
-        proven: [
-          { claimId: "c-verified", line: "a.ts exists" },
-          {
-            claimId: "c-seen",
-            line: "a.ts:9 calls scrollTo, seen by a session",
-          },
+      situation: situation({
+        evidence: [
+          { claimId: "c-verified", stance: "for" },
+          { claimId: "c-seen", stance: "for" },
+          { claimId: "c-asserted", stance: "against" },
         ],
-        inferred: [{ claimId: "c-asserted", settledBy: { task: "probe" } }],
-        keep: ["c-verified"],
-      },
+      }),
     };
     expect(validateCommand(grounded, ctx())).toEqual([]);
+    store.record("i1", "command.turned", "runtime", {
+      cycle: 1,
+      turn: {
+        ...turn,
+        situation: situation({
+          open: [
+            {
+              id: "i1-o01",
+              what: "whether a.ts scrolls",
+              settledBy: "a reproduce",
+            },
+          ],
+        }),
+      },
+    });
+    const carrying: CommandTurn = {
+      ...turn,
+      situation: situation({
+        open: [
+          {
+            id: "i1-o01",
+            what: "whether a.ts scrolls",
+            settledBy: "a reproduce",
+          },
+          { what: "a new one", settledBy: "a read" },
+        ],
+      }),
+    };
+    expect(validateCommand(carrying, ctx())).toEqual([]);
     const ungrounded: CommandTurn = {
       ...turn,
-      situation: {
-        changed: "the IC's",
-        hypothesis: "a.ts handles deletion",
-        proven: [
-          { claimId: "c-none", line: "missing" },
-          { claimId: "c-asserted", line: "inferred, not observed" },
+      situation: situation({
+        evidence: [
+          { claimId: "c-none", stance: "for" },
+          { claimId: "c-gone", stance: "against" },
+          { claimId: "c-none", stance: "against" },
         ],
-        inferred: [{ claimId: "c-gone", settledBy: { task: "probe" } }],
-        keep: ["c-none"],
-      },
+        open: [
+          {
+            id: "i1-o01",
+            what: "whether a.ts scrolls",
+            settledBy: "a reproduce",
+          },
+          { id: "i1-o07", what: "invented", settledBy: "nothing" },
+          { id: "i1-o01", what: "twice", settledBy: "a reproduce" },
+        ],
+      }),
     };
+    // The IC's own assignments settle only items the last picture lists (PR 58).
+    expect(
+      validateCommand(
+        {
+          ...turn,
+          assignTasks: [grepTask({ settles: ["i1-o01", "i1-o05"] })],
+        },
+        ctx(),
+      ),
+    ).toEqual([
+      {
+        rule: "Situation grounded",
+        reason:
+          'task "find scrollTo calls" settles i1-o05, which is not an open item of the situation',
+      },
+    ]);
     expect(validateCommand(ungrounded, ctx())).toEqual([
       {
         rule: "Situation grounded",
@@ -1372,7 +1467,11 @@ describe("validator", () => {
       {
         rule: "Situation grounded",
         reason:
-          "the situation lists claim c-asserted as proven, but its basis is inferred, not observed",
+          "the situation carries open item i1-o07, which the last picture does not list; a new item takes no id",
+      },
+      {
+        rule: "Situation grounded",
+        reason: "the situation carries open item i1-o01 twice",
       },
     ]);
     store.close();

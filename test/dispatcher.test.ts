@@ -27,9 +27,21 @@ import {
   renderTurnPrompt,
   unitsOwingReport,
 } from "../src/units/index.js";
-import { scriptedIncident, unitProposal } from "./fixtures/models.js";
+import {
+  scriptedIncident,
+  situation,
+  unitProposal,
+  unitSituation,
+} from "./fixtures/models.js";
 
 const tree = resolve("test/fixtures/tree");
+/** The slice picture the stub fills on a scripted report that carries none (R5-2). */
+const STUB_UNIT_SITUATION = {
+  picture: "stub slice picture",
+  evidence: [],
+  open: [],
+  changed: "stub: nothing yet",
+};
 const stub = resolve("test/stub-claude");
 /** A unit's pass asks its leader for its move, so a pass over a led unit needs the stub; the root's asks nobody (R4-6). */
 const stubbed = { cwd: tree, env: { NOSCOPE_CLAUDE_BIN: stub } };
@@ -377,7 +389,7 @@ describe("dispatcher", () => {
     store.close();
   });
 
-  it("a session's brief carries the incident objective, the IC's situation, and the claims and results the task names in evidenceFrom", async () => {
+  it("a session's brief carries the incident objective and the claims and results the task names in evidenceFrom, and no line of the IC's picture (R5-2)", async () => {
     const { readFileSync } = await import("node:fs");
     const store = new Store(":memory:");
     const { incident, task } = scriptedIncident(store);
@@ -419,17 +431,20 @@ describe("dispatcher", () => {
         result: { matches: 2 },
       },
     );
-    // The IC's situation (R4-5) is what the brief carries.
+    // The IC's situation is on the log and stays out of the brief (R5-2): only objectives
+    // and evidence flow down.
     store.record("i1", "command.turned", "runtime", {
       cycle: 1,
       turn: {
-        situation: {
+        situation: situation({
           changed: "the grep landed",
-          hypothesis: "the handler is the one",
-          proven: [{ claimId: claim.id, line: "the handler is at a.ts:1" }],
-          inferred: [],
-          keep: [],
-        },
+          picture: "THE-IC-PICTURE: the handler is the one",
+          evidence: [{ claimId: claim.id, stance: "for" }],
+          open: [
+            { id: "i1-o01", what: "THE-IC-OPEN-ITEM", settledBy: "a read" },
+          ],
+          assessment: { kind: "priors_updated", why: "THE-IC-ASSESSMENT" },
+        }),
       },
     });
     const said = task({
@@ -533,10 +548,18 @@ describe("dispatcher", () => {
     const prompt = calls[0]?.prompt ?? "";
     expect(
       prompt.startsWith(
-        `Incident objective: ${incident.objective}\nCurrent hypothesis: the handler is the one\nEstablished so far:\n  - ${claim.id}: the handler is at a.ts:1\n\nYour unit: i1-command (command, the root), leader claude-code/claude-haiku-4-5: command: where deletion moves the scroll position\nReports to: Mauria, the Agency Administrator; your reports go into the incident file\nBelow it: no units\n\nObjective:`,
+        `Incident objective: ${incident.objective}\n\nYour unit: i1-command (command, the root), leader claude-code/claude-haiku-4-5: command: where deletion moves the scroll position\nReports to: Mauria, the Agency Administrator; your reports go into the incident file\nBelow it: no units\n\nObjective:`,
       ),
     ).toBe(true);
     expect(prompt).not.toContain("You lead unit");
+    for (const line of [
+      "THE-IC-PICTURE",
+      "THE-IC-OPEN-ITEM",
+      "THE-IC-ASSESSMENT",
+      "hypothesis",
+      "the grep landed",
+    ])
+      expect(prompt).not.toContain(line);
     expect(prompt).toContain(
       `Evidence attached by reference:\nclaims:\n  - ${claim.id}: `,
     );
@@ -845,7 +868,12 @@ describe("dispatcher, unit leaders", () => {
       {
         unitId: "u-led",
         sessionId: "stub-session",
-        report: { outcome: "progress", changed: [], pictureChanged: false },
+        report: {
+          outcome: "progress",
+          changed: [],
+          pictureChanged: false,
+          situation: STUB_UNIT_SITUATION,
+        },
       },
     ]);
     const calls = readCalls(log);
@@ -2140,6 +2168,7 @@ describe("dispatcher, lacks at the leader", () => {
         outcome: "progress",
         changed: [],
         pictureChanged: false,
+        situation: unitSituation(),
         resourceRequests: [
           { kind: "human_knowledge", what: "which file", why: "two match" },
         ],
@@ -3215,6 +3244,35 @@ describe("dispatcher, revise (R4-3)", () => {
       inputs: { root: ".", pattern: "delete" },
       status: "completed",
     });
+    // The leader's own earlier report carries the unit's picture of its slice (R5-2);
+    // the runtime's not_met after the refusals does not replace it.
+    store.record(incident.id, "unit.reported", "dispatcher", {
+      unitId: "u-a",
+      sessionId: "s-gone",
+      provider: "claude-code",
+      model: "claude-haiku-4-5",
+      report: {
+        outcome: "progress",
+        changed: [],
+        pictureChanged: false,
+        situation: unitSituation({
+          picture: "THE-UNIT-PICTURE: a.txt:2 is a handler",
+          evidence: [{ claimId: "c-old", stance: "for" }],
+          open: [{ what: "whether it is the only one", settledBy: "a grep" }],
+          changed: "first look",
+        }),
+      },
+    });
+    // The IC's picture is on the log and never reaches the unit (R5-2).
+    store.record(incident.id, "command.turned", "runtime", {
+      cycle: 1,
+      turn: {
+        situation: situation({
+          picture: "THE-IC-PICTURE",
+          assessment: { kind: "on_track", why: "THE-IC-ASSESSMENT" },
+        }),
+      },
+    });
     const report = {
       outcome: "not_met",
       changed: [],
@@ -3233,7 +3291,8 @@ describe("dispatcher, revise (R4-3)", () => {
     });
     const reported = store
       .listEvents(incident.id)
-      .find((e) => e.type === "unit.reported");
+      .filter((e) => e.type === "unit.reported")
+      .at(-1);
     if (reported === undefined) throw new Error("the unit reported");
     store.setIncidentPeriod(
       incident.id,
@@ -3286,17 +3345,31 @@ describe("dispatcher, revise (R4-3)", () => {
           outcome: "met",
           changed: [{ what: "the handler is at a.txt:2", claims: [] }],
           pictureChanged: false,
+          situation: STUB_UNIT_SITUATION,
         },
       },
     ]);
     const calls = readCalls(join(dir, "calls"));
     expect(calls.map((c) => [c.kind, c.resume])).toEqual([["leader", null]]);
-    // A fresh session: the orientation first, then the brief, then the ask for a report.
+    // A fresh session: the orientation first (with the unit's own last picture and no
+    // line of the IC's, R5-2), then the brief, then the ask for a report.
     const prompt = calls[0]?.prompt ?? "";
     expect(prompt.startsWith("Incident objective: ")).toBe(true);
     expect(prompt).toContain(
-      "You lead unit u-a. Your unit's objective: the first half",
+      [
+        "You lead unit u-a. Your unit's objective: the first half",
+        "Equipment your unit's tasks may use: none; Bash allowlist: none",
+        "Your unit's last picture of its slice: THE-UNIT-PICTURE: a.txt:2 is a handler",
+        "Its evidence:",
+        "  - c-old: for",
+        "Its open items:",
+        "  - whether it is the only one; settled by: a grep",
+        "It last changed: first look",
+      ].join("\n"),
     );
+    expect(prompt).not.toContain("THE-IC-PICTURE");
+    expect(prompt).not.toContain("THE-IC-ASSESSMENT");
+    expect(prompt).not.toMatch(/hypothesis/i);
     expect(prompt).toContain(
       [
         `The IC reviewed your report ${reported.id} and sent it back for revision 1. Its instructions:`,
@@ -3457,7 +3530,8 @@ describe("incident step", () => {
       "IC command turn for period 1 (session stub-session): stub command turn",
       "  objective: pursue the incident objective",
       "  situation changed: stub: nothing yet",
-      "  hypothesis: stub hypothesis",
+      "  picture: stub picture",
+      "  assessment: on_track: stub: nothing tested yet",
       "  status: continue",
       "plan drafted (session stub-session): grep first",
       "  create unit find under 001-command (leader claude-code/claude-haiku-4-5): locate the handler",
@@ -3481,13 +3555,13 @@ describe("incident step", () => {
       await withStubOutput(bad, () => run(["incident", "step", "001"], ctx)),
     ).toBe(EXIT.ok);
     // The IC's default verdict on the report the last step filed (R4-2): the stub revises a progress report.
-    expect(out[4]).toMatch(
+    expect(out[5]).toMatch(
       /^ {2}verdict on 001-u02's report [0-9a-f-]{36}: revise: stub: progress; instructions: stub: carry on$/,
     );
     // The validator rejects the draft before the IC reads it (R5-3), and the same plan
     // redrafted twice is rejected each time; no review is called.
-    expect(out[9]).toBe("plan rejected:");
-    expect(out[10]).toMatch(/^ {2}- Units exist: /);
+    expect(out[10]).toBe("plan rejected:");
+    expect(out[11]).toMatch(/^ {2}- Units exist: /);
     expect(out.filter((l) => l === "plan rejected:")).toHaveLength(3);
     expect(out.some((l) => l.startsWith("IC review"))).toBe(false);
     out.length = 0;

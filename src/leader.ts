@@ -1,8 +1,11 @@
 import {
   type CapabilityRequest,
   type Event,
+  IncidentBriefing,
+  type OpenItem,
   type Question,
   Situation,
+  UnitSituation,
 } from "./models.js";
 import type { Refusal } from "./providers/index.js";
 
@@ -370,19 +373,189 @@ export function eventsSinceLastCommand(events: readonly Event[]): Event[] {
   return events.filter((e) => e.sequence > since);
 }
 
+/** The incident briefing the initial IC wrote (R3-8), with the call that wrote it, or null for an incident created without a size-up. */
+export function briefingOf(
+  events: readonly Event[],
+): { briefing: IncidentBriefing; event: Event } | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e === undefined || e.type !== "incident.briefed") continue;
+    const parsed = IncidentBriefing.safeParse(e.payload.briefing);
+    return parsed.success ? { briefing: parsed.data, event: e } : null;
+  }
+  return null;
+}
+
+/** An open item's id: the incident's, then `o` and a two-digit number, so the file's ids read as one series. */
+function openItemId(incidentId: string, n: number): string {
+  return `${incidentId}-o${String(n).padStart(2, "0")}`;
+}
+
 /**
- * The IC's situation (R4-5): the one on its last accepted `command.turned`, which every
- * seat works from until the next turn; null before the IC's first accepted turn (and on a
- * log written before R4-5, whose situations rode on `plan.applied`). A rejected turn's is
- * skipped, as its period is.
+ * The first picture, seeded from the initial IC's briefing (R5-2) so the IC's first turn
+ * edits a picture rather than writing one from nothing: the dominant problem is the
+ * picture, each need the size-up did not check is an open item (settled by checking it),
+ * a checked need's finding is evidence in prose under the picture, and the assessment is
+ * that nothing has tested it yet. The open items are numbered from `o01`, and the IC's
+ * first turn carries each forward by id or lets it go. Null without a briefing.
+ */
+function seededSituation(events: readonly Event[]): Situation | null {
+  const briefed = briefingOf(events);
+  if (briefed === null || briefed.event.incidentId === null) return null;
+  const { briefing } = briefed;
+  const checked = briefing.obviouslyNeeded
+    .filter((n) => n.checked)
+    .map((n) => `${n.what}: ${n.finding ?? "checked"}`);
+  const unchecked = briefing.obviouslyNeeded.filter((n) => !n.checked);
+  const incidentId = briefed.event.incidentId;
+  return {
+    picture: `${briefing.dominantProblem}${checked.length === 0 ? "" : ` The size-up checked: ${checked.join("; ")}.`}`,
+    evidence: [],
+    open: unchecked.map((n, i) => ({
+      id: openItemId(incidentId, i + 1),
+      what: `whether ${n.what} is in place; the size-up did not check it`,
+      settledBy: "a check of it",
+    })),
+    assessment: {
+      kind: "on_track",
+      why: "seeded from the initial IC's briefing; no report has tested it yet",
+    },
+    changed: "seeded from the briefing's dominant problem and needs",
+  };
+}
+
+/** The situation on an accepted command turn, or null when the event carries none that parses. */
+function situationOn(e: Event): Situation | null {
+  const parsed = Situation.safeParse(
+    (e.payload.turn as { situation?: unknown } | undefined)?.situation,
+  );
+  return parsed.success ? parsed.data : null;
+}
+
+/** The IC's last accepted `command.turned`, or null before its first. */
+function lastAcceptedTurn(events: readonly Event[]): Event | null {
+  let last: Event | null = null;
+  for (const e of events)
+    if (e.type === "command.turned" && e.payload.rejected !== true) last = e;
+  return last;
+}
+
+/**
+ * The IC's situation (R5-2; R4-5 until then): the one on its last accepted
+ * `command.turned`, which the planner reads until the next turn; before the IC's first
+ * accepted turn, the picture seeded from the briefing; null with neither (an incident
+ * created without a size-up and not yet commanded), and null when the last accepted turn
+ * carries a situation in a shape from before R5-2 (`situationPredatesShape` says so, and
+ * the renderers print it), never the seed in its place. A rejected turn's is skipped, as
+ * its period is.
  */
 export function icSituation(events: readonly Event[]): Situation | null {
-  let last: unknown;
-  for (const e of events)
-    if (e.type === "command.turned" && e.payload.rejected !== true)
-      last = (e.payload.turn as { situation?: unknown } | undefined)?.situation;
-  const parsed = Situation.safeParse(last);
-  return parsed.success ? parsed.data : null;
+  const last = lastAcceptedTurn(events);
+  return last === null ? seededSituation(events) : situationOn(last);
+}
+
+/** Whether the IC's last accepted turn carries a situation that no longer parses (a log written under R4-5's shape), which `show` and section 10 say rather than print "(none)". */
+export function situationPredatesShape(events: readonly Event[]): boolean {
+  const last = lastAcceptedTurn(events);
+  return last !== null && situationOn(last) === null;
+}
+
+/** The line the file prints where the IC's situation would be when the log's last turn predates the current shape (R5-2). */
+export const SITUATION_PREDATES_SHAPE =
+  "(the last command turn's situation is in a shape from before R5-2)";
+
+/**
+ * The situation as the runtime records it (R5-2): every open item numbered. An item that
+ * carries an id keeps it (the validator has checked it names an item of the last
+ * picture); a new one takes the next number after every id the incident has issued, on
+ * the seed or on any accepted turn, so an id is never reused for a different item.
+ */
+export function numberOpenItems(
+  situation: Situation,
+  incidentId: string,
+  events: readonly Event[],
+): Situation {
+  const issued = [
+    ...(seededSituation(events)?.open ?? []),
+    ...events.flatMap((e) =>
+      e.type === "command.turned" ? (situationOn(e)?.open ?? []) : [],
+    ),
+  ]
+    .map((item) => item.id)
+    .filter((id): id is string => id !== undefined)
+    .map((id) => Number(id.slice(id.lastIndexOf("-o") + 2)))
+    .filter((n) => Number.isFinite(n));
+  let next = Math.max(0, ...issued) + 1;
+  return {
+    ...situation,
+    open: situation.open.map((item) =>
+      item.id === undefined
+        ? { ...item, id: openItemId(incidentId, next++) }
+        : item,
+    ),
+  };
+}
+
+/**
+ * Which tasks work each open item (R5-2), from every `plan.applied` that recorded
+ * `settles` (a plan's tasks, or the IC's under command): the item's id to the ids of the
+ * tasks that named it. A task's status is the caller's to read; the validator counts an
+ * open one as working the item, and `show` prints each with its status.
+ */
+export function openItemsWorked(
+  events: readonly Event[],
+): Map<string, string[]> {
+  const worked = new Map<string, string[]>();
+  for (const e of events) {
+    if (e.type !== "plan.applied" || !Array.isArray(e.payload.settles))
+      continue;
+    for (const s of e.payload.settles as {
+      taskId?: unknown;
+      openItemId?: unknown;
+    }[]) {
+      if (typeof s.taskId !== "string" || typeof s.openItemId !== "string")
+        continue;
+      const tasks = worked.get(s.openItemId) ?? [];
+      tasks.push(s.taskId);
+      worked.set(s.openItemId, tasks);
+    }
+  }
+  return worked;
+}
+
+/** The ids of the open items the IC's current picture lists, which a plan's `settles` and a carried-forward item may name. */
+export function openItemIds(situation: Situation | null): Set<string> {
+  return new Set(
+    (situation?.open ?? [])
+      .map((item: OpenItem) => item.id)
+      .filter((id): id is string => id !== undefined),
+  );
+}
+
+/**
+ * A unit's own picture of its slice (R5-2), from its last `unit.reported` that carries one
+ * the leader wrote; null before its first report (or when only the runtime has reported
+ * for it). A fresh leader session of the unit reads it in its orientation, so a replaced
+ * session starts from what the unit last believed and never from the IC's picture.
+ */
+export function unitSituation(
+  events: readonly Event[],
+  unitId: string,
+): UnitSituation | null {
+  let last: UnitSituation | null = null;
+  for (const e of events) {
+    if (
+      e.type !== "unit.reported" ||
+      e.payload.unitId !== unitId ||
+      e.payload.writtenBy === "runtime"
+    )
+      continue;
+    const parsed = UnitSituation.safeParse(
+      (e.payload.report as { situation?: unknown } | undefined)?.situation,
+    );
+    if (parsed.success) last = parsed.data;
+  }
+  return last;
 }
 
 /**

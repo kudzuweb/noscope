@@ -154,6 +154,11 @@ describe("incident commands", () => {
       [
         "unit reports, the last of each unit, with the work behind it:",
         `  - u-a, report ${report.id}: met; changed: the handler is found (claims u-a-c-grep, u-a-c-inv)`,
+        "    its picture of its slice: the handler resets the scroll; the handler at a.ts:2 resets the view",
+        "      evidence: u-a-c-grep for, u-a-c-inv for",
+        "      open:",
+        "        (none)",
+        "      changed: test",
         "    work since its previous report:",
         "      task u-a-grep (grep): find the delete handler",
         "        claims: u-a-c-grep: /r/a.ts:2 matches (observed, confidence 1.00)",

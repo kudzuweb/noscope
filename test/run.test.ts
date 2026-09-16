@@ -94,9 +94,9 @@ describe("incident run", () => {
     const shown = harness([]);
     shown.ctx.env.NOSCOPE_DB = h.ctx.env.NOSCOPE_DB as string;
     expect(await run(["incident", "show", "001"], shown.ctx)).toBe(EXIT.ok);
-    // The IC's situation prints under the period (R4-5), the stub's default one here.
+    // The IC's situation prints under the period (R4-5, R5-2), the stub's default one here.
     expect(shown.out.join("\n")).toContain(
-      "period priorities:\n  (none)\nsituation, the IC's:\n  changed: stub: nothing yet\n  hypothesis: stub hypothesis\n  proven:\n    (none)\n  inferred:\n    (none)\n  keep: (none)\n  reassignments open, each taken by a new unit in the next plan naming its id in takes: (none)",
+      "period priorities:\n  (none)\nsituation, the IC's:\n  picture: stub picture\n  assessment: on_track: stub: nothing tested yet\n  changed: stub: nothing yet\n  evidence (only a claim for, observed, proves a part of the picture):\n    (none)\n  open items, each worked by a task in the next plan naming its id in settles, or deferred by the IC:\n    (none)\n  reassignments open, each taken by a new unit in the next plan naming its id in takes: (none)",
     );
     const claims = store.listClaims("001");
     expect(claims).toHaveLength(1);

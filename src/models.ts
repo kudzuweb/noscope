@@ -448,6 +448,12 @@ export const TaskProposal = z.object({
   evidenceFrom: EvidenceFrom.default({ claims: [], tasks: [] }).describe(
     "Claims by id and tasks by id or ref whose content this task needs; the runtime attaches them, so do not copy evidence into inputs",
   ),
+  settles: z
+    .array(z.string().min(1))
+    .optional()
+    .describe(
+      "The open items of the IC's situation this task settles, by id as section 10 lists them (R5-2); every open item the IC did not defer is named here by some task",
+    ),
   instructions: z.string(),
   provider: z.string().nullable(),
   model: z.string().nullable(),
@@ -480,74 +486,121 @@ export const SopApplication = z.object({
 });
 
 /**
- * What settles an inferred link (R4-5): a task, by an open task's id or by the ref the IC
- * wants this period's plan to give the task that settles it; a reproduce task the same
- * way; or deferred, with why, which is a decision recorded rather than a link left out.
+ * One thing the incident does not yet know (R5-2): what it is, in prose, and what would
+ * settle it. The runtime numbers each item (`<incident>-oNN`) when the command turn is
+ * applied, so a plan's task can name what it settles in `settles`; an item carried
+ * forward from the last picture keeps its id, a new one is written without one. Deferred
+ * with a why, the item is a decision recorded rather than a task owed.
  */
-export const Settlement = z.union([
-  z.object({
-    task: z
-      .string()
-      .min(1)
-      .describe(
-        "An open task's id, or the ref the plan is to give the task that settles the link",
-      ),
-  }),
-  z.object({
-    reproduce: z
-      .string()
-      .min(1)
-      .describe(
-        "A reproduce task, by an open task's id or the ref the plan is to give it",
-      ),
-  }),
-  z.object({
-    deferred: z
-      .string()
-      .min(1)
-      .describe(
-        "Why this link is not worked this period: a decision recorded, not an omission",
-      ),
-  }),
-]);
+export const OpenItem = z.object({
+  id: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Only for an item carried forward from your last picture: its id as the file lists it. Leave it out for a new item; the runtime numbers it. Never write an id the file does not list",
+    ),
+  what: z.string().min(1).describe("What is not yet known, one line"),
+  settledBy: z
+    .string()
+    .min(1)
+    .describe(
+      "What would settle it, in prose: what must be read, run or reproduced; the plan's task that works it names this item's id in settles",
+    ),
+  deferred: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Why this item is not worked this period: a decision recorded, not an omission; an item neither worked by a task nor deferred rejects the plan",
+    ),
+});
+
+/** A claim the picture rests on or is contradicted by (R5-2), by id, with its stance. */
+export const SituationEvidence = z.object({
+  claimId: z.string().min(1),
+  stance: z
+    .enum(["for", "against"])
+    .describe("Whether the claim supports the picture or contradicts it"),
+});
 
 /**
- * The IC's picture of the incident (R4-5; the planner's until then), written on every
- * command turn and read by every seat: what changed, the current explanation, the observed
- * claims it rests on, the inferred links and what settles each, and the claims to keep in
- * view. The planner drafts the tactics that work it and the validator holds the plan to
- * its inferred links. A reassignment is written into the slice it concerns rather than
- * listed apart.
+ * The IC's reading of where the incident stands after each turn (R5-2): on track (the
+ * reports confirmed the picture), priors updated (the picture changed, the tactics hold),
+ * or tactics change (the plan must redraw the units rather than extend them; the planner
+ * reads this as that signal).
+ */
+export const Assessment = z.object({
+  kind: z.enum(["on_track", "priors_updated", "tactics_change"]),
+  why: z.string().min(1).describe("Why, one sentence"),
+});
+
+/**
+ * The IC's situation (R5-2; R4-5 until then): one picture of reality, seeded from the
+ * initial IC's briefing and edited on every command turn, that the planner reads in full
+ * and no unit ever sees. `picture` is what the incident now believes is going on;
+ * `evidence` names the claims for and against it by id; `open` is what is not yet known,
+ * each item with what would settle it and an id the runtime gives it; `assessment` says
+ * whether the incident is on track, its priors were updated or its tactics must change;
+ * `changed` is what this turn changed. The validator holds the plan to the open items
+ * (Open items are worked) and the turn to the claims it names (Situation grounded).
  */
 export const Situation = z.object({
+  picture: z
+    .string()
+    .min(1)
+    .describe(
+      "What the incident now believes is going on, one paragraph: edit the picture you were given, do not restate it",
+    ),
+  evidence: z
+    .array(SituationEvidence)
+    .describe(
+      "The claims that support or contradict the picture, by id, each marked for or against; only a claim marked for with basis observed proves any part of the picture",
+    ),
+  open: z
+    .array(OpenItem)
+    .describe(
+      "What is not yet known, each with what would settle it; every item is worked by a task in the period's plan or deferred here with why",
+    ),
+  assessment: Assessment.describe(
+    "Where the incident stands after this turn: on_track, priors_updated, or tactics_change when the units must be redrawn rather than extended",
+  ),
   changed: z
     .string()
     .min(1)
     .describe(
-      "What changed since your last turn, one paragraph; on the first turn, what the briefing established",
+      "What this turn changed in the picture, one paragraph; on the first turn, what you made of the briefing's seed",
     ),
-  hypothesis: z
+});
+
+/**
+ * A unit leader's picture of its own slice (R5-2), filed on its report: what the unit now
+ * believes about its slice, the claims for and against by id, what it does not yet know
+ * with what would settle it, and what changed since its last report. Observations flow up:
+ * the IC folds each slice into the whole on its verdict, and the leader never reads the
+ * IC's picture.
+ */
+export const UnitSituation = z.object({
+  picture: z
     .string()
     .min(1)
-    .describe("The current explanation of the objective, one paragraph"),
-  proven: z
-    .array(
-      z.object({
-        claimId: z.string().min(1),
-        line: z.string().min(1).describe("The claim in one line"),
-      }),
-    )
     .describe(
-      "The observed claims the hypothesis rests on; a claim with basis inferred is refused here",
+      "What your unit now believes about its slice of the problem, one paragraph",
     ),
-  inferred: z
-    .array(z.object({ claimId: z.string().min(1), settledBy: Settlement }))
+  evidence: z
+    .array(SituationEvidence)
     .describe(
-      "Every link the hypothesis needs that no claim observed, each with what settles it: a task this period's plan must carry (by an open task's id or the ref the plan is to give it), or deferred with why",
+      "Your unit's claims that support or contradict its picture, by id, each marked for or against",
     ),
-  keep: z
-    .array(z.string())
-    .describe("Claim ids to hold in view next cycle beyond the proven list"),
+  open: z
+    .array(OpenItem.omit({ id: true, deferred: true }))
+    .describe(
+      "What your unit does not yet know about its slice, each with what would settle it",
+    ),
+  changed: z
+    .string()
+    .min(1)
+    .describe("What changed in your unit's picture since its last report"),
 });
 
 export const ActionPlan = z.strictObject({
@@ -567,7 +620,7 @@ export const ActionPlan = z.strictObject({
   rationale: z
     .string()
     .describe(
-      "Why this plan, one paragraph: how it works the IC's situation, and the priority that chose between plans",
+      "Why this plan, one paragraph: how it works the open items of the IC's situation, and the priority that chose between plans",
     ),
   discrepancy: z
     .string()
@@ -612,6 +665,9 @@ const LeaderReportFields = z.object({
     .describe(
       "Whether what the unit found changes the picture the incident is working from, so the IC should act before anything new starts",
     ),
+  situation: UnitSituation.describe(
+    "Your unit's picture of its slice (R5-2): what it now believes, the claims for and against by id, what it does not yet know with what would settle it, and what changed since its last report; the IC folds it into the incident's picture",
+  ),
   why: z
     .string()
     .min(1)
@@ -647,10 +703,10 @@ export const LeaderReport = LeaderReportFields.superRefine((r, ctx) => {
     });
 });
 
-/** The fields both kinds of turn carry: tasks the leader assigns under its unit, and a discrepancy. A strike team is declared on a task by whoever defines it (R5-4), so a turn carries no request for one. */
+/** The fields both kinds of turn carry: tasks the leader assigns under its unit (without `settles`, which names the IC's open items a leader never sees; R5-2), and a discrepancy. A strike team is declared on a task by whoever defines it (R5-4), so a turn carries no request for one. */
 const TurnFields = {
   assignTasks: z
-    .array(TaskProposal)
+    .array(TaskProposal.omit({ settles: true }))
     .optional()
     .describe(
       "Tasks to assign under your own unit, to capabilities your unit holds, inside your unit's budget: how you get a retrievable fact yourself, without waiting for the next plan. Each names your unit id as its unit and runs in a session of its own or in process; a strike team for one of them goes in that task's own strikeTeam field. They are checked by the validator's rules and run in this pass on a continue, next pass on a report",
@@ -752,9 +808,14 @@ export const ReportVerdict = z
     instructions: z
       .string()
       .describe(
-        "For revise: what is missing, for the same leader to finish; for reassign: what the unit found and did not find, for the unit that takes its slice; empty for accepted",
+        "For revise: what is missing, for the same leader to finish; for reassign: what the unit found and did not find, for the unit that takes its slice; empty for accepted. Never what you think the answer is: a unit reads its objective and the evidence, not your picture",
       ),
-    why: z.string().min(1).describe("Why this verdict, from the work shown"),
+    why: z
+      .string()
+      .min(1)
+      .describe(
+        "Why this verdict, from the work shown; it reaches the unit's leader with the instructions, so it says what the work showed and never what you think the answer is",
+      ),
   })
   .superRefine((v, ctx) => {
     if (v.verdict === "accepted" && v.instructions !== "")
@@ -776,7 +837,8 @@ export const ReportVerdict = z
  * report lists, the situation (R4-5), the period's objectives and priorities, units to
  * close, answers to what units asked for, what only Mauria can supply, and whether the
  * incident continues. The planner then drafts the tactics against the period and the
- * situation, as a suggestion for the IC. Every turn schema is
+ * situation, as a suggestion for the IC; the situation's open items are numbered by the
+ * runtime when the turn is applied (R5-2). Every turn schema is
  * one strict object: the structured-output API refuses a top-level oneOf/anyOf and accepts
  * keys a loose object does not name, so fields that vary by variant are optional and a
  * refinement enforces them after parse (verified on Claude Code 2.1.272, R3-5).
@@ -803,7 +865,7 @@ export const CommandTurn = z.strictObject({
       "One verdict per unit that reported, naming the unit and the event id of its last report the change report lists (an earlier report of the same unit is marked as answered through the last and takes none): accepted, revise or reassign, with instructions for the last two and a why for each",
     ),
   situation: Situation.describe(
-    "Your situation, the picture every seat works from this period (R4-5): what changed, the hypothesis, the observed claims it rests on, every inferred link with the task that settles it or deferred with why, and the claims to keep in view; a reassignment updates the slice it concerns",
+    "The situation (R5-2): the picture of reality the incident holds, edited from the one section 10 shows you (seeded from the briefing on your first turn), the claims for and against it by id, what is not yet known with what would settle it, your assessment (on_track, priors_updated or tactics_change) with why, and what this turn changed; the planner reads it in full and no unit ever does. A reassignment updates the slice it concerns",
   ),
   closeUnits: z
     .array(UnitClose)
@@ -1262,6 +1324,8 @@ export type GrantRequest = z.infer<typeof GrantRequest>;
 export type SopApplication = z.infer<typeof SopApplication>;
 export type ActionPlan = z.infer<typeof ActionPlan>;
 export type Situation = z.infer<typeof Situation>;
+export type OpenItem = z.infer<typeof OpenItem>;
+export type UnitSituation = z.infer<typeof UnitSituation>;
 export type LeaderReport = z.infer<typeof LeaderReport>;
 export type ResourceRequest = z.infer<typeof ResourceRequest>;
 export type LeaderTurn = z.infer<typeof LeaderTurn>;
@@ -1274,7 +1338,6 @@ export type IncidentBriefing = z.infer<typeof IncidentBriefing>;
 export type ReviewTurn = z.infer<typeof ReviewTurn>;
 export type PlanPatch = z.infer<typeof PlanPatch>;
 export type HandoffDocument = z.infer<typeof HandoffDocument>;
-export type Settlement = z.infer<typeof Settlement>;
 export type Needed = z.infer<typeof Needed>;
 export type ClaimProposal = z.infer<typeof ClaimProposal>;
 export type SessionResult = z.infer<typeof SessionResult>;

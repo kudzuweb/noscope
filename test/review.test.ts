@@ -155,7 +155,7 @@ describe("incident review", () => {
     );
     // The stub's second command turn answered the unit's progress report with a revise (R4-2), listed under the turn and counted.
     expect(text).toMatch(
-      /set period 2: 1 objective\(s\), 0 close\(s\), 1 verdict\(s\), continue {2}session stub-session\n {2}verdict on 001-u02's report [0-9a-f-]{36}: revise: stub: progress; instructions: stub: carry on\n {2}ic claude-sonnet-5: in 1,500 \(uncached 1,000 \/ write 200 \/ read 300\) {2}out 42 {2}1\.5 s {2}\$0\.01 {2}reviewed the draft: approve {2}session stub-session/,
+      /set period 2: 1 objective\(s\), 0 close\(s\), 1 verdict\(s\), continue {2}session stub-session\n {2}assessment: on_track: stub: nothing tested yet\n {2}verdict on 001-u02's report [0-9a-f-]{36}: revise: stub: progress; instructions: stub: carry on\n {2}ic claude-sonnet-5: in 1,500 \(uncached 1,000 \/ write 200 \/ read 300\) {2}out 42 {2}1\.5 s {2}\$0\.01 {2}reviewed the draft: approve {2}session stub-session/,
     );
     expect(text).toContain(
       "report verdicts: 1: 0 accepted, 1 revise, 0 reassign\n  001-u02: 0 accepted, 1 revise, 0 reassign",
