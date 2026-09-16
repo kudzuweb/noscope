@@ -954,7 +954,7 @@ Mauria, and the IC decides which reach her.
 | R5-7 | Independent work runs together | none | The planner's rule text and the IC's review put units that do not depend on each other in the same period, so code reading never waits behind a reproduce it does not need. |
 | R5-8 | The IC gates the briefing's questions | R5-2 | The initial IC's questions do not block the incident; they reach the IC's first turn as proposals, and only a question the IC raises reaches Mauria. |
 | R5-10 | A failed or cancelled task settles its dependents | none | When a task fails or is cancelled, every task that depends on it is cancelled in the same pass with the reason recorded, the planner reads it next cycle, and nothing waits on a task that will never complete. |
-| R5-11 | Turns say less | none | Schema descriptions ask for decisions, not prose; the IC's period text and the planner's rationale are bounded; a resumed IC turn carries the change since its last turn rather than the whole file again, so output length and context stop being the clock. |
+| R5-11 | The IC's briefing carries the change | none | A resumed IC turn reads the change report and the file's sections that changed since its last accepted turn, not the whole file again, so the IC's context stops growing by a file per turn; the whole file returns after a handoff or a fallback. |
 | R5-12 | Fifth run | all | The first incident rerun with everything above, measured beside runs 001 to 004; the target is run 003's cost and time or better with run 004's evidence. |
 
 R5-1 to R5-4, R5-6, R5-7, R5-10 and R5-11 can run in parallel; R5-5 after R5-4; R5-8 after
@@ -1123,22 +1123,26 @@ with the reason rather than failing at run time. DESIGN.md Step 5 and Step 6 fol
 Acceptance: a dispatcher test on the stub where a grep fails and its two dependents are
 cancelled in the same pass with the cause recorded; a validator test rejecting a grep whose
 root does not exist.
-### R5-11: Turns say less
-Scope: the schema descriptions on `CommandTurn`, `ActionPlan` and `LeaderTurn` ask for
-decisions in the fewest words that carry them and stop asking for justification in
-prose: `why` fields are bounded to a sentence, the period's objectives to one line each,
-the planner's `rationale` to how the plan works the open items and nothing else, the
-situation's `picture` to a paragraph; the validator warns on a turn past its bound and
-the role texts say a turn is read by the runtime and the next seat, not by a person. The
-IC's briefing on a resumed turn carries the change report and the file's changed sections
-only, since the session already holds the rest, and the whole file again only after a
-handoff or a fallback. Run 004's IC and planner wrote 78k output tokens at about 13
-seconds per thousand, 17 of the run's 35 minutes, and the IC's last turn read a 170k
-context. DESIGN.md Step 4 and the Speed section follow.
+### R5-11: The IC's briefing carries the change
+Checked before building, 2026-09-15 23:05: the IC's and the planner's structured turns
+are not padded (run 004's largest command turn is 8.9k characters, about 2.2k tokens, of
+objectives, situation, verdicts and rationale, against 16.9k output tokens billed; the
+IC session made no tool calls, so the rest is the model's reasoning before it answers,
+which is a model being needed for a decision). Bounding the turn's fields would save
+nothing, so the earlier "Turns say less" scope is dropped. What stands: a resumed IC
+session keeps every past briefing in its context, and every briefing carried the whole
+incident file, which is why run 004's last turn read 170k and sat one turn short of the
+handoff. Scope: the IC's briefing on a resumed turn carries the change report and the
+file's sections that changed since the IC's last accepted turn (units, tasks, claims and
+evidence, questions, the situation), each headed as changed, with a line naming the
+sections unchanged since then; the whole file is rendered again on the first turn of a
+session, after a handoff and after a fallback, since those sessions hold nothing. The
+runtime tells what changed from the log's sequence numbers. DESIGN.md Step 4 and the
+Speed section follow, and the Reference row on the IC's context.
 
-Acceptance: the planner and IC schemas render the bounds in their descriptions; a
-validator test warns on an over-long why; a test that a resumed IC briefing omits the
-unchanged sections and a post-handoff one carries them.
+Acceptance: a test that a resumed IC briefing omits the unchanged sections and names
+them; a test that the first turn after a fallback carries the whole file; a run test on
+the stub where the IC's third turn reads fewer input tokens than its second.
 ### R5-12: Fifth run
 Scope: the first incident's objective run a fifth time from the same roughdraftplus
 working directory at commit 6a996e8, with the scratch document restored, the same
