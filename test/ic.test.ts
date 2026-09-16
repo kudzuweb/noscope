@@ -688,7 +688,9 @@ describe("the IC above the planner", () => {
       "plan redrafted after a correction (session stub-session): grep for the handler, as corrected",
     );
     expect(h.out).toContain("plan approved");
-    expect(h.out).toContain("  ran 001-t01 (grep): completed; 1 claim(s)");
+    expect(h.out).toContain(
+      "  ran 001-t01 (grep): completed; evidence: 1 match in 1 file",
+    );
     const calls = h.calls();
     expect(calls.filter((c) => c.kind !== "leader").map((c) => c.kind)).toEqual(
       ["command", "planner", "review", "planner"],
