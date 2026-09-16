@@ -3781,8 +3781,10 @@ transfer block (about 25 lines replaced by 8), `src/validator.ts` (the tier cons
 one warning check added), `src/planner.ts` (one warning line added), `src/models.ts` (two
 optional fields), `src/ic.ts` (one constant and one line in `renderReviewPrompt`),
 `src/leader.ts` (`IC_MODEL` and its comment), `src/size-up.ts` (two sentences of the role
-text). R5-7 also adds a `PLANNER_WARNINGS` or `PLANNER_RULES` line and a review sentence;
-both of R5-6's are their own array elements.
+text). Rebased over R5-7 (#53) before merging: its `PLANNER_WARNINGS` line, its
+`WARNING_CHECKS` entry, its review line (`SERIALIZED_WORK_ASK`, which precedes the models
+line in the review's ask), its planner snapshot line, its validator test and its warning
+rows in DESIGN.md and `docs/architecture.html` all sit beside R5-6's.
 
 Not exactly to spec, with reasons:
 
